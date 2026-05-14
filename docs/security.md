@@ -13,6 +13,8 @@ There are no UI controls or API routes for mutating Meta campaigns, ad sets, ads
 
 Social inbox permissions are validated separately from ads sync. Message/comment reply features must require explicit human approval before any Meta send/reply endpoint is called. AI may draft suggested replies, but it must not send them automatically.
 
+The social inbox sync stores message/comment content and metadata in Supabase. Page access tokens are used server-side only to call Meta and are redacted before Page metadata is stored.
+
 ## Secret Handling
 
 - Secrets are read from runtime environment variables.

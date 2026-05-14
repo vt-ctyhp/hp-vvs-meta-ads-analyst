@@ -18,6 +18,11 @@ Tables:
 - `ai_analysis_dashboards`
 - `ai_analysis_runs`
 - `sync_runs`
+- `meta_social_pages`
+- `meta_social_threads`
+- `meta_social_messages`
+- `meta_social_comments`
+- `meta_social_sync_runs`
 
 Campaign umbrella metadata is stored on:
 

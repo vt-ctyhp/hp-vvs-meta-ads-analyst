@@ -1,12 +1,33 @@
 import { SocialInboxClient, type SocialInboxStatus } from "@/components/social-inbox-client";
 import { getMissingRequiredEnv } from "@/lib/env";
 import { getMetaPermissionHealth, validateConfiguredMetaAccounts } from "@/lib/meta";
+import { getSocialInboxData, type SocialInboxData } from "@/lib/social-inbox";
 
 export const dynamic = "force-dynamic";
 
 export default async function InboxPage() {
-  const status = await getSocialInboxStatus();
-  return <SocialInboxClient status={status} />;
+  const [status, inboxData] = await Promise.all([getSocialInboxStatus(), getSafeSocialInboxData()]);
+  return <SocialInboxClient status={status} initialData={inboxData.data} dataError={inboxData.error} />;
+}
+
+async function getSafeSocialInboxData(): Promise<{ data: SocialInboxData; error: string | null }> {
+  try {
+    return { data: await getSocialInboxData(), error: null };
+  } catch (error) {
+    return {
+      data: emptySocialInboxData(),
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function emptySocialInboxData(): SocialInboxData {
+  return {
+    threads: [],
+    messages: [],
+    comments: [],
+    syncRuns: [],
+  };
 }
 
 async function getSocialInboxStatus(): Promise<SocialInboxStatus> {

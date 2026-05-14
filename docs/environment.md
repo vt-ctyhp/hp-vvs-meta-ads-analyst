@@ -23,5 +23,10 @@ Optional:
 | `OPENAI_DEEP_MODEL` | `gpt-5.5` | Deep model for optional ad-hoc analysis interpretation. |
 | `META_API_VERSION` | `v24.0` | Meta Graph API version. |
 | `META_VVS_AD_ACCOUNT_ID` | unset | Optional VVS ad account id, with or without `act_`. Add when VVS access is ready. |
+| `META_SOCIAL_SYNC_CONVERSATION_LIMIT` | `25` | Max recent conversations pulled per Page/platform during manual inbox sync. |
+| `META_SOCIAL_SYNC_MESSAGE_THREAD_LIMIT` | `10` | Max synced conversation threads where message bodies are fetched per run. |
+| `META_SOCIAL_SYNC_MESSAGE_LIMIT` | `25` | Max messages pulled per synced thread. |
+| `META_SOCIAL_SYNC_MEDIA_LIMIT` | `20` | Max recent Instagram media items scanned for comments. |
+| `META_SOCIAL_SYNC_FEED_LIMIT` | `15` | Max recent Facebook Page feed items scanned for comments when Meta permits the feed read. |
 
 Do not commit `.env`, `.env.local`, or downloaded key material.

@@ -16,6 +16,12 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import type {
+  SocialInboxComment,
+  SocialInboxData,
+  SocialInboxMessage,
+} from "@/lib/social-inbox";
+
 type PermissionBlock = {
   ok: boolean;
   required: string[];
@@ -56,26 +62,73 @@ export type SocialInboxStatus = {
 
 type InboxFilter = "all" | "messages" | "comments" | "unread";
 
-const MOCK_QUEUE: Array<{
+type QueueDisplayItem = {
   id: string;
+  sourceId: string;
   channel: "Facebook" | "Instagram";
+  platform: "facebook" | "instagram";
   type: "message" | "comment";
   sender: string;
   preview: string;
-  status: "Waiting" | "Needs review";
+  status: "Synced" | "Unread" | "Needs reply";
   time: string;
-}> = [];
+  timestamp: string | null;
+};
 
-export function SocialInboxClient({ status }: { status: SocialInboxStatus }) {
+type SyncResponse = {
+  status?: string;
+  metrics?: {
+    pages?: number;
+    threads?: number;
+    messages?: number;
+    comments?: number;
+  };
+  errors?: string[];
+  error?: string;
+};
+
+export function SocialInboxClient({
+  status,
+  initialData,
+  dataError,
+}: {
+  status: SocialInboxStatus;
+  initialData: SocialInboxData;
+  dataError: string | null;
+}) {
   const [filter, setFilter] = useState<InboxFilter>("all");
   const [query, setQuery] = useState("");
-  const selectedItem = MOCK_QUEUE[0] || null;
+  const [inboxData, setInboxData] = useState(initialData);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<string | null>(dataError);
+
+  const queue = useMemo(() => buildQueue(inboxData), [inboxData]);
+  const selectedItem =
+    queue.find((item) => item.id === selectedId) || queue[0] || null;
+  const selectedMessages = useMemo(
+    () =>
+      selectedItem?.type === "message"
+        ? inboxData.messages
+            .filter(
+              (message) =>
+                message.platform === selectedItem.platform &&
+                message.thread_id === selectedItem.sourceId,
+            )
+            .sort((a, b) => String(a.sent_at || "").localeCompare(String(b.sent_at || "")))
+        : [],
+    [inboxData.messages, selectedItem],
+  );
+  const selectedComment =
+    selectedItem?.type === "comment"
+      ? inboxData.comments.find((comment) => comment.comment_id === selectedItem.sourceId) || null
+      : null;
   const filteredQueue = useMemo(
     () =>
-      MOCK_QUEUE.filter((item) => {
+      queue.filter((item) => {
         if (filter === "messages" && item.type !== "message") return false;
         if (filter === "comments" && item.type !== "comment") return false;
-        if (filter === "unread" && item.status !== "Waiting") return false;
+        if (filter === "unread" && item.status !== "Unread") return false;
         const normalizedQuery = query.trim().toLowerCase();
         if (!normalizedQuery) return true;
         return [item.channel, item.type, item.sender, item.preview]
@@ -83,8 +136,42 @@ export function SocialInboxClient({ status }: { status: SocialInboxStatus }) {
           .toLowerCase()
           .includes(normalizedQuery);
       }),
-    [filter, query],
+    [filter, query, queue],
   );
+
+  async function handleSync() {
+    setIsSyncing(true);
+    setSyncStatus("Syncing recent Meta inbox data...");
+
+    try {
+      const syncResponse = await fetch("/api/social-inbox/sync", { method: "POST" });
+      const syncPayload = (await syncResponse.json()) as SyncResponse;
+      if (!syncResponse.ok) {
+        throw new Error(syncPayload.error || "Inbox sync failed.");
+      }
+
+      const dataResponse = await fetch("/api/social-inbox", { cache: "no-store" });
+      const freshData = (await dataResponse.json()) as SocialInboxData | { error: string };
+      if (!dataResponse.ok || isErrorPayload(freshData)) {
+        throw new Error(isErrorPayload(freshData) ? freshData.error : "Could not refresh inbox data.");
+      }
+
+      setInboxData(freshData);
+      const metrics = syncPayload.metrics || {};
+      const errorNote = syncPayload.errors?.length
+        ? ` ${syncPayload.errors.length} source warning(s); first: ${syncPayload.errors[0]}`
+        : "";
+      setSyncStatus(
+        `Sync ${syncPayload.status || "complete"}: ${metrics.threads || 0} threads, ${
+          metrics.messages || 0
+        } messages, ${metrics.comments || 0} comments.${errorNote}`,
+      );
+    } catch (error) {
+      setSyncStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsSyncing(false);
+    }
+  }
 
   return (
     <main className="min-h-screen bg-hp-foundation px-4 py-6 text-hp-body md:px-8">
@@ -149,7 +236,14 @@ export function SocialInboxClient({ status }: { status: SocialInboxStatus }) {
 
           <div className="max-h-[720px] overflow-y-auto">
             {filteredQueue.length ? (
-              filteredQueue.map((item) => <QueueItem key={item.id} item={item} />)
+              filteredQueue.map((item) => (
+                <QueueItem
+                  key={item.id}
+                  item={item}
+                  active={selectedItem?.id === item.id}
+                  onSelect={() => setSelectedId(item.id)}
+                />
+              ))
             ) : (
               <div className="p-8 text-center">
                 <div className="mx-auto flex h-12 w-12 items-center justify-center border border-hp-rule text-hp-muted">
@@ -157,8 +251,8 @@ export function SocialInboxClient({ status }: { status: SocialInboxStatus }) {
                 </div>
                 <h2 className="mt-4 font-title text-2xl text-hp-ink">No synced threads yet</h2>
                 <p className="mt-2 text-sm leading-6 text-hp-muted">
-                  The inbox UI is ready. Message/comment rows will appear here after webhook
-                  ingestion and storage are added.
+                  Click Sync Inbox to pull recent Instagram conversations and available comments.
+                  Webhooks are still the next step for real-time delivery.
                 </p>
               </div>
             )}
@@ -175,14 +269,17 @@ export function SocialInboxClient({ status }: { status: SocialInboxStatus }) {
                 <h2 className="mt-2 font-title text-[34px] leading-tight text-hp-ink">
                   {selectedItem ? selectedItem.sender : "Select a thread"}
                 </h2>
+                {syncStatus ? (
+                  <p className="mt-2 max-w-3xl text-sm leading-6 text-hp-muted">{syncStatus}</p>
+                ) : null}
               </div>
               <button
-                disabled
-                title="Webhook sync is not implemented yet"
-                className="flex h-10 items-center justify-center gap-2 border border-hp-rule px-4 text-[11px] uppercase tracking-[0.14em] text-hp-muted"
+                disabled={!status.readiness.socialInbox || isSyncing}
+                onClick={handleSync}
+                className="flex h-10 items-center justify-center gap-2 border border-hp-ink px-4 text-[11px] uppercase tracking-[0.14em] text-hp-ink transition-colors hover:bg-hp-ink hover:text-hp-foundation disabled:border-hp-rule disabled:text-hp-muted"
               >
-                <RefreshCw size={14} />
-                Sync Soon
+                <RefreshCw size={14} className={isSyncing ? "animate-spin" : ""} />
+                {isSyncing ? "Syncing" : "Sync Inbox"}
               </button>
             </div>
           </div>
@@ -190,14 +287,22 @@ export function SocialInboxClient({ status }: { status: SocialInboxStatus }) {
           <div className="grid min-h-[640px] gap-0 lg:grid-cols-[minmax(0,1fr)_340px]">
             <div className="flex min-w-0 flex-col border-b border-hp-rule lg:border-b-0 lg:border-r">
               <div className="flex-1 p-6">
-                <EmptyThreadState />
+                {selectedItem ? (
+                  <SelectedItemDetail
+                    item={selectedItem}
+                    messages={selectedMessages}
+                    comment={selectedComment}
+                  />
+                ) : (
+                  <EmptyThreadState />
+                )}
               </div>
 
               <div className="border-t border-hp-rule p-4">
                 <textarea
                   disabled
                   rows={4}
-                  placeholder="Human-approved reply composer will be enabled after message/comment ingestion and send APIs are wired."
+                  placeholder="Human-approved reply composer will be enabled after send APIs are wired."
                   className="w-full resize-none border border-hp-rule bg-hp-inset p-3 text-sm leading-6 outline-none placeholder:text-hp-muted disabled:opacity-70"
                 />
                 <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -222,8 +327,8 @@ export function SocialInboxClient({ status }: { status: SocialInboxStatus }) {
                   <span className="text-[11px] uppercase tracking-[0.14em]">AI Suggestion</span>
                 </div>
                 <p className="text-sm leading-6 text-hp-muted">
-                  Draft generation is intentionally disabled until the selected thread has stored
-                  customer context. Suggestions will never send automatically.
+                  Draft generation is intentionally disabled until send/reply APIs and customer
+                  context retrieval are wired. Suggestions will never send automatically.
                 </p>
                 <button
                   disabled
@@ -233,6 +338,8 @@ export function SocialInboxClient({ status }: { status: SocialInboxStatus }) {
                   Suggest Reply
                 </button>
               </div>
+
+              <SyncRunPanel data={inboxData} />
 
               <div className="mt-5 border border-hp-rule p-4">
                 <div className="mb-3 flex items-center gap-2 text-hp-ink">
@@ -260,6 +367,150 @@ export function SocialInboxClient({ status }: { status: SocialInboxStatus }) {
         </section>
       </section>
     </main>
+  );
+}
+
+function buildQueue(data: SocialInboxData): QueueDisplayItem[] {
+  const threadItems = data.threads.map((thread) => {
+    const channel: "Instagram" | "Facebook" =
+      thread.platform === "instagram" ? "Instagram" : "Facebook";
+    return {
+      id: `thread:${thread.platform}:${thread.thread_id}`,
+      sourceId: thread.thread_id,
+      channel,
+      platform: thread.platform,
+      type: "message" as const,
+      sender: thread.participant_name || `${channel} Conversation`,
+      preview: thread.snippet || `${thread.message_count} synced message(s)`,
+      status: thread.unread_count > 0 ? "Unread" as const : "Synced" as const,
+      time: formatDateLabel(thread.last_message_at || thread.last_synced_at),
+      timestamp: thread.last_message_at || thread.last_synced_at,
+    };
+  });
+
+  const commentItems = data.comments.map((comment) => {
+    const channel: "Instagram" | "Facebook" =
+      comment.platform === "instagram" ? "Instagram" : "Facebook";
+    return {
+      id: `comment:${comment.platform}:${comment.comment_id}`,
+      sourceId: comment.comment_id,
+      channel,
+      platform: comment.platform,
+      type: "comment" as const,
+      sender: comment.author_name || `${channel} Comment`,
+      preview: comment.body || "Comment text unavailable",
+      status: "Needs reply" as const,
+      time: formatDateLabel(comment.created_time || comment.last_synced_at),
+      timestamp: comment.created_time || comment.last_synced_at,
+    };
+  });
+
+  return [...threadItems, ...commentItems].sort((a, b) =>
+    String(b.timestamp || "").localeCompare(String(a.timestamp || "")),
+  );
+}
+
+function SelectedItemDetail({
+  item,
+  messages,
+  comment,
+}: {
+  item: QueueDisplayItem;
+  messages: SocialInboxMessage[];
+  comment: SocialInboxComment | null;
+}) {
+  if (item.type === "comment") {
+    return (
+      <div className="min-h-[420px] border border-hp-rule p-5">
+        <div className="mb-4 flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+          <Camera size={15} />
+          {item.channel} Comment
+        </div>
+        <p className="text-lg leading-8 text-hp-ink">{comment?.body || item.preview}</p>
+        <div className="mt-5 grid gap-3 border-t border-hp-rule pt-4 text-sm text-hp-muted sm:grid-cols-2">
+          <div>Author: {comment?.author_name || item.sender}</div>
+          <div>Created: {formatDateLabel(comment?.created_time || item.timestamp)}</div>
+          <div>Likes: {comment?.like_count || 0}</div>
+          <div>Replies: {comment?.reply_count || 0}</div>
+        </div>
+        {comment?.content_permalink ? (
+          <a
+            href={comment.content_permalink}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-5 inline-flex border border-hp-rule px-4 py-2 text-[11px] uppercase tracking-[0.14em] text-hp-ink hover:bg-hp-inset"
+          >
+            Open on Meta
+          </a>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-[420px] border border-dashed border-hp-rule p-5">
+      {messages.length ? (
+        <div className="space-y-4">
+          {messages.map((message) => (
+            <div
+              key={message.id}
+              className={`max-w-[82%] border p-4 ${
+                message.direction === "outbound"
+                  ? "ml-auto border-hp-ink bg-hp-ink text-hp-foundation"
+                  : "border-hp-rule bg-hp-inset text-hp-body"
+              }`}
+            >
+              <div className="mb-2 text-[10px] uppercase tracking-[0.14em] opacity-70">
+                {message.sender_name || message.direction} · {formatDateLabel(message.sent_at)}
+              </div>
+              <p className="text-sm leading-6">{message.body || "Attachment or unsupported message"}</p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="flex min-h-[360px] items-center justify-center text-center">
+          <div>
+            <div className="mx-auto flex h-14 w-14 items-center justify-center border border-hp-rule text-hp-muted">
+              <MessageCircle size={20} />
+            </div>
+            <h3 className="mt-5 font-title text-3xl text-hp-ink">Thread detected</h3>
+            <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-hp-muted">
+              Meta returned this conversation thread. If message bodies are blank after sync, the
+              next step is webhook delivery, which receives new messages as they arrive.
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SyncRunPanel({ data }: { data: SocialInboxData }) {
+  const lastRun = data.syncRuns[0] || null;
+
+  return (
+    <div className="mt-5 border border-hp-rule p-4">
+      <div className="mb-3 flex items-center gap-2 text-hp-ink">
+        <RefreshCw size={17} />
+        <span className="text-[11px] uppercase tracking-[0.14em]">Last Sync</span>
+      </div>
+      {lastRun ? (
+        <div className="space-y-2 text-sm leading-6 text-hp-muted">
+          <p className="text-hp-ink">{lastRun.status}</p>
+          <p>{formatDateLabel(lastRun.completed_at || lastRun.started_at)}</p>
+          <p>
+            {Number(lastRun.metrics.threads || 0)} threads ·{" "}
+            {Number(lastRun.metrics.messages || 0)} messages ·{" "}
+            {Number(lastRun.metrics.comments || 0)} comments
+          </p>
+          {lastRun.errors.length ? (
+            <p className="text-signal-warning">{String(lastRun.errors[0])}</p>
+          ) : null}
+        </div>
+      ) : (
+        <p className="text-sm leading-6 text-hp-muted">No inbox sync has run yet.</p>
+      )}
+    </div>
   );
 }
 
@@ -311,7 +562,10 @@ function MetaReadinessPanel({ status }: { status: SocialInboxStatus }) {
           <div className="mt-3 space-y-2">
             {status.accounts.length ? (
               status.accounts.map((account) => (
-                <div key={account.accountId} className="flex items-center justify-between gap-3 text-sm">
+                <div
+                  key={account.accountId}
+                  className="flex items-center justify-between gap-3 text-sm"
+                >
                   <span className="text-hp-ink">{account.name || account.accountId}</span>
                   <span className={account.ok ? "text-signal-positive" : "text-signal-danger"}>
                     {account.ok ? "Ready" : account.error || "Error"}
@@ -411,25 +665,29 @@ function StatusPill({ ready, label }: { ready: boolean; label: string }) {
 
 function QueueItem({
   item,
+  active,
+  onSelect,
 }: {
-  item: {
-    channel: "Facebook" | "Instagram";
-    type: "message" | "comment";
-    sender: string;
-    preview: string;
-    status: "Waiting" | "Needs review";
-    time: string;
-  };
+  item: QueueDisplayItem;
+  active: boolean;
+  onSelect: () => void;
 }) {
   const Icon = item.channel === "Instagram" ? Camera : MessageCircle;
   return (
-    <button className="w-full border-b border-hp-rule p-4 text-left transition-colors hover:bg-hp-inset">
+    <button
+      onClick={onSelect}
+      className={`w-full border-b border-hp-rule p-4 text-left transition-colors hover:bg-hp-inset ${
+        active ? "bg-hp-inset" : ""
+      }`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <Icon size={16} className="text-hp-muted" />
           <span className="truncate text-sm text-hp-ink">{item.sender}</span>
         </div>
-        <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{item.time}</span>
+        <span className="shrink-0 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+          {item.time}
+        </span>
       </div>
       <p className="mt-2 line-clamp-2 text-sm leading-6 text-hp-body">{item.preview}</p>
       <div className="mt-3 flex items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
@@ -449,11 +707,26 @@ function EmptyThreadState() {
         </div>
         <h3 className="mt-5 font-title text-3xl text-hp-ink">No conversation selected</h3>
         <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-hp-muted">
-          Once webhooks are connected, Facebook and Instagram messages/comments will be normalized
-          into the queue. Selecting one will show thread history, customer context, AI draft tools,
-          and the human-approved reply composer.
+          Click Sync Inbox to pull the latest available Meta threads/comments, then select an item
+          from the queue.
         </p>
       </div>
     </div>
   );
+}
+
+function formatDateLabel(value: string | null | undefined) {
+  if (!value) return "No date";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "No date";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function isErrorPayload(value: SocialInboxData | { error: string }): value is { error: string } {
+  return "error" in value;
 }

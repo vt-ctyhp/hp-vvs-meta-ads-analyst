@@ -39,62 +39,6 @@ export type Database = {
   }
   public: {
     Tables: {
-      ai_chat_messages: {
-        Row: {
-          content: string
-          created_at: string
-          id: string
-          role: string
-          session_id: string
-          source_transparency: Json
-        }
-        Insert: {
-          content: string
-          created_at?: string
-          id?: string
-          role: string
-          session_id: string
-          source_transparency?: Json
-        }
-        Update: {
-          content?: string
-          created_at?: string
-          id?: string
-          role?: string
-          session_id?: string
-          source_transparency?: Json
-        }
-        Relationships: [
-          {
-            foreignKeyName: "ai_chat_messages_session_id_fkey"
-            columns: ["session_id"]
-            isOneToOne: false
-            referencedRelation: "ai_chat_sessions"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      ai_chat_sessions: {
-        Row: {
-          created_at: string
-          id: string
-          title: string
-          updated_at: string
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          title?: string
-          updated_at?: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          title?: string
-          updated_at?: string
-        }
-        Relationships: []
-      }
       ai_analysis_dashboards: {
         Row: {
           created_at: string
@@ -180,6 +124,62 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      ai_chat_messages: {
+        Row: {
+          content: string
+          created_at: string
+          id: string
+          role: string
+          session_id: string
+          source_transparency: Json
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          id?: string
+          role: string
+          session_id: string
+          source_transparency?: Json
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          id?: string
+          role?: string
+          session_id?: string
+          source_transparency?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_chat_messages_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "ai_chat_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ai_chat_sessions: {
+        Row: {
+          created_at: string
+          id: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          title?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       ai_reports: {
         Row: {
@@ -977,8 +977,11 @@ export type Database = {
           lost_lead_reason: string | null
           next_steps: string | null
           order_date: string | null
+          order_total: number
+          paid_to_date: number
           production_deadline: string | null
           production_deadline_move_count: number
+          remaining_balance: number
           root_id: string
           sales_stage: string | null
           updated_at: string
@@ -1002,8 +1005,11 @@ export type Database = {
           lost_lead_reason?: string | null
           next_steps?: string | null
           order_date?: string | null
+          order_total?: number
+          paid_to_date?: number
           production_deadline?: string | null
           production_deadline_move_count?: number
+          remaining_balance?: number
           root_id: string
           sales_stage?: string | null
           updated_at?: string
@@ -1027,8 +1033,11 @@ export type Database = {
           lost_lead_reason?: string | null
           next_steps?: string | null
           order_date?: string | null
+          order_total?: number
+          paid_to_date?: number
           production_deadline?: string | null
           production_deadline_move_count?: number
+          remaining_balance?: number
           root_id?: string
           sales_stage?: string | null
           updated_at?: string
@@ -3439,6 +3448,263 @@ export type Database = {
           },
         ]
       }
+      meta_social_comments: {
+        Row: {
+          author_id: string | null
+          author_name: string | null
+          body: string | null
+          comment_id: string
+          content_id: string | null
+          content_permalink: string | null
+          created_at: string
+          created_time: string | null
+          hidden: boolean | null
+          id: string
+          ig_user_id: string | null
+          last_synced_at: string | null
+          like_count: number
+          page_id: string | null
+          parent_comment_id: string | null
+          platform: string
+          raw_json: Json
+          reply_count: number
+          updated_at: string
+        }
+        Insert: {
+          author_id?: string | null
+          author_name?: string | null
+          body?: string | null
+          comment_id: string
+          content_id?: string | null
+          content_permalink?: string | null
+          created_at?: string
+          created_time?: string | null
+          hidden?: boolean | null
+          id?: string
+          ig_user_id?: string | null
+          last_synced_at?: string | null
+          like_count?: number
+          page_id?: string | null
+          parent_comment_id?: string | null
+          platform: string
+          raw_json?: Json
+          reply_count?: number
+          updated_at?: string
+        }
+        Update: {
+          author_id?: string | null
+          author_name?: string | null
+          body?: string | null
+          comment_id?: string
+          content_id?: string | null
+          content_permalink?: string | null
+          created_at?: string
+          created_time?: string | null
+          hidden?: boolean | null
+          id?: string
+          ig_user_id?: string | null
+          last_synced_at?: string | null
+          like_count?: number
+          page_id?: string | null
+          parent_comment_id?: string | null
+          platform?: string
+          raw_json?: Json
+          reply_count?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      meta_social_messages: {
+        Row: {
+          attachments: Json
+          body: string | null
+          created_at: string
+          direction: string
+          id: string
+          message_id: string
+          platform: string
+          raw_json: Json
+          recipient_id: string | null
+          recipient_name: string | null
+          sender_id: string | null
+          sender_name: string | null
+          sent_at: string | null
+          thread_id: string
+          thread_ref_id: string | null
+        }
+        Insert: {
+          attachments?: Json
+          body?: string | null
+          created_at?: string
+          direction?: string
+          id?: string
+          message_id: string
+          platform: string
+          raw_json?: Json
+          recipient_id?: string | null
+          recipient_name?: string | null
+          sender_id?: string | null
+          sender_name?: string | null
+          sent_at?: string | null
+          thread_id: string
+          thread_ref_id?: string | null
+        }
+        Update: {
+          attachments?: Json
+          body?: string | null
+          created_at?: string
+          direction?: string
+          id?: string
+          message_id?: string
+          platform?: string
+          raw_json?: Json
+          recipient_id?: string | null
+          recipient_name?: string | null
+          sender_id?: string | null
+          sender_name?: string | null
+          sent_at?: string | null
+          thread_id?: string
+          thread_ref_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meta_social_messages_thread_ref_id_fkey"
+            columns: ["thread_ref_id"]
+            isOneToOne: false
+            referencedRelation: "meta_social_threads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      meta_social_pages: {
+        Row: {
+          created_at: string
+          id: string
+          ig_user_id: string | null
+          ig_username: string | null
+          last_synced_at: string | null
+          name: string | null
+          page_id: string
+          raw_json: Json
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          ig_user_id?: string | null
+          ig_username?: string | null
+          last_synced_at?: string | null
+          name?: string | null
+          page_id: string
+          raw_json?: Json
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          ig_user_id?: string | null
+          ig_username?: string | null
+          last_synced_at?: string | null
+          name?: string | null
+          page_id?: string
+          raw_json?: Json
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      meta_social_sync_runs: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          errors: Json
+          id: string
+          metrics: Json
+          page_ids: Json
+          started_at: string
+          status: string
+          trigger: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          errors?: Json
+          id?: string
+          metrics?: Json
+          page_ids?: Json
+          started_at?: string
+          status?: string
+          trigger: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          errors?: Json
+          id?: string
+          metrics?: Json
+          page_ids?: Json
+          started_at?: string
+          status?: string
+          trigger?: string
+        }
+        Relationships: []
+      }
+      meta_social_threads: {
+        Row: {
+          created_at: string
+          id: string
+          ig_user_id: string | null
+          last_message_at: string | null
+          last_synced_at: string | null
+          message_count: number
+          page_id: string | null
+          participant_id: string | null
+          participant_name: string | null
+          platform: string
+          raw_json: Json
+          snippet: string | null
+          thread_id: string
+          thread_type: string
+          unread_count: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          ig_user_id?: string | null
+          last_message_at?: string | null
+          last_synced_at?: string | null
+          message_count?: number
+          page_id?: string | null
+          participant_id?: string | null
+          participant_name?: string | null
+          platform: string
+          raw_json?: Json
+          snippet?: string | null
+          thread_id: string
+          thread_type?: string
+          unread_count?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          ig_user_id?: string | null
+          last_message_at?: string | null
+          last_synced_at?: string | null
+          message_count?: number
+          page_id?: string | null
+          participant_id?: string | null
+          participant_name?: string | null
+          platform?: string
+          raw_json?: Json
+          snippet?: string | null
+          thread_id?: string
+          thread_type?: string
+          unread_count?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       ops_log: {
         Row: {
           action: string
@@ -5151,6 +5417,30 @@ export type Database = {
       can_read_broadcast: { Args: { p_broadcast_id: string }; Returns: boolean }
       can_read_root: { Args: { p_root_id: string }; Returns: boolean }
       can_write_root: { Args: { p_root_id: string }; Returns: boolean }
+      create_payment_document_with_ledger: {
+        Args: {
+          p_amount_received: number
+          p_balance_due: number
+          p_brand: Database["public"]["Enums"]["brand"]
+          p_doc_family: Database["public"]["Enums"]["doc_family"]
+          p_fees: number
+          p_idempotency_key: string
+          p_invoice_total: number
+          p_issued_by: string
+          p_line_items: Json
+          p_method: string
+          p_net_amount: number
+          p_reference: string
+          p_referral_discount: number
+          p_root_id: string
+          p_so: string
+          p_subtotal: number
+          p_tax_amount: number
+          p_tax_enabled: boolean
+          p_tax_rate: number
+        }
+        Returns: Json
+      }
       current_app_user_id: { Args: never; Returns: string }
       current_user_has_any_role: {
         Args: { p_roles: Database["public"]["Enums"]["user_role"][] }
@@ -5224,6 +5514,10 @@ export type Database = {
         Args: { p_actor_user_id?: string; p_customer_id: string }
         Returns: Json
       }
+      recalculate_payment_status_for_root: {
+        Args: { p_changed_by: string; p_root_id: string; p_source?: string }
+        Returns: undefined
+      }
       repair_customer_read_model_owner_assignments: {
         Args: { p_import_batch_id?: string }
         Returns: {
@@ -5238,6 +5532,40 @@ export type Database = {
           p_owner_role: Database["public"]["Enums"]["user_role"]
         }
         Returns: string
+      }
+      void_payment_document_and_recalculate_status: {
+        Args: { p_document_id: string; p_reason: string; p_voided_by: string }
+        Returns: {
+          appt_id: string | null
+          brand: Database["public"]["Enums"]["brand"]
+          created_at: string
+          doc_family: Database["public"]["Enums"]["doc_family"]
+          doc_number: string
+          document_id: string
+          id: string
+          idempotency_key: string | null
+          issued_at: string
+          issued_by: string
+          pdf_storage_asset_id: string | null
+          pdf_storage_bucket: string | null
+          pdf_storage_path: string | null
+          root_id: string
+          status: Database["public"]["Enums"]["doc_status"]
+          superseded_by: string | null
+          supersedes: string | null
+          tax_enabled: boolean
+          updated_at: string
+          version: number
+          void_reason: string | null
+          voided_at: string | null
+          voided_by: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "documents"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
     }
     Enums: {

@@ -45,6 +45,8 @@ Meta preview/image URLs can expire, so previews are treated as refreshable metad
 
 The dashboard sync button calls `POST /api/sync`. It uses the same read-only sync path as cron and records a `sync_runs` entry with trigger `manual`.
 
+The inbox sync button calls `POST /api/social-inbox/sync`. It validates the social inbox Meta permissions, fetches managed Page metadata, stores the connected Instagram thread/comment data that Meta returns, and records source-specific warnings in `meta_social_sync_runs`. This manual sync is a proof-of-data path; Meta Webhooks should be added next for real-time message/comment delivery.
+
 ## AI Retrieval
 
 Reports and chat call the Supabase-backed dashboard retrieval layer before invoking OpenAI. The retrieved context includes:

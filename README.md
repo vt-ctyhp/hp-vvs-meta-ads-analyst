@@ -51,6 +51,8 @@ vercel --prod
 - `/` executive dashboard, creative leaderboard, gallery, report controls, chat
 - `/inbox` Facebook/Instagram inbox readiness page and human-approved reply UI shell
 - `/api/sync` manual read-only Meta sync
+- `/api/social-inbox` latest stored social inbox threads, messages, comments, and sync runs
+- `/api/social-inbox/sync` manual Facebook/Instagram inbox/comment sync
 - `/api/cron/sync` Vercel Cron sync, protected by `CRON_SECRET`
 - `/api/reports` AI executive report generation
 - `/api/chat` AI executive chat
