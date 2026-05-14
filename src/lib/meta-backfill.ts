@@ -42,6 +42,7 @@ export type MetaAdsBackfillChunk = {
   insightRows: number;
   error: string | null;
   lockedAt: string | null;
+  retryAfter: string | null;
   completedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -253,16 +254,24 @@ export async function runMetaAdsBackfillBatch(input: { limit?: number } = {}) {
     } catch (error) {
       const message = errorToMessage(error);
       if (isMetaRateLimitError(message)) {
+        const retryAfter = new Date(Date.now() + getRateLimitRetryDelayMs()).toISOString();
         const update = await supabase
           .from("meta_ads_backfill_chunks")
           .update({
             status: "queued",
             error: message,
             locked_at: null,
+            retry_after: retryAfter,
             completed_at: null,
           })
           .eq("id", chunk.id);
         if (update.error) throw update.error;
+        const accountBackoffUpdate = await supabase
+          .from("meta_ads_backfill_chunks")
+          .update({ retry_after: retryAfter })
+          .eq("meta_account_id", chunk.metaAccountId)
+          .in("status", ["queued"]);
+        if (accountBackoffUpdate.error) throw accountBackoffUpdate.error;
         results.push({ chunkId: chunk.id, status: "deferred", insightRows: 0, error: message });
         break;
       }
@@ -376,6 +385,12 @@ function getBackfillChunksPerRun() {
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : 1;
 }
 
+function getRateLimitRetryDelayMs() {
+  const minutes = Number(process.env.META_BACKFILL_RATE_LIMIT_RETRY_MINUTES);
+  const retryMinutes = Number.isFinite(minutes) && minutes > 0 ? minutes : 60;
+  return retryMinutes * 60 * 1000;
+}
+
 function isMetaRateLimitError(message: string) {
   return /rate[- ]?limit|too many calls|application request limit/i.test(message);
 }
@@ -447,6 +462,7 @@ function mapChunk(row: JsonRecord): MetaAdsBackfillChunk {
     insightRows: numberField(row.insight_rows),
     error: stringField(row.error),
     lockedAt: stringField(row.locked_at),
+    retryAfter: stringField(row.retry_after),
     completedAt: stringField(row.completed_at),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
