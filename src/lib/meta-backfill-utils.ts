@@ -8,6 +8,7 @@ export type InsightDateRange =
   | { kind: "range"; since: string; until: string };
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const DEFAULT_INCREMENTAL_SYNC_DAYS = 35;
 
 export function monthlyDateChunks(start: string, end: string): DateChunk[] {
   const startDate = parseDate(start);
@@ -46,7 +47,7 @@ export function incrementalDatePreset(env: Record<string, string | undefined> = 
   if (explicitPreset) return explicitPreset;
 
   const days = Number(env.META_INCREMENTAL_SYNC_DAYS);
-  const normalizedDays = Number.isFinite(days) && days > 0 ? Math.floor(days) : 90;
+  const normalizedDays = Number.isFinite(days) && days > 0 ? Math.floor(days) : DEFAULT_INCREMENTAL_SYNC_DAYS;
   return `last_${normalizedDays}d`;
 }
 
