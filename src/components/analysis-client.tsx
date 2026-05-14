@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import {
   BarChart3,
   Brain,
@@ -110,12 +109,6 @@ export function AnalysisClient({ initialSaved }: Props) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <ModeSwitch value={mode} onChange={setMode} />
-          <Link
-            href="/"
-            className="border border-hp-rule px-4 py-2 text-[11px] uppercase tracking-[0.14em] text-hp-ink transition-colors hover:border-hp-ink"
-          >
-            Prebuilt Dashboard
-          </Link>
         </div>
       </header>
 
