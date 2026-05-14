@@ -17,11 +17,19 @@ export type MetricSummary = {
   clicks: number;
   leads: number;
   bookings: number;
+  websiteBookings: number;
+  messagingContacts: number;
+  newMessagingContacts: number;
+  primaryResults: number;
+  primaryResultLabel: string;
+  secondaryResults: number | null;
+  secondaryResultLabel: string | null;
   conversions: number;
   ctr: number;
   cpm: number;
   cpc: number;
   cpl: number | null;
+  costPerPrimaryResult: number | null;
   frequency: number;
 };
 
@@ -55,6 +63,10 @@ export type DailyTrendRow = {
   impressions: number;
   clicks: number;
   leads: number;
+  primaryResults: number;
+  websiteBookings: number;
+  messagingContacts: number;
+  newMessagingContacts: number;
   ctr: number;
   cpc: number;
 };
@@ -180,6 +192,7 @@ type InsightRow = {
   leads: string | number | null;
   bookings: string | number | null;
   conversions: string | number | null;
+  actions: unknown;
 };
 
 const EMPTY_METRICS: MetricSummary = {
@@ -189,13 +202,25 @@ const EMPTY_METRICS: MetricSummary = {
   clicks: 0,
   leads: 0,
   bookings: 0,
+  websiteBookings: 0,
+  messagingContacts: 0,
+  newMessagingContacts: 0,
+  primaryResults: 0,
+  primaryResultLabel: "Primary Results",
+  secondaryResults: null,
+  secondaryResultLabel: null,
   conversions: 0,
   ctr: 0,
   cpm: 0,
   cpc: 0,
   cpl: null,
+  costPerPrimaryResult: null,
   frequency: 0,
 };
+
+const WEBSITE_BOOKING_ACTION_TYPES = ["offsite_conversion.fb_pixel_custom"];
+const MESSAGING_CONTACT_ACTION_TYPES = ["onsite_conversion.total_messaging_connection"];
+const NEW_MESSAGING_CONTACT_ACTION_TYPES = ["onsite_conversion.messaging_first_reply"];
 
 export function emptyDashboardPayload(missingEnv = getMissingRequiredEnv()): DashboardPayload {
   return {
@@ -323,13 +348,13 @@ export async function fetchDashboardData(days = 30): Promise<DashboardPayload> {
       );
     };
 
-    const overview = summarize(insights);
+    const overview = summarize(insights, getInsightUmbrella);
     const byBrand = Array.from(groupInsights(insights, (row) => getBrandCode(row.brand_id)).entries())
       .map(([brandCode, groupRows]) => ({
         id: brandCode,
         name: brandCode,
         brandCode,
-        ...summarize(groupRows),
+        ...summarize(groupRows, getInsightUmbrella),
       }))
       .sort(bySpendDesc);
 
@@ -339,7 +364,7 @@ export async function fetchDashboardData(days = 30): Promise<DashboardPayload> {
         name: umbrella,
         brandCode: "All",
         campaignUmbrella: resolveUmbrella(umbrella),
-        ...summarize(groupRows),
+        ...summarize(groupRows, getInsightUmbrella),
       }))
       .sort(bySpendDesc);
 
@@ -376,7 +401,7 @@ export async function fetchDashboardData(days = 30): Promise<DashboardPayload> {
           campaignUmbrella: classification.umbrella,
           campaignUmbrellaConfidence: classification.confidence,
           campaignUmbrellaReason: classification.reason,
-          ...summarize(groupRows),
+          ...summarize(groupRows, getInsightUmbrella),
         };
       })
       .sort(bySpendDesc);
@@ -406,7 +431,7 @@ export async function fetchDashboardData(days = 30): Promise<DashboardPayload> {
           campaignUmbrella: classification.umbrella,
           campaignUmbrellaConfidence: classification.confidence,
           campaignUmbrellaReason: classification.reason,
-          ...summarize(groupRows),
+          ...summarize(groupRows, getInsightUmbrella),
         };
       })
       .sort(bySpendDesc);
@@ -421,7 +446,7 @@ export async function fetchDashboardData(days = 30): Promise<DashboardPayload> {
         const first = groupRows[0];
         const ad = first?.ad_id ? adById.get(first.ad_id) : undefined;
         const creative = creativeById.get(creativeId || ad?.creative_id || "");
-        const metrics = summarize(groupRows);
+        const metrics = summarize(groupRows, getInsightUmbrella);
         const risk = getFatigueRisk(metrics, overview);
         const campaignUmbrella = dominantUmbrella(groupRows, getInsightUmbrella);
         return {
@@ -456,7 +481,7 @@ export async function fetchDashboardData(days = 30): Promise<DashboardPayload> {
     )
       .map(([key, groupRows]) => {
         const [date, brandCode, campaignUmbrella] = key.split("::");
-        const metrics = summarize(groupRows);
+        const metrics = summarize(groupRows, getInsightUmbrella);
         return {
           date,
           brandCode,
@@ -465,6 +490,10 @@ export async function fetchDashboardData(days = 30): Promise<DashboardPayload> {
           impressions: metrics.impressions,
           clicks: metrics.clicks,
           leads: metrics.leads,
+          primaryResults: metrics.primaryResults,
+          websiteBookings: metrics.websiteBookings,
+          messagingContacts: metrics.messagingContacts,
+          newMessagingContacts: metrics.newMessagingContacts,
           ctr: metrics.ctr,
           cpc: metrics.cpc,
         };
@@ -549,7 +578,10 @@ export async function fetchDashboardData(days = 30): Promise<DashboardPayload> {
   }
 }
 
-export function summarize(insights: InsightRow[]): MetricSummary {
+export function summarize(
+  insights: InsightRow[],
+  getUmbrella: (row: InsightRow) => CampaignUmbrella = (row) => resolveUmbrella(row.campaign_umbrella),
+): MetricSummary {
   const base = insights.reduce(
     (acc, row) => {
       acc.spend += toNumber(row.spend);
@@ -564,7 +596,10 @@ export function summarize(insights: InsightRow[]): MetricSummary {
     { ...EMPTY_METRICS },
   );
 
-  return deriveRates(base);
+  return deriveRates({
+    ...base,
+    ...summarizePrimaryOutcomes(insights, getUmbrella),
+  });
 }
 
 export function deriveRates(metrics: MetricSummary): MetricSummary {
@@ -572,6 +607,8 @@ export function deriveRates(metrics: MetricSummary): MetricSummary {
   const cpm = metrics.impressions > 0 ? (metrics.spend / metrics.impressions) * 1000 : 0;
   const cpc = metrics.clicks > 0 ? metrics.spend / metrics.clicks : 0;
   const cpl = metrics.leads > 0 ? metrics.spend / metrics.leads : null;
+  const costPerPrimaryResult =
+    metrics.primaryResults > 0 ? metrics.spend / metrics.primaryResults : null;
   const frequency = metrics.reach > 0 ? metrics.impressions / metrics.reach : 0;
 
   return {
@@ -581,6 +618,8 @@ export function deriveRates(metrics: MetricSummary): MetricSummary {
     cpm: roundMoney(cpm),
     cpc: roundMoney(cpc),
     cpl: cpl === null ? null : roundMoney(cpl),
+    costPerPrimaryResult:
+      costPerPrimaryResult === null ? null : roundMoney(costPerPrimaryResult),
     frequency: round(frequency, 2),
   };
 }
@@ -618,12 +657,108 @@ function roundMoney(value: number): number {
   return round(value, 2);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function groupInsights(rowsToGroup: InsightRow[], keyFn: (row: InsightRow) => string) {
   return rowsToGroup.reduce((groups, row) => {
     const key = keyFn(row) || "unknown";
     groups.set(key, [...(groups.get(key) || []), row]);
     return groups;
   }, new Map<string, InsightRow[]>());
+}
+
+function summarizePrimaryOutcomes(
+  insights: InsightRow[],
+  getUmbrella: (row: InsightRow) => CampaignUmbrella,
+) {
+  const umbrellas = new Set<CampaignUmbrella>();
+  const totals = insights.reduce(
+    (acc, row) => {
+      const umbrella = getUmbrella(row);
+      const rowOutcome = getPrimaryOutcome(row, umbrella);
+      umbrellas.add(umbrella);
+      acc.websiteBookings += rowOutcome.websiteBookings;
+      acc.messagingContacts += rowOutcome.messagingContacts;
+      acc.newMessagingContacts += rowOutcome.newMessagingContacts;
+      acc.primaryResults += rowOutcome.primaryResults;
+      if (rowOutcome.secondaryResults !== null) {
+        acc.secondaryResults = (acc.secondaryResults || 0) + rowOutcome.secondaryResults;
+      }
+      return acc;
+    },
+    {
+      websiteBookings: 0,
+      messagingContacts: 0,
+      newMessagingContacts: 0,
+      primaryResults: 0,
+      primaryResultLabel: "Primary Results",
+      secondaryResults: null as number | null,
+      secondaryResultLabel: null as string | null,
+    },
+  );
+
+  if (umbrellas.size === 1) {
+    const profile = getKpiProfile(Array.from(umbrellas)[0]);
+    totals.primaryResultLabel = profile.primaryResultLabel;
+    totals.secondaryResultLabel = profile.secondaryResultLabel;
+  }
+
+  return totals;
+}
+
+function getPrimaryOutcome(row: InsightRow, umbrella: CampaignUmbrella) {
+  const websiteBookings = actionCount(row.actions, WEBSITE_BOOKING_ACTION_TYPES);
+  const messagingContacts = actionCount(row.actions, MESSAGING_CONTACT_ACTION_TYPES);
+  const newMessagingContacts = actionCount(row.actions, NEW_MESSAGING_CONTACT_ACTION_TYPES);
+  const profile = getKpiProfile(umbrella);
+
+  return {
+    websiteBookings,
+    messagingContacts,
+    newMessagingContacts,
+    primaryResults: profile.primaryMetric === "websiteBookings" ? websiteBookings : messagingContacts,
+    secondaryResults:
+      profile.secondaryMetric === "newMessagingContacts" ? newMessagingContacts : null,
+  };
+}
+
+function getKpiProfile(umbrella: CampaignUmbrella) {
+  if (umbrella === "Book Appts US") {
+    return {
+      primaryMetric: "websiteBookings" as const,
+      primaryResultLabel: "Website Bookings",
+      secondaryMetric: null,
+      secondaryResultLabel: null,
+    };
+  }
+
+  if (umbrella === "Facebook US Product" || umbrella === "Facebook VN Product") {
+    return {
+      primaryMetric: "messagingContacts" as const,
+      primaryResultLabel: "Messaging Contacts",
+      secondaryMetric: "newMessagingContacts" as const,
+      secondaryResultLabel: "New Msg Contacts",
+    };
+  }
+
+  return {
+    primaryMetric: "messagingContacts" as const,
+    primaryResultLabel: "Messaging Contacts",
+    secondaryMetric: null,
+    secondaryResultLabel: null,
+  };
+}
+
+function actionCount(actions: unknown, exactActionTypes: string[]) {
+  if (!Array.isArray(actions)) return 0;
+  return actions.reduce((sum, action) => {
+    if (!isRecord(action)) return sum;
+    const type = String(action.action_type || "");
+    if (!exactActionTypes.includes(type)) return sum;
+    return sum + toNumber(action.value as string | number | null | undefined);
+  }, 0);
 }
 
 function resolveUmbrella(...values: Array<string | null | undefined>): CampaignUmbrella {
@@ -719,14 +854,17 @@ function buildOpportunities(
     );
   }
 
-  const leadEfficient = creatives
-    .filter((creative) => creative.leads >= 2 && creative.cpl !== null)
-    .sort((a, b) => (a.cpl || Infinity) - (b.cpl || Infinity))
+  const resultEfficient = creatives
+    .filter((creative) => creative.primaryResults >= 2 && creative.costPerPrimaryResult !== null)
+    .sort(
+      (a, b) =>
+        (a.costPerPrimaryResult || Infinity) - (b.costPerPrimaryResult || Infinity),
+    )
     .slice(0, 3);
 
-  for (const creative of leadEfficient) {
+  for (const creative of resultEfficient) {
     messages.push(
-      `${creative.name} has the strongest lead efficiency at ${formatMetric(creative.cpl, "money")} CPL.`,
+      `${creative.name} has the strongest ${creative.primaryResultLabel.toLowerCase()} efficiency at ${formatMetric(creative.costPerPrimaryResult, "money")} per result.`,
     );
   }
 

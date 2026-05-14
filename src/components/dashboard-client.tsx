@@ -29,7 +29,7 @@ import {
 import type { DashboardPayload, PerformanceRow } from "@/lib/analytics";
 
 type ViewMode = "table" | "cards" | "gallery";
-type SortKey = "spend" | "ctr" | "cpc" | "leads" | "frequency";
+type SortKey = "spend" | "primaryResults" | "ctr" | "cpc" | "newMessagingContacts" | "frequency";
 
 type Props = {
   initialData: DashboardPayload;
@@ -42,9 +42,10 @@ type ChatMessage = {
 
 const SORT_LABELS: Record<SortKey, string> = {
   spend: "Spend",
+  primaryResults: "Primary KPI",
   ctr: "CTR",
   cpc: "CPC",
-  leads: "Leads",
+  newMessagingContacts: "New Msg Contacts",
   frequency: "Frequency",
 };
 
@@ -216,7 +217,7 @@ export function DashboardClient({ initialData }: Props) {
           <MetricTile label="Impressions" value={formatMetric(data.overview.impressions, "number")} />
           <MetricTile label="CTR" value={formatMetric(data.overview.ctr, "percent")} />
           <MetricTile label="CPC" value={formatMetric(data.overview.cpc, "money")} />
-          <MetricTile label="Leads" value={formatMetric(data.overview.leads, "number")} />
+          <MetricTile label="Primary Results" value={formatMetric(data.overview.primaryResults, "number")} />
         </div>
       </section>
 
@@ -236,7 +237,9 @@ export function DashboardClient({ initialData }: Props) {
               <div className="min-h-10 text-sm font-medium leading-5">{row.name}</div>
               <div className="mt-3 flex items-end justify-between gap-3">
                 <span className="text-xl tabular-nums">{formatMetric(row.spend, "money")}</span>
-                <span className="text-xs tabular-nums">{formatMetric(row.ctr, "percent")} CTR</span>
+                <span className="text-right text-xs tabular-nums">
+                  {formatMetric(row.primaryResults, "number")} {row.primaryResultLabel}
+                </span>
               </div>
             </button>
           ))}
@@ -502,7 +505,7 @@ function PerformanceSection({ title, rows }: { title: string; rows: PerformanceR
               <th className="border-b border-hp-rule px-3 py-3 text-right">Spend</th>
               <th className="border-b border-hp-rule px-3 py-3 text-right">CTR</th>
               <th className="border-b border-hp-rule px-3 py-3 text-right">CPC</th>
-              <th className="border-b border-hp-rule px-3 py-3 text-right">Leads</th>
+              <th className="border-b border-hp-rule px-3 py-3 text-right">Primary KPI</th>
             </tr>
           </thead>
           <tbody>
@@ -514,7 +517,9 @@ function PerformanceSection({ title, rows }: { title: string; rows: PerformanceR
                 <td className="px-3 py-3 text-right tabular-nums">{formatMetric(row.spend, "money")}</td>
                 <td className="px-3 py-3 text-right tabular-nums">{formatMetric(row.ctr, "percent")}</td>
                 <td className="px-3 py-3 text-right tabular-nums">{formatMetric(row.cpc, "money")}</td>
-                <td className="px-3 py-3 text-right tabular-nums">{formatMetric(row.leads, "number")}</td>
+                <td className="px-3 py-3 text-right">
+                  <ResultCell row={row} align="right" />
+                </td>
               </tr>
             ))}
             {!rows.length ? (
@@ -545,6 +550,7 @@ function CreativeTable({ rows }: { rows: PerformanceRow[] }) {
             <th className="border-b border-hp-rule px-3 py-3 text-right">CTR</th>
             <th className="border-b border-hp-rule px-3 py-3 text-right">CPC</th>
             <th className="border-b border-hp-rule px-3 py-3 text-right">Freq.</th>
+            <th className="border-b border-hp-rule px-3 py-3 text-right">Primary KPI</th>
             <th className="border-b border-hp-rule px-3 py-3">Risk</th>
           </tr>
         </thead>
@@ -564,6 +570,9 @@ function CreativeTable({ rows }: { rows: PerformanceRow[] }) {
               <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.ctr, "percent")}</td>
               <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.cpc, "money")}</td>
               <td className="px-3 py-4 text-right tabular-nums">{row.frequency.toFixed(2)}x</td>
+              <td className="px-3 py-4 text-right">
+                <ResultCell row={row} align="right" />
+              </td>
               <td className="px-3 py-4">
                 <RiskBadge level={row.riskLevel} />
               </td>
@@ -571,7 +580,7 @@ function CreativeTable({ rows }: { rows: PerformanceRow[] }) {
           ))}
           {!rows.length ? (
             <tr>
-              <td colSpan={9} className="px-3 py-8 text-center text-sm text-hp-muted">
+              <td colSpan={10} className="px-3 py-8 text-center text-sm text-hp-muted">
                 No creatives match the selected filters.
               </td>
             </tr>
@@ -600,8 +609,13 @@ function CreativeCards({ rows }: { rows: PerformanceRow[] }) {
               <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
                 <MiniMetric label="Spend" value={formatMetric(row.spend, "money")} />
                 <MiniMetric label="CTR" value={formatMetric(row.ctr, "percent")} />
-                <MiniMetric label="CPC" value={formatMetric(row.cpc, "money")} />
+                <MiniMetric label={row.primaryResultLabel} value={formatMetric(row.primaryResults, "number")} />
               </div>
+              {row.secondaryResultLabel && row.secondaryResults !== null ? (
+                <div className="mt-2 text-xs text-hp-muted">
+                  {formatMetric(row.secondaryResults, "number")} {row.secondaryResultLabel}
+                </div>
+              ) : null}
               {row.body ? <p className="mt-3 line-clamp-3 text-sm text-hp-muted">{row.body}</p> : null}
             </div>
           </div>
@@ -628,8 +642,13 @@ function CreativeGallery({ rows }: { rows: PerformanceRow[] }) {
             <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
               <MiniMetric label="Spend" value={formatMetric(row.spend, "money")} />
               <MiniMetric label="CTR" value={formatMetric(row.ctr, "percent")} />
-              <MiniMetric label="Freq." value={`${row.frequency.toFixed(2)}x`} />
+              <MiniMetric label={row.primaryResultLabel} value={formatMetric(row.primaryResults, "number")} />
             </div>
+            {row.secondaryResultLabel && row.secondaryResults !== null ? (
+              <div className="mt-3 text-xs text-hp-muted">
+                {formatMetric(row.secondaryResults, "number")} {row.secondaryResultLabel}
+              </div>
+            ) : null}
           </div>
         </article>
       ))}
@@ -691,6 +710,22 @@ function RiskBadge({ level }: { level?: PerformanceRow["riskLevel"] }) {
     <span className={`text-[10px] uppercase tracking-[0.14em] ${color}`}>
       {level || "low"}
     </span>
+  );
+}
+
+function ResultCell({ row, align = "left" }: { row: PerformanceRow; align?: "left" | "right" }) {
+  return (
+    <div className={align === "right" ? "text-right" : "text-left"}>
+      <div className="tabular-nums text-hp-ink">{formatMetric(row.primaryResults, "number")}</div>
+      <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+        {row.primaryResultLabel}
+      </div>
+      {row.secondaryResultLabel && row.secondaryResults !== null ? (
+        <div className="mt-1 text-xs tabular-nums text-hp-muted">
+          {formatMetric(row.secondaryResults, "number")} {row.secondaryResultLabel}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

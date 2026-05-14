@@ -513,8 +513,22 @@ async function syncAccount(account: SyncAccountConfig, brandId: string | null) {
         inline_link_clicks: numberString(insight.inline_link_clicks),
         unique_clicks: numberString(insight.unique_clicks),
         conversions: extractActionCount(insight.actions, ["offsite_conversion", "purchase", "complete_registration"]),
-        leads: extractActionCount(insight.actions, ["lead", "onsite_conversion.lead_grouped", "offsite_conversion.fb_pixel_lead"]),
-        bookings: extractActionCount(insight.actions, ["schedule", "submit_application", "booking", "appointment"]),
+        leads: extractExactActionCount(insight.actions, [
+          "lead",
+          "onsite_conversion.lead",
+          "onsite_conversion.lead_grouped",
+          "onsite_web_lead",
+          "offsite_conversion.fb_pixel_lead",
+        ]),
+        bookings:
+          classification.umbrella === "Book Appts US"
+            ? extractExactActionCount(insight.actions, ["offsite_conversion.fb_pixel_custom"])
+            : extractExactActionCount(insight.actions, [
+                "schedule",
+                "submit_application",
+                "booking",
+                "appointment",
+              ]),
         video_metrics: {
           video_30_sec_watched_actions: insight.video_30_sec_watched_actions || [],
           video_avg_time_watched_actions: insight.video_avg_time_watched_actions || [],
@@ -907,6 +921,16 @@ function extractActionCount(actions: unknown, actionTypes: string[]) {
     if (!isRecord(action)) return sum;
     const type = String(action.action_type || "");
     if (!actionTypes.some((target) => type.includes(target))) return sum;
+    return sum + (numberField(action.value) || 0);
+  }, 0);
+}
+
+function extractExactActionCount(actions: unknown, actionTypes: string[]) {
+  if (!Array.isArray(actions)) return 0;
+  return actions.reduce((sum, action) => {
+    if (!isRecord(action)) return sum;
+    const type = String(action.action_type || "");
+    if (!actionTypes.includes(type)) return sum;
     return sum + (numberField(action.value) || 0);
   }, 0);
 }
