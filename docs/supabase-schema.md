@@ -15,6 +15,8 @@ Tables:
 - `ai_reports`
 - `ai_chat_sessions`
 - `ai_chat_messages`
+- `ai_analysis_dashboards`
+- `ai_analysis_runs`
 - `sync_runs`
 
 Campaign umbrella metadata is stored on:
@@ -43,3 +45,4 @@ Important indexes:
 - creative preview source
 - latest sync runs
 - latest reports
+- latest ad-hoc analysis dashboards and run history

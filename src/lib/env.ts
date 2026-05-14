@@ -11,6 +11,7 @@ const REQUIRED_APP_ENV = [
 ] as const;
 
 export type RequiredAppEnv = (typeof REQUIRED_APP_ENV)[number];
+export type AnalysisMode = "fast" | "deep";
 
 export class ConfigurationError extends Error {
   missing: string[];
@@ -26,7 +27,14 @@ export function getMissingRequiredEnv(keys: readonly string[] = REQUIRED_APP_ENV
   return keys.filter((key) => !process.env[key]?.trim());
 }
 
-export function requireEnv(name: RequiredAppEnv | "OPENAI_MODEL" | "META_API_VERSION"): string {
+export function requireEnv(
+  name:
+    | RequiredAppEnv
+    | "OPENAI_MODEL"
+    | "OPENAI_FAST_MODEL"
+    | "OPENAI_DEEP_MODEL"
+    | "META_API_VERSION",
+): string {
   const value = process.env[name];
   if (!value?.trim()) {
     throw new ConfigurationError(`Missing required environment variable: ${name}`, [name]);
@@ -50,6 +58,11 @@ export function assertConfigured(keys: readonly string[] = REQUIRED_APP_ENV): vo
 
 export function getMetaApiVersion(): string {
   return getOptionalEnv("META_API_VERSION", "v24.0");
+}
+
+export function getOpenAIAnalysisModel(mode: AnalysisMode): string {
+  if (mode === "deep") return getOptionalEnv("OPENAI_DEEP_MODEL", "gpt-5.5");
+  return getOptionalEnv("OPENAI_FAST_MODEL", "gpt-5.4-nano");
 }
 
 export function getOpenAIModel(): string {

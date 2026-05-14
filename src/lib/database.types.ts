@@ -95,6 +95,92 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_analysis_dashboards: {
+        Row: {
+          created_at: string
+          id: string
+          mode: string
+          model_analysis: string | null
+          model_plan: string
+          prompt: string
+          source_transparency: Json
+          spec: Json
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          mode?: string
+          model_analysis?: string | null
+          model_plan: string
+          prompt: string
+          source_transparency?: Json
+          spec: Json
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          mode?: string
+          model_analysis?: string | null
+          model_plan?: string
+          prompt?: string
+          source_transparency?: Json
+          spec?: Json
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      ai_analysis_runs: {
+        Row: {
+          created_at: string
+          dashboard_id: string | null
+          id: string
+          mode: string
+          model_analysis: string | null
+          model_plan: string
+          prompt: string
+          result_preview: Json
+          source_transparency: Json
+          token_estimate: Json
+        }
+        Insert: {
+          created_at?: string
+          dashboard_id?: string | null
+          id?: string
+          mode?: string
+          model_analysis?: string | null
+          model_plan: string
+          prompt: string
+          result_preview?: Json
+          source_transparency?: Json
+          token_estimate?: Json
+        }
+        Update: {
+          created_at?: string
+          dashboard_id?: string | null
+          id?: string
+          mode?: string
+          model_analysis?: string | null
+          model_plan?: string
+          prompt?: string
+          result_preview?: Json
+          source_transparency?: Json
+          token_estimate?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_analysis_runs_dashboard_id_fkey"
+            columns: ["dashboard_id"]
+            isOneToOne: false
+            referencedRelation: "ai_analysis_dashboards"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ai_reports: {
         Row: {
           ad_account_ids: Json

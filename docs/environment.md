@@ -19,6 +19,8 @@ Optional:
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `OPENAI_MODEL` | `gpt-4.1-mini` | Chat/report model. |
+| `OPENAI_FAST_MODEL` | `gpt-5.4-nano` | Fast model for ad-hoc analysis spec generation. |
+| `OPENAI_DEEP_MODEL` | `gpt-5.5` | Deep model for optional ad-hoc analysis interpretation. |
 | `META_API_VERSION` | `v24.0` | Meta Graph API version. |
 | `META_VVS_AD_ACCOUNT_ID` | unset | Optional VVS ad account id, with or without `act_`. Add when VVS access is ready. |
 

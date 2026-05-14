@@ -1,0 +1,1072 @@
+import OpenAI from "openai";
+import { format, parseISO, startOfMonth, startOfWeek, subDays } from "date-fns";
+import { z } from "zod";
+
+import type { Json } from "./database.types";
+import {
+  type AnalysisMode,
+  ConfigurationError,
+  getMissingRequiredEnv,
+  getOpenAIAnalysisModel,
+} from "./env";
+import { createServiceClient } from "./supabase";
+
+const ANALYSIS_METRICS = [
+  "spend",
+  "impressions",
+  "reach",
+  "clicks",
+  "leads",
+  "bookings",
+  "conversions",
+  "ctr",
+  "cpm",
+  "cpc",
+  "cpl",
+  "frequency",
+] as const;
+
+const ANALYSIS_DIMENSIONS = [
+  "date",
+  "week",
+  "month",
+  "brand",
+  "campaign_umbrella",
+  "campaign",
+  "ad_set",
+  "ad",
+  "creative",
+] as const;
+
+const FILTER_FIELDS = [
+  "search",
+  "brand",
+  "campaign_umbrella",
+  "campaign",
+  "ad_set",
+  "ad",
+  "creative",
+] as const;
+
+const DATE_PRESETS = [
+  "last_7_days",
+  "last_14_days",
+  "last_30_days",
+  "last_4_weeks",
+  "last_8_weeks",
+  "last_12_weeks",
+  "last_90_days",
+  "custom",
+] as const;
+
+const WIDGET_TYPES = ["metric", "table", "line", "bar"] as const;
+const DEFAULT_METRICS: AnalysisMetric[] = ["spend", "impressions", "clicks", "ctr", "cpc", "leads", "cpl"];
+const MAX_DAYS = 365;
+const MAX_TABLE_ROWS = 100;
+const MAX_INSIGHT_ROWS = 25000;
+const MAX_ANALYSIS_ROWS = 18;
+
+export type AnalysisMetric = (typeof ANALYSIS_METRICS)[number];
+export type AnalysisDimension = (typeof ANALYSIS_DIMENSIONS)[number];
+export type AnalysisFilterField = (typeof FILTER_FIELDS)[number];
+export type AnalysisGrain = "summary" | "daily" | "weekly" | "monthly";
+export type AnalysisWidgetType = (typeof WIDGET_TYPES)[number];
+
+export type AnalysisFilter = {
+  field: AnalysisFilterField;
+  operator: "contains" | "equals";
+  value: string;
+};
+
+export type AnalysisSpec = {
+  title: string;
+  dateRange: {
+    preset?: (typeof DATE_PRESETS)[number];
+    start?: string;
+    end?: string;
+    days?: number;
+  };
+  grain: AnalysisGrain;
+  dimensions: AnalysisDimension[];
+  filters: AnalysisFilter[];
+  metrics: AnalysisMetric[];
+  sort?: {
+    field: AnalysisMetric | AnalysisDimension;
+    direction: "asc" | "desc";
+  };
+  limit: number;
+  widgets: Array<{
+    type: AnalysisWidgetType;
+    title: string;
+    x?: AnalysisDimension;
+    metrics: AnalysisMetric[];
+  }>;
+};
+
+export type AnalysisTableColumn = {
+  key: string;
+  label: string;
+  type: "text" | "money" | "number" | "percent";
+};
+
+export type AnalysisResult = {
+  status: "ready" | "needs_narrowing";
+  dashboardId: string | null;
+  prompt: string;
+  mode: AnalysisMode;
+  title: string;
+  answer: string;
+  spec: AnalysisSpec;
+  table: {
+    columns: AnalysisTableColumn[];
+    rows: Array<Record<string, string | number | null>>;
+  };
+  totals: Record<string, number | null>;
+  widgets: AnalysisSpec["widgets"];
+  sourceTransparency: {
+    timeRange: { start: string; end: string; days: number };
+    adAccountsAnalyzed: string[];
+    recordCounts: Record<string, number>;
+  };
+  modelUsed: {
+    plan: string;
+    analysis: string | null;
+  };
+  tokenEstimate: {
+    planInputTokens: number;
+    planOutputTokens: number;
+    analysisInputTokens: number;
+    analysisOutputTokens: number;
+    estimatedCostUsd: number;
+  };
+  persistenceWarning?: string;
+};
+
+export type SavedAnalysisDashboard = {
+  id: string;
+  title: string;
+  prompt: string;
+  mode: AnalysisMode;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type InsightRow = {
+  brand_id: string | null;
+  meta_account_id: string;
+  campaign_id: string | null;
+  campaign_name: string | null;
+  ad_set_id: string | null;
+  ad_set_name: string | null;
+  ad_id: string | null;
+  ad_name: string | null;
+  creative_id: string | null;
+  campaign_umbrella: string | null;
+  date_start: string;
+  spend: number | string | null;
+  impressions: number | string | null;
+  reach: number | string | null;
+  clicks: number | string | null;
+  leads: number | string | null;
+  bookings: number | string | null;
+  conversions: number | string | null;
+};
+
+type BrandRow = { id: string; code: string; name: string };
+type AccountRow = { meta_account_id: string; name: string | null };
+type MetricAccumulator = {
+  spend: number;
+  impressions: number;
+  reach: number;
+  clicks: number;
+  leads: number;
+  bookings: number;
+  conversions: number;
+};
+
+const metricSchema = z.enum(ANALYSIS_METRICS);
+const dimensionSchema = z.enum(ANALYSIS_DIMENSIONS);
+const filterFieldSchema = z.enum(FILTER_FIELDS);
+const widgetTypeSchema = z.enum(WIDGET_TYPES);
+
+const widgetSchema = z.object({
+  type: widgetTypeSchema.catch("table"),
+  title: z.string().max(80).catch("Analysis"),
+  x: dimensionSchema.optional(),
+  metrics: z.array(metricSchema).min(1).max(6).catch(["spend", "ctr", "leads"]),
+});
+
+const analysisSpecSchema = z.object({
+  title: z.string().min(1).max(100).catch("Ad-hoc analysis"),
+  dateRange: z
+    .object({
+      preset: z.enum(DATE_PRESETS).optional(),
+      start: z.string().optional(),
+      end: z.string().optional(),
+      days: z.number().int().positive().max(MAX_DAYS).optional(),
+    })
+    .catch({ preset: "last_30_days" }),
+  grain: z.enum(["summary", "daily", "weekly", "monthly"]).catch("weekly"),
+  dimensions: z.array(dimensionSchema).min(1).max(3).catch(["week"]),
+  filters: z
+    .array(
+      z.object({
+        field: filterFieldSchema.catch("search"),
+        operator: z.enum(["contains", "equals"]).catch("contains"),
+        value: z.string().max(120).catch(""),
+      }),
+    )
+    .max(6)
+    .catch([]),
+  metrics: z.array(metricSchema).min(1).max(8).catch(DEFAULT_METRICS),
+  sort: z
+    .object({
+      field: z.union([metricSchema, dimensionSchema]).catch("spend"),
+      direction: z.enum(["asc", "desc"]).catch("desc"),
+    })
+    .optional(),
+  limit: z.number().int().min(1).max(MAX_TABLE_ROWS).catch(50),
+  widgets: z.array(widgetSchema).min(1).max(4).catch([]),
+});
+
+export async function fetchSavedAnalysisDashboards(limit = 12): Promise<SavedAnalysisDashboard[]> {
+  const missing = getMissingRequiredEnv([
+    "NEXT_PUBLIC_SUPABASE_URL",
+    "SUPABASE_SERVICE_ROLE_KEY",
+  ]);
+  if (missing.length) return [];
+
+  try {
+    const supabase = createServiceClient();
+    const response = await supabase
+      .from("ai_analysis_dashboards")
+      .select("id,title,prompt,mode,created_at,updated_at")
+      .order("updated_at", { ascending: false })
+      .limit(limit);
+
+    if (response.error) throw response.error;
+
+    return rows<Record<string, unknown>>(response.data).map((dashboard) => ({
+      id: String(dashboard.id),
+      title: String(dashboard.title),
+      prompt: String(dashboard.prompt),
+      mode: dashboard.mode === "deep" ? "deep" : "fast",
+      createdAt: String(dashboard.created_at),
+      updatedAt: String(dashboard.updated_at),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export async function runSavedAdHocAnalysis(dashboardId: string): Promise<AnalysisResult> {
+  const supabase = createServiceClient();
+  const response = await supabase
+    .from("ai_analysis_dashboards")
+    .select("id,title,prompt,mode,spec,model_plan,model_analysis")
+    .eq("id", dashboardId)
+    .single();
+
+  if (response.error) throw response.error;
+
+  const dashboard = response.data as Record<string, unknown>;
+  const spec = normalizeSpec(dashboard.spec, String(dashboard.prompt));
+  const mode: AnalysisMode = dashboard.mode === "deep" ? "deep" : "fast";
+  const planModel = String(dashboard.model_plan || getOpenAIAnalysisModel("fast"));
+  const analysisModel = typeof dashboard.model_analysis === "string" ? dashboard.model_analysis : null;
+  const aggregated = await aggregateSpec(spec);
+
+  return {
+    ...baseResult({
+      prompt: String(dashboard.prompt),
+      mode,
+      spec,
+      aggregated,
+      dashboardId: String(dashboard.id),
+      planModel,
+      analysisModel,
+      tokenEstimate: emptyTokenEstimate(),
+    }),
+    answer: "Loaded saved dashboard spec and refreshed the data directly from Supabase.",
+  };
+}
+
+export async function createAdHocAnalysis(input: {
+  prompt: string;
+  mode: AnalysisMode;
+}): Promise<AnalysisResult> {
+  const prompt = input.prompt.trim();
+  if (!prompt) {
+    throw new ConfigurationError("Analysis prompt is required.");
+  }
+
+  const planModel = getOpenAIAnalysisModel("fast");
+  const { spec, usage: planUsage } = await createSpecWithAI(prompt, planModel);
+  const aggregated = await aggregateSpec(spec);
+  const baseTokenEstimate = {
+    ...emptyTokenEstimate(),
+    planInputTokens: planUsage.input,
+    planOutputTokens: planUsage.output,
+  };
+
+  if (aggregated.needsNarrowing) {
+    return baseResult({
+      prompt,
+      mode: input.mode,
+      spec,
+      aggregated,
+      dashboardId: null,
+      planModel,
+      analysisModel: null,
+      tokenEstimate: withEstimatedCost(baseTokenEstimate, planModel, null),
+    });
+  }
+
+  const analysis =
+    input.mode === "deep"
+      ? await generateDeepAnalysis(prompt, spec, aggregated, getOpenAIAnalysisModel("deep"))
+      : null;
+
+  const resultBeforeSave = baseResult({
+    prompt,
+    mode: input.mode,
+    spec,
+    aggregated,
+    dashboardId: null,
+    planModel,
+    analysisModel: analysis?.model || null,
+    tokenEstimate: withEstimatedCost(
+      {
+        ...baseTokenEstimate,
+        analysisInputTokens: analysis?.usage.input || 0,
+        analysisOutputTokens: analysis?.usage.output || 0,
+      },
+      planModel,
+      analysis?.model || null,
+    ),
+  });
+
+  const result = {
+    ...resultBeforeSave,
+    answer: analysis?.answer || buildDeterministicAnswer(spec, aggregated),
+  };
+
+  const persistence = await persistAnalysis(result, planModel, analysis?.model || null);
+  return {
+    ...result,
+    dashboardId: persistence.dashboardId,
+    persistenceWarning: persistence.warning,
+  };
+}
+
+async function createSpecWithAI(prompt: string, model: string) {
+  const response = await createOpenAIClient().chat.completions.create({
+    model,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content:
+          "You convert Meta Ads questions into a compact JSON dashboard spec. Return JSON only. Never write SQL, code, or raw data. Use only the allowed fields and widgets.",
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          task: "Create an AnalysisSpec for a Meta Ads ad-hoc dashboard.",
+          userPrompt: prompt,
+          allowed: {
+            metrics: ANALYSIS_METRICS,
+            dimensions: ANALYSIS_DIMENSIONS,
+            filterFields: FILTER_FIELDS,
+            grains: ["summary", "daily", "weekly", "monthly"],
+            widgets: WIDGET_TYPES,
+            datePresets: DATE_PRESETS,
+          },
+          rules: [
+            "For free-text ad concepts like cash for gold, use a search filter.",
+            "For past four weeks week by week, use preset last_4_weeks, grain weekly, dimensions ['week'].",
+            "Prefer metrics spend, impressions, clicks, ctr, cpc, leads, cpl for performance comparisons.",
+            "Use table plus line or bar widgets for comparison requests.",
+            "Keep limits at or below 50 unless the user asks for a leaderboard.",
+          ],
+        }),
+      },
+    ],
+  });
+
+  const content = response.choices[0]?.message?.content;
+  return {
+    spec: normalizeSpec(parseJson(content) || fallbackSpec(prompt), prompt),
+    usage: {
+      input: response.usage?.prompt_tokens || estimateTokens(prompt) + 700,
+      output: response.usage?.completion_tokens || estimateTokens(content || ""),
+    },
+  };
+}
+
+async function generateDeepAnalysis(
+  prompt: string,
+  spec: AnalysisSpec,
+  aggregated: Awaited<ReturnType<typeof aggregateSpec>>,
+  model: string,
+) {
+  const compactRows = aggregated.table.rows.slice(0, MAX_ANALYSIS_ROWS);
+  const response = await createOpenAIClient().chat.completions.create({
+    model,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are a Meta Ads analyst. Interpret only the compact aggregated data supplied. Be concise, compare periods clearly, and cite metric values from the table. Do not claim access to raw rows.",
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          userPrompt: prompt,
+          spec,
+          sourceTransparency: aggregated.sourceTransparency,
+          totals: aggregated.totals,
+          compactRows,
+        }),
+      },
+    ],
+  });
+
+  const answer =
+    response.choices[0]?.message?.content ||
+    "Deep analysis could not be generated from the aggregated result.";
+
+  return {
+    model,
+    answer,
+    usage: {
+      input: response.usage?.prompt_tokens || estimateTokens(JSON.stringify(compactRows)) + 900,
+      output: response.usage?.completion_tokens || estimateTokens(answer),
+    },
+  };
+}
+
+async function aggregateSpec(spec: AnalysisSpec) {
+  const range = resolveDateRange(spec.dateRange);
+  const tooBroad = isLikelyTooBroad(spec, range.days);
+  if (tooBroad) {
+    return emptyAggregate(
+      spec,
+      range,
+      "Narrow this request by date range, brand, campaign umbrella, or a search term before generating the dashboard.",
+    );
+  }
+
+  const supabase = createServiceClient();
+  const [insightsRes, brandsRes, accountsRes] = await Promise.all([
+    supabase
+      .from("meta_daily_insights")
+      .select(
+        "brand_id,meta_account_id,campaign_id,campaign_name,ad_set_id,ad_set_name,ad_id,ad_name,creative_id,campaign_umbrella,date_start,spend,impressions,reach,clicks,leads,bookings,conversions",
+      )
+      .gte("date_start", range.start)
+      .lte("date_start", range.end)
+      .order("date_start", { ascending: true })
+      .limit(MAX_INSIGHT_ROWS),
+    supabase.from("brands").select("id,code,name"),
+    supabase.from("meta_ad_accounts").select("meta_account_id,name"),
+  ]);
+
+  const firstError = [insightsRes, brandsRes, accountsRes].find((res) => res.error)?.error;
+  if (firstError) throw firstError;
+
+  const insights = rows<InsightRow>(insightsRes.data);
+  if (insights.length >= MAX_INSIGHT_ROWS) {
+    return emptyAggregate(
+      spec,
+      range,
+      "This request matches too much Meta Ads data. Add a brand, campaign umbrella, ad concept, or shorter date range.",
+    );
+  }
+
+  const brandById = new Map(rows<BrandRow>(brandsRes.data).map((brand) => [brand.id, brand]));
+  const accountNameById = new Map(
+    rows<AccountRow>(accountsRes.data).map((account) => [
+      account.meta_account_id,
+      account.name || account.meta_account_id,
+    ]),
+  );
+  const filtered = insights.filter((row) => matchesFilters(row, spec.filters, brandById));
+
+  const grouped = new Map<string, { dimensions: Record<string, string>; metrics: MetricAccumulator; count: number }>();
+  for (const row of filtered) {
+    const dimensions = getDimensions(row, spec, brandById);
+    const key = spec.dimensions.map((dimension) => dimensions[dimension] || "").join("::") || "summary";
+    const existing =
+      grouped.get(key) ||
+      {
+        dimensions,
+        metrics: emptyMetrics(),
+        count: 0,
+      };
+
+    existing.metrics.spend += toNumber(row.spend);
+    existing.metrics.impressions += toNumber(row.impressions);
+    existing.metrics.reach += toNumber(row.reach);
+    existing.metrics.clicks += toNumber(row.clicks);
+    existing.metrics.leads += toNumber(row.leads);
+    existing.metrics.bookings += toNumber(row.bookings);
+    existing.metrics.conversions += toNumber(row.conversions);
+    existing.count += 1;
+    grouped.set(key, existing);
+  }
+
+  const rowsForTable = Array.from(grouped.values()).map((group) => {
+    const derived = deriveMetrics(group.metrics);
+    return {
+      ...group.dimensions,
+      ...Object.fromEntries(spec.metrics.map((metric) => [metric, derived[metric]])),
+      sourceRows: group.count,
+    };
+  });
+
+  const sortedRows = sortRows(rowsForTable, spec).slice(0, spec.limit);
+  const totals = deriveMetrics(
+    filtered.reduce((acc, row) => {
+      acc.spend += toNumber(row.spend);
+      acc.impressions += toNumber(row.impressions);
+      acc.reach += toNumber(row.reach);
+      acc.clicks += toNumber(row.clicks);
+      acc.leads += toNumber(row.leads);
+      acc.bookings += toNumber(row.bookings);
+      acc.conversions += toNumber(row.conversions);
+      return acc;
+    }, emptyMetrics()),
+  );
+
+  const sourceTransparency = {
+    timeRange: range,
+    adAccountsAnalyzed: Array.from(
+      new Set(insights.map((row) => accountNameById.get(row.meta_account_id) || row.meta_account_id)),
+    ),
+    recordCounts: {
+      meta_daily_insights: insights.length,
+      matched_insights: filtered.length,
+      grouped_rows: grouped.size,
+      returned_rows: sortedRows.length,
+    },
+  };
+
+  return {
+    needsNarrowing: false,
+    narrowingMessage: "",
+    table: {
+      columns: buildColumns(spec),
+      rows: sortedRows,
+    },
+    totals,
+    sourceTransparency,
+  };
+}
+
+function normalizeSpec(value: unknown, prompt: string): AnalysisSpec {
+  const parsed = analysisSpecSchema.safeParse(value);
+  const base = parsed.success ? parsed.data : fallbackSpec(prompt);
+  const dimensions = normalizeDimensions(base.dimensions, base.grain);
+  const metrics = uniqueAllowed(base.metrics, ANALYSIS_METRICS, DEFAULT_METRICS);
+  const filters = base.filters
+    .map((filter) => ({ ...filter, value: filter.value.trim() }))
+    .filter((filter) => filter.value);
+  const widgets = normalizeWidgets(base.widgets, dimensions, metrics, base.grain);
+
+  return {
+    title: base.title,
+    dateRange: base.dateRange,
+    grain: base.grain,
+    dimensions,
+    filters,
+    metrics,
+    sort: base.sort,
+    limit: Math.min(Math.max(base.limit, 1), MAX_TABLE_ROWS),
+    widgets,
+  };
+}
+
+function normalizeDimensions(dimensions: AnalysisDimension[], grain: AnalysisGrain) {
+  const fallback: AnalysisDimension[] =
+    grain === "daily" ? ["date"] : grain === "monthly" ? ["month"] : grain === "summary" ? ["brand"] : ["week"];
+  return uniqueAllowed(dimensions, ANALYSIS_DIMENSIONS, fallback).slice(0, 3);
+}
+
+function normalizeWidgets(
+  widgets: AnalysisSpec["widgets"],
+  dimensions: AnalysisDimension[],
+  metrics: AnalysisMetric[],
+  grain: AnalysisGrain,
+) {
+  const normalized = widgets
+    .filter((widget) => WIDGET_TYPES.includes(widget.type))
+    .map((widget) => ({
+      type: widget.type,
+      title: widget.title || labelForWidget(widget.type),
+      x: widget.x && dimensions.includes(widget.x) ? widget.x : dimensions[0],
+      metrics: uniqueAllowed(widget.metrics, ANALYSIS_METRICS, metrics).slice(0, 4),
+    }));
+
+  if (normalized.length) return normalized;
+
+  const timeWidget = grain === "daily" || grain === "weekly" || grain === "monthly";
+  return [
+    { type: "metric" as const, title: "Totals", metrics: metrics.slice(0, 4) },
+    { type: "table" as const, title: "Comparison table", x: dimensions[0], metrics },
+    {
+      type: timeWidget ? ("line" as const) : ("bar" as const),
+      title: timeWidget ? "Trend" : "Comparison",
+      x: dimensions[0],
+      metrics: metrics.filter((metric) => metric !== "impressions").slice(0, 3),
+    },
+  ];
+}
+
+function fallbackSpec(prompt: string): AnalysisSpec {
+  const weekly = /week|weekly|four|4/i.test(prompt);
+  const search = inferSearchTerm(prompt);
+
+  return {
+    title: titleFromPrompt(prompt),
+    dateRange: { preset: weekly ? "last_4_weeks" : "last_30_days" },
+    grain: weekly ? "weekly" : "summary",
+    dimensions: weekly ? ["week"] : ["brand"],
+    filters: search ? [{ field: "search", operator: "contains", value: search }] : [],
+    metrics: DEFAULT_METRICS,
+    sort: weekly ? { field: "week", direction: "asc" } : { field: "spend", direction: "desc" },
+    limit: 50,
+    widgets: [],
+  };
+}
+
+function resolveDateRange(dateRange: AnalysisSpec["dateRange"]) {
+  const today = new Date();
+  const end = isDateString(dateRange.end) ? parseISO(dateRange.end) : today;
+  const presetDays: Record<string, number> = {
+    last_7_days: 7,
+    last_14_days: 14,
+    last_30_days: 30,
+    last_4_weeks: 28,
+    last_8_weeks: 56,
+    last_12_weeks: 84,
+    last_90_days: 90,
+  };
+  const days = Math.min(
+    Math.max(dateRange.days || presetDays[dateRange.preset || ""] || 30, 1),
+    MAX_DAYS,
+  );
+  const start = isDateString(dateRange.start) ? parseISO(dateRange.start) : subDays(end, days - 1);
+  const actualDays = Math.max(1, differenceInCalendarDays(start, end) + 1);
+
+  return {
+    start: format(start, "yyyy-MM-dd"),
+    end: format(end, "yyyy-MM-dd"),
+    days: actualDays,
+  };
+}
+
+function matchesFilters(
+  row: InsightRow,
+  filters: AnalysisFilter[],
+  brandById: Map<string, BrandRow>,
+) {
+  return filters.every((filter) => {
+    const target = getFilterText(row, filter.field, brandById).toLowerCase();
+    const value = filter.value.toLowerCase();
+    return filter.operator === "equals" ? target === value : target.includes(value);
+  });
+}
+
+function getFilterText(row: InsightRow, field: AnalysisFilterField, brandById: Map<string, BrandRow>) {
+  if (field === "brand") return getBrandCode(row.brand_id, brandById);
+  if (field === "campaign_umbrella") return row.campaign_umbrella || "";
+  if (field === "campaign") return [row.campaign_name, row.campaign_id].filter(Boolean).join(" ");
+  if (field === "ad_set") return [row.ad_set_name, row.ad_set_id].filter(Boolean).join(" ");
+  if (field === "ad") return [row.ad_name, row.ad_id].filter(Boolean).join(" ");
+  if (field === "creative") return row.creative_id || "";
+  return [
+    getBrandCode(row.brand_id, brandById),
+    row.campaign_umbrella,
+    row.campaign_name,
+    row.ad_set_name,
+    row.ad_name,
+    row.creative_id,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function getDimensions(row: InsightRow, spec: AnalysisSpec, brandById: Map<string, BrandRow>) {
+  const date = parseISO(row.date_start);
+  const values: Record<string, string> = {
+    date: row.date_start,
+    week: format(startOfWeek(date, { weekStartsOn: 1 }), "yyyy-MM-dd"),
+    month: format(startOfMonth(date), "yyyy-MM"),
+    brand: getBrandCode(row.brand_id, brandById),
+    campaign_umbrella: row.campaign_umbrella || "Needs review",
+    campaign: row.campaign_name || row.campaign_id || "Unknown campaign",
+    ad_set: row.ad_set_name || row.ad_set_id || "Unknown ad set",
+    ad: row.ad_name || row.ad_id || "Unknown ad",
+    creative: row.creative_id || "Unknown creative",
+  };
+
+  return Object.fromEntries(spec.dimensions.map((dimension) => [dimension, values[dimension]]));
+}
+
+function buildColumns(spec: AnalysisSpec): AnalysisTableColumn[] {
+  return [
+    ...spec.dimensions.map((dimension) => ({
+      key: dimension,
+      label: labelFor(dimension),
+      type: "text" as const,
+    })),
+    ...spec.metrics.map((metric) => ({
+      key: metric,
+      label: labelFor(metric),
+      type: metricType(metric),
+    })),
+  ];
+}
+
+function sortRows(rowsForTable: Array<Record<string, string | number | null>>, spec: AnalysisSpec) {
+  const sort = spec.sort;
+  const firstDimension = spec.dimensions[0];
+  const field = sort?.field || (["date", "week", "month"].includes(firstDimension) ? firstDimension : "spend");
+  const direction = sort?.direction || (field === "date" || field === "week" || field === "month" ? "asc" : "desc");
+
+  return [...rowsForTable].sort((a, b) => {
+    const aValue = a[field] ?? "";
+    const bValue = b[field] ?? "";
+    const result =
+      typeof aValue === "number" && typeof bValue === "number"
+        ? aValue - bValue
+        : String(aValue).localeCompare(String(bValue));
+    return direction === "asc" ? result : -result;
+  });
+}
+
+function deriveMetrics(metrics: MetricAccumulator): Record<AnalysisMetric, number | null> {
+  return {
+    spend: round(metrics.spend, 2),
+    impressions: Math.round(metrics.impressions),
+    reach: Math.round(metrics.reach),
+    clicks: Math.round(metrics.clicks),
+    leads: Math.round(metrics.leads),
+    bookings: Math.round(metrics.bookings),
+    conversions: Math.round(metrics.conversions),
+    ctr: metrics.impressions > 0 ? round((metrics.clicks / metrics.impressions) * 100, 2) : 0,
+    cpm: metrics.impressions > 0 ? round((metrics.spend / metrics.impressions) * 1000, 2) : 0,
+    cpc: metrics.clicks > 0 ? round(metrics.spend / metrics.clicks, 2) : 0,
+    cpl: metrics.leads > 0 ? round(metrics.spend / metrics.leads, 2) : null,
+    frequency: metrics.reach > 0 ? round(metrics.impressions / metrics.reach, 2) : 0,
+  };
+}
+
+function baseResult(input: {
+  prompt: string;
+  mode: AnalysisMode;
+  spec: AnalysisSpec;
+  aggregated: Awaited<ReturnType<typeof aggregateSpec>>;
+  dashboardId: string | null;
+  planModel: string;
+  analysisModel: string | null;
+  tokenEstimate: AnalysisResult["tokenEstimate"];
+}): AnalysisResult {
+  return {
+    status: input.aggregated.needsNarrowing ? "needs_narrowing" : "ready",
+    dashboardId: input.dashboardId,
+    prompt: input.prompt,
+    mode: input.mode,
+    title: input.spec.title,
+    answer: input.aggregated.needsNarrowing ? input.aggregated.narrowingMessage : "",
+    spec: input.spec,
+    table: input.aggregated.table,
+    totals: input.aggregated.totals,
+    widgets: input.spec.widgets,
+    sourceTransparency: input.aggregated.sourceTransparency,
+    modelUsed: {
+      plan: input.planModel,
+      analysis: input.analysisModel,
+    },
+    tokenEstimate: input.tokenEstimate,
+  };
+}
+
+async function persistAnalysis(result: AnalysisResult, planModel: string, analysisModel: string | null) {
+  try {
+    const supabase = createServiceClient();
+    const insert = await supabase
+      .from("ai_analysis_dashboards")
+      .insert({
+        title: result.title,
+        prompt: result.prompt,
+        mode: result.mode,
+        spec: result.spec as unknown as Json,
+        model_plan: planModel,
+        model_analysis: analysisModel,
+        source_transparency: result.sourceTransparency as unknown as Json,
+      })
+      .select("id")
+      .single();
+
+    if (insert.error) throw insert.error;
+
+    const dashboardId = String((insert.data as { id: string }).id);
+    await supabase.from("ai_analysis_runs").insert({
+      dashboard_id: dashboardId,
+      prompt: result.prompt,
+      mode: result.mode,
+      model_plan: planModel,
+      model_analysis: analysisModel,
+      token_estimate: result.tokenEstimate as unknown as Json,
+      source_transparency: result.sourceTransparency as unknown as Json,
+      result_preview: {
+        title: result.title,
+        rowCount: result.table.rows.length,
+        widgets: result.widgets.map((widget) => widget.type),
+      } as unknown as Json,
+    });
+
+    return { dashboardId };
+  } catch (error) {
+    return {
+      dashboardId: null,
+      warning: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function buildDeterministicAnswer(
+  spec: AnalysisSpec,
+  aggregated: Awaited<ReturnType<typeof aggregateSpec>>,
+) {
+  const rowsForAnswer = aggregated.table.rows.slice(0, 4);
+  if (!rowsForAnswer.length) {
+    return "No matching Meta Ads records were found for this request.";
+  }
+
+  const spend = aggregated.totals.spend ?? 0;
+  const leads = aggregated.totals.leads ?? 0;
+  const cpl = aggregated.totals.cpl;
+  const firstMetric = spec.metrics.find((metric) => metric !== "impressions") || "spend";
+  const bestRow = [...aggregated.table.rows].sort((a, b) => {
+    const aValue = Number(a[firstMetric] || 0);
+    const bValue = Number(b[firstMetric] || 0);
+    return bValue - aValue;
+  })[0];
+
+  return [
+    `${spec.title} returned ${aggregated.table.rows.length} grouped rows from ${aggregated.sourceTransparency.recordCounts.matched_insights} matching daily records.`,
+    `Total spend was ${formatMoney(spend)}, with ${formatNumber(leads)} leads${cpl === null ? "" : ` at ${formatMoney(cpl)} CPL`}.`,
+    bestRow ? `Highest ${labelFor(firstMetric).toLowerCase()} row: ${describeRow(bestRow, spec.dimensions)}.` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function emptyAggregate(spec: AnalysisSpec, range: { start: string; end: string; days: number }, message: string) {
+  return {
+    needsNarrowing: true,
+    narrowingMessage: message,
+    table: {
+      columns: buildColumns(spec),
+      rows: [],
+    },
+    totals: deriveMetrics(emptyMetrics()),
+    sourceTransparency: {
+      timeRange: range,
+      adAccountsAnalyzed: [],
+      recordCounts: {
+        meta_daily_insights: 0,
+        matched_insights: 0,
+        grouped_rows: 0,
+        returned_rows: 0,
+      },
+    },
+  };
+}
+
+function isLikelyTooBroad(spec: AnalysisSpec, days: number) {
+  const highCardinality = spec.dimensions.some((dimension) =>
+    ["campaign", "ad_set", "ad", "creative"].includes(dimension),
+  );
+  return days > 120 && spec.filters.length === 0 && highCardinality;
+}
+
+function createOpenAIClient() {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new ConfigurationError("Missing OPENAI_API_KEY", ["OPENAI_API_KEY"]);
+  }
+  return new OpenAI({ apiKey });
+}
+
+function parseJson(content: string | null | undefined) {
+  if (!content) return null;
+  try {
+    return JSON.parse(content) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function rows<T>(data: unknown): T[] {
+  return Array.isArray(data) ? (data as T[]) : [];
+}
+
+function toNumber(value: string | number | null | undefined) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (!value) return 0;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function round(value: number, precision = 2) {
+  const factor = 10 ** precision;
+  return Math.round(value * factor) / factor;
+}
+
+function emptyMetrics(): MetricAccumulator {
+  return {
+    spend: 0,
+    impressions: 0,
+    reach: 0,
+    clicks: 0,
+    leads: 0,
+    bookings: 0,
+    conversions: 0,
+  };
+}
+
+function getBrandCode(brandId: string | null, brandById: Map<string, BrandRow>) {
+  return (brandId && brandById.get(brandId)?.code) || "Unassigned";
+}
+
+function uniqueAllowed<T extends string>(values: T[], allowed: readonly T[], fallback: T[]) {
+  const allowedSet = new Set(allowed);
+  const unique = Array.from(new Set(values.filter((value) => allowedSet.has(value))));
+  return unique.length ? unique : fallback;
+}
+
+function differenceInCalendarDays(start: Date, end: Date) {
+  const startUtc = Date.UTC(start.getFullYear(), start.getMonth(), start.getDate());
+  const endUtc = Date.UTC(end.getFullYear(), end.getMonth(), end.getDate());
+  return Math.round((endUtc - startUtc) / 86400000);
+}
+
+function isDateString(value: unknown): value is string {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function titleFromPrompt(prompt: string) {
+  const trimmed = prompt.trim().replace(/\s+/g, " ");
+  if (!trimmed) return "Ad-hoc Meta Ads analysis";
+  return trimmed.length > 90 ? `${trimmed.slice(0, 87)}...` : trimmed;
+}
+
+function inferSearchTerm(prompt: string) {
+  const lower = prompt.toLowerCase();
+  if (lower.includes("cash for gold")) return "cash for gold";
+  return "";
+}
+
+function labelFor(value: string) {
+  const labels: Record<string, string> = {
+    ad_set: "Ad Set",
+    bookings: "Bookings",
+    brand: "Brand",
+    campaign: "Campaign",
+    campaign_umbrella: "Umbrella",
+    clicks: "Clicks",
+    conversions: "Conversions",
+    cpc: "CPC",
+    cpl: "CPL",
+    cpm: "CPM",
+    creative: "Creative",
+    ctr: "CTR",
+    date: "Date",
+    frequency: "Frequency",
+    impressions: "Impressions",
+    leads: "Leads",
+    month: "Month",
+    reach: "Reach",
+    spend: "Spend",
+    week: "Week",
+  };
+  return labels[value] || value;
+}
+
+function labelForWidget(type: AnalysisWidgetType) {
+  if (type === "metric") return "Totals";
+  if (type === "line") return "Trend";
+  if (type === "bar") return "Comparison";
+  return "Table";
+}
+
+function metricType(metric: AnalysisMetric): AnalysisTableColumn["type"] {
+  if (["spend", "cpc", "cpl", "cpm"].includes(metric)) return "money";
+  if (["ctr", "frequency"].includes(metric)) return metric === "ctr" ? "percent" : "number";
+  return "number";
+}
+
+function describeRow(row: Record<string, string | number | null>, dimensions: AnalysisDimension[]) {
+  return dimensions.map((dimension) => `${labelFor(dimension)} ${row[dimension]}`).join(", ");
+}
+
+function formatMoney(value: number | null) {
+  if (value === null) return "n/a";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: value >= 100 ? 0 : 2,
+  }).format(value);
+}
+
+function formatNumber(value: number | null) {
+  if (value === null) return "n/a";
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
+}
+
+function emptyTokenEstimate(): AnalysisResult["tokenEstimate"] {
+  return {
+    planInputTokens: 0,
+    planOutputTokens: 0,
+    analysisInputTokens: 0,
+    analysisOutputTokens: 0,
+    estimatedCostUsd: 0,
+  };
+}
+
+function withEstimatedCost(
+  estimate: AnalysisResult["tokenEstimate"],
+  planModel: string,
+  analysisModel: string | null,
+) {
+  return {
+    ...estimate,
+    estimatedCostUsd: round(
+      costFor(planModel, estimate.planInputTokens, estimate.planOutputTokens) +
+        (analysisModel
+          ? costFor(analysisModel, estimate.analysisInputTokens, estimate.analysisOutputTokens)
+          : 0),
+      5,
+    ),
+  };
+}
+
+function costFor(model: string, inputTokens: number, outputTokens: number) {
+  const rates = model.includes("gpt-5.5")
+    ? { input: 5, output: 30 }
+    : model.includes("gpt-5.4-nano")
+      ? { input: 0.2, output: 1.25 }
+      : model.includes("gpt-5.4-mini")
+        ? { input: 0.75, output: 4.5 }
+        : { input: 1, output: 5 };
+
+  return (inputTokens / 1_000_000) * rates.input + (outputTokens / 1_000_000) * rates.output;
+}
+
+function estimateTokens(value: string) {
+  return Math.ceil(value.length / 4);
+}
