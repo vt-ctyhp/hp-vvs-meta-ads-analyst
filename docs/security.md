@@ -1,14 +1,17 @@
 # Security Notes
 
-## Read-Only Meta Access
+## Meta Access Boundaries
 
-The Meta integration validates token permissions before sync:
+The ads sync integration validates token permissions before sync:
 
-- Sync requires `ads_read` and `read_insights`.
+- Sync requires `ads_read`.
+- `read_insights` is optional and reported as missing if absent.
 - Sync fails if `ads_management` is granted.
 - The code only calls read endpoints for accounts, campaigns, ad sets, ads, creatives, previews, and insights.
 
 There are no UI controls or API routes for mutating Meta campaigns, ad sets, ads, budgets, targeting, creatives, or statuses.
+
+Social inbox permissions are validated separately from ads sync. Message/comment reply features must require explicit human approval before any Meta send/reply endpoint is called. AI may draft suggested replies, but it must not send them automatically.
 
 ## Secret Handling
 

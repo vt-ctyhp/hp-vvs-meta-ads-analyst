@@ -1,12 +1,12 @@
 # HP/VVS Meta Ads AI Analyst
 
-Internal read-only Meta Ads intelligence app for HP and VVS.
+Internal Meta Ads intelligence app for HP and VVS.
 
 ## Architecture
 
 Meta Marketing API -> Supabase -> AI analysis layer -> Next.js dashboard/chat -> Vercel.
 
-The app only uses read endpoints. It does not request or use `ads_management`, and it contains no code paths for editing, pausing, creating, deleting, duplicating, or modifying campaigns, ad sets, ads, budgets, targeting, or creatives.
+The ads integration only uses read endpoints. It does not request or use `ads_management`, and it contains no code paths for editing, pausing, creating, deleting, duplicating, or modifying campaigns, ad sets, ads, budgets, targeting, or creatives.
 
 ## Cloud Setup
 
@@ -63,13 +63,27 @@ Manual corrections can be stored in `campaign_umbrella_overrides` without changi
 
 ## Meta Permissions
 
-Allowed:
+Ads sync:
 
 - `ads_read`
-- `read_insights` if required by the Meta app/account for insights reads
+- `read_insights` if required by the Meta app/account for insights reads.
+
+Social inbox readiness:
+
+- `pages_show_list`
+- `pages_manage_metadata`
+- `pages_read_engagement`
+- `pages_messaging`
+- `instagram_basic`
+- `instagram_manage_messages`
+- `instagram_manage_comments`
+
+Social reply readiness:
+
+- `pages_manage_engagement` for Facebook Page comment reply/moderation workflows.
 
 Forbidden:
 
 - `ads_management`
 
-If the token is missing required read permissions, includes `ads_management`, or cannot read the configured HP account, sync stops and returns the exact setup issue.
+If the token is missing required ads sync permissions, includes `ads_management`, or cannot read the configured HP account, sync stops and returns the exact setup issue. Social reply features must still require a human click before sending.

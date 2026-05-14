@@ -31,6 +31,14 @@ type MetaPermission = {
   status: string;
 };
 
+type PermissionStatus = {
+  ok: boolean;
+  required: string[];
+  missing: string[];
+  optionalMissing?: string[];
+  warnings?: string[];
+};
+
 type SyncAccountConfig = {
   brandCode: "HP" | "VVS";
   brandName: string;
@@ -64,6 +72,20 @@ export type SyncResult = {
   errors: string[];
   syncRunId?: string;
 };
+
+const FORBIDDEN_META_PERMISSIONS = ["ads_management"];
+const ADS_SYNC_REQUIRED_PERMISSIONS = ["ads_read"];
+const ADS_SYNC_OPTIONAL_PERMISSIONS = ["read_insights"];
+const SOCIAL_INBOX_REQUIRED_PERMISSIONS = [
+  "pages_show_list",
+  "pages_manage_metadata",
+  "pages_read_engagement",
+  "pages_messaging",
+  "instagram_basic",
+  "instagram_manage_messages",
+  "instagram_manage_comments",
+];
+const SOCIAL_REPLY_REQUIRED_PERMISSIONS = ["pages_manage_engagement"];
 
 class MetaGraphError extends Error {
   details?: unknown;
@@ -105,7 +127,7 @@ export async function syncMetaAds(trigger: "cron" | "manual" | "preview" = "manu
   const errors: string[] = [];
 
   try {
-    await validateReadOnlyMetaToken();
+    await validateMetaAdsSyncPermissions();
     const brandRows = await ensureBrands(accounts);
     const brandByCode = new Map(brandRows.map((brand) => [String(brand.code), String(brand.id)]));
 
@@ -152,31 +174,52 @@ export async function syncMetaAds(trigger: "cron" | "manual" | "preview" = "manu
   }
 }
 
-export async function validateReadOnlyMetaToken() {
-  const permissions = await graphFetch<MetaPermission[]>("me/permissions", {});
-  const granted = new Set(
-    permissions
-      .filter((permission) => permission.status === "granted")
-      .map((permission) => permission.permission),
-  );
+export async function validateMetaAdsSyncPermissions() {
+  const permissionHealth = await getMetaPermissionHealth();
 
-  if (granted.has("ads_management")) {
+  if (permissionHealth.forbiddenGranted.length) {
     throw new ConfigurationError(
-      "Meta token has forbidden ads_management permission. Re-issue a read-only token with ads_read and read_insights only.",
+      `Meta token has forbidden permission(s): ${permissionHealth.forbiddenGranted.join(", ")}. Re-issue a token without campaign/ad mutation permissions.`,
     );
   }
 
-  const missing = ["ads_read"].filter((permission) => !granted.has(permission));
-  if (missing.length) {
+  if (permissionHealth.adsSync.missing.length) {
     throw new ConfigurationError(
-      `Meta token is missing required read-only permission(s): ${missing.join(", ")}. Grant ads_read, then retry sync.`,
-      missing,
+      `Meta token is missing required ads sync permission(s): ${permissionHealth.adsSync.missing.join(", ")}. Grant ads_read, then retry sync.`,
+      permissionHealth.adsSync.missing,
     );
   }
 
   return {
+    granted: permissionHealth.granted,
+    optionalMissing: permissionHealth.adsSync.optionalMissing || [],
+  };
+}
+
+export const validateReadOnlyMetaToken = validateMetaAdsSyncPermissions;
+
+export async function getMetaPermissionHealth() {
+  const granted = await fetchGrantedMetaPermissions();
+  const forbiddenGranted = FORBIDDEN_META_PERMISSIONS.filter((permission) =>
+    granted.has(permission),
+  );
+  const adsSync = buildPermissionStatus(granted, ADS_SYNC_REQUIRED_PERMISSIONS, {
+    optional: ADS_SYNC_OPTIONAL_PERMISSIONS,
+  });
+  const socialInbox = buildPermissionStatus(granted, SOCIAL_INBOX_REQUIRED_PERMISSIONS);
+  const socialReply = buildPermissionStatus(granted, SOCIAL_REPLY_REQUIRED_PERMISSIONS, {
+    warnings: [
+      "Facebook Page comment replies may be blocked until pages_manage_engagement is granted.",
+      "The app must still require a human click before any reply is sent.",
+    ],
+  });
+
+  return {
     granted: Array.from(granted).sort(),
-    optionalMissing: ["read_insights"].filter((permission) => !granted.has(permission)),
+    forbiddenGranted,
+    adsSync,
+    socialInbox,
+    socialReply,
   };
 }
 
@@ -692,6 +735,38 @@ async function graphFetch<T>(path: string, params: Record<string, string | undef
   }
 
   return json as T;
+}
+
+async function fetchGrantedMetaPermissions() {
+  const permissions = await graphFetch<MetaPermission[]>("me/permissions", {});
+  return new Set(
+    permissions
+      .filter((permission) => permission.status === "granted")
+      .map((permission) => permission.permission),
+  );
+}
+
+function buildPermissionStatus(
+  granted: Set<string>,
+  required: string[],
+  options: { optional?: string[]; warnings?: string[] } = {},
+): PermissionStatus {
+  const missing = required.filter((permission) => !granted.has(permission));
+  const optionalMissing = options.optional?.filter((permission) => !granted.has(permission));
+  const warnings = [
+    ...(options.warnings || []).filter(() => missing.length > 0),
+    ...((optionalMissing || []).length
+      ? [`Optional permission(s) missing: ${(optionalMissing || []).join(", ")}.`]
+      : []),
+  ];
+
+  return {
+    ok: missing.length === 0,
+    required,
+    missing,
+    ...(optionalMissing ? { optionalMissing } : {}),
+    ...(warnings.length ? { warnings } : {}),
+  };
 }
 
 async function graphPages<T>(

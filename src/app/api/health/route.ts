@@ -1,5 +1,5 @@
 import { getMissingRequiredEnv } from "@/lib/env";
-import { validateConfiguredMetaAccounts, validateReadOnlyMetaToken } from "@/lib/meta";
+import { getMetaPermissionHealth, validateConfiguredMetaAccounts } from "@/lib/meta";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,19 +15,28 @@ export async function GET() {
     ok: missingEnv.length === 0 && meta.ok,
     missingEnv,
     meta,
-    readOnly: true,
+    campaignMutationDisabled: true,
+    humanApprovalRequiredForSocialReplies: true,
     forbiddenPermissions: ["ads_management"],
   });
 }
 
 async function validateMeta() {
   try {
-    const permissions = await validateReadOnlyMetaToken();
+    const permissions = await getMetaPermissionHealth();
     const accounts = await validateConfiguredMetaAccounts();
     return {
-      ok: accounts.every((account) => account.ok),
+      ok:
+        accounts.every((account) => account.ok) &&
+        permissions.forbiddenGranted.length === 0 &&
+        permissions.adsSync.ok,
       permissions,
       accounts,
+      readiness: {
+        adsSync: permissions.adsSync.ok && accounts.every((account) => account.ok),
+        socialInbox: permissions.socialInbox.ok,
+        socialReply: permissions.socialReply.ok,
+      },
     };
   } catch (error) {
     return {
