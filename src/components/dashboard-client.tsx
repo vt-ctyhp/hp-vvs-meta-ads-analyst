@@ -8,6 +8,7 @@ import {
   Bot,
   CalendarRange,
   ChevronDown,
+  FileDown,
   GalleryHorizontalEnd,
   MessageSquare,
   RefreshCw,
@@ -49,6 +50,8 @@ const SORT_LABELS: Record<SortKey, string> = {
   newMessagingContacts: "New Msg Contacts",
   frequency: "Frequency",
 };
+
+const CREATIVE_EXPORT_GALLERY_LIMIT = 24;
 
 export function DashboardClient({ initialData }: Props) {
   const [data] = useState(initialData);
@@ -208,6 +211,24 @@ export function DashboardClient({ initialData }: Props) {
     setStartDate(start);
     setEndDate(end);
     applyDateRange(start, end);
+  }
+
+  async function exportCreativesPdf() {
+    const activeRange = data.sourceTransparency.timeRange;
+    const html = buildCreativePdfHtml({
+      rows: filteredCreatives,
+      dateRange: formatDateRange(
+        activeRange.start || startDate,
+        activeRange.end || endDate,
+      ),
+      umbrellaName: formatUmbrellaName(umbrella),
+      brandName: brand === "all" ? "All Brands" : brand,
+      searchQuery: query,
+      sortLabel: SORT_LABELS[sortKey],
+      generatedAt: new Date(),
+    });
+
+    await printHtmlDocument(html);
   }
 
   if (!data.configured) {
@@ -400,7 +421,19 @@ export function DashboardClient({ initialData }: Props) {
           <PerformanceSection title="Ad Set Performance" rows={filteredAdSets.slice(0, 10)} />
 
           <div className="min-w-0 border border-hp-rule bg-hp-card p-4 sm:p-6">
-            <SectionHeader eyebrow="Creative Leaderboard" title="Creative gallery and table" />
+            <SectionHeader
+              eyebrow="Creative Leaderboard"
+              title="Creative gallery and table"
+              actions={
+                <button
+                  onClick={() => void exportCreativesPdf()}
+                  className="flex h-10 items-center justify-center gap-2 border border-hp-ink px-3 text-[10px] uppercase tracking-[0.14em] text-hp-ink transition-colors hover:bg-hp-ink hover:text-hp-foundation"
+                >
+                  <FileDown size={15} />
+                  Export PDF
+                </button>
+              }
+            />
             {viewMode === "table" && <CreativeTable rows={filteredCreatives.slice(0, 50)} />}
             {viewMode === "cards" && <CreativeCards rows={filteredCreatives.slice(0, 18)} />}
             {viewMode === "gallery" && <CreativeGallery rows={filteredCreatives.slice(0, 24)} />}
@@ -478,13 +511,26 @@ function ShellHeader({ data }: { data: DashboardPayload }) {
   );
 }
 
-function SectionHeader({ eyebrow, title }: { eyebrow: string; title: string }) {
+function SectionHeader({
+  eyebrow,
+  title,
+  actions,
+}: {
+  eyebrow: string;
+  title: string;
+  actions?: React.ReactNode;
+}) {
   return (
     <div className="mb-6">
-      <span className="block text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-        {eyebrow}
-      </span>
-      <h2 className="mt-2 font-title text-[28px] leading-tight text-hp-ink">{title}</h2>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <span className="block text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+            {eyebrow}
+          </span>
+          <h2 className="mt-2 font-title text-[28px] leading-tight text-hp-ink">{title}</h2>
+        </div>
+        {actions ? <div className="flex shrink-0 items-center">{actions}</div> : null}
+      </div>
       <div className="mt-4 h-px bg-hp-rule" />
     </div>
   );
@@ -1029,6 +1075,621 @@ function SourcePanel({ data }: { data: DashboardPayload }) {
       </div>
     </section>
   );
+}
+
+type CreativePdfHtmlOptions = {
+  rows: PerformanceRow[];
+  dateRange: string;
+  umbrellaName: string;
+  brandName: string;
+  searchQuery: string;
+  sortLabel: string;
+  generatedAt: Date;
+};
+
+async function printHtmlDocument(html: string) {
+  const frame = document.createElement("iframe");
+  frame.setAttribute("aria-hidden", "true");
+  frame.style.position = "fixed";
+  frame.style.left = "-10000px";
+  frame.style.top = "0";
+  frame.style.width = "1120px";
+  frame.style.height = "800px";
+  frame.style.border = "0";
+  frame.style.opacity = "0";
+
+  document.body.appendChild(frame);
+
+  const printWindow = frame.contentWindow;
+  const printDocument = printWindow?.document;
+  if (!printWindow || !printDocument) {
+    frame.remove();
+    window.alert("The PDF export could not be prepared in this browser.");
+    return;
+  }
+
+  printDocument.open();
+  printDocument.write(html);
+  printDocument.close();
+
+  await waitForPrintImages(printDocument, 2500);
+  await new Promise((resolve) => window.setTimeout(resolve, 150));
+
+  const cleanup = () => frame.remove();
+  printWindow.addEventListener("afterprint", cleanup, { once: true });
+  window.setTimeout(cleanup, 30000);
+  printWindow.focus();
+  printWindow.print();
+}
+
+function waitForPrintImages(printDocument: Document, timeoutMs: number) {
+  const pendingImages = Array.from(printDocument.images).filter((image) => !image.complete);
+  if (!pendingImages.length) return Promise.resolve();
+
+  return new Promise<void>((resolve) => {
+    let isSettled = false;
+    let remaining = pendingImages.length;
+
+    const settle = () => {
+      if (isSettled) return;
+      isSettled = true;
+      window.clearTimeout(timeout);
+      resolve();
+    };
+
+    const completeOne = () => {
+      remaining -= 1;
+      if (remaining <= 0) settle();
+    };
+
+    const timeout = window.setTimeout(settle, timeoutMs);
+
+    for (const image of pendingImages) {
+      image.addEventListener("load", completeOne, { once: true });
+      image.addEventListener("error", completeOne, { once: true });
+    }
+  });
+}
+
+function buildCreativePdfHtml({
+  rows,
+  dateRange,
+  umbrellaName,
+  brandName,
+  searchQuery,
+  sortLabel,
+  generatedAt,
+}: CreativePdfHtmlOptions) {
+  const galleryRows = rows.slice(0, CREATIVE_EXPORT_GALLERY_LIMIT);
+  const totalSpend = rows.reduce((sum, row) => sum + row.spend, 0);
+  const totalPrimaryResults = rows.reduce((sum, row) => sum + row.primaryResults, 0);
+  const totalNewMessagingContacts = rows.reduce(
+    (sum, row) => sum + row.newMessagingContacts,
+    0,
+  );
+  const highRiskCount = rows.filter((row) => row.riskLevel === "high").length;
+  const generatedLabel = new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(generatedAt);
+  const searchLabel = searchQuery.trim() ? searchQuery.trim() : "None";
+  const subtitleParts = [
+    `Brand: ${brandName}`,
+    `Sorted by: ${sortLabel}`,
+    `Search: ${searchLabel}`,
+  ];
+
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>${escapeHtml(`Creative Export - ${umbrellaName} - ${dateRange}`)}</title>
+    <style>
+      @page {
+        size: letter landscape;
+        margin: 0.34in;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        background: #ffffff;
+        color: #2a2725;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 9.5px;
+        line-height: 1.35;
+      }
+
+      body {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+
+      .report-header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 2.35in;
+        gap: 0.22in;
+        align-items: end;
+        border-bottom: 1px solid #2a2725;
+        padding-bottom: 0.14in;
+        margin-bottom: 0.16in;
+      }
+
+      .kicker,
+      .label,
+      th {
+        color: #8a8178;
+        font-size: 7px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 0.04in 0 0;
+        color: #2a2725;
+        font-size: 23px;
+        font-weight: 500;
+        line-height: 1.05;
+        overflow-wrap: anywhere;
+      }
+
+      h2 {
+        margin: 0.02in 0 0;
+        color: #2a2725;
+        font-size: 14px;
+        font-weight: 500;
+        line-height: 1.15;
+      }
+
+      .subtitle,
+      .meta,
+      .muted {
+        color: #4a4540;
+      }
+
+      .meta {
+        display: grid;
+        gap: 0.05in;
+        text-align: right;
+      }
+
+      .meta strong {
+        display: block;
+        color: #2a2725;
+        font-size: 9px;
+        font-weight: 700;
+      }
+
+      .summary {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 0.08in;
+        margin-bottom: 0.18in;
+      }
+
+      .metric {
+        min-height: 0.42in;
+        border: 1px solid #d4cfc4;
+        padding: 0.06in 0.08in;
+        break-inside: avoid;
+      }
+
+      .metric-value {
+        margin-top: 0.03in;
+        color: #2a2725;
+        font-size: 13px;
+        font-variant-numeric: tabular-nums;
+        line-height: 1.1;
+        overflow-wrap: anywhere;
+      }
+
+      .section-heading {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 0.16in;
+        border-top: 1px solid #d4cfc4;
+        padding-top: 0.1in;
+        margin: 0.04in 0 0.1in;
+        break-after: avoid;
+        page-break-after: avoid;
+      }
+
+      .section-count {
+        color: #8a8178;
+        font-size: 8px;
+        text-align: right;
+        white-space: nowrap;
+      }
+
+      .gallery-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.08in;
+        margin-bottom: 0.18in;
+      }
+
+      .gallery-card {
+        min-width: 0;
+        border: 1px solid #d4cfc4;
+        background: #fbf7f1;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      .gallery-media {
+        height: 0.92in;
+        border-bottom: 1px solid #d4cfc4;
+        background: #efe8dd;
+      }
+
+      .gallery-body {
+        padding: 0.07in;
+      }
+
+      .gallery-name,
+      .table-name {
+        color: #2a2725;
+        font-weight: 700;
+        overflow-wrap: anywhere;
+      }
+
+      .gallery-name {
+        max-height: 2.6em;
+        overflow: hidden;
+      }
+
+      .gallery-umbrella {
+        margin-top: 0.03in;
+        color: #8a8178;
+        font-size: 7px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        overflow-wrap: anywhere;
+      }
+
+      .gallery-metrics {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.05in;
+        margin-top: 0.06in;
+      }
+
+      .mini-value {
+        margin-top: 0.01in;
+        color: #2a2725;
+        font-size: 8px;
+        font-variant-numeric: tabular-nums;
+        overflow-wrap: anywhere;
+      }
+
+      .preview,
+      .preview img,
+      .preview iframe {
+        width: 100%;
+        height: 100%;
+      }
+
+      .preview img {
+        display: block;
+        object-fit: cover;
+      }
+
+      .preview iframe {
+        display: block;
+        border: 0;
+        background: #ffffff;
+      }
+
+      .preview-empty {
+        display: flex;
+        width: 100%;
+        height: 100%;
+        align-items: center;
+        justify-content: center;
+        color: #8a8178;
+        font-size: 7px;
+        letter-spacing: 0.08em;
+        text-align: center;
+        text-transform: uppercase;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+        page-break-inside: auto;
+      }
+
+      thead {
+        display: table-header-group;
+      }
+
+      tr {
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid #d4cfc4;
+        padding: 0.04in 0.05in;
+        text-align: left;
+        vertical-align: top;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+      }
+
+      th {
+        background: #efe8dd;
+        color: #4a4540;
+        font-weight: 700;
+      }
+
+      td {
+        font-size: 8px;
+      }
+
+      .table-copy {
+        margin-top: 0.02in;
+        color: #8a8178;
+        font-size: 7px;
+        max-height: 3.7em;
+        overflow: hidden;
+      }
+
+      .table-preview {
+        width: 0.48in;
+        height: 0.48in;
+        border: 1px solid #d4cfc4;
+        background: #efe8dd;
+      }
+
+      .num {
+        text-align: right;
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .risk-low {
+        color: #245d4d;
+      }
+
+      .risk-medium {
+        color: #8b5b19;
+      }
+
+      .risk-high {
+        color: #8d2e2e;
+      }
+
+      .empty-state {
+        border: 1px solid #d4cfc4;
+        padding: 0.18in;
+        color: #8a8178;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="report-header">
+      <div>
+        <div class="kicker">Creative Gallery and Table PDF Export</div>
+        <h1>${escapeHtml(umbrellaName)}</h1>
+        <div class="subtitle">Internal Campaign Umbrella</div>
+      </div>
+      <div class="meta">
+        <div>
+          <strong>Date range</strong>
+          ${escapeHtml(dateRange)}
+        </div>
+        <div>
+          <strong>Filters</strong>
+          ${escapeHtml(subtitleParts.join(" | "))}
+        </div>
+        <div>
+          <strong>Generated</strong>
+          ${escapeHtml(generatedLabel)}
+        </div>
+      </div>
+    </header>
+
+    <section class="summary" aria-label="Creative export summary">
+      ${metricMarkup("Creatives", formatMetric(rows.length, "number"))}
+      ${metricMarkup("Spend", formatMetric(totalSpend, "money"))}
+      ${metricMarkup("Primary Results", formatMetric(totalPrimaryResults, "number"))}
+      ${metricMarkup("New Msg Contacts", formatMetric(totalNewMessagingContacts, "number"))}
+      ${metricMarkup("High Risk", formatMetric(highRiskCount, "number"))}
+    </section>
+
+    <section>
+      <div class="section-heading">
+        <div>
+          <div class="kicker">Creative Gallery</div>
+          <h2>Top previews by ${escapeHtml(sortLabel)}</h2>
+        </div>
+        <div class="section-count">Top ${formatMetric(galleryRows.length, "number")} of ${formatMetric(rows.length, "number")}</div>
+      </div>
+      ${
+        galleryRows.length
+          ? `<div class="gallery-grid">${galleryRows.map(galleryCardMarkup).join("")}</div>`
+          : `<div class="empty-state">No creatives match the selected filters.</div>`
+      }
+    </section>
+
+    <section>
+      <div class="section-heading">
+        <div>
+          <div class="kicker">Creative Table</div>
+          <h2>Filtered creative performance</h2>
+        </div>
+        <div class="section-count">${formatMetric(rows.length, "number")} rows</div>
+      </div>
+      ${rows.length ? creativeTableMarkup(rows) : `<div class="empty-state">No creatives match the selected filters.</div>`}
+    </section>
+  </body>
+</html>`;
+}
+
+function metricMarkup(label: string, value: string) {
+  return `<div class="metric">
+    <div class="label">${escapeHtml(label)}</div>
+    <div class="metric-value">${escapeHtml(value)}</div>
+  </div>`;
+}
+
+function galleryCardMarkup(row: PerformanceRow) {
+  return `<article class="gallery-card">
+    <div class="gallery-media preview">${creativePreviewMarkup(row)}</div>
+    <div class="gallery-body">
+      <div class="gallery-name">${escapeHtml(truncateText(row.name, 74))}</div>
+      <div class="gallery-umbrella">${escapeHtml(row.brandCode)} | ${escapeHtml(row.campaignUmbrella || "Unassigned")}</div>
+      <div class="gallery-metrics">
+        ${miniMetricMarkup("Spend", formatMetric(row.spend, "money"))}
+        ${miniMetricMarkup("CTR", formatMetric(row.ctr, "percent"))}
+        ${miniMetricMarkup(row.primaryResultLabel, formatMetric(row.primaryResults, "number"))}
+      </div>
+    </div>
+  </article>`;
+}
+
+function miniMetricMarkup(label: string, value: string) {
+  return `<div>
+    <div class="label">${escapeHtml(truncateText(label, 22))}</div>
+    <div class="mini-value">${escapeHtml(value)}</div>
+  </div>`;
+}
+
+function creativeTableMarkup(rows: PerformanceRow[]) {
+  return `<table>
+    <colgroup>
+      <col style="width: 25%" />
+      <col style="width: 9%" />
+      <col style="width: 6%" />
+      <col style="width: 13%" />
+      <col style="width: 8%" />
+      <col style="width: 7%" />
+      <col style="width: 7%" />
+      <col style="width: 6%" />
+      <col style="width: 13%" />
+      <col style="width: 6%" />
+    </colgroup>
+    <thead>
+      <tr>
+        <th>Creative</th>
+        <th>Preview</th>
+        <th>Brand</th>
+        <th>Umbrella</th>
+        <th class="num">Spend</th>
+        <th class="num">CTR</th>
+        <th class="num">CPC</th>
+        <th class="num">Freq.</th>
+        <th class="num">Primary KPI</th>
+        <th>Risk</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows.map(creativeTableRowMarkup).join("")}
+    </tbody>
+  </table>`;
+}
+
+function creativeTableRowMarkup(row: PerformanceRow) {
+  return `<tr>
+    <td>
+      <div class="table-name">${escapeHtml(truncateText(row.name, 120))}</div>
+      ${row.body ? `<div class="table-copy">${escapeHtml(truncateText(row.body, 170))}</div>` : ""}
+    </td>
+    <td><div class="table-preview preview">${creativePreviewMarkup(row)}</div></td>
+    <td>${escapeHtml(row.brandCode)}</td>
+    <td>${escapeHtml(row.campaignUmbrella || "Unassigned")}</td>
+    <td class="num">${escapeHtml(formatMetric(row.spend, "money"))}</td>
+    <td class="num">${escapeHtml(formatMetric(row.ctr, "percent"))}</td>
+    <td class="num">${escapeHtml(formatMetric(row.cpc, "money"))}</td>
+    <td class="num">${Number.isFinite(row.frequency) ? `${row.frequency.toFixed(2)}x` : "n/a"}</td>
+    <td class="num">
+      ${escapeHtml(formatMetric(row.primaryResults, "number"))}
+      <div class="muted">${escapeHtml(truncateText(row.primaryResultLabel, 28))}</div>
+    </td>
+    <td class="${riskClassName(row.riskLevel)}">${escapeHtml(row.riskLevel || "low")}</td>
+  </tr>`;
+}
+
+function creativePreviewMarkup(row: PerformanceRow) {
+  if (row.previewHtml && row.previewSource === "ad_preview") {
+    return `<iframe title="${escapeHtml(`${row.name} preview`)}" srcdoc="${escapeHtml(row.previewHtml)}" sandbox=""></iframe>`;
+  }
+
+  const imageSrc = printablePreviewUrl(row);
+  if (imageSrc) {
+    return `<img src="${escapeHtml(imageSrc)}" alt="${escapeHtml(row.name)}" referrerpolicy="no-referrer" />`;
+  }
+
+  return `<div class="preview-empty">No Preview</div>`;
+}
+
+function printablePreviewUrl(row: PerformanceRow) {
+  const src = row.previewUrl || row.thumbnailUrl || row.imageUrl || row.videoThumbnailUrl;
+  if (!src) return null;
+  const trimmed = src.trim();
+  return /^(https?:\/\/|data:image\/|blob:|\/)/i.test(trimmed) ? trimmed : null;
+}
+
+function riskClassName(level?: PerformanceRow["riskLevel"]) {
+  return `risk-${level || "low"}`;
+}
+
+function formatDateRange(start: string | null, end: string | null) {
+  if (start && end) return `${formatDateLabel(start)} to ${formatDateLabel(end)}`;
+  if (start) return `From ${formatDateLabel(start)}`;
+  if (end) return `Through ${formatDateLabel(end)}`;
+  return "No date range";
+}
+
+function formatDateLabel(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return value;
+
+  const [, year, month, day] = match;
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+}
+
+function formatUmbrellaName(value: string) {
+  return value === "all" ? "All Campaign Umbrellas" : value;
+}
+
+function truncateText(value: string | null | undefined, maxLength: number) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
+function escapeHtml(value: string | number | null | undefined) {
+  return String(value ?? "").replace(/[&<>"']/g, (character) => {
+    switch (character) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&#39;";
+      default:
+        return character;
+    }
+  });
 }
 
 function rowMatchesFilters(row: PerformanceRow, brand: string, umbrella: string, query: string) {
