@@ -209,6 +209,17 @@ type InsightRow = {
   actions: unknown;
 };
 
+const BRAND_COLUMNS = "id,code,name";
+const ACCOUNT_COLUMNS = "id,brand_id,meta_account_id,name";
+const CAMPAIGN_COLUMNS =
+  "id,brand_id,campaign_id,name,status,effective_status,objective,campaign_umbrella,campaign_umbrella_confidence,campaign_umbrella_reason";
+const AD_SET_COLUMNS =
+  "id,brand_id,ad_set_id,campaign_id,name,status,effective_status,campaign_umbrella,campaign_umbrella_confidence,campaign_umbrella_reason";
+const AD_COLUMNS =
+  "id,brand_id,ad_id,ad_set_id,campaign_id,creative_id,name,status,effective_status,campaign_umbrella,campaign_umbrella_confidence,campaign_umbrella_reason";
+const CREATIVE_COLUMNS =
+  "id,brand_id,creative_id,name,title,body,thumbnail_url,image_url,video_thumbnail_url,preview_url,preview_html,preview_source";
+
 const EMPTY_METRICS: MetricSummary = {
   spend: 0,
   impressions: 0,
@@ -288,13 +299,9 @@ export async function fetchDashboardData(
     const supabase = createServiceClient();
     const dateRange = resolveDashboardDateRange(dateRangeInput);
 
-    const metadataPromise = Promise.all([
-      supabase.from("brands").select("*"),
-      supabase.from("meta_ad_accounts").select("*"),
-      supabase.from("meta_campaigns").select("*"),
-      supabase.from("meta_ad_sets").select("*"),
-      supabase.from("meta_ads").select("*"),
-      supabase.from("meta_creatives").select("*"),
+    const coreMetadataPromise = Promise.all([
+      supabase.from("brands").select(BRAND_COLUMNS),
+      supabase.from("meta_ad_accounts").select(ACCOUNT_COLUMNS),
       supabase
         .from("ai_reports")
         .select("id,title,report_type,generated_at,source_transparency")
@@ -305,6 +312,12 @@ export async function fetchDashboardData(
         .select("*")
         .order("started_at", { ascending: false })
         .limit(8),
+    ]);
+    const metadataCountPromise = Promise.all([
+      supabase.from("meta_campaigns").select("id", { count: "exact", head: true }),
+      supabase.from("meta_ad_sets").select("id", { count: "exact", head: true }),
+      supabase.from("meta_ads").select("id", { count: "exact", head: true }),
+      supabase.from("meta_creatives").select("id", { count: "exact", head: true }),
     ]);
     const aggregatePromise = runSequential([
       () =>
@@ -385,12 +398,14 @@ export async function fetchDashboardData(
       [
         brandsRes,
         accountsRes,
-        campaignsRes,
-        adSetsRes,
-        adsRes,
-        creativesRes,
         reportsRes,
         syncRunsRes,
+      ],
+      [
+        campaignCountRes,
+        adSetCountRes,
+        adCountRes,
+        creativeCountRes,
       ],
       [
         overviewRows,
@@ -402,29 +417,46 @@ export async function fetchDashboardData(
         dailyTrendAggregateRows,
         dateCoverageAggregateRows,
       ],
-    ] = await Promise.all([metadataPromise, aggregatePromise]);
+    ] = await Promise.all([coreMetadataPromise, metadataCountPromise, aggregatePromise]);
 
     const firstError = [
       brandsRes,
       accountsRes,
-      campaignsRes,
-      adSetsRes,
-      adsRes,
-      creativesRes,
       reportsRes,
       syncRunsRes,
+      campaignCountRes,
+      adSetCountRes,
+      adCountRes,
+      creativeCountRes,
     ].find((res) => res.error)?.error;
 
     if (firstError) {
       throw firstError;
     }
 
+    const targetedMetadata = await fetchTargetedDashboardMetadata({
+      supabase,
+      campaignAggregateRows,
+      adSetAggregateRows,
+      creativeAggregateRows,
+    });
+    const targetedMetadataError = [
+      targetedMetadata.adsRes,
+      targetedMetadata.adSetsRes,
+      targetedMetadata.campaignsRes,
+      targetedMetadata.creativesRes,
+    ].find((res) => res.error)?.error;
+
+    if (targetedMetadataError) {
+      throw targetedMetadataError;
+    }
+
     const brands = rows<BrandRow>(brandsRes.data);
     const accounts = rows<AccountRow>(accountsRes.data);
-    const campaigns = rows<CampaignRow>(campaignsRes.data);
-    const adSets = rows<AdSetRow>(adSetsRes.data);
-    const ads = rows<AdRow>(adsRes.data);
-    const creatives = rows<CreativeRow>(creativesRes.data);
+    const campaigns = rows<CampaignRow>(targetedMetadata.campaignsRes.data);
+    const adSets = rows<AdSetRow>(targetedMetadata.adSetsRes.data);
+    const ads = rows<AdRow>(targetedMetadata.adsRes.data);
+    const creatives = rows<CreativeRow>(targetedMetadata.creativesRes.data);
 
     const brandById = new Map(brands.map((brand) => [brand.id, brand]));
     const campaignById = new Map(campaigns.map((campaign) => [campaign.campaign_id, campaign]));
@@ -464,6 +496,7 @@ export async function fetchDashboardData(
       .sort(bySpendDesc);
 
     const campaignUmbrellas = orderedUmbrellas([
+      ...CAMPAIGN_UMBRELLAS,
       ...byUmbrella.map((row) => row.campaignUmbrella),
       ...campaigns.map((campaign) => resolveUmbrella(campaign.campaign_umbrella)),
       ...adSets.map((adSet) => resolveUmbrella(adSet.campaign_umbrella)),
@@ -631,10 +664,10 @@ export async function fetchDashboardData(
       recordCounts: {
         brands: brands.length,
         meta_ad_accounts: accounts.length,
-        meta_campaigns: campaigns.length,
-        meta_ad_sets: adSets.length,
-        meta_ads: ads.length,
-        meta_creatives: creatives.length,
+        meta_campaigns: campaignCountRes.count || campaigns.length,
+        meta_ad_sets: adSetCountRes.count || adSets.length,
+        meta_ads: adCountRes.count || ads.length,
+        meta_creatives: creativeCountRes.count || creatives.length,
         meta_daily_insights: overviewRows[0]?.source_rows || 0,
         aggregate_by_brand: byBrandRows.length,
         aggregate_by_umbrella: byUmbrellaRows.length,
@@ -688,6 +721,98 @@ export async function fetchDashboardData(
     }
     throw error;
   }
+}
+
+async function fetchTargetedDashboardMetadata({
+  supabase,
+  campaignAggregateRows,
+  adSetAggregateRows,
+  creativeAggregateRows,
+}: {
+  supabase: ReturnType<typeof createServiceClient>;
+  campaignAggregateRows: MetaInsightAggregateRow[];
+  adSetAggregateRows: MetaInsightAggregateRow[];
+  creativeAggregateRows: MetaInsightAggregateRow[];
+}) {
+  const creativeIds = uniqueRemoteIds(creativeAggregateRows.map((row) => row.creative_id));
+  const campaignAggregateIds = uniqueRemoteIds(campaignAggregateRows.map((row) => row.campaign_id));
+  const adSetAggregateIds = uniqueRemoteIds(adSetAggregateRows.map((row) => row.ad_set_id));
+
+  const [adsRes, creativesRes] = await Promise.all([
+    selectRowsByRemoteId<AdRow>(supabase, "meta_ads", AD_COLUMNS, "creative_id", creativeIds),
+    selectRowsByRemoteId<CreativeRow>(
+      supabase,
+      "meta_creatives",
+      CREATIVE_COLUMNS,
+      "creative_id",
+      creativeIds,
+    ),
+  ]);
+
+  const ads = rows<AdRow>(adsRes.data);
+  const adSetIds = uniqueRemoteIds([
+    ...adSetAggregateIds,
+    ...ads.map((ad) => ad.ad_set_id),
+  ]);
+  const adSetsRes = await selectRowsByRemoteId<AdSetRow>(
+    supabase,
+    "meta_ad_sets",
+    AD_SET_COLUMNS,
+    "ad_set_id",
+    adSetIds,
+  );
+
+  const adSets = rows<AdSetRow>(adSetsRes.data);
+  const campaignIds = uniqueRemoteIds([
+    ...campaignAggregateIds,
+    ...ads.map((ad) => ad.campaign_id),
+    ...adSets.map((adSet) => adSet.campaign_id),
+  ]);
+  const campaignsRes = await selectRowsByRemoteId<CampaignRow>(
+    supabase,
+    "meta_campaigns",
+    CAMPAIGN_COLUMNS,
+    "campaign_id",
+    campaignIds,
+  );
+
+  return {
+    adsRes,
+    adSetsRes,
+    campaignsRes,
+    creativesRes,
+  };
+}
+
+type MetadataQueryResult<T> = {
+  data: T[] | null;
+  error: Error | null;
+};
+
+async function selectRowsByRemoteId<T>(
+  supabase: ReturnType<typeof createServiceClient>,
+  table: string,
+  columns: string,
+  idColumn: string,
+  ids: string[],
+): Promise<MetadataQueryResult<T>> {
+  if (!ids.length) return { data: [], error: null };
+
+  const client = supabase as unknown as {
+    from: (tableName: string) => {
+      select: (columnList: string) => {
+        in: (columnName: string, values: string[]) => Promise<MetadataQueryResult<T>>;
+      };
+    };
+  };
+
+  return client.from(table).select(columns).in(idColumn, ids);
+}
+
+function uniqueRemoteIds(values: Array<string | null | undefined>) {
+  return Array.from(
+    new Set(values.filter((value): value is string => Boolean(value && value !== "unknown"))),
+  );
 }
 
 function summaryFromAggregate(

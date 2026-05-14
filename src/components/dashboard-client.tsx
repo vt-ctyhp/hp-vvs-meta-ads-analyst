@@ -17,7 +17,15 @@ import {
   Sparkles,
   Table2,
 } from "lucide-react";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  type FormEvent,
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   CartesianGrid,
   Line,
@@ -51,6 +59,18 @@ const SORT_LABELS: Record<SortKey, string> = {
   frequency: "Frequency",
 };
 
+const MONEY_FORMATTER_WITH_CENTS = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  maximumFractionDigits: 2,
+});
+const MONEY_FORMATTER_WHOLE = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  maximumFractionDigits: 0,
+});
+const NUMBER_FORMATTER = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+
 export function DashboardClient({ initialData }: Props) {
   const data = initialData;
   const [brand, setBrand] = useState("all");
@@ -70,6 +90,11 @@ export function DashboardClient({ initialData }: Props) {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [isChatting, setIsChatting] = useState(false);
   const [hidePdfFinancials, setHidePdfFinancials] = useState(false);
+  const deferredQuery = useDeferredValue(query);
+  const normalizedQuery = useMemo(
+    () => deferredQuery.trim().toLowerCase(),
+    [deferredQuery],
+  );
 
   useEffect(() => {
     setStartDate(data.sourceTransparency.timeRange.start || "");
@@ -89,25 +114,34 @@ export function DashboardClient({ initialData }: Props) {
 
   const filteredCampaigns = useMemo(
     () =>
-      data.campaigns
-        .filter((row) => rowMatchesFilters(row, brand, umbrella, query))
-        .sort((a, b) => Number(b[sortKey] || 0) - Number(a[sortKey] || 0)),
-    [brand, data.campaigns, query, sortKey, umbrella],
+      filterAndSortRows(data.campaigns, brand, umbrella, normalizedQuery, sortKey),
+    [brand, data.campaigns, normalizedQuery, sortKey, umbrella],
   );
 
   const filteredAdSets = useMemo(
     () =>
-      data.adSets
-        .filter((row) => rowMatchesFilters(row, brand, umbrella, query))
-        .sort((a, b) => Number(b[sortKey] || 0) - Number(a[sortKey] || 0)),
-    [brand, data.adSets, query, sortKey, umbrella],
+      filterAndSortRows(data.adSets, brand, umbrella, normalizedQuery, sortKey),
+    [brand, data.adSets, normalizedQuery, sortKey, umbrella],
   );
 
   const filteredCreatives = useMemo(() => {
-    return data.creatives
-      .filter((creative) => rowMatchesFilters(creative, brand, umbrella, query))
-      .sort((a, b) => Number(b[sortKey] || 0) - Number(a[sortKey] || 0));
-  }, [brand, data.creatives, query, sortKey, umbrella]);
+    return filterAndSortRows(data.creatives, brand, umbrella, normalizedQuery, sortKey);
+  }, [brand, data.creatives, normalizedQuery, sortKey, umbrella]);
+
+  const visibleCampaigns = useMemo(() => filteredCampaigns.slice(0, 10), [filteredCampaigns]);
+  const visibleAdSets = useMemo(() => filteredAdSets.slice(0, 10), [filteredAdSets]);
+  const visibleCreativeTableRows = useMemo(
+    () => filteredCreatives.slice(0, 50),
+    [filteredCreatives],
+  );
+  const visibleCreativeCardRows = useMemo(
+    () => filteredCreatives.slice(0, 18),
+    [filteredCreatives],
+  );
+  const visibleCreativeGalleryRows = useMemo(
+    () => filteredCreatives.slice(0, 24),
+    [filteredCreatives],
+  );
 
   const trendRows = useMemo(() => {
     const byDate = new Map<string, Record<string, string | number>>();
@@ -125,7 +159,7 @@ export function DashboardClient({ initialData }: Props) {
     return Array.from(byDate.values());
   }, [brand, data.dailyTrend, umbrella]);
 
-  async function runManualSync() {
+  const runManualSync = useCallback(async function runManualSync() {
     setIsSyncing(true);
     try {
       const response = await fetch("/api/sync", { method: "POST" });
@@ -137,9 +171,9 @@ export function DashboardClient({ initialData }: Props) {
     } finally {
       setIsSyncing(false);
     }
-  }
+  }, []);
 
-  async function generateReport() {
+  const generateReport = useCallback(async function generateReport() {
     setIsReporting(true);
     setReportStatus("");
     try {
@@ -161,9 +195,9 @@ export function DashboardClient({ initialData }: Props) {
     } finally {
       setIsReporting(false);
     }
-  }
+  }, [data.sourceTransparency.timeRange.days, endDate, startDate]);
 
-  async function sendChatMessage() {
+  const sendChatMessage = useCallback(async function sendChatMessage() {
     const message = chatInput.trim();
     if (!message) return;
     setChatInput("");
@@ -200,9 +234,9 @@ export function DashboardClient({ initialData }: Props) {
     } finally {
       setIsChatting(false);
     }
-  }
+  }, [chatInput, chatSessionId, data.sourceTransparency.timeRange.days, endDate, startDate]);
 
-  function applyDateRange(nextStart = startDate, nextEnd = endDate) {
+  const applyDateRange = useCallback(function applyDateRange(nextStart = startDate, nextEnd = endDate) {
     if (!nextStart || !nextEnd) return;
     const url = new URL(window.location.href);
     url.searchParams.set("start", nextStart);
@@ -210,17 +244,17 @@ export function DashboardClient({ initialData }: Props) {
     url.searchParams.delete("days");
     setIsApplyingRange(true);
     window.location.assign(url.toString());
-  }
+  }, [endDate, startDate]);
 
-  function applyQuickRange(days: number) {
+  const applyQuickRange = useCallback(function applyQuickRange(days: number) {
     const end = data.sourceTransparency.timeRange.end || toDateInput(new Date());
     const start = shiftDate(end, -(days - 1));
     setStartDate(start);
     setEndDate(end);
     applyDateRange(start, end);
-  }
+  }, [applyDateRange, data.sourceTransparency.timeRange.end]);
 
-  async function exportCreativesPdf() {
+  const exportCreativesPdf = useCallback(async function exportCreativesPdf() {
     const activeRange = data.sourceTransparency.timeRange;
     const hideFinancialSort = hidePdfFinancials && isFinancialSortKey(sortKey);
     const exportRows = hideFinancialSort
@@ -243,7 +277,17 @@ export function DashboardClient({ initialData }: Props) {
     });
 
     await printHtmlDocument(html);
-  }
+  }, [
+    brand,
+    data.sourceTransparency.timeRange,
+    endDate,
+    filteredCreatives,
+    hidePdfFinancials,
+    query,
+    sortKey,
+    startDate,
+    umbrella,
+  ]);
 
   if (!data.configured) {
     return (
@@ -434,8 +478,8 @@ export function DashboardClient({ initialData }: Props) {
 
       <section className="mx-auto mt-8 grid w-full max-w-7xl min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,360px)]">
         <div className="min-w-0 space-y-8">
-          <PerformanceSection title="Campaign Performance" rows={filteredCampaigns.slice(0, 10)} />
-          <PerformanceSection title="Ad Set Performance" rows={filteredAdSets.slice(0, 10)} />
+          <PerformanceSection title="Campaign Performance" rows={visibleCampaigns} />
+          <PerformanceSection title="Ad Set Performance" rows={visibleAdSets} />
 
           <div className="min-w-0 border border-hp-rule bg-hp-card p-4 sm:p-6">
             <SectionHeader
@@ -462,9 +506,9 @@ export function DashboardClient({ initialData }: Props) {
                 </div>
               }
             />
-            {viewMode === "table" && <CreativeTable rows={filteredCreatives.slice(0, 50)} />}
-            {viewMode === "cards" && <CreativeCards rows={filteredCreatives.slice(0, 18)} />}
-            {viewMode === "gallery" && <CreativeGallery rows={filteredCreatives.slice(0, 24)} />}
+            {viewMode === "table" && <CreativeTable rows={visibleCreativeTableRows} />}
+            {viewMode === "cards" && <CreativeCards rows={visibleCreativeCardRows} />}
+            {viewMode === "gallery" && <CreativeGallery rows={visibleCreativeGalleryRows} />}
           </div>
         </div>
 
@@ -517,7 +561,7 @@ export function DashboardClient({ initialData }: Props) {
   );
 }
 
-function ShellHeader({ data }: { data: DashboardPayload }) {
+const ShellHeader = memo(function ShellHeader({ data }: { data: DashboardPayload }) {
   const range = data.sourceTransparency.timeRange;
   return (
     <header className="mx-auto flex max-w-7xl flex-col gap-5 border-b border-hp-rule pb-6 md:flex-row md:items-end md:justify-between">
@@ -537,9 +581,9 @@ function ShellHeader({ data }: { data: DashboardPayload }) {
       </div>
     </header>
   );
-}
+});
 
-function SectionHeader({
+const SectionHeader = memo(function SectionHeader({
   eyebrow,
   title,
   actions,
@@ -562,18 +606,18 @@ function SectionHeader({
       <div className="mt-4 h-px bg-hp-rule" />
     </div>
   );
-}
+});
 
-function MetricTile({ label, value }: { label: string; value: string }) {
+const MetricTile = memo(function MetricTile({ label, value }: { label: string; value: string }) {
   return (
     <div className="border border-hp-rule bg-hp-card p-5">
       <div className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">{label}</div>
       <div className="mt-3 text-2xl tabular-nums text-hp-ink">{value}</div>
     </div>
   );
-}
+});
 
-function DataCoverageNotice({ data }: { data: DashboardPayload }) {
+const DataCoverageNotice = memo(function DataCoverageNotice({ data }: { data: DashboardPayload }) {
   const coverage = data.sourceTransparency.dataCoverage;
   if (coverage.isComplete || coverage.expectedDays === 0) return null;
 
@@ -591,9 +635,9 @@ function DataCoverageNotice({ data }: { data: DashboardPayload }) {
       </div>
     </div>
   );
-}
+});
 
-function DateRangeControls({
+const DateRangeControls = memo(function DateRangeControls({
   startDate,
   endDate,
   onStartDateChange,
@@ -659,9 +703,9 @@ function DateRangeControls({
       </div>
     </form>
   );
-}
+});
 
-function SegmentedView({
+const SegmentedView = memo(function SegmentedView({
   value,
   onChange,
 }: {
@@ -690,9 +734,9 @@ function SegmentedView({
       ))}
     </div>
   );
-}
+});
 
-function PerformanceSection({ title, rows }: { title: string; rows: PerformanceRow[] }) {
+const PerformanceSection = memo(function PerformanceSection({ title, rows }: { title: string; rows: PerformanceRow[] }) {
   return (
     <div className="min-w-0 border border-hp-rule bg-hp-card p-4 sm:p-6">
       <SectionHeader eyebrow="Performance" title={title} />
@@ -748,9 +792,9 @@ function PerformanceSection({ title, rows }: { title: string; rows: PerformanceR
       </div>
     </div>
   );
-}
+});
 
-function CreativeTable({ rows }: { rows: PerformanceRow[] }) {
+const CreativeTable = memo(function CreativeTable({ rows }: { rows: PerformanceRow[] }) {
   return (
     <div className="w-full overflow-x-auto">
       <table className="w-full min-w-[840px] table-fixed border-collapse text-sm">
@@ -821,9 +865,9 @@ function CreativeTable({ rows }: { rows: PerformanceRow[] }) {
       </table>
     </div>
   );
-}
+});
 
-function CreativeCards({ rows }: { rows: PerformanceRow[] }) {
+const CreativeCards = memo(function CreativeCards({ rows }: { rows: PerformanceRow[] }) {
   return (
     <div className="grid gap-4 md:grid-cols-2">
       {rows.map((row) => (
@@ -855,9 +899,9 @@ function CreativeCards({ rows }: { rows: PerformanceRow[] }) {
       ))}
     </div>
   );
-}
+});
 
-function CreativeGallery({ rows }: { rows: PerformanceRow[] }) {
+const CreativeGallery = memo(function CreativeGallery({ rows }: { rows: PerformanceRow[] }) {
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {rows.map((row) => (
@@ -886,9 +930,9 @@ function CreativeGallery({ rows }: { rows: PerformanceRow[] }) {
       ))}
     </div>
   );
-}
+});
 
-function CreativePreview({
+const CreativePreview = memo(function CreativePreview({
   creative,
   compact = false,
   gallery = false,
@@ -928,9 +972,9 @@ function CreativePreview({
       <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">No Preview</span>
     </div>
   );
-}
+});
 
-function RiskBadge({ level }: { level?: PerformanceRow["riskLevel"] }) {
+const RiskBadge = memo(function RiskBadge({ level }: { level?: PerformanceRow["riskLevel"] }) {
   const color =
     level === "high"
       ? "text-signal-danger"
@@ -943,9 +987,9 @@ function RiskBadge({ level }: { level?: PerformanceRow["riskLevel"] }) {
       {level || "low"}
     </span>
   );
-}
+});
 
-function ResultCell({ row, align = "left" }: { row: PerformanceRow; align?: "left" | "right" }) {
+const ResultCell = memo(function ResultCell({ row, align = "left" }: { row: PerformanceRow; align?: "left" | "right" }) {
   return (
     <div className={align === "right" ? "text-right" : "text-left"}>
       <div className="tabular-nums text-hp-ink">{formatMetric(row.primaryResults, "number")}</div>
@@ -959,18 +1003,18 @@ function ResultCell({ row, align = "left" }: { row: PerformanceRow; align?: "lef
       ) : null}
     </div>
   );
-}
+});
 
-function MiniMetric({ label, value }: { label: string; value: string }) {
+const MiniMetric = memo(function MiniMetric({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{label}</div>
       <div className="mt-1 tabular-nums text-hp-ink">{value}</div>
     </div>
   );
-}
+});
 
-function InsightPanel({
+const InsightPanel = memo(function InsightPanel({
   id,
   title,
   icon,
@@ -1015,9 +1059,9 @@ function InsightPanel({
       ) : null}
     </section>
   );
-}
+});
 
-function ActionPanel({
+const ActionPanel = memo(function ActionPanel({
   isSyncing,
   isReporting,
   reportStatus,
@@ -1053,9 +1097,9 @@ function ActionPanel({
       {reportStatus ? <p className="mt-3 text-sm text-hp-muted">{reportStatus}</p> : null}
     </section>
   );
-}
+});
 
-function ChatPanel({
+const ChatPanel = memo(function ChatPanel({
   messages,
   value,
   isLoading,
@@ -1114,9 +1158,9 @@ function ChatPanel({
       </div>
     </section>
   );
-}
+});
 
-function SourcePanel({ data }: { data: DashboardPayload }) {
+const SourcePanel = memo(function SourcePanel({ data }: { data: DashboardPayload }) {
   const counts = Object.entries(data.sourceTransparency.recordCounts);
   const coverage = data.sourceTransparency.dataCoverage;
   return (
@@ -1147,7 +1191,7 @@ function SourcePanel({ data }: { data: DashboardPayload }) {
       </div>
     </section>
   );
-}
+});
 
 type CreativePdfHtmlOptions = {
   rows: PerformanceRow[];
@@ -1625,25 +1669,44 @@ function escapeHtml(value: string | number | null | undefined) {
   });
 }
 
-function rowMatchesFilters(row: PerformanceRow, brand: string, umbrella: string, query: string) {
+function filterAndSortRows(
+  rows: PerformanceRow[],
+  brand: string,
+  umbrella: string,
+  normalizedQuery: string,
+  sortKey: SortKey,
+) {
+  return rows
+    .filter((row) => rowMatchesFilters(row, brand, umbrella, normalizedQuery))
+    .sort((a, b) => Number(b[sortKey] || 0) - Number(a[sortKey] || 0));
+}
+
+function rowMatchesFilters(
+  row: PerformanceRow,
+  brand: string,
+  umbrella: string,
+  normalizedQuery: string,
+) {
   if (brand !== "all" && row.brandCode !== brand) return false;
   if (umbrella !== "all" && row.campaignUmbrella !== umbrella) return false;
 
-  const normalizedQuery = query.trim().toLowerCase();
   if (!normalizedQuery) return true;
 
-  return [
-    row.name,
-    row.title,
-    row.body,
-    row.brandCode,
-    row.campaignUmbrella,
-    row.objective,
-    row.status,
-    row.effectiveStatus,
-  ]
-    .filter(Boolean)
-    .some((value) => String(value).toLowerCase().includes(normalizedQuery));
+  return (
+    searchValueMatches(row.name, normalizedQuery) ||
+    searchValueMatches(row.title, normalizedQuery) ||
+    searchValueMatches(row.body, normalizedQuery) ||
+    searchValueMatches(row.brandCode, normalizedQuery) ||
+    searchValueMatches(row.campaignUmbrella, normalizedQuery) ||
+    searchValueMatches(row.objective, normalizedQuery) ||
+    searchValueMatches(row.status, normalizedQuery) ||
+    searchValueMatches(row.effectiveStatus, normalizedQuery)
+  );
+}
+
+function searchValueMatches(value: string | null | undefined, normalizedQuery: string) {
+  if (!value) return false;
+  return value.toLowerCase().includes(normalizedQuery);
 }
 
 function isFinancialSortKey(sortKey: SortKey) {
@@ -1663,12 +1726,8 @@ function toDateInput(date: Date) {
 function formatMetric(value: number | null, kind: "money" | "number" | "percent") {
   if (value === null || Number.isNaN(value)) return "n/a";
   if (kind === "money") {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      maximumFractionDigits: value >= 100 ? 0 : 2,
-    }).format(value);
+    return (value >= 100 ? MONEY_FORMATTER_WHOLE : MONEY_FORMATTER_WITH_CENTS).format(value);
   }
   if (kind === "percent") return `${value.toFixed(2)}%`;
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
+  return NUMBER_FORMATTER.format(value);
 }
