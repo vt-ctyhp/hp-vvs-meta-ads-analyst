@@ -800,7 +800,7 @@ function resolveDateRange(dateRange: AnalysisSpec["dateRange"]) {
   );
   let start = isDateString(dateRange.start) ? parseISO(dateRange.start) : subDays(end, days - 1);
   if (start > end) [start, end] = [end, start];
-  const actualDays = Math.max(1, differenceInCalendarDays(end, start) + 1);
+  const actualDays = Math.max(1, differenceInCalendarDays(start, end) + 1);
 
   return {
     start: format(start, "yyyy-MM-dd"),
@@ -1145,7 +1145,12 @@ function inferMetricsFromPrompt(lower: string): AnalysisMetric[] | undefined {
 
 function inferDateRangeFromPrompt(prompt: string): AnalysisSpec["dateRange"] | undefined {
   const lower = prompt.toLowerCase();
-  const explicitDate = extractDate(prompt);
+  const explicitDates = extractDates(prompt);
+  if (explicitDates.length >= 2 && /\bthrough\b|\bto\b|\buntil\b|\bbetween\b|\band\b/.test(lower)) {
+    return { preset: "custom", start: explicitDates[0], end: explicitDates[1] };
+  }
+
+  const explicitDate = explicitDates[0] || null;
   if (explicitDate && /\bsince\b|\bfrom\b|\bstarting\b|\bbeginning\b/.test(lower)) {
     return { preset: "custom", start: explicitDate };
   }
@@ -1157,25 +1162,35 @@ function inferDateRangeFromPrompt(prompt: string): AnalysisSpec["dateRange"] | u
   return undefined;
 }
 
-function extractDate(prompt: string) {
-  const isoMatch = prompt.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/);
-  if (isoMatch) return formatDateParts(Number(isoMatch[1]), Number(isoMatch[2]), Number(isoMatch[3]));
+function extractDates(prompt: string) {
+  const matches: Array<{ index: number; date: string }> = [];
 
-  const slashMatch = prompt.match(/\b(\d{1,2})\/(\d{1,2})\/(20\d{2})\b/);
-  if (slashMatch) return formatDateParts(Number(slashMatch[3]), Number(slashMatch[1]), Number(slashMatch[2]));
-
-  const monthMatch = prompt.match(
-    /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,)?\s+(20\d{2})\b/i,
-  );
-  if (monthMatch) {
-    return formatDateParts(
-      Number(monthMatch[3]),
-      monthNumber(monthMatch[1]),
-      Number(monthMatch[2]),
-    );
+  for (const match of prompt.matchAll(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/g)) {
+    const date = formatDateParts(Number(match[1]), Number(match[2]), Number(match[3]));
+    if (date) matches.push({ index: match.index || 0, date });
   }
 
-  return null;
+  for (const match of prompt.matchAll(/\b(\d{1,2})\/(\d{1,2})\/(20\d{2})\b/g)) {
+    const date = formatDateParts(Number(match[3]), Number(match[1]), Number(match[2]));
+    if (date) matches.push({ index: match.index || 0, date });
+  }
+
+  const monthPattern =
+    /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,)?\s+(20\d{2})\b/gi;
+  for (const match of prompt.matchAll(monthPattern)) {
+    const date = formatDateParts(Number(match[3]), monthNumber(match[1]), Number(match[2]));
+    if (date) matches.push({ index: match.index || 0, date });
+  }
+
+  const seen = new Set<string>();
+  return matches
+    .sort((a, b) => a.index - b.index)
+    .map((match) => match.date)
+    .filter((date) => {
+      if (seen.has(date)) return false;
+      seen.add(date);
+      return true;
+    });
 }
 
 function monthNumber(month: string) {
