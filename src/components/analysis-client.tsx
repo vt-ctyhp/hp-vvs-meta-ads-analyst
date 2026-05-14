@@ -45,9 +45,7 @@ const CHART_COLORS = ["#2A2725", "#245D4D", "#8B5B19", "#8D2E2E", "#E91D79"];
 
 export function AnalysisClient({ initialSaved }: Props) {
   const [mode, setMode] = useState<AnalysisMode>("fast");
-  const [prompt, setPrompt] = useState(
-    "cash for gold ads for the past four weeks, week by week",
-  );
+  const [prompt, setPrompt] = useState("");
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [saved, setSaved] = useState(initialSaved);
   const [loading, setLoading] = useState(false);
@@ -65,6 +63,8 @@ export function AnalysisClient({ initialSaved }: Props) {
     setLoading(true);
     setStatus("");
     setActionStatus("");
+    setResult(null);
+    setTitleDraft("");
     try {
       const response = await fetch("/api/analysis", {
         method: "POST",
@@ -240,11 +240,12 @@ export function AnalysisClient({ initialSaved }: Props) {
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
               rows={6}
+              placeholder="Ad spend by campaign umbrella since January 1, 2026, month by month."
               className="w-full resize-none border border-hp-rule bg-hp-inset p-3 text-sm leading-6 outline-none focus:border-hp-pink"
             />
             <button
               onClick={generateAnalysis}
-              disabled={loading}
+              disabled={loading || !prompt.trim()}
               className="mt-3 flex w-full items-center justify-center gap-2 bg-hp-ink px-4 py-3 text-xs uppercase tracking-[0.14em] text-hp-foundation transition-colors hover:bg-hp-pink"
             >
               {loading ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}

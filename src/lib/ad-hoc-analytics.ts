@@ -194,6 +194,18 @@ type MetricAccumulator = {
   bookings: number;
   conversions: number;
 };
+type PromptIntent = {
+  dateRange?: AnalysisSpec["dateRange"];
+  grain?: AnalysisGrain;
+  dimensions?: AnalysisDimension[];
+  metrics?: AnalysisMetric[];
+  sort?: AnalysisSpec["sort"];
+  limit?: number;
+  tableOnly?: boolean;
+  tableTitle?: string;
+  title?: string;
+  stripCashForGoldFilter?: boolean;
+};
 
 const metricSchema = z.enum(ANALYSIS_METRICS);
 const dimensionSchema = z.enum(ANALYSIS_DIMENSIONS);
@@ -510,10 +522,12 @@ async function createSpecWithAI(prompt: string, model: string) {
             datePresets: DATE_PRESETS,
           },
           rules: [
-            "For free-text ad concepts like cash for gold, use a search filter.",
-            "For past four weeks week by week, use preset last_4_weeks, grain weekly, dimensions ['week'].",
-            "Prefer metrics spend, impressions, clicks, ctr, cpc, leads, cpl for performance comparisons.",
-            "Use table plus line or bar widgets for comparison requests.",
+            "Map campaign umbrella, internal campaign umbrella, or umbrella to the campaign_umbrella dimension. Do not use a search filter for that.",
+            "For month by month, monthly, or by month, use grain monthly and include the month dimension.",
+            "For since/from/starting a specific date, use preset custom with start as YYYY-MM-DD and omit end unless the user gives one.",
+            "For ad spend or spend-only requests, include spend first; if no other metric is requested, use only spend.",
+            "Use search filters only for free-text ad concepts, product names, or campaign/ad text explicitly named by the user.",
+            "For table-format requests, return a table widget first and add charts only when the user asks for charts.",
             "Keep limits at or below 50 unless the user asks for a leaderboard.",
           ],
         }),
@@ -566,6 +580,10 @@ async function editSpecWithAI(input: {
             "If the user says add a chart/table/metric, append an appropriate widget.",
             "If the user says rearrange, update the widgets array order.",
             "If the user asks to compare by campaign, ad set, ad, creative, brand, or umbrella, adjust dimensions accordingly.",
+            "Map campaign umbrella, internal campaign umbrella, or umbrella to campaign_umbrella, not to a search filter.",
+            "For month by month, monthly, or by month, use grain monthly and include the month dimension.",
+            "For since/from/starting a specific date, use preset custom with start as YYYY-MM-DD and omit end unless the user gives one.",
+            "For ad spend or spend-only requests, include spend first; if no other metric is requested, use only spend.",
             "Keep limits at or below 50 unless the user asks for a leaderboard.",
           ],
         }),
@@ -747,13 +765,23 @@ async function aggregateSpec(spec: AnalysisSpec) {
 
 function normalizeSpec(value: unknown, prompt: string): AnalysisSpec {
   const parsed = analysisSpecSchema.safeParse(value);
-  const base = parsed.success ? parsed.data : fallbackSpec(prompt);
+  const intent = inferPromptIntent(prompt);
+  const base = applyPromptIntent(parsed.success ? parsed.data : fallbackSpec(prompt), intent);
   const dimensions = normalizeDimensions(base.dimensions, base.grain);
   const metrics = uniqueAllowed(base.metrics, ANALYSIS_METRICS, DEFAULT_METRICS);
   const filters = base.filters
     .map((filter) => ({ ...filter, value: filter.value.trim() }))
     .filter((filter) => filter.value);
-  const widgets = normalizeWidgets(base.widgets, dimensions, metrics, base.grain);
+  const widgets = intent.tableOnly
+    ? [
+        {
+          type: "table" as const,
+          title: intent.tableTitle || "Comparison table",
+          x: dimensions[0],
+          metrics,
+        },
+      ]
+    : normalizeWidgets(base.widgets, dimensions, metrics, base.grain);
 
   return {
     title: base.title,
@@ -807,17 +835,27 @@ function normalizeWidgets(
 function fallbackSpec(prompt: string): AnalysisSpec {
   const weekly = /week|weekly|four|4/i.test(prompt);
   const search = inferSearchTerm(prompt);
+  const intent = inferPromptIntent(prompt);
 
   return {
     title: titleFromPrompt(prompt),
-    dateRange: { preset: weekly ? "last_4_weeks" : "last_30_days" },
-    grain: weekly ? "weekly" : "summary",
-    dimensions: weekly ? ["week"] : ["brand"],
+    dateRange: intent.dateRange || { preset: weekly ? "last_4_weeks" : "last_30_days" },
+    grain: intent.grain || (weekly ? "weekly" : "summary"),
+    dimensions: intent.dimensions || (weekly ? ["week"] : ["brand"]),
     filters: search ? [{ field: "search", operator: "contains", value: search }] : [],
-    metrics: DEFAULT_METRICS,
-    sort: weekly ? { field: "week", direction: "asc" } : { field: "spend", direction: "desc" },
-    limit: 50,
-    widgets: [],
+    metrics: intent.metrics || DEFAULT_METRICS,
+    sort: intent.sort || (weekly ? { field: "week", direction: "asc" } : { field: "spend", direction: "desc" }),
+    limit: intent.limit || 50,
+    widgets: intent.tableOnly
+      ? [
+          {
+            type: "table",
+            title: intent.tableTitle || "Comparison table",
+            x: intent.dimensions?.[0],
+            metrics: intent.metrics || DEFAULT_METRICS,
+          },
+        ]
+      : [],
   };
 }
 
@@ -915,16 +953,31 @@ function sortRows(rowsForTable: Array<Record<string, string | number | null>>, s
   const firstDimension = spec.dimensions[0];
   const field = sort?.field || (["date", "week", "month"].includes(firstDimension) ? firstDimension : "spend");
   const direction = sort?.direction || (field === "date" || field === "week" || field === "month" ? "asc" : "desc");
+  const tieBreakers = spec.dimensions.filter((dimension) => dimension !== field);
 
   return [...rowsForTable].sort((a, b) => {
-    const aValue = a[field] ?? "";
-    const bValue = b[field] ?? "";
-    const result =
-      typeof aValue === "number" && typeof bValue === "number"
-        ? aValue - bValue
-        : String(aValue).localeCompare(String(bValue));
-    return direction === "asc" ? result : -result;
+    const result = compareRowValues(a[field], b[field]);
+    if (result !== 0) return direction === "asc" ? result : -result;
+
+    for (const tieBreaker of tieBreakers) {
+      const tieResult = compareRowValues(a[tieBreaker], b[tieBreaker]);
+      if (tieResult !== 0) return tieResult;
+    }
+
+    return 0;
   });
+}
+
+function compareRowValues(
+  aValue: string | number | null | undefined,
+  bValue: string | number | null | undefined,
+) {
+  const aNormalized = aValue ?? "";
+  const bNormalized = bValue ?? "";
+  if (typeof aNormalized === "number" && typeof bNormalized === "number") {
+    return aNormalized - bNormalized;
+  }
+  return String(aNormalized).localeCompare(String(bNormalized));
 }
 
 function deriveMetrics(metrics: MetricAccumulator): Record<AnalysisMetric, number | null> {
@@ -1076,6 +1129,7 @@ function buildDeterministicAnswer(
   const spend = aggregated.totals.spend ?? 0;
   const leads = aggregated.totals.leads ?? 0;
   const cpl = aggregated.totals.cpl;
+  const includesLeadMetrics = spec.metrics.some((metric) => metric === "leads" || metric === "cpl");
   const firstMetric = spec.metrics.find((metric) => metric !== "impressions") || "spend";
   const bestRow = [...aggregated.table.rows].sort((a, b) => {
     const aValue = Number(a[firstMetric] || 0);
@@ -1085,7 +1139,9 @@ function buildDeterministicAnswer(
 
   return [
     `${spec.title} returned ${aggregated.table.rows.length} grouped rows from ${aggregated.sourceTransparency.recordCounts.matched_insights} matching daily records.`,
-    `Total spend was ${formatMoney(spend)}, with ${formatNumber(leads)} leads${cpl === null ? "" : ` at ${formatMoney(cpl)} CPL`}.`,
+    includesLeadMetrics
+      ? `Total spend was ${formatMoney(spend)}, with ${formatNumber(leads)} leads${cpl === null ? "" : ` at ${formatMoney(cpl)} CPL`}.`
+      : `Total spend was ${formatMoney(spend)}.`,
     bestRow ? `Highest ${labelFor(firstMetric).toLowerCase()} row: ${describeRow(bestRow, spec.dimensions)}.` : "",
   ]
     .filter(Boolean)
@@ -1119,6 +1175,174 @@ function isLikelyTooBroad(spec: AnalysisSpec, days: number) {
     ["campaign", "ad_set", "ad", "creative"].includes(dimension),
   );
   return days > 120 && spec.filters.length === 0 && highCardinality;
+}
+
+function inferPromptIntent(prompt: string): PromptIntent {
+  const lower = prompt.toLowerCase();
+  const dimensions = inferDimensionsFromPrompt(lower);
+  const dateRange = inferDateRangeFromPrompt(prompt);
+  const wantsMonthly = /\bmonth(?:\s+by\s+month|ly)?\b|\bby month\b|month-by-month/i.test(prompt);
+  const wantsWeekly = /\bweek(?:\s+by\s+week|ly)?\b|\bby week\b|week-by-week/i.test(prompt);
+  const wantsDaily = /\bday(?:\s+by\s+day)?\b|\bdaily\b|\bby day\b|day-by-day/i.test(prompt);
+  const metrics = inferMetricsFromPrompt(lower);
+  const tableOnly = /\btable\b|\btable format\b|\btabular\b/i.test(prompt) && !/\bchart\b|\bgraph\b|\bline\b|\bbar\b/i.test(prompt);
+  const firstDimension = dimensions?.[0];
+
+  return {
+    dateRange,
+    grain: wantsMonthly ? "monthly" : wantsWeekly ? "weekly" : wantsDaily ? "daily" : undefined,
+    dimensions,
+    metrics,
+    sort: firstDimension
+      ? {
+          field: firstDimension,
+          direction: "asc",
+        }
+      : undefined,
+    limit: dimensions?.includes("campaign_umbrella") ? MAX_TABLE_ROWS : undefined,
+    tableOnly,
+    tableTitle:
+      tableOnly && dimensions?.includes("campaign_umbrella") && dimensions.includes("month")
+        ? "Monthly spend by campaign umbrella"
+        : undefined,
+    title:
+      dimensions?.includes("campaign_umbrella") && dimensions.includes("month") && metrics?.length === 1 && metrics[0] === "spend"
+        ? "Ad spend by campaign umbrella by month"
+        : undefined,
+    stripCashForGoldFilter: !lower.includes("cash for gold"),
+  };
+}
+
+function applyPromptIntent(spec: AnalysisSpec, intent: PromptIntent): AnalysisSpec {
+  return {
+    ...spec,
+    title: intent.title || spec.title,
+    dateRange: intent.dateRange || spec.dateRange,
+    grain: intent.grain || spec.grain,
+    dimensions: intent.dimensions || spec.dimensions,
+    filters: intent.stripCashForGoldFilter
+      ? spec.filters.filter((filter) => !filter.value.toLowerCase().includes("cash for gold"))
+      : spec.filters,
+    metrics: intent.metrics || spec.metrics,
+    sort: intent.sort || spec.sort,
+    limit: intent.limit || spec.limit,
+    widgets: intent.tableOnly
+      ? [
+          {
+            type: "table",
+            title: intent.tableTitle || "Comparison table",
+            x: intent.dimensions?.[0] || spec.dimensions[0],
+            metrics: intent.metrics || spec.metrics,
+          },
+        ]
+      : spec.widgets,
+  };
+}
+
+function inferDimensionsFromPrompt(lower: string): AnalysisDimension[] | undefined {
+  const wantsMonth = /\bmonth(?:\s+by\s+month|ly)?\b|\bby month\b|month-by-month/.test(lower);
+  const wantsWeek = /\bweek(?:\s+by\s+week|ly)?\b|\bby week\b|week-by-week/.test(lower);
+  const wantsDay = /\bday(?:\s+by\s+day)?\b|\bdaily\b|\bby day\b|day-by-day/.test(lower);
+  const wantsUmbrella = /\bcampaign[-\s]?umbrellas?\b|\binternal campaign umbrellas?\b|\bumbrellas?\b/.test(lower);
+  const wantsCampaign = /\bcampaigns?\b/.test(lower);
+  const wantsAdSet = /\bad sets?\b/.test(lower);
+  const wantsAd = /\bads?\b/.test(lower);
+  const wantsCreative = /\bcreatives?\b/.test(lower);
+  const wantsBrand = /\bbrands?\b/.test(lower);
+  const dimensions: AnalysisDimension[] = [];
+
+  if (wantsMonth) dimensions.push("month");
+  else if (wantsWeek) dimensions.push("week");
+  else if (wantsDay) dimensions.push("date");
+
+  if (wantsUmbrella) dimensions.push("campaign_umbrella");
+  else if (wantsAdSet) dimensions.push("ad_set");
+  else if (wantsCreative) dimensions.push("creative");
+  else if (wantsAd) dimensions.push("ad");
+  else if (wantsCampaign) dimensions.push("campaign");
+  else if (wantsBrand) dimensions.push("brand");
+
+  return dimensions.length ? dimensions : undefined;
+}
+
+function inferMetricsFromPrompt(lower: string): AnalysisMetric[] | undefined {
+  const requested: AnalysisMetric[] = [];
+  const add = (metric: AnalysisMetric) => {
+    if (!requested.includes(metric)) requested.push(metric);
+  };
+
+  if (/\bad spend\b|\bspend\b|\bspent\b|\bcost\b/.test(lower)) add("spend");
+  if (/\bimpressions?\b/.test(lower)) add("impressions");
+  if (/\breach\b/.test(lower)) add("reach");
+  if (/\bclicks?\b/.test(lower)) add("clicks");
+  if (/\bleads?\b/.test(lower)) add("leads");
+  if (/\bbookings?\b|\bappointments?\b/.test(lower)) add("bookings");
+  if (/\bconversions?\b/.test(lower)) add("conversions");
+  if (/\bctr\b/.test(lower)) add("ctr");
+  if (/\bcpm\b/.test(lower)) add("cpm");
+  if (/\bcpc\b/.test(lower)) add("cpc");
+  if (/\bcpl\b/.test(lower)) add("cpl");
+  if (/\bfrequency\b/.test(lower)) add("frequency");
+
+  return requested.length ? requested : undefined;
+}
+
+function inferDateRangeFromPrompt(prompt: string): AnalysisSpec["dateRange"] | undefined {
+  const lower = prompt.toLowerCase();
+  const explicitDate = extractDate(prompt);
+  if (explicitDate && /\bsince\b|\bfrom\b|\bstarting\b|\bbeginning\b/.test(lower)) {
+    return { preset: "custom", start: explicitDate };
+  }
+
+  if (/\bytd\b|\byear to date\b|\bthis year\b/.test(lower)) {
+    return { preset: "custom", start: `${new Date().getFullYear()}-01-01` };
+  }
+
+  return undefined;
+}
+
+function extractDate(prompt: string) {
+  const isoMatch = prompt.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/);
+  if (isoMatch) return formatDateParts(Number(isoMatch[1]), Number(isoMatch[2]), Number(isoMatch[3]));
+
+  const slashMatch = prompt.match(/\b(\d{1,2})\/(\d{1,2})\/(20\d{2})\b/);
+  if (slashMatch) return formatDateParts(Number(slashMatch[3]), Number(slashMatch[1]), Number(slashMatch[2]));
+
+  const monthMatch = prompt.match(
+    /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,)?\s+(20\d{2})\b/i,
+  );
+  if (monthMatch) {
+    return formatDateParts(
+      Number(monthMatch[3]),
+      monthNumber(monthMatch[1]),
+      Number(monthMatch[2]),
+    );
+  }
+
+  return null;
+}
+
+function monthNumber(month: string) {
+  const key = month.slice(0, 3).toLowerCase();
+  return ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(key) + 1;
+}
+
+function formatDateParts(year: number, month: number, day: number) {
+  if (!year || !month || !day) return null;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return [
+    String(year).padStart(4, "0"),
+    String(month).padStart(2, "0"),
+    String(day).padStart(2, "0"),
+  ].join("-");
 }
 
 function createOpenAIClient() {
