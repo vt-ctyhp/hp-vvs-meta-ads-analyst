@@ -49,6 +49,8 @@ The inbox sync button calls `POST /api/social-inbox/sync`. It validates the soci
 
 `/api/meta/webhook` is the signed Meta callback for future message/comment delivery. `GET` handles Meta verification using `META_WEBHOOK_VERIFY_TOKEN`; `POST` verifies `X-Hub-Signature-256`, normalizes message/comment events, and stores them in the social inbox tables. This is the preferred path for Facebook Messenger events when Meta's historical conversations edge does not return data.
 
+Production is subscribed to the HP Page for `messages`, `message_echoes`, and `messaging_postbacks`. Manual sync can prove Instagram historical data flow; Facebook Messenger should be tested by sending a new Page message after webhook subscription.
+
 ## AI Retrieval
 
 Reports and chat call the Supabase-backed dashboard retrieval layer before invoking OpenAI. The retrieved context includes:

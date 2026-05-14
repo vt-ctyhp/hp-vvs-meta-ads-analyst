@@ -425,7 +425,7 @@ async function safeSyncConversations(input: ConversationSyncInput) {
     return {
       threads: 0,
       messages: 0,
-      errors: [`${input.platform} messages: ${errorToMessage(error)}`],
+      errors: [`${input.platform} messages: ${conversationSyncErrorMessage(input.platform, error)}`],
     };
   }
 }
@@ -1051,4 +1051,19 @@ function isRecord(value: unknown): value is JsonRecord {
 function errorToMessage(error: unknown) {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function conversationSyncErrorMessage(platform: "facebook" | "instagram", error: unknown) {
+  const message = errorToMessage(error);
+  if (platform !== "facebook") return message;
+
+  if (error instanceof MetaSocialGraphError && isRecord(error.details)) {
+    const graphError = recordField(error.details.error);
+    const code = numberField(graphError.code);
+    if (code === 1 || code === 2) {
+      return `Meta is not returning historical Facebook Messenger conversations for this Page via polling. Webhook capture is configured for new Facebook messages. Last Meta error: ${message}`;
+    }
+  }
+
+  return message;
 }
