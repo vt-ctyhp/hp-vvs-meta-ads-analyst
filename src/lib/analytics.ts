@@ -306,71 +306,79 @@ export async function fetchDashboardData(
         .order("started_at", { ascending: false })
         .limit(8),
     ]);
-    const aggregatePromise = Promise.all([
-      aggregateMetaInsights({
-        start: dateRange.start,
-        end: dateRange.end,
-        dimensions: [],
-        sortField: "spend",
-        sortDirection: "desc",
-        limit: 1,
-      }),
-      aggregateMetaInsights({
-        start: dateRange.start,
-        end: dateRange.end,
-        dimensions: ["brand"],
-        sortField: "spend",
-        sortDirection: "desc",
-        limit: 100,
-      }),
-      aggregateMetaInsights({
-        start: dateRange.start,
-        end: dateRange.end,
-        dimensions: ["campaign_umbrella"],
-        sortField: "spend",
-        sortDirection: "desc",
-        limit: 100,
-      }),
-      aggregateMetaInsights({
-        start: dateRange.start,
-        end: dateRange.end,
-        dimensions: ["campaign"],
-        sortField: "spend",
-        sortDirection: "desc",
-        limit: 5000,
-      }),
-      aggregateMetaInsights({
-        start: dateRange.start,
-        end: dateRange.end,
-        dimensions: ["ad_set"],
-        sortField: "spend",
-        sortDirection: "desc",
-        limit: 5000,
-      }),
-      aggregateMetaInsights({
-        start: dateRange.start,
-        end: dateRange.end,
-        dimensions: ["creative"],
-        sortField: "spend",
-        sortDirection: "desc",
-        limit: 5000,
-      }),
-      aggregateMetaInsights({
-        start: dateRange.start,
-        end: dateRange.end,
-        dimensions: ["date", "brand", "campaign_umbrella"],
-        sortField: "date",
-        sortDirection: "asc",
-        limit: 10000,
-      }),
-      aggregateMetaInsights({
-        start: dateRange.start,
-        end: dateRange.end,
-        dimensions: ["date"],
-        sortField: "date",
-        sortDirection: "asc",
-        limit: dateRange.days + 5,
-      }),
+    const aggregatePromise = runSequential([
+      () =>
+        aggregateMetaInsights({
+          start: dateRange.start,
+          end: dateRange.end,
+          dimensions: [],
+          sortField: "spend",
+          sortDirection: "desc",
+          limit: 1,
+        }),
+      () =>
+        aggregateMetaInsights({
+          start: dateRange.start,
+          end: dateRange.end,
+          dimensions: ["brand"],
+          sortField: "spend",
+          sortDirection: "desc",
+          limit: 100,
+        }),
+      () =>
+        aggregateMetaInsights({
+          start: dateRange.start,
+          end: dateRange.end,
+          dimensions: ["campaign_umbrella"],
+          sortField: "spend",
+          sortDirection: "desc",
+          limit: 100,
+        }),
+      () =>
+        aggregateMetaInsights({
+          start: dateRange.start,
+          end: dateRange.end,
+          dimensions: ["campaign"],
+          sortField: "spend",
+          sortDirection: "desc",
+          limit: 5000,
+        }),
+      () =>
+        aggregateMetaInsights({
+          start: dateRange.start,
+          end: dateRange.end,
+          dimensions: ["ad_set"],
+          sortField: "spend",
+          sortDirection: "desc",
+          limit: 5000,
+        }),
+      () =>
+        aggregateMetaInsights({
+          start: dateRange.start,
+          end: dateRange.end,
+          dimensions: ["creative"],
+          sortField: "spend",
+          sortDirection: "desc",
+          limit: 5000,
+        }),
+      () =>
+        aggregateMetaInsights({
+          start: dateRange.start,
+          end: dateRange.end,
+          dimensions: ["date", "brand", "campaign_umbrella"],
+          sortField: "date",
+          sortDirection: "asc",
+          limit: 10000,
+        }),
+      () =>
+        aggregateMetaInsights({
+          start: dateRange.start,
+          end: dateRange.end,
+          dimensions: ["date"],
+          sortField: "date",
+          sortDirection: "asc",
+          limit: dateRange.days + 5,
+        }),
     ]);
 
     const [
@@ -777,6 +785,14 @@ export function formatMetric(value: number | null, kind: "money" | "number" | "p
 
 function rows<T>(data: unknown): T[] {
   return Array.isArray(data) ? (data as T[]) : [];
+}
+
+async function runSequential<T>(tasks: Array<() => Promise<T>>) {
+  const results: T[] = [];
+  for (const task of tasks) {
+    results.push(await task());
+  }
+  return results;
 }
 
 function resolveDashboardDateRange(input: number | DashboardDateRangeInput) {
