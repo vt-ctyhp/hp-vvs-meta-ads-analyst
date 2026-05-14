@@ -244,8 +244,14 @@ export function SocialInboxClient({ status }: { status: SocialInboxStatus }) {
                   <li>Human click required for every reply.</li>
                   <li>Campaign/ad mutation remains disabled.</li>
                   <li>
-                    Facebook comment replies remain limited until{" "}
-                    <span className="text-hp-ink">pages_manage_engagement</span> is granted.
+                    {status.readiness.socialReply ? (
+                      "Facebook comment replies are permission-ready; send APIs must still enforce human approval."
+                    ) : (
+                      <>
+                        Facebook comment replies remain limited until{" "}
+                        <span className="text-hp-ink">pages_manage_engagement</span> is granted.
+                      </>
+                    )}
                   </li>
                 </ul>
               </div>
