@@ -1,0 +1,3 @@
+-- Placeholder for a migration version already present in the linked Supabase
+-- project history. Keep this file so local migration history can align with
+-- remote without reverting or replaying an already-applied migration.
