@@ -17,7 +17,7 @@ import {
   Sparkles,
   Table2,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import {
   CartesianGrid,
   Line,
@@ -52,11 +52,12 @@ const SORT_LABELS: Record<SortKey, string> = {
 };
 
 export function DashboardClient({ initialData }: Props) {
-  const [data] = useState(initialData);
+  const data = initialData;
   const [brand, setBrand] = useState("all");
   const [umbrella, setUmbrella] = useState("all");
   const [startDate, setStartDate] = useState(data.sourceTransparency.timeRange.start || "");
   const [endDate, setEndDate] = useState(data.sourceTransparency.timeRange.end || "");
+  const [isApplyingRange, setIsApplyingRange] = useState(false);
   const [query, setQuery] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [sortKey, setSortKey] = useState<SortKey>("spend");
@@ -69,6 +70,12 @@ export function DashboardClient({ initialData }: Props) {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [isChatting, setIsChatting] = useState(false);
   const [hidePdfFinancials, setHidePdfFinancials] = useState(false);
+
+  useEffect(() => {
+    setStartDate(data.sourceTransparency.timeRange.start || "");
+    setEndDate(data.sourceTransparency.timeRange.end || "");
+    setIsApplyingRange(false);
+  }, [data.sourceTransparency.timeRange.end, data.sourceTransparency.timeRange.start]);
 
   const brands = useMemo(
     () => ["all", ...Array.from(new Set(data.byBrand.map((row) => row.brandCode)))],
@@ -201,7 +208,8 @@ export function DashboardClient({ initialData }: Props) {
     url.searchParams.set("start", nextStart);
     url.searchParams.set("end", nextEnd);
     url.searchParams.delete("days");
-    window.location.assign(`${url.pathname}${url.search}`);
+    setIsApplyingRange(true);
+    window.location.assign(url.toString());
   }
 
   function applyQuickRange(days: number) {
@@ -374,8 +382,9 @@ export function DashboardClient({ initialData }: Props) {
               endDate={endDate}
               onStartDateChange={setStartDate}
               onEndDateChange={setEndDate}
-              onApply={() => applyDateRange()}
+              onApply={applyDateRange}
               onQuickRange={applyQuickRange}
+              isApplying={isApplyingRange}
             />
           </div>
 
@@ -569,20 +578,29 @@ function DateRangeControls({
   onEndDateChange,
   onApply,
   onQuickRange,
+  isApplying,
 }: {
   startDate: string;
   endDate: string;
   onStartDateChange: (value: string) => void;
   onEndDateChange: (value: string) => void;
-  onApply: () => void;
+  onApply: (startDate: string, endDate: string) => void;
   onQuickRange: (days: number) => void;
+  isApplying: boolean;
 }) {
+  function submitDateRange(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    onApply(String(formData.get("start") || ""), String(formData.get("end") || ""));
+  }
+
   return (
-    <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+    <form onSubmit={submitDateRange} className="flex flex-col gap-2 lg:flex-row lg:items-center">
       <div className="flex min-w-0 flex-wrap items-center gap-2 border border-hp-rule px-3 py-2">
         <CalendarRange size={16} className="text-hp-muted" />
         <input
           aria-label="Start date"
+          name="start"
           type="date"
           value={startDate}
           onChange={(event) => onStartDateChange(event.target.value)}
@@ -591,21 +609,24 @@ function DateRangeControls({
         <span className="text-hp-muted">to</span>
         <input
           aria-label="End date"
+          name="end"
           type="date"
           value={endDate}
           onChange={(event) => onEndDateChange(event.target.value)}
           className="h-8 bg-transparent text-sm outline-none"
         />
         <button
-          onClick={onApply}
+          type="submit"
+          disabled={isApplying}
           className="h-8 border border-hp-ink px-3 text-[10px] uppercase tracking-[0.14em] text-hp-ink transition-colors hover:bg-hp-ink hover:text-hp-foundation"
         >
-          Apply
+          {isApplying ? "Updating" : "Apply"}
         </button>
       </div>
       <div className="flex items-center gap-1">
         {[7, 14, 30].map((days) => (
           <button
+            type="button"
             key={days}
             onClick={() => onQuickRange(days)}
             className="h-8 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted transition-colors hover:border-hp-ink hover:text-hp-ink"
@@ -614,7 +635,7 @@ function DateRangeControls({
           </button>
         ))}
       </div>
-    </div>
+    </form>
   );
 }
 
