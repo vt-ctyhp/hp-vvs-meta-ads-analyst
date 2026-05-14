@@ -66,6 +66,7 @@ const DATE_PRESETS = [
 ] as const;
 
 const WIDGET_TYPES = ["metric", "table", "line", "bar"] as const;
+const TABLE_LAYOUT_TYPES = ["flat", "pivot"] as const;
 const DEFAULT_METRICS: AnalysisMetric[] = ["spend", "impressions", "clicks", "ctr", "cpc", "leads", "cpl"];
 const MAX_DAYS = 10000;
 const MAX_TABLE_ROWS = 100;
@@ -76,6 +77,7 @@ export type AnalysisDimension = (typeof ANALYSIS_DIMENSIONS)[number];
 export type AnalysisFilterField = (typeof FILTER_FIELDS)[number];
 export type AnalysisGrain = "summary" | "daily" | "weekly" | "monthly";
 export type AnalysisWidgetType = (typeof WIDGET_TYPES)[number];
+export type AnalysisTableLayoutType = (typeof TABLE_LAYOUT_TYPES)[number];
 
 export type AnalysisFilter = {
   field: AnalysisFilterField;
@@ -100,6 +102,12 @@ export type AnalysisSpec = {
     direction: "asc" | "desc";
   };
   limit: number;
+  tableLayout?: {
+    type: AnalysisTableLayoutType;
+    rowDimension?: AnalysisDimension;
+    columnDimension?: AnalysisDimension;
+    metric?: AnalysisMetric;
+  };
   widgets: Array<{
     type: AnalysisWidgetType;
     title: string;
@@ -178,6 +186,7 @@ type PromptIntent = {
   tableOnly?: boolean;
   tableTitle?: string;
   title?: string;
+  tableLayout?: AnalysisSpec["tableLayout"];
   widgets?: AnalysisSpec["widgets"];
   stripCashForGoldFilter?: boolean;
 };
@@ -186,6 +195,7 @@ const metricSchema = z.enum(ANALYSIS_METRICS);
 const dimensionSchema = z.enum(ANALYSIS_DIMENSIONS);
 const filterFieldSchema = z.enum(FILTER_FIELDS);
 const widgetTypeSchema = z.enum(WIDGET_TYPES);
+const tableLayoutTypeSchema = z.enum(TABLE_LAYOUT_TYPES);
 
 const widgetSchema = z.object({
   type: widgetTypeSchema.catch("table"),
@@ -224,6 +234,14 @@ const analysisSpecSchema = z.object({
     })
     .optional(),
   limit: z.number().int().min(1).max(MAX_TABLE_ROWS).catch(50),
+  tableLayout: z
+    .object({
+      type: tableLayoutTypeSchema.catch("flat"),
+      rowDimension: dimensionSchema.optional(),
+      columnDimension: dimensionSchema.optional(),
+      metric: metricSchema.optional(),
+    })
+    .optional(),
   widgets: z.array(widgetSchema).min(1).max(4).catch([]),
 });
 
@@ -494,6 +512,7 @@ async function createSpecWithAI(prompt: string, model: string) {
             filterFields: FILTER_FIELDS,
             grains: ["summary", "daily", "weekly", "monthly"],
             widgets: WIDGET_TYPES,
+            tableLayouts: TABLE_LAYOUT_TYPES,
             datePresets: DATE_PRESETS,
           },
           rules: [
@@ -507,6 +526,8 @@ async function createSpecWithAI(prompt: string, model: string) {
             "If the user asks to group by specific fields, replace dimensions with those fields instead of preserving unrelated existing dimensions.",
             "Use search filters only for free-text ad concepts, product names, or campaign/ad text explicitly named by the user.",
             "For table-format requests, return a table widget first and add charts only when the user asks for charts.",
+            "For pivot, crosstab, matrix, first-row/first-column, or intersection-table requests, set tableLayout.type to pivot with rowDimension, columnDimension, and metric.",
+            "For pivot tables with one time dimension and one non-time dimension, use the non-time dimension as rowDimension and the time dimension as columnDimension unless the user says otherwise.",
             "For chart/graph requests, include a line widget for time-series groupings and a bar widget for non-time groupings.",
             "Keep limits at or below 50 unless the user asks for a leaderboard.",
           ],
@@ -553,6 +574,7 @@ async function editSpecWithAI(input: {
             filterFields: FILTER_FIELDS,
             grains: ["summary", "daily", "weekly", "monthly"],
             widgets: WIDGET_TYPES,
+            tableLayouts: TABLE_LAYOUT_TYPES,
             datePresets: DATE_PRESETS,
           },
           rules: [
@@ -569,6 +591,8 @@ async function editSpecWithAI(input: {
             "For count/how many/number of campaigns, ad sets, ads, or creatives, use campaign_count, ad_set_count, ad_count, or creative_count. Do not list entity IDs unless the user asks to list or group by each entity.",
             "If the user asks to group by specific fields, replace dimensions with those fields instead of preserving unrelated existing dimensions.",
             "If the user says just count, only count, or no need to list IDs, remove the entity dimension and use the matching count metric.",
+            "For pivot, crosstab, matrix, first-row/first-column, or intersection-table requests, set tableLayout.type to pivot with rowDimension, columnDimension, and metric.",
+            "For pivot tables with one time dimension and one non-time dimension, use the non-time dimension as rowDimension and the time dimension as columnDimension unless the user says otherwise.",
             "For chart/graph requests, include a line widget for time-series groupings and a bar widget for non-time groupings.",
             "Keep limits at or below 50 unless the user asks for a leaderboard.",
           ],
@@ -635,7 +659,10 @@ async function generateDeepAnalysis(
 async function aggregateSpec(spec: AnalysisSpec) {
   const range = resolveDateRange(spec.dateRange);
   const countMetrics = spec.metrics.filter(isCountMetric);
-  const aggregateLimit = spec.sort?.field && isCountMetric(spec.sort.field) ? 10000 : spec.limit;
+  const aggregateLimit =
+    spec.tableLayout?.type === "pivot" || (spec.sort?.field && isCountMetric(spec.sort.field))
+      ? 10000
+      : spec.limit;
 
   const supabase = createServiceClient();
   const [aggregateRows, totalRows, countRowsByMetric, totalCountRowsByMetric, accountsRes] = await Promise.all([
@@ -715,6 +742,7 @@ async function aggregateSpec(spec: AnalysisSpec) {
     };
   });
   const rowsForTableSorted = sortResultRows(rowsForTable, spec).slice(0, spec.limit);
+  const table = buildResultTable(spec, rowsForTable, rowsForTableSorted);
   const totalCountRowsLookup = new Map(totalCountRowsByMetric.map((entry) => [entry.metric, entry.rows]));
   const totals = {
     ...aggregateMetrics(totalRows[0]),
@@ -734,17 +762,14 @@ async function aggregateSpec(spec: AnalysisSpec) {
       meta_daily_insights: matchedRows,
       matched_insights: matchedRows,
       grouped_rows: aggregateRows.length,
-      returned_rows: rowsForTableSorted.length,
+      returned_rows: table.rows.length,
     },
   };
 
   return {
     needsNarrowing: false,
     narrowingMessage: "",
-    table: {
-      columns: buildColumns(spec),
-      rows: rowsForTableSorted,
-    },
+    table,
     totals,
     sourceTransparency,
   };
@@ -754,12 +779,29 @@ function normalizeSpec(value: unknown, prompt: string): AnalysisSpec {
   const parsed = analysisSpecSchema.safeParse(value);
   const intent = inferPromptIntent(prompt);
   const base = applyPromptIntent(parsed.success ? parsed.data : fallbackSpec(prompt), intent);
-  const dimensions = normalizeDimensions(base.dimensions, base.grain);
   const metrics = uniqueAllowed(base.metrics, ANALYSIS_METRICS, DEFAULT_METRICS);
+  const tableLayout = normalizeTableLayout(base.tableLayout, base.dimensions, metrics);
+  const dimensions = normalizeDimensions(
+    tableLayout?.type === "pivot" && tableLayout.rowDimension && tableLayout.columnDimension
+      ? uniqueDimensions([...base.dimensions, tableLayout.rowDimension, tableLayout.columnDimension])
+      : base.dimensions,
+    base.grain,
+  );
+  const normalizedTableLayout = normalizeTableLayout(tableLayout, dimensions, metrics);
   const filters = base.filters
     .map((filter) => ({ ...filter, value: filter.value.trim() }))
     .filter((filter) => filter.value);
-  const widgets = normalizeWidgets(base.widgets, dimensions, metrics, base.grain);
+  const widgets =
+    normalizedTableLayout?.type === "pivot" && !base.widgets.length
+      ? [
+          {
+            type: "table" as const,
+            title: "Pivot table",
+            x: normalizedTableLayout.rowDimension,
+            metrics: [normalizedTableLayout.metric || metrics[0]],
+          },
+        ]
+      : normalizeWidgets(base.widgets, dimensions, metrics, base.grain);
 
   return {
     title: base.title,
@@ -770,7 +812,39 @@ function normalizeSpec(value: unknown, prompt: string): AnalysisSpec {
     metrics,
     sort: base.sort,
     limit: Math.min(Math.max(base.limit, 1), MAX_TABLE_ROWS),
+    tableLayout: normalizedTableLayout,
     widgets,
+  };
+}
+
+function normalizeTableLayout(
+  tableLayout: AnalysisSpec["tableLayout"] | undefined,
+  dimensions: AnalysisDimension[],
+  metrics: AnalysisMetric[],
+): AnalysisSpec["tableLayout"] | undefined {
+  if (tableLayout?.type !== "pivot") return tableLayout?.type === "flat" ? { type: "flat" } : undefined;
+
+  const rowDimension =
+    tableLayout.rowDimension && dimensions.includes(tableLayout.rowDimension)
+      ? tableLayout.rowDimension
+      : dimensions.find((dimension) => !isTimeDimension(dimension)) || dimensions[0];
+  const columnDimension =
+    tableLayout.columnDimension && dimensions.includes(tableLayout.columnDimension)
+      ? tableLayout.columnDimension
+      : dimensions.find((dimension) => dimension !== rowDimension && isTimeDimension(dimension)) ||
+        dimensions.find((dimension) => dimension !== rowDimension);
+  const metric =
+    tableLayout.metric && metrics.includes(tableLayout.metric)
+      ? tableLayout.metric
+      : metrics.find((candidate) => candidate !== "impressions") || metrics[0];
+
+  if (!rowDimension || !columnDimension || !metric || rowDimension === columnDimension) return undefined;
+
+  return {
+    type: "pivot",
+    rowDimension,
+    columnDimension,
+    metric,
   };
 }
 
@@ -824,6 +898,7 @@ function fallbackSpec(prompt: string): AnalysisSpec {
     metrics: intent.metrics || DEFAULT_METRICS,
     sort: intent.sort || (weekly ? { field: "week", direction: "asc" } : { field: "spend", direction: "desc" }),
     limit: intent.limit || 50,
+    tableLayout: intent.tableLayout,
     widgets: intent.widgets || [],
   };
 }
@@ -868,6 +943,98 @@ function buildColumns(spec: AnalysisSpec): AnalysisTableColumn[] {
       type: metricType(metric),
     })),
   ];
+}
+
+function buildResultTable(
+  spec: AnalysisSpec,
+  allRows: Array<Record<string, string | number | null>>,
+  flatRows: Array<Record<string, string | number | null>>,
+): AnalysisResult["table"] {
+  if (spec.tableLayout?.type !== "pivot") {
+    return {
+      columns: buildColumns(spec),
+      rows: flatRows,
+    };
+  }
+
+  return buildPivotTable(spec, allRows) || {
+    columns: buildColumns(spec),
+    rows: flatRows,
+  };
+}
+
+function buildPivotTable(
+  spec: AnalysisSpec,
+  rows: Array<Record<string, string | number | null>>,
+): AnalysisResult["table"] | null {
+  const layout = normalizeTableLayout(spec.tableLayout, spec.dimensions, spec.metrics);
+  if (!layout?.rowDimension || !layout.columnDimension || !layout.metric) return null;
+  const rowDimension = layout.rowDimension;
+  const columnDimension = layout.columnDimension;
+  const metric = layout.metric;
+
+  const rowLabels = new Set<string>();
+  const columnLabels = new Set<string>();
+  const valuesByRow = new Map<string, Map<string, number>>();
+  const rowTotals = new Map<string, number>();
+
+  rows.forEach((row) => {
+    const rowLabel = String(row[rowDimension] || "n/a");
+    const columnLabel = String(row[columnDimension] || "n/a");
+    const value = Number(row[metric] || 0);
+    rowLabels.add(rowLabel);
+    columnLabels.add(columnLabel);
+
+    const rowValues = valuesByRow.get(rowLabel) || new Map<string, number>();
+    rowValues.set(columnLabel, round((rowValues.get(columnLabel) || 0) + value));
+    valuesByRow.set(rowLabel, rowValues);
+    rowTotals.set(rowLabel, round((rowTotals.get(rowLabel) || 0) + value));
+  });
+
+  const sortedColumns = Array.from(columnLabels).sort((a, b) =>
+    comparePivotLabels(a, b, columnDimension),
+  );
+  const sortedRows = Array.from(rowLabels)
+    .sort((a, b) => comparePivotLabels(a, b, rowDimension))
+    .slice(0, spec.limit);
+  const metricTypeForCells = metricType(metric);
+  const pivotColumns: AnalysisTableColumn[] = [
+    {
+      key: rowDimension,
+      label: labelFor(rowDimension),
+      type: "text",
+    },
+    ...sortedColumns.map((label, index) => ({
+      key: `pivot_${index}`,
+      label,
+      type: metricTypeForCells,
+    })),
+    {
+      key: "pivot_total",
+      label: `Total ${labelFor(metric)}`,
+      type: metricTypeForCells,
+    },
+  ];
+  const pivotRows = sortedRows.map((rowLabel) => {
+    const rowValues = valuesByRow.get(rowLabel) || new Map<string, number>();
+    return {
+      [rowDimension]: rowLabel,
+      ...Object.fromEntries(
+        sortedColumns.map((columnLabel, index) => [`pivot_${index}`, rowValues.get(columnLabel) || 0]),
+      ),
+      pivot_total: rowTotals.get(rowLabel) || 0,
+    };
+  });
+
+  return {
+    columns: pivotColumns,
+    rows: pivotRows,
+  };
+}
+
+function comparePivotLabels(a: string, b: string, dimension: AnalysisDimension) {
+  if (isTimeDimension(dimension)) return a.localeCompare(b, undefined, { numeric: true });
+  return a.localeCompare(b, undefined, { numeric: true });
 }
 
 function aggregateMetrics(row: MetaInsightAggregateRow | undefined): Record<AnalysisMetric, number | null> {
@@ -1153,21 +1320,26 @@ function buildDeterministicAnswer(
   const cpl = aggregated.totals.cpl;
   const includesLeadMetrics = spec.metrics.some((metric) => metric === "leads" || metric === "cpl");
   const firstMetric = spec.metrics.find((metric) => metric !== "impressions") || "spend";
+  const scoreField = spec.tableLayout?.type === "pivot" ? "pivot_total" : firstMetric;
+  const descriptionDimensions =
+    spec.tableLayout?.type === "pivot" && spec.tableLayout.rowDimension
+      ? [spec.tableLayout.rowDimension]
+      : spec.dimensions;
   const primarySummary = spec.metrics.includes("spend")
     ? includesLeadMetrics
       ? `Total spend was ${formatMoney(spend)}, with ${formatNumber(leads)} leads${cpl === null ? "" : ` at ${formatMoney(cpl)} CPL`}.`
       : `Total spend was ${formatMoney(spend)}.`
     : `Total ${labelFor(firstMetric).toLowerCase()} ${isCountMetric(firstMetric) ? "were" : "was"} ${formatMetricForAnswer(aggregated.totals[firstMetric], firstMetric)}.`;
   const bestRow = [...aggregated.table.rows].sort((a, b) => {
-    const aValue = Number(a[firstMetric] || 0);
-    const bValue = Number(b[firstMetric] || 0);
+    const aValue = Number(a[scoreField] || 0);
+    const bValue = Number(b[scoreField] || 0);
     return bValue - aValue;
   })[0];
 
   return [
     `${spec.title} returned ${aggregated.table.rows.length} grouped rows from ${aggregated.sourceTransparency.recordCounts.matched_insights} matching daily records.`,
     primarySummary,
-    bestRow ? `Highest ${labelFor(firstMetric).toLowerCase()} row: ${describeRow(bestRow, spec.dimensions)}.` : "",
+    bestRow ? `Highest ${labelFor(firstMetric).toLowerCase()} row: ${describeRow(bestRow, descriptionDimensions)}.` : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -1192,13 +1364,16 @@ function inferPromptIntent(prompt: string): PromptIntent {
   const firstDimension = dimensions?.[0];
   const wantsBudget = metrics?.includes("monthly_budget") || /\bbudgets?\b/.test(lower);
   const isMonthlyUmbrella = dimensions?.includes("campaign_umbrella") && dimensions.includes("month");
+  const tableLayout = inferTableLayoutFromPrompt(promptForModeLower, dimensions, metrics);
   const widgets = inferWidgetsFromPrompt({
     lower: promptForModeLower,
     dimensions,
     metrics,
-    tableOnly,
+    tableOnly: tableOnly || tableLayout?.type === "pivot",
     tableTitle:
-      tableOnly && isMonthlyUmbrella && wantsBudget
+      tableLayout?.type === "pivot"
+        ? "Pivot table"
+        : tableOnly && isMonthlyUmbrella && wantsBudget
         ? "Monthly spend and budget by campaign umbrella"
         : tableOnly && isMonthlyUmbrella
           ? "Monthly spend by campaign umbrella"
@@ -1224,13 +1399,16 @@ function inferPromptIntent(prompt: string): PromptIntent {
         : tableOnly && isMonthlyUmbrella
           ? "Monthly spend by campaign umbrella"
           : undefined,
+    tableLayout,
     widgets,
     title:
-      isMonthlyUmbrella && wantsBudget
-        ? "Monthly spend and budget by campaign umbrella"
-        : isMonthlyUmbrella && metrics?.length === 1 && metrics[0] === "spend"
-          ? "Ad spend by campaign umbrella by month"
-          : undefined,
+      tableLayout?.type === "pivot"
+        ? "Pivot table"
+        : isMonthlyUmbrella && wantsBudget
+          ? "Monthly spend and budget by campaign umbrella"
+          : isMonthlyUmbrella && metrics?.length === 1 && metrics[0] === "spend"
+            ? "Ad spend by campaign umbrella by month"
+            : undefined,
     stripCashForGoldFilter: !lower.includes("cash for gold"),
   };
 }
@@ -1248,6 +1426,7 @@ function applyPromptIntent(spec: AnalysisSpec, intent: PromptIntent): AnalysisSp
     metrics: intent.metrics || spec.metrics,
     sort: intent.sort || spec.sort,
     limit: intent.limit || spec.limit,
+    tableLayout: intent.tableLayout || spec.tableLayout,
     widgets: intent.widgets || spec.widgets,
   };
 }
@@ -1364,6 +1543,105 @@ function inferWidgetsFromPrompt(input: {
 
   return wantsTableToo ? [tableWidget, chartWidget] : [chartWidget];
 }
+
+function inferTableLayoutFromPrompt(
+  lower: string,
+  dimensions?: AnalysisDimension[],
+  metrics?: AnalysisMetric[],
+): AnalysisSpec["tableLayout"] | undefined {
+  if (
+    !/\b(pivot|cross[-\s]?tab|crosstab|matrix|intersection|intersections|first column|first row)\b/.test(
+      lower,
+    )
+  ) {
+    return undefined;
+  }
+
+  const availableDimensions = dimensions || [];
+  if (availableDimensions.length < 2) return undefined;
+
+  const explicitRowDimension = dimensionNearLayoutCue(lower, "row", availableDimensions);
+  const explicitColumnDimension = dimensionNearLayoutCue(lower, "column", availableDimensions);
+  const timeDimension = availableDimensions.find(isTimeDimension);
+  const nonTimeDimension = availableDimensions.find((dimension) => !isTimeDimension(dimension));
+  const rowDimension =
+    explicitRowDimension ||
+    (timeDimension && nonTimeDimension ? nonTimeDimension : availableDimensions[0]);
+  const columnDimension =
+    explicitColumnDimension && explicitColumnDimension !== rowDimension
+      ? explicitColumnDimension
+      : timeDimension && timeDimension !== rowDimension
+        ? timeDimension
+        : availableDimensions.find((dimension) => dimension !== rowDimension);
+  const metric = pivotMetricFromPrompt(lower, metrics || []);
+
+  if (!rowDimension || !columnDimension || !metric) return undefined;
+
+  return {
+    type: "pivot",
+    rowDimension,
+    columnDimension,
+    metric,
+  };
+}
+
+function dimensionNearLayoutCue(
+  lower: string,
+  cue: "row" | "column",
+  availableDimensions: AnalysisDimension[],
+) {
+  const cuePattern =
+    cue === "row"
+      ? "\\b(rows?|left|first\\s+column)\\b"
+      : "\\b(columns?|across|top|first\\s+row)\\b";
+  const match = lower.match(new RegExp(cuePattern));
+  if (!match) return undefined;
+  const start = Math.max((match.index || 0) - 80, 0);
+  const end = Math.min((match.index || 0) + match[0].length + 80, lower.length);
+  return dimensionFromText(lower.slice(start, end), availableDimensions);
+}
+
+function dimensionFromText(text: string, availableDimensions: AnalysisDimension[]) {
+  const dimensionPatterns: Array<[AnalysisDimension, RegExp]> = [
+    ["campaign_umbrella", /\bcampaign[-\s]?umbrellas?\b|\binternal campaign umbrellas?\b|\bumbrellas?\b/],
+    ["campaign", /\bcampaigns?\b/],
+    ["ad_set", /\bad sets?\b/],
+    ["creative", /\b(?:ad\s+)?creatives?\b/],
+    ["ad", /\bads?\b/],
+    ["brand", /\bbrands?\b/],
+    ["month", /\bmonths?\b|\bmonthly\b/],
+    ["week", /\bweeks?\b|\bweekly\b/],
+    ["date", /\bdates?\b|\bdays?\b|\bdaily\b/],
+  ];
+
+  return dimensionPatterns.find(([dimension, pattern]) => availableDimensions.includes(dimension) && pattern.test(text))?.[0];
+}
+
+function pivotMetricFromPrompt(lower: string, metrics: AnalysisMetric[]) {
+  const explicitMetric = ANALYSIS_METRICS.find((metric) => metricPromptPatterns[metric]?.test(lower));
+  if (explicitMetric && metrics.includes(explicitMetric)) return explicitMetric;
+  return metrics.find((metric) => metric !== "impressions") || metrics[0];
+}
+
+const metricPromptPatterns: Partial<Record<AnalysisMetric, RegExp>> = {
+  spend: /\bad spend\b|\bspend\b|\bspent\b|\bcost\b/,
+  monthly_budget: /\bmonthly budgets?\b|\bbudgets?\b/,
+  campaign_count: /\b(count|number of|how many)\b[^.?!\n]*\bcampaigns?\b/,
+  ad_set_count: /\b(count|number of|how many)\b[^.?!\n]*\bad sets?\b/,
+  ad_count: /\b(count|number of|how many)\b[^.?!\n]*\bads\b/,
+  creative_count: /\b(count|number of|how many)\b[^.?!\n]*\b(?:ad\s+)?creatives?\b/,
+  impressions: /\bimpressions?\b/,
+  reach: /\breach\b/,
+  clicks: /\bclicks?\b/,
+  leads: /\bleads?\b/,
+  bookings: /\bbookings?\b|\bappointments?\b/,
+  conversions: /\bconversions?\b/,
+  ctr: /\bctr\b/,
+  cpm: /\bcpm\b/,
+  cpc: /\bcpc\b/,
+  cpl: /\bcpl\b/,
+  frequency: /\bfrequency\b/,
+};
 
 function shouldUseEntityDimension(
   lower: string,
