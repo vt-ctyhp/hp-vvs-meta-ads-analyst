@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   buildInsightDateParams,
+  finalizedInsightCutoffDate,
   incrementalDatePreset,
   monthlyDateChunks,
 } from "../src/lib/meta-backfill-utils.ts";
@@ -59,6 +60,14 @@ describe("Meta insight date params", () => {
         META_SYNC_DATE_PRESET: "yesterday",
       }),
       "yesterday",
+    );
+  });
+
+  it("calculates the finalized insight cutoff from the refresh window", () => {
+    assert.equal(finalizedInsightCutoffDate({}, new Date("2026-05-14T12:00:00Z")), "2026-04-10");
+    assert.equal(
+      finalizedInsightCutoffDate({ META_INCREMENTAL_SYNC_DAYS: "14" }, new Date("2026-05-14T12:00:00Z")),
+      "2026-05-01",
     );
   });
 });

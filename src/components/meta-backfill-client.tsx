@@ -70,6 +70,51 @@ type BackfillState = {
   coverage: HistoryCoverage[];
 };
 
+type DataHealth = {
+  generatedAt: string;
+  syncPolicy: {
+    incrementalDatePreset: string;
+    incrementalRefreshDays: number;
+    finalizedCutoffDate: string;
+    finalizedRows: number;
+    refreshableRows: number;
+  };
+  insights: {
+    totalRows: number;
+    uniqueAccountAdDateKeys: number;
+    duplicateKeyCount: number;
+    nullKeyRows: number;
+    dateRange: { min: string | null; max: string | null };
+  };
+  checks: {
+    duplicateRowsOk: boolean;
+    nullKeysOk: boolean;
+    hasInsightRows: boolean;
+  };
+  monthlyUmbrella: Array<{
+    month: string;
+    campaignUmbrella: string;
+    rows: number;
+    spend: number;
+    leads: number;
+    bookings: number;
+    conversions: number;
+  }>;
+  recentSyncRuns: Array<{
+    id: string;
+    trigger: string;
+    status: string;
+    startedAt: string;
+    completedAt: string | null;
+    metrics: {
+      audit?: {
+        warnings?: string[];
+      };
+    } & Record<string, unknown>;
+    errors: unknown;
+  }>;
+};
+
 const STATUS_CLASS: Record<BackfillStatus | ChunkStatus, string> = {
   pending: "border-hp-rule bg-hp-inset text-hp-body",
   queued: "border-hp-rule bg-hp-inset text-hp-body",
@@ -90,6 +135,7 @@ export function MetaBackfillClient() {
   const [startDate, setStartDate] = useState("2007-01-01");
   const [endDate, setEndDate] = useState(todayString());
   const [state, setState] = useState<BackfillState | null>(null);
+  const [dataHealth, setDataHealth] = useState<DataHealth | null>(null);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
 
@@ -120,6 +166,20 @@ export function MetaBackfillClient() {
       const payload = await request(`/api/meta/backfill?${query.toString()}`);
       setState(payload);
       setStatus(nextStatus);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadDataHealth() {
+    setLoading(true);
+    setStatus("");
+    try {
+      const payload = await request("/api/meta/data-health");
+      setDataHealth(payload);
+      setStatus("Data health refreshed.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     } finally {
@@ -190,6 +250,9 @@ export function MetaBackfillClient() {
           <Button onClick={() => loadState()} disabled={loading} icon={RefreshCcw}>
             Refresh
           </Button>
+          <Button onClick={loadDataHealth} disabled={loading} icon={Shield}>
+            Data Health
+          </Button>
           <Button onClick={runBatch} disabled={loading} icon={Play} intent="primary">
             Run Batch
           </Button>
@@ -246,6 +309,8 @@ export function MetaBackfillClient() {
               <span>{status}</span>
             </div>
           ) : null}
+
+          <DataHealthPanel health={dataHealth} />
 
           <section className="border border-hp-rule bg-hp-card p-4">
             <div className="flex items-center justify-between gap-3">
@@ -421,6 +486,83 @@ function JobRow({
   );
 }
 
+function DataHealthPanel({ health }: { health: DataHealth | null }) {
+  const recentWarnings = (health?.recentSyncRuns || [])
+    .flatMap((run) => run.metrics.audit?.warnings || [])
+    .slice(0, 5);
+  const recentUmbrellaRows = (health?.monthlyUmbrella || []).slice(-12).reverse();
+
+  return (
+    <section className="border border-hp-rule bg-hp-card p-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <PanelTitle icon={Shield} title="Data Health" />
+        {health ? (
+          <span className="text-xs text-hp-muted">Checked {formatDateTime(health.generatedAt)}</span>
+        ) : null}
+      </div>
+
+      {health ? (
+        <>
+          <div className="mt-4 grid gap-3 md:grid-cols-4">
+            <Stat label="Insight Rows" value={health.insights.totalRows.toLocaleString()} />
+            <Stat label="Duplicate Keys" value={health.insights.duplicateKeyCount.toLocaleString()} />
+            <Stat label="Null Keys" value={health.insights.nullKeyRows.toLocaleString()} />
+            <Stat label="Refresh Window" value={health.syncPolicy.incrementalDatePreset} />
+          </div>
+          <div className="mt-3 grid gap-3 md:grid-cols-4">
+            <SmallMetric
+              label="Date Range"
+              value={`${health.insights.dateRange.min || "-"} to ${health.insights.dateRange.max || "-"}`}
+            />
+            <SmallMetric label="Finalized Before" value={health.syncPolicy.finalizedCutoffDate} />
+            <SmallMetric label="Finalized Rows" value={health.syncPolicy.finalizedRows.toLocaleString()} />
+            <SmallMetric label="Refreshable Rows" value={health.syncPolicy.refreshableRows.toLocaleString()} />
+          </div>
+          {recentWarnings.length ? (
+            <div className="mt-3 border border-signal-warning/30 bg-signal-warning/10 p-3 text-sm text-signal-warning">
+              {recentWarnings.map((warning, index) => (
+                <div key={`${warning}-${index}`}>{warning}</div>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-3 border border-signal-positive/30 bg-signal-positive/10 p-3 text-sm text-signal-positive">
+              No duplicate keys, null insight keys, or recent sync warnings were reported.
+            </div>
+          )}
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[680px] border-collapse text-sm">
+              <thead className="text-left text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+                <tr className="border-b border-hp-rule">
+                  <th className="py-2 pr-3 font-normal">Month</th>
+                  <th className="py-2 pr-3 font-normal">Umbrella</th>
+                  <th className="py-2 pr-3 font-normal">Spend</th>
+                  <th className="py-2 pr-3 font-normal">Rows</th>
+                  <th className="py-2 pr-3 font-normal">Leads</th>
+                  <th className="py-2 pr-3 font-normal">Bookings</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentUmbrellaRows.map((row) => (
+                  <tr key={`${row.month}-${row.campaignUmbrella}`} className="border-b border-hp-rule/70">
+                    <td className="py-2 pr-3 text-hp-ink">{row.month}</td>
+                    <td className="py-2 pr-3">{row.campaignUmbrella}</td>
+                    <td className="py-2 pr-3 tabular-nums">{formatMoney(row.spend)}</td>
+                    <td className="py-2 pr-3">{row.rows.toLocaleString()}</td>
+                    <td className="py-2 pr-3">{row.leads.toLocaleString()}</td>
+                    <td className="py-2 pr-3">{row.bookings.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      ) : (
+        <EmptyState text="Click Data Health to check duplicate keys, sync policy, and recent monthly totals." />
+      )}
+    </section>
+  );
+}
+
 function DateInput({
   label,
   value,
@@ -551,4 +693,12 @@ function formatDateTime(value: string | null) {
     hour: "numeric",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function formatMoney(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: value >= 100 ? 0 : 2,
+  }).format(value);
 }

@@ -5,7 +5,13 @@ import {
   type CampaignUmbrellaClassification,
   type CampaignUmbrellaOverride,
 } from "./campaign-umbrellas";
-import { buildInsightDateParams, incrementalDatePreset, type InsightDateRange } from "./meta-backfill-utils";
+import {
+  buildInsightDateParams,
+  finalizedInsightCutoffDate,
+  incrementalDatePreset,
+  incrementalSyncDays,
+  type InsightDateRange,
+} from "./meta-backfill-utils";
 import { createServiceClient } from "./supabase";
 
 type JsonRecord = Record<string, unknown>;
@@ -54,6 +60,49 @@ type SyncMetrics = {
   creatives: number;
   insightRows: number;
   previewRefreshes: number;
+  audit?: SyncAuditSummary;
+};
+
+type InsightAggregateSnapshot = {
+  rows: number;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  leads: number;
+  bookings: number;
+  conversions: number;
+};
+
+type InsightBucketSnapshot = InsightAggregateSnapshot & {
+  month: string;
+  campaignUmbrella: string;
+};
+
+type AccountSyncAudit = {
+  brandCode: string;
+  metaAccountId: string;
+  requestedRange: string;
+  fetchedRows: number;
+  validRows: number;
+  storedRows: number;
+  skippedFinalizedRows: number;
+  skippedInvalidRows: number;
+  duplicateFetchedRows: number;
+  allowFinalizedUpdates: boolean;
+  finalizedCutoffDate: string | null;
+  affectedRange: { start: string | null; end: string | null };
+  before: InsightAggregateSnapshot;
+  after: InsightAggregateSnapshot;
+  delta: InsightAggregateSnapshot;
+  changedBuckets: InsightBucketSnapshot[];
+  warnings: string[];
+};
+
+type SyncAuditSummary = {
+  incrementalRefreshDays: number;
+  finalizedCutoffDate: string;
+  accounts: AccountSyncAudit[];
+  warnings: string[];
 };
 
 type DynamicSupabaseClient = {
@@ -64,6 +113,17 @@ type DynamicSupabaseClient = {
     ) => {
       select: (columns: string) => Promise<{ data: JsonRecord[] | null; error: Error | null }>;
     };
+  };
+};
+type SupabaseSelectChain = PromiseLike<{ data: unknown; error: Error | null }> & {
+  eq: (column: string, value: unknown) => SupabaseSelectChain;
+  gte: (column: string, value: unknown) => SupabaseSelectChain;
+  lte: (column: string, value: unknown) => SupabaseSelectChain;
+  range: (from: number, to: number) => SupabaseSelectChain;
+};
+type SupabaseSelectClient = {
+  from: (table: string) => {
+    select: (columns: string) => SupabaseSelectChain;
   };
 };
 
@@ -125,6 +185,12 @@ export async function syncMetaAds(trigger: "cron" | "manual" | "preview" = "manu
     insightRows: 0,
     previewRefreshes: 0,
   };
+  const auditSummary: SyncAuditSummary = {
+    incrementalRefreshDays: incrementalSyncDays(),
+    finalizedCutoffDate: finalizedInsightCutoffDate(),
+    accounts: [],
+    warnings: [],
+  };
   const errors: string[] = [];
 
   try {
@@ -142,11 +208,14 @@ export async function syncMetaAds(trigger: "cron" | "manual" | "preview" = "manu
         metrics.creatives += result.creatives;
         metrics.insightRows += result.insightRows;
         metrics.previewRefreshes += result.previewRefreshes;
+        auditSummary.accounts.push(result.audit);
+        auditSummary.warnings.push(...result.audit.warnings);
       } catch (error) {
         errors.push(`${account.brandCode}: ${errorToMessage(error)}`);
       }
     }
 
+    metrics.audit = auditSummary;
     const status = errors.length ? (metrics.accounts > 0 ? "partial" : "failed") : "success";
     await supabase
       .from("sync_runs")
@@ -161,6 +230,7 @@ export async function syncMetaAds(trigger: "cron" | "manual" | "preview" = "manu
     return { status, metrics, errors, syncRunId } satisfies SyncResult;
   } catch (error) {
     errors.push(errorToMessage(error));
+    metrics.audit = auditSummary;
     await supabase
       .from("sync_runs")
       .update({
@@ -268,13 +338,18 @@ export async function syncMetaAdsAccountRange(input: {
   return syncAccount(input.account, brandId, {
     insights: { kind: "range", since: input.since, until: input.until },
     refreshPreviews: false,
+    allowFinalizedInsightUpdates: true,
   });
 }
 
 async function syncAccount(
   account: SyncAccountConfig,
   brandId: string | null,
-  options: { insights?: InsightDateRange; refreshPreviews?: boolean } = {},
+  options: {
+    insights?: InsightDateRange;
+    refreshPreviews?: boolean;
+    allowFinalizedInsightUpdates?: boolean;
+  } = {},
 ) {
   const accountId = normalizeAccountId(account.accountId);
   const metaAccountId = `act_${accountId}`;
@@ -543,84 +618,56 @@ async function syncAccount(
   const adByMetaId = new Map(adRows.map((row) => [String(row.ad_id), row]));
 
   const insights = await fetchInsights(metaAccountId, options.insights);
-  await upsertMany(
-    "meta_daily_insights",
-    insights.map((insight) => {
-      const adId = stringField(insight.ad_id);
-      const ad = adByMetaId.get(adId || "");
-      const creativeId = stringField(ad?.creative_id);
-      const campaignId = stringField(insight.campaign_id);
-      const adSetId = stringField(insight.adset_id);
-      const inheritedClassification = (adId && adClassifications.get(adId)) ||
-        (adSetId && adSetClassifications.get(adSetId)) ||
-        (campaignId && campaignClassifications.get(campaignId)) ||
-        null;
-      const classification = inheritedClassification ||
-        classifyCampaignUmbrella({
-          campaignName: stringField(insight.campaign_name),
-          adSetName: stringField(insight.adset_name),
-        });
-      return {
-        brand_id: brandId,
-        account_id: accountRow.id,
-        campaign_ref_id: campaignByMetaId.get(String(campaignId))?.id || null,
-        ad_set_ref_id: adSetByMetaId.get(String(adSetId))?.id || null,
-        ad_ref_id: ad?.id || null,
-        creative_ref_id: creativeByMetaId.get(creativeId || "")?.id || null,
-        meta_account_id: metaAccountId,
-        campaign_id: campaignId,
-        campaign_name: stringField(insight.campaign_name),
-        ad_set_id: adSetId,
-        ad_set_name: stringField(insight.adset_name),
-        ad_id: adId,
-        ad_name: stringField(insight.ad_name),
-        creative_id: creativeId,
-        date_start: stringField(insight.date_start),
-        date_stop: stringField(insight.date_stop),
-        spend: numberString(insight.spend),
-        impressions: numberString(insight.impressions),
-        reach: numberString(insight.reach),
-        frequency: numberString(insight.frequency),
-        cpm: numberString(insight.cpm),
-        cpc: numberString(insight.cpc),
-        ctr: numberString(insight.ctr),
-        clicks: numberString(insight.clicks),
-        inline_link_clicks: numberString(insight.inline_link_clicks),
-        unique_clicks: numberString(insight.unique_clicks),
-        conversions: extractActionCount(insight.actions, ["offsite_conversion", "purchase", "complete_registration"]),
-        leads: extractExactActionCount(insight.actions, [
-          "lead",
-          "onsite_conversion.lead",
-          "onsite_conversion.lead_grouped",
-          "onsite_web_lead",
-          "offsite_conversion.fb_pixel_lead",
-        ]),
-        bookings:
-          classification.umbrella === "Book Appts US"
-            ? extractExactActionCount(insight.actions, ["offsite_conversion.fb_pixel_custom"])
-            : extractExactActionCount(insight.actions, [
-                "schedule",
-                "submit_application",
-                "booking",
-                "appointment",
-              ]),
-        video_metrics: {
-          video_30_sec_watched_actions: insight.video_30_sec_watched_actions || [],
-          video_avg_time_watched_actions: insight.video_avg_time_watched_actions || [],
-          video_p25_watched_actions: insight.video_p25_watched_actions || [],
-          video_p50_watched_actions: insight.video_p50_watched_actions || [],
-          video_p75_watched_actions: insight.video_p75_watched_actions || [],
-          video_p95_watched_actions: insight.video_p95_watched_actions || [],
-          video_p100_watched_actions: insight.video_p100_watched_actions || [],
-        },
-        actions: Array.isArray(insight.actions) ? insight.actions : [],
-        action_values: Array.isArray(insight.action_values) ? insight.action_values : [],
-        ...umbrellaColumns(classification),
-        raw_json: insight,
-      };
+  const allowFinalizedUpdates = options.allowFinalizedInsightUpdates === true;
+  const finalizedCutoff = allowFinalizedUpdates ? null : finalizedInsightCutoffDate();
+  const mappedInsightRows = insights.map((insight) =>
+    mapInsightToDailyRow({
+      insight,
+      brandId,
+      accountRow,
+      metaAccountId,
+      campaignByMetaId,
+      adSetByMetaId,
+      adByMetaId,
+      creativeByMetaId,
+      adClassifications,
+      adSetClassifications,
+      campaignClassifications,
     }),
-    "meta_account_id,ad_id,date_start",
   );
+  const validInsightRows = mappedInsightRows.filter(isValidInsightRow);
+  const skippedInvalidRows = mappedInsightRows.length - validInsightRows.length;
+  const refreshableInsightRows = finalizedCutoff
+    ? validInsightRows.filter((row) => String(row.date_start) >= finalizedCutoff)
+    : validInsightRows;
+  const skippedFinalizedRows = validInsightRows.length - refreshableInsightRows.length;
+  const { rows: dedupedInsightRows, duplicateCount } = dedupeInsightRows(refreshableInsightRows);
+  const affectedRange = dateRangeForRows(dedupedInsightRows);
+  const before = await insightAggregateSnapshot(metaAccountId, affectedRange);
+  const beforeBuckets = await insightBucketSnapshots(metaAccountId, affectedRange);
+
+  await upsertMany("meta_daily_insights", dedupedInsightRows, "meta_account_id,ad_id,date_start");
+
+  const after = await insightAggregateSnapshot(metaAccountId, affectedRange);
+  const afterBuckets = await insightBucketSnapshots(metaAccountId, affectedRange);
+  const audit = buildAccountSyncAudit({
+    account,
+    metaAccountId,
+    range: options.insights || { kind: "preset", datePreset: getSyncDatePreset() },
+    fetchedRows: insights.length,
+    validRows: validInsightRows.length,
+    storedRows: dedupedInsightRows.length,
+    skippedFinalizedRows,
+    skippedInvalidRows,
+    duplicateFetchedRows: duplicateCount,
+    allowFinalizedUpdates,
+    finalizedCutoffDate: finalizedCutoff,
+    affectedRange,
+    before,
+    after,
+    beforeBuckets,
+    afterBuckets,
+  });
 
   return {
     campaigns: campaigns.length,
@@ -629,7 +676,336 @@ async function syncAccount(
     creatives: creativeRows.length,
     insightRows: insights.length,
     previewRefreshes: refreshPreviews ? previewByAdId.size + creativeRows.length : 0,
+    audit,
   };
+}
+
+function mapInsightToDailyRow(input: {
+  insight: JsonRecord;
+  brandId: string | null;
+  accountRow: JsonRecord;
+  metaAccountId: string;
+  campaignByMetaId: Map<string, JsonRecord>;
+  adSetByMetaId: Map<string, JsonRecord>;
+  adByMetaId: Map<string, JsonRecord>;
+  creativeByMetaId: Map<string, JsonRecord>;
+  adClassifications: Map<string, CampaignUmbrellaClassification>;
+  adSetClassifications: Map<string, CampaignUmbrellaClassification>;
+  campaignClassifications: Map<string, CampaignUmbrellaClassification>;
+}) {
+  const adId = stringField(input.insight.ad_id);
+  const ad = input.adByMetaId.get(adId || "");
+  const creativeId = stringField(ad?.creative_id);
+  const campaignId = stringField(input.insight.campaign_id);
+  const adSetId = stringField(input.insight.adset_id);
+  const inheritedClassification = (adId && input.adClassifications.get(adId)) ||
+    (adSetId && input.adSetClassifications.get(adSetId)) ||
+    (campaignId && input.campaignClassifications.get(campaignId)) ||
+    null;
+  const classification = inheritedClassification ||
+    classifyCampaignUmbrella({
+      campaignName: stringField(input.insight.campaign_name),
+      adSetName: stringField(input.insight.adset_name),
+    });
+
+  return {
+    brand_id: input.brandId,
+    account_id: input.accountRow.id,
+    campaign_ref_id: input.campaignByMetaId.get(String(campaignId))?.id || null,
+    ad_set_ref_id: input.adSetByMetaId.get(String(adSetId))?.id || null,
+    ad_ref_id: ad?.id || null,
+    creative_ref_id: input.creativeByMetaId.get(creativeId || "")?.id || null,
+    meta_account_id: input.metaAccountId,
+    campaign_id: campaignId,
+    campaign_name: stringField(input.insight.campaign_name),
+    ad_set_id: adSetId,
+    ad_set_name: stringField(input.insight.adset_name),
+    ad_id: adId,
+    ad_name: stringField(input.insight.ad_name),
+    creative_id: creativeId,
+    date_start: stringField(input.insight.date_start),
+    date_stop: stringField(input.insight.date_stop),
+    spend: numberString(input.insight.spend),
+    impressions: numberString(input.insight.impressions),
+    reach: numberString(input.insight.reach),
+    frequency: numberString(input.insight.frequency),
+    cpm: numberString(input.insight.cpm),
+    cpc: numberString(input.insight.cpc),
+    ctr: numberString(input.insight.ctr),
+    clicks: numberString(input.insight.clicks),
+    inline_link_clicks: numberString(input.insight.inline_link_clicks),
+    unique_clicks: numberString(input.insight.unique_clicks),
+    conversions: extractActionCount(input.insight.actions, ["offsite_conversion", "purchase", "complete_registration"]),
+    leads: extractExactActionCount(input.insight.actions, [
+      "lead",
+      "onsite_conversion.lead",
+      "onsite_conversion.lead_grouped",
+      "onsite_web_lead",
+      "offsite_conversion.fb_pixel_lead",
+    ]),
+    bookings:
+      classification.umbrella === "Book Appts US"
+        ? extractExactActionCount(input.insight.actions, ["offsite_conversion.fb_pixel_custom"])
+        : extractExactActionCount(input.insight.actions, [
+            "schedule",
+            "submit_application",
+            "booking",
+            "appointment",
+          ]),
+    video_metrics: {
+      video_30_sec_watched_actions: input.insight.video_30_sec_watched_actions || [],
+      video_avg_time_watched_actions: input.insight.video_avg_time_watched_actions || [],
+      video_p25_watched_actions: input.insight.video_p25_watched_actions || [],
+      video_p50_watched_actions: input.insight.video_p50_watched_actions || [],
+      video_p75_watched_actions: input.insight.video_p75_watched_actions || [],
+      video_p95_watched_actions: input.insight.video_p95_watched_actions || [],
+      video_p100_watched_actions: input.insight.video_p100_watched_actions || [],
+    },
+    actions: Array.isArray(input.insight.actions) ? input.insight.actions : [],
+    action_values: Array.isArray(input.insight.action_values) ? input.insight.action_values : [],
+    ...umbrellaColumns(classification),
+    raw_json: input.insight,
+  };
+}
+
+function isValidInsightRow(row: JsonRecord) {
+  return Boolean(row.meta_account_id && row.ad_id && row.date_start);
+}
+
+function dedupeInsightRows(inputRows: JsonRecord[]) {
+  const byKey = new Map<string, JsonRecord>();
+  let duplicateCount = 0;
+
+  inputRows.forEach((row) => {
+    const key = `${row.meta_account_id}|${row.ad_id}|${row.date_start}`;
+    if (byKey.has(key)) duplicateCount += 1;
+    byKey.set(key, row);
+  });
+
+  return { rows: Array.from(byKey.values()), duplicateCount };
+}
+
+function dateRangeForRows(inputRows: JsonRecord[]) {
+  return inputRows.reduce<{ start: string | null; end: string | null }>(
+    (range, row) => {
+      const date = stringField(row.date_start);
+      if (!date) return range;
+      return {
+        start: !range.start || date < range.start ? date : range.start,
+        end: !range.end || date > range.end ? date : range.end,
+      };
+    },
+    { start: null, end: null },
+  );
+}
+
+async function insightAggregateSnapshot(
+  metaAccountId: string,
+  range: { start: string | null; end: string | null },
+): Promise<InsightAggregateSnapshot> {
+  return aggregateStoredInsightRows(await fetchStoredInsightRows(metaAccountId, range));
+}
+
+async function insightBucketSnapshots(
+  metaAccountId: string,
+  range: { start: string | null; end: string | null },
+) {
+  const buckets = new Map<string, InsightBucketSnapshot>();
+  const storedRows = await fetchStoredInsightRows(metaAccountId, range);
+
+  storedRows.forEach((row) => {
+    const month = String(row.date_start || "").slice(0, 7) || "unknown";
+    const campaignUmbrella = stringField(row.campaign_umbrella) || "Needs review";
+    const key = `${month}|${campaignUmbrella}`;
+    const current = buckets.get(key) || {
+      month,
+      campaignUmbrella,
+      ...emptyInsightSnapshot(),
+    };
+    addInsightRowToSnapshot(current, row);
+    buckets.set(key, current);
+  });
+
+  return Array.from(buckets.values()).sort((a, b) =>
+    `${a.month}|${a.campaignUmbrella}`.localeCompare(`${b.month}|${b.campaignUmbrella}`),
+  );
+}
+
+async function fetchStoredInsightRows(
+  metaAccountId: string,
+  range: { start: string | null; end: string | null },
+) {
+  if (!range.start || !range.end) return [];
+
+  const supabase = createServiceClient() as unknown as SupabaseSelectClient;
+  const output: JsonRecord[] = [];
+  const pageSize = 1000;
+
+  for (let from = 0; ; from += pageSize) {
+    const query = supabase
+      .from("meta_daily_insights")
+      .select("date_start,campaign_umbrella,spend,impressions,clicks,leads,bookings,conversions")
+      .eq("meta_account_id", metaAccountId)
+      .gte("date_start", range.start)
+      .lte("date_start", range.end)
+      .range(from, from + pageSize - 1);
+    const response = await query;
+
+    if (response.error) throw response.error;
+
+    const page = rows<JsonRecord>(response.data);
+    output.push(...page);
+    if (page.length < pageSize) break;
+  }
+
+  return output;
+}
+
+function aggregateStoredInsightRows(inputRows: JsonRecord[]) {
+  const snapshot = emptyInsightSnapshot();
+  inputRows.forEach((row) => addInsightRowToSnapshot(snapshot, row));
+  return snapshot;
+}
+
+function emptyInsightSnapshot(): InsightAggregateSnapshot {
+  return {
+    rows: 0,
+    spend: 0,
+    impressions: 0,
+    clicks: 0,
+    leads: 0,
+    bookings: 0,
+    conversions: 0,
+  };
+}
+
+function addInsightRowToSnapshot(snapshot: InsightAggregateSnapshot, row: JsonRecord) {
+  snapshot.rows += 1;
+  snapshot.spend = roundCurrency(snapshot.spend + (numberField(row.spend) || 0));
+  snapshot.impressions += Math.round(numberField(row.impressions) || 0);
+  snapshot.clicks += Math.round(numberField(row.clicks) || 0);
+  snapshot.leads += Math.round(numberField(row.leads) || 0);
+  snapshot.bookings += Math.round(numberField(row.bookings) || 0);
+  snapshot.conversions += Math.round(numberField(row.conversions) || 0);
+}
+
+function buildAccountSyncAudit(input: {
+  account: SyncAccountConfig;
+  metaAccountId: string;
+  range: InsightDateRange;
+  fetchedRows: number;
+  validRows: number;
+  storedRows: number;
+  skippedFinalizedRows: number;
+  skippedInvalidRows: number;
+  duplicateFetchedRows: number;
+  allowFinalizedUpdates: boolean;
+  finalizedCutoffDate: string | null;
+  affectedRange: { start: string | null; end: string | null };
+  before: InsightAggregateSnapshot;
+  after: InsightAggregateSnapshot;
+  beforeBuckets: InsightBucketSnapshot[];
+  afterBuckets: InsightBucketSnapshot[];
+}): AccountSyncAudit {
+  const warnings: string[] = [];
+
+  if (input.skippedInvalidRows) {
+    warnings.push(`${input.account.brandCode}: skipped ${input.skippedInvalidRows} invalid insight row(s).`);
+  }
+  if (input.duplicateFetchedRows) {
+    warnings.push(`${input.account.brandCode}: collapsed ${input.duplicateFetchedRows} duplicate fetched insight row(s).`);
+  }
+  if (input.skippedFinalizedRows) {
+    warnings.push(
+      `${input.account.brandCode}: skipped ${input.skippedFinalizedRows} finalized insight row(s) before ${input.finalizedCutoffDate}.`,
+    );
+  }
+
+  const changedBuckets = changedInsightBuckets(input.beforeBuckets, input.afterBuckets);
+  changedBuckets
+    .filter((bucket) => bucket.rows > 0 && bucket.spend > 500)
+    .slice(0, 5)
+    .forEach((bucket) => {
+      warnings.push(
+        `${input.account.brandCode}: ${bucket.month} ${bucket.campaignUmbrella} spend changed by ${formatMoneyForAudit(bucket.spend)} during sync.`,
+      );
+    });
+
+  return {
+    brandCode: input.account.brandCode,
+    metaAccountId: input.metaAccountId,
+    requestedRange: describeInsightRange(input.range),
+    fetchedRows: input.fetchedRows,
+    validRows: input.validRows,
+    storedRows: input.storedRows,
+    skippedFinalizedRows: input.skippedFinalizedRows,
+    skippedInvalidRows: input.skippedInvalidRows,
+    duplicateFetchedRows: input.duplicateFetchedRows,
+    allowFinalizedUpdates: input.allowFinalizedUpdates,
+    finalizedCutoffDate: input.finalizedCutoffDate,
+    affectedRange: input.affectedRange,
+    before: input.before,
+    after: input.after,
+    delta: diffInsightSnapshot(input.before, input.after),
+    changedBuckets,
+    warnings,
+  };
+}
+
+function changedInsightBuckets(before: InsightBucketSnapshot[], after: InsightBucketSnapshot[]) {
+  const beforeByKey = new Map(before.map((bucket) => [`${bucket.month}|${bucket.campaignUmbrella}`, bucket]));
+  const afterByKey = new Map(after.map((bucket) => [`${bucket.month}|${bucket.campaignUmbrella}`, bucket]));
+  const keys = Array.from(new Set([...beforeByKey.keys(), ...afterByKey.keys()]));
+
+  return keys
+    .map((key) => {
+      const afterBucket = afterByKey.get(key);
+      const [month, campaignUmbrella] = key.split("|");
+      return {
+        month,
+        campaignUmbrella,
+        ...diffInsightSnapshot(beforeByKey.get(key) || emptyInsightSnapshot(), afterBucket || emptyInsightSnapshot()),
+      };
+    })
+    .filter((bucket) =>
+      bucket.rows !== 0 ||
+      bucket.spend !== 0 ||
+      bucket.impressions !== 0 ||
+      bucket.clicks !== 0 ||
+      bucket.leads !== 0 ||
+      bucket.bookings !== 0 ||
+      bucket.conversions !== 0,
+    )
+    .sort((a, b) => Math.abs(b.spend) - Math.abs(a.spend));
+}
+
+function diffInsightSnapshot(before: InsightAggregateSnapshot, after: InsightAggregateSnapshot) {
+  return {
+    rows: after.rows - before.rows,
+    spend: roundCurrency(after.spend - before.spend),
+    impressions: after.impressions - before.impressions,
+    clicks: after.clicks - before.clicks,
+    leads: after.leads - before.leads,
+    bookings: after.bookings - before.bookings,
+    conversions: after.conversions - before.conversions,
+  };
+}
+
+function describeInsightRange(range: InsightDateRange) {
+  if (range.kind === "range") return `${range.since} to ${range.until}`;
+  return range.datePreset || getSyncDatePreset();
+}
+
+function roundCurrency(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function formatMoneyForAudit(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 2,
+  }).format(value);
 }
 
 async function fetchInsights(metaAccountId: string, range?: InsightDateRange) {
