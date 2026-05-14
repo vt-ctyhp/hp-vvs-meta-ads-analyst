@@ -75,6 +75,13 @@ export type DailyTrendRow = {
 export type SourceTransparency = {
   timeRange: { start: string | null; end: string | null; days: number };
   adAccountsAnalyzed: string[];
+  dataCoverage: {
+    expectedDays: number;
+    storedDays: number;
+    missingDays: number;
+    missingDateSample: string[];
+    isComplete: boolean;
+  };
   recordCounts: Record<string, number>;
 };
 
@@ -237,6 +244,13 @@ export function emptyDashboardPayload(missingEnv = getMissingRequiredEnv()): Das
     sourceTransparency: {
       timeRange: { start: null, end: null, days: 30 },
       adAccountsAnalyzed: [],
+      dataCoverage: {
+        expectedDays: 0,
+        storedDays: 0,
+        missingDays: 0,
+        missingDateSample: [],
+        isComplete: true,
+      },
       recordCounts: {},
     },
     overview: EMPTY_METRICS,
@@ -568,6 +582,11 @@ export async function fetchDashboardData(
         };
       })
       .sort((a, b) => a.date.localeCompare(b.date));
+    const dataCoverage = buildDataCoverage(
+      dateRange.start,
+      dateRange.end,
+      dailyTrendAggregateRows.map((row) => row.date),
+    );
 
     const fatigueRisks = creativeRows
       .filter((creative) => creative.riskLevel === "high" || creative.riskLevel === "medium")
@@ -591,6 +610,7 @@ export async function fetchDashboardData(
         days: dateRange.days,
       },
       adAccountsAnalyzed: accounts.map((account) => account.name || account.meta_account_id),
+      dataCoverage,
       recordCounts: {
         brands: brands.length,
         meta_ad_accounts: accounts.length,
@@ -775,6 +795,37 @@ function normalizeDays(days: number | null | undefined) {
 
 function normalizeDateString(value: string | null | undefined) {
   return value && DATE_PATTERN.test(value) ? value : null;
+}
+
+function buildDataCoverage(start: string, end: string, storedDateValues: Array<string | null | undefined>) {
+  const storedDates = new Set(
+    storedDateValues.filter((value): value is string => Boolean(value && DATE_PATTERN.test(value))),
+  );
+  const missingDateSample: string[] = [];
+  const endDate = parseDate(end);
+  const cursor = parseDate(start);
+  let expectedDays = 0;
+  let storedDays = 0;
+
+  while (cursor <= endDate) {
+    const dateKey = toDateString(cursor);
+    expectedDays += 1;
+    if (storedDates.has(dateKey)) {
+      storedDays += 1;
+    } else if (missingDateSample.length < 31) {
+      missingDateSample.push(dateKey);
+    }
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  const missingDays = Math.max(0, expectedDays - storedDays);
+  return {
+    expectedDays,
+    storedDays,
+    missingDays,
+    missingDateSample,
+    isComplete: missingDays === 0,
+  };
 }
 
 function parseDate(value: string) {

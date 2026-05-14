@@ -273,6 +273,8 @@ export function DashboardClient({ initialData }: Props) {
       <ShellHeader data={data} />
 
       <section className="mx-auto mt-8 max-w-7xl">
+        <DataCoverageNotice data={data} />
+
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
           <MetricTile label="Spend" value={formatMetric(data.overview.spend, "money")} />
           <MetricTile label="Impressions" value={formatMetric(data.overview.impressions, "number")} />
@@ -567,6 +569,26 @@ function MetricTile({ label, value }: { label: string; value: string }) {
     <div className="border border-hp-rule bg-hp-card p-5">
       <div className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">{label}</div>
       <div className="mt-3 text-2xl tabular-nums text-hp-ink">{value}</div>
+    </div>
+  );
+}
+
+function DataCoverageNotice({ data }: { data: DashboardPayload }) {
+  const coverage = data.sourceTransparency.dataCoverage;
+  if (coverage.isComplete || coverage.expectedDays === 0) return null;
+
+  return (
+    <div className="mb-4 flex gap-3 border border-hp-pink/70 bg-hp-card px-4 py-3 text-sm text-hp-ink">
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-hp-pink" />
+      <div>
+        <div>
+          Stored Meta coverage is incomplete: {coverage.storedDays} of {coverage.expectedDays}{" "}
+          selected days have rows.
+        </div>
+        <div className="mt-1 text-hp-muted">
+          Totals below only include stored days. Missing days: {coverage.missingDays}.
+        </div>
+      </div>
     </div>
   );
 }
@@ -1096,6 +1118,7 @@ function ChatPanel({
 
 function SourcePanel({ data }: { data: DashboardPayload }) {
   const counts = Object.entries(data.sourceTransparency.recordCounts);
+  const coverage = data.sourceTransparency.dataCoverage;
   return (
     <section className="border border-hp-rule bg-hp-card p-4">
       <div className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
@@ -1104,6 +1127,17 @@ function SourcePanel({ data }: { data: DashboardPayload }) {
       <div className="mt-3 space-y-2 text-sm">
         <div>{data.sourceTransparency.timeRange.days} day window</div>
         <div>{data.sourceTransparency.adAccountsAnalyzed.join(", ") || "No accounts"}</div>
+        <div className="flex justify-between gap-4 border-t border-hp-rule pt-2">
+          <span>stored_days</span>
+          <span className="tabular-nums">
+            {formatMetric(coverage.storedDays, "number")} /{" "}
+            {formatMetric(coverage.expectedDays, "number")}
+          </span>
+        </div>
+        <div className="flex justify-between gap-4 border-t border-hp-rule pt-2">
+          <span>missing_days</span>
+          <span className="tabular-nums">{formatMetric(coverage.missingDays, "number")}</span>
+        </div>
         {counts.map(([key, value]) => (
           <div key={key} className="flex justify-between gap-4 border-t border-hp-rule pt-2">
             <span>{key}</span>
