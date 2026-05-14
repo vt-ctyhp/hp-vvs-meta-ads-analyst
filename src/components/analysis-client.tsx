@@ -3,13 +3,17 @@
 import {
   BarChart3,
   Brain,
+  Check,
   Gauge,
   History,
   Loader2,
+  Pencil,
   Save,
   Send,
   Sparkles,
   Table2,
+  Trash2,
+  X,
 } from "lucide-react";
 import { useState } from "react";
 import {
@@ -48,6 +52,11 @@ export function AnalysisClient({ initialSaved }: Props) {
   const [saved, setSaved] = useState(initialSaved);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
+  const [actionStatus, setActionStatus] = useState("");
+  const [editPrompt, setEditPrompt] = useState("");
+  const [titleDraft, setTitleDraft] = useState("");
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
 
   async function generateAnalysis() {
     const nextPrompt = prompt.trim();
@@ -55,6 +64,7 @@ export function AnalysisClient({ initialSaved }: Props) {
 
     setLoading(true);
     setStatus("");
+    setActionStatus("");
     try {
       const response = await fetch("/api/analysis", {
         method: "POST",
@@ -64,6 +74,9 @@ export function AnalysisClient({ initialSaved }: Props) {
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Analysis failed");
       setResult(payload);
+      setTitleDraft(payload.title || "");
+      setEditPrompt("");
+      setActionStatus(payload.dashboardId ? "Dashboard saved automatically." : "");
       await refreshSaved();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
@@ -75,13 +88,117 @@ export function AnalysisClient({ initialSaved }: Props) {
   async function loadSavedDashboard(dashboardId: string) {
     setLoading(true);
     setStatus("");
+    setActionStatus("");
     try {
       const response = await fetch(`/api/analysis?dashboardId=${encodeURIComponent(dashboardId)}`);
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Could not load saved dashboard");
       setResult(payload);
+      setTitleDraft(payload.title || "");
       setPrompt(payload.prompt || prompt);
       setMode(payload.mode || "fast");
+      setEditPrompt("");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function applyDashboardEdit() {
+    const nextPrompt = editPrompt.trim();
+    if (!nextPrompt || !result) return;
+
+    setLoading(true);
+    setStatus("");
+    setActionStatus("");
+    try {
+      const response = await fetch("/api/analysis", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "edit",
+          dashboardId: result.dashboardId,
+          currentPrompt: result.prompt,
+          currentSpec: result.spec,
+          prompt: nextPrompt,
+          mode,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Dashboard edit failed");
+      setResult(payload);
+      setTitleDraft(payload.title || "");
+      setPrompt(payload.prompt || nextPrompt);
+      setEditPrompt("");
+      setActionStatus(payload.dashboardId ? "Dashboard updated and saved." : "");
+      await refreshSaved();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function renameDashboard(dashboardId: string, title: string) {
+    const nextTitle = title.trim();
+    if (!nextTitle) return;
+
+    setLoading(true);
+    setStatus("");
+    setActionStatus("");
+    try {
+      const response = await fetch("/api/analysis", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ dashboardId, title: nextTitle }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Rename failed");
+      setSaved((dashboards) =>
+        dashboards.map((dashboard) =>
+          dashboard.id === dashboardId ? { ...dashboard, ...payload } : dashboard,
+        ),
+      );
+      setResult((current) =>
+        current?.dashboardId === dashboardId
+          ? {
+              ...current,
+              title: payload.title,
+              spec: { ...current.spec, title: payload.title },
+            }
+          : current,
+      );
+      setRenamingId(null);
+      setRenameDraft("");
+      setTitleDraft(payload.title || nextTitle);
+      setActionStatus("Dashboard renamed.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function deleteDashboard(dashboardId: string) {
+    if (!window.confirm("Delete this saved ad-hoc dashboard?")) return;
+
+    setLoading(true);
+    setStatus("");
+    setActionStatus("");
+    try {
+      const response = await fetch(`/api/analysis?dashboardId=${encodeURIComponent(dashboardId)}`, {
+        method: "DELETE",
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Delete failed");
+      setSaved((dashboards) => dashboards.filter((dashboard) => dashboard.id !== dashboardId));
+      if (result?.dashboardId === dashboardId) {
+        setResult(null);
+        setTitleDraft("");
+        setEditPrompt("");
+      }
+      setActionStatus("Dashboard deleted.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     } finally {
@@ -133,28 +250,79 @@ export function AnalysisClient({ initialSaved }: Props) {
               {loading ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
               Generate
             </button>
+            {actionStatus ? <p className="mt-3 text-sm text-signal-positive">{actionStatus}</p> : null}
             {status ? <p className="mt-3 text-sm text-signal-danger">{status}</p> : null}
           </section>
 
           <section className="border border-hp-rule bg-hp-card p-4">
             <div className="mb-4 flex items-center gap-2 text-hp-ink">
               <History size={18} />
-              <span className="text-[11px] uppercase tracking-[0.14em]">Saved Specs</span>
+              <span className="text-[11px] uppercase tracking-[0.14em]">Saved Dashboards</span>
             </div>
             <div className="space-y-2">
               {saved.length ? (
                 saved.map((dashboard) => (
-                  <button
-                    key={dashboard.id}
-                    onClick={() => loadSavedDashboard(dashboard.id)}
-                    className="w-full border border-hp-rule p-3 text-left transition-colors hover:border-hp-ink hover:bg-hp-inset"
-                  >
-                    <div className="line-clamp-2 text-sm text-hp-ink">{dashboard.title}</div>
-                    <div className="mt-2 flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-                      <span>{dashboard.mode}</span>
-                      <span>{new Date(dashboard.updatedAt).toLocaleDateString()}</span>
-                    </div>
-                  </button>
+                  <article key={dashboard.id} className="border border-hp-rule">
+                    <button
+                      onClick={() => loadSavedDashboard(dashboard.id)}
+                      className="w-full p-3 text-left transition-colors hover:bg-hp-inset"
+                    >
+                      <div className="line-clamp-2 text-sm text-hp-ink">{dashboard.title}</div>
+                      <div className="mt-2 flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                        <span>{dashboard.mode}</span>
+                        <span>{new Date(dashboard.updatedAt).toLocaleDateString()}</span>
+                      </div>
+                    </button>
+
+                    {renamingId === dashboard.id ? (
+                      <div className="flex gap-2 border-t border-hp-rule p-2">
+                        <input
+                          value={renameDraft}
+                          onChange={(event) => setRenameDraft(event.target.value)}
+                          className="min-w-0 flex-1 border-b border-hp-rule bg-transparent px-1 py-1 text-sm outline-none focus:border-hp-pink"
+                          aria-label="Rename saved dashboard"
+                        />
+                        <button
+                          onClick={() => renameDashboard(dashboard.id, renameDraft)}
+                          disabled={loading || !renameDraft.trim()}
+                          title="Save name"
+                          className="flex h-8 w-8 items-center justify-center border border-hp-ink text-hp-ink transition-colors hover:bg-hp-ink hover:text-hp-foundation"
+                        >
+                          <Check size={14} />
+                        </button>
+                        <button
+                          onClick={() => {
+                            setRenamingId(null);
+                            setRenameDraft("");
+                          }}
+                          title="Cancel rename"
+                          className="flex h-8 w-8 items-center justify-center border border-hp-rule text-hp-muted transition-colors hover:border-hp-ink hover:text-hp-ink"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex border-t border-hp-rule">
+                        <button
+                          onClick={() => {
+                            setRenamingId(dashboard.id);
+                            setRenameDraft(dashboard.title);
+                          }}
+                          className="flex flex-1 items-center justify-center gap-2 px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted transition-colors hover:bg-hp-inset hover:text-hp-ink"
+                        >
+                          <Pencil size={13} />
+                          Rename
+                        </button>
+                        <button
+                          onClick={() => deleteDashboard(dashboard.id)}
+                          className="flex flex-1 items-center justify-center gap-2 border-l border-hp-rule px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-signal-danger transition-colors hover:bg-hp-inset"
+                        >
+                          <Trash2 size={13} />
+                          Delete
+                        </button>
+                      </div>
+                    )}
+                  </article>
                 ))
               ) : (
                 <p className="text-sm text-hp-muted">No saved specs yet.</p>
@@ -165,7 +333,19 @@ export function AnalysisClient({ initialSaved }: Props) {
 
         <section className="min-w-0 space-y-6">
           {result ? (
-            <AnalysisOutput result={result} />
+            <>
+              <CurrentDashboardPanel
+                result={result}
+                titleDraft={titleDraft}
+                editPrompt={editPrompt}
+                loading={loading}
+                onTitleChange={setTitleDraft}
+                onRename={() => result.dashboardId && renameDashboard(result.dashboardId, titleDraft)}
+                onEditPromptChange={setEditPrompt}
+                onApplyEdit={applyDashboardEdit}
+              />
+              <AnalysisOutput result={result} />
+            </>
           ) : (
             <div className="border border-hp-rule bg-hp-card p-8">
               <div className="flex h-64 items-center justify-center border border-dashed border-hp-rule text-center text-sm text-hp-muted">
@@ -176,6 +356,82 @@ export function AnalysisClient({ initialSaved }: Props) {
         </section>
       </section>
     </main>
+  );
+}
+
+function CurrentDashboardPanel({
+  result,
+  titleDraft,
+  editPrompt,
+  loading,
+  onTitleChange,
+  onRename,
+  onEditPromptChange,
+  onApplyEdit,
+}: {
+  result: AnalysisResult;
+  titleDraft: string;
+  editPrompt: string;
+  loading: boolean;
+  onTitleChange: (value: string) => void;
+  onRename: () => void;
+  onEditPromptChange: (value: string) => void;
+  onApplyEdit: () => void;
+}) {
+  return (
+    <section className="border border-hp-rule bg-hp-card p-4">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1">
+          <div className="mb-2 flex items-center gap-2 text-hp-ink">
+            <Save size={16} />
+            <span className="text-[11px] uppercase tracking-[0.14em]">
+              {result.dashboardId ? "Saved Dashboard" : "Unsaved Dashboard"}
+            </span>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <input
+              value={titleDraft}
+              onChange={(event) => onTitleChange(event.target.value)}
+              disabled={!result.dashboardId}
+              className="min-w-0 flex-1 border border-hp-rule bg-hp-inset px-3 py-2 text-sm outline-none focus:border-hp-pink disabled:opacity-60"
+              aria-label="Dashboard name"
+            />
+            <button
+              onClick={onRename}
+              disabled={loading || !result.dashboardId || !titleDraft.trim() || titleDraft === result.title}
+              className="flex h-10 items-center justify-center gap-2 border border-hp-ink px-4 text-[11px] uppercase tracking-[0.14em] text-hp-ink transition-colors hover:bg-hp-ink hover:text-hp-foundation disabled:hover:bg-transparent disabled:hover:text-hp-ink"
+            >
+              <Pencil size={14} />
+              Rename
+            </button>
+          </div>
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="mb-2 flex items-center gap-2 text-hp-ink">
+            <Sparkles size={16} />
+            <span className="text-[11px] uppercase tracking-[0.14em]">Edit with GPT</span>
+          </div>
+          <div className="flex flex-col gap-2">
+            <textarea
+              value={editPrompt}
+              onChange={(event) => onEditPromptChange(event.target.value)}
+              rows={3}
+              placeholder="Add a campaign-umbrella table, move the trend chart first, or compare this against last month."
+              className="w-full resize-none border border-hp-rule bg-hp-inset p-3 text-sm leading-6 outline-none placeholder:text-hp-muted focus:border-hp-pink"
+            />
+            <button
+              onClick={onApplyEdit}
+              disabled={loading || !editPrompt.trim()}
+              className="flex h-10 items-center justify-center gap-2 bg-hp-ink px-4 text-[11px] uppercase tracking-[0.14em] text-hp-foundation transition-colors hover:bg-hp-pink"
+            >
+              {loading ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+              Apply Edit
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 

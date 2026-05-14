@@ -174,6 +174,17 @@ type InsightRow = {
 
 type BrandRow = { id: string; code: string; name: string };
 type AccountRow = { meta_account_id: string; name: string | null };
+type AnalysisDashboardRecord = {
+  id: string;
+  title: string;
+  prompt: string;
+  mode: string;
+  spec: unknown;
+  model_plan: string | null;
+  model_analysis: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
 type MetricAccumulator = {
   spend: number;
   impressions: number;
@@ -260,35 +271,69 @@ export async function fetchSavedAnalysisDashboards(limit = 12): Promise<SavedAna
 }
 
 export async function runSavedAdHocAnalysis(dashboardId: string): Promise<AnalysisResult> {
-  const supabase = createServiceClient();
-  const response = await supabase
-    .from("ai_analysis_dashboards")
-    .select("id,title,prompt,mode,spec,model_plan,model_analysis")
-    .eq("id", dashboardId)
-    .single();
-
-  if (response.error) throw response.error;
-
-  const dashboard = response.data as Record<string, unknown>;
-  const spec = normalizeSpec(dashboard.spec, String(dashboard.prompt));
+  const dashboard = await fetchAnalysisDashboardRecord(dashboardId);
+  const spec = normalizeSpec(dashboard.spec, dashboard.prompt);
   const mode: AnalysisMode = dashboard.mode === "deep" ? "deep" : "fast";
-  const planModel = String(dashboard.model_plan || getOpenAIAnalysisModel("fast"));
-  const analysisModel = typeof dashboard.model_analysis === "string" ? dashboard.model_analysis : null;
+  const planModel = dashboard.model_plan || getOpenAIAnalysisModel("fast");
+  const analysisModel = dashboard.model_analysis;
   const aggregated = await aggregateSpec(spec);
 
   return {
     ...baseResult({
-      prompt: String(dashboard.prompt),
+      prompt: dashboard.prompt,
       mode,
       spec,
       aggregated,
-      dashboardId: String(dashboard.id),
+      dashboardId: dashboard.id,
       planModel,
       analysisModel,
       tokenEstimate: emptyTokenEstimate(),
     }),
     answer: "Loaded saved dashboard spec and refreshed the data directly from Supabase.",
   };
+}
+
+export async function renameSavedAnalysisDashboard(input: {
+  dashboardId: string;
+  title: string;
+}): Promise<SavedAnalysisDashboard> {
+  const title = normalizeDashboardTitle(input.title);
+  if (!title) {
+    throw new ConfigurationError("Dashboard title is required.");
+  }
+
+  const dashboard = await fetchAnalysisDashboardRecord(input.dashboardId);
+  const spec = {
+    ...normalizeSpec(dashboard.spec, dashboard.prompt),
+    title,
+  };
+
+  const supabase = createServiceClient();
+  const response = await supabase
+    .from("ai_analysis_dashboards")
+    .update({
+      title,
+      spec: spec as unknown as Json,
+    })
+    .eq("id", input.dashboardId)
+    .select("id,title,prompt,mode,created_at,updated_at")
+    .single();
+
+  if (response.error) throw response.error;
+  return mapSavedDashboard(response.data);
+}
+
+export async function deleteSavedAnalysisDashboard(dashboardId: string) {
+  const supabase = createServiceClient();
+  const response = await supabase
+    .from("ai_analysis_dashboards")
+    .delete()
+    .eq("id", dashboardId)
+    .select("id")
+    .single();
+
+  if (response.error) throw response.error;
+  return { id: String(response.data.id) };
 }
 
 export async function createAdHocAnalysis(input: {
@@ -359,6 +404,88 @@ export async function createAdHocAnalysis(input: {
   };
 }
 
+export async function editAdHocAnalysis(input: {
+  dashboardId?: string | null;
+  currentSpec?: unknown;
+  currentPrompt?: string | null;
+  prompt: string;
+  mode: AnalysisMode;
+}): Promise<AnalysisResult> {
+  const editPrompt = input.prompt.trim();
+  if (!editPrompt) {
+    throw new ConfigurationError("Edit prompt is required.");
+  }
+
+  const dashboard = input.dashboardId
+    ? await fetchAnalysisDashboardRecord(input.dashboardId)
+    : null;
+  const basePrompt = dashboard?.prompt || input.currentPrompt?.trim() || "Ad-hoc Meta Ads analysis";
+  const currentSpec = normalizeSpec(dashboard?.spec || input.currentSpec, basePrompt);
+  const planModel = getOpenAIAnalysisModel("fast");
+  const { spec, usage: planUsage } = await editSpecWithAI({
+    currentSpec,
+    currentPrompt: basePrompt,
+    editPrompt,
+    model: planModel,
+  });
+  const prompt = mergePrompts(basePrompt, editPrompt);
+  const aggregated = await aggregateSpec(spec);
+  const baseTokenEstimate = {
+    ...emptyTokenEstimate(),
+    planInputTokens: planUsage.input,
+    planOutputTokens: planUsage.output,
+  };
+
+  if (aggregated.needsNarrowing) {
+    return baseResult({
+      prompt,
+      mode: input.mode,
+      spec,
+      aggregated,
+      dashboardId: dashboard?.id || null,
+      planModel,
+      analysisModel: null,
+      tokenEstimate: withEstimatedCost(baseTokenEstimate, planModel, null),
+    });
+  }
+
+  const analysis =
+    input.mode === "deep"
+      ? await generateDeepAnalysis(prompt, spec, aggregated, getOpenAIAnalysisModel("deep"))
+      : null;
+
+  const resultBeforeSave = baseResult({
+    prompt,
+    mode: input.mode,
+    spec,
+    aggregated,
+    dashboardId: dashboard?.id || null,
+    planModel,
+    analysisModel: analysis?.model || null,
+    tokenEstimate: withEstimatedCost(
+      {
+        ...baseTokenEstimate,
+        analysisInputTokens: analysis?.usage.input || 0,
+        analysisOutputTokens: analysis?.usage.output || 0,
+      },
+      planModel,
+      analysis?.model || null,
+    ),
+  });
+
+  const result = {
+    ...resultBeforeSave,
+    answer: analysis?.answer || buildDeterministicAnswer(spec, aggregated),
+  };
+
+  const persistence = await persistAnalysis(result, planModel, analysis?.model || null, dashboard?.id || null);
+  return {
+    ...result,
+    dashboardId: persistence.dashboardId,
+    persistenceWarning: persistence.warning,
+  };
+}
+
 async function createSpecWithAI(prompt: string, model: string) {
   const response = await createOpenAIClient().chat.completions.create({
     model,
@@ -399,6 +526,60 @@ async function createSpecWithAI(prompt: string, model: string) {
     spec: normalizeSpec(parseJson(content) || fallbackSpec(prompt), prompt),
     usage: {
       input: response.usage?.prompt_tokens || estimateTokens(prompt) + 700,
+      output: response.usage?.completion_tokens || estimateTokens(content || ""),
+    },
+  };
+}
+
+async function editSpecWithAI(input: {
+  currentSpec: AnalysisSpec;
+  currentPrompt: string;
+  editPrompt: string;
+  model: string;
+}) {
+  const response = await createOpenAIClient().chat.completions.create({
+    model: input.model,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content:
+          "You edit an existing Meta Ads dashboard AnalysisSpec. Return the full updated JSON spec only. Preserve existing filters/date range/metrics/widgets unless the user asks to change them. You may add, remove, rename, or reorder widgets to satisfy layout requests. Never write SQL or raw data.",
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          task: "Modify this existing AnalysisSpec according to the requested follow-up.",
+          currentPrompt: input.currentPrompt,
+          requestedChange: input.editPrompt,
+          currentSpec: input.currentSpec,
+          allowed: {
+            metrics: ANALYSIS_METRICS,
+            dimensions: ANALYSIS_DIMENSIONS,
+            filterFields: FILTER_FIELDS,
+            grains: ["summary", "daily", "weekly", "monthly"],
+            widgets: WIDGET_TYPES,
+            datePresets: DATE_PRESETS,
+          },
+          rules: [
+            "Return one complete AnalysisSpec JSON object.",
+            "If the user says add a chart/table/metric, append an appropriate widget.",
+            "If the user says rearrange, update the widgets array order.",
+            "If the user asks to compare by campaign, ad set, ad, creative, brand, or umbrella, adjust dimensions accordingly.",
+            "Keep limits at or below 50 unless the user asks for a leaderboard.",
+          ],
+        }),
+      },
+    ],
+  });
+
+  const content = response.choices[0]?.message?.content;
+  return {
+    spec: normalizeSpec(parseJson(content) || input.currentSpec, input.editPrompt),
+    usage: {
+      input:
+        response.usage?.prompt_tokens ||
+        estimateTokens(JSON.stringify(input.currentSpec)) + estimateTokens(input.editPrompt) + 900,
       output: response.usage?.completion_tokens || estimateTokens(content || ""),
     },
   };
@@ -793,28 +974,43 @@ function baseResult(input: {
   };
 }
 
-async function persistAnalysis(result: AnalysisResult, planModel: string, analysisModel: string | null) {
+async function persistAnalysis(
+  result: AnalysisResult,
+  planModel: string,
+  analysisModel: string | null,
+  dashboardId?: string | null,
+) {
   try {
     const supabase = createServiceClient();
-    const insert = await supabase
-      .from("ai_analysis_dashboards")
-      .insert({
-        title: result.title,
-        prompt: result.prompt,
-        mode: result.mode,
-        spec: result.spec as unknown as Json,
-        model_plan: planModel,
-        model_analysis: analysisModel,
-        source_transparency: result.sourceTransparency as unknown as Json,
-      })
-      .select("id")
-      .single();
+    const dashboardPayload = {
+      title: result.title,
+      prompt: result.prompt,
+      mode: result.mode,
+      spec: result.spec as unknown as Json,
+      model_plan: planModel,
+      model_analysis: analysisModel,
+      source_transparency: result.sourceTransparency as unknown as Json,
+    };
+    const savedDashboard = dashboardId
+      ? await supabase
+          .from("ai_analysis_dashboards")
+          .update(dashboardPayload)
+          .eq("id", dashboardId)
+          .select("id")
+          .single()
+      : await supabase
+          .from("ai_analysis_dashboards")
+          .insert({
+            ...dashboardPayload,
+          })
+          .select("id")
+          .single();
 
-    if (insert.error) throw insert.error;
+    if (savedDashboard.error) throw savedDashboard.error;
 
-    const dashboardId = String((insert.data as { id: string }).id);
+    const savedDashboardId = String((savedDashboard.data as { id: string }).id);
     await supabase.from("ai_analysis_runs").insert({
-      dashboard_id: dashboardId,
+      dashboard_id: savedDashboardId,
       prompt: result.prompt,
       mode: result.mode,
       model_plan: planModel,
@@ -828,13 +1024,44 @@ async function persistAnalysis(result: AnalysisResult, planModel: string, analys
       } as unknown as Json,
     });
 
-    return { dashboardId };
+    return { dashboardId: savedDashboardId };
   } catch (error) {
     return {
       dashboardId: null,
       warning: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+async function fetchAnalysisDashboardRecord(dashboardId: string): Promise<AnalysisDashboardRecord> {
+  const supabase = createServiceClient();
+  const response = await supabase
+    .from("ai_analysis_dashboards")
+    .select("id,title,prompt,mode,spec,model_plan,model_analysis,created_at,updated_at")
+    .eq("id", dashboardId)
+    .single();
+
+  if (response.error) throw response.error;
+  return response.data as AnalysisDashboardRecord;
+}
+
+function mapSavedDashboard(dashboard: Record<string, unknown>): SavedAnalysisDashboard {
+  return {
+    id: String(dashboard.id),
+    title: String(dashboard.title),
+    prompt: String(dashboard.prompt),
+    mode: dashboard.mode === "deep" ? "deep" : "fast",
+    createdAt: String(dashboard.created_at),
+    updatedAt: String(dashboard.updated_at),
+  };
+}
+
+function normalizeDashboardTitle(title: string) {
+  return title.trim().replace(/\s+/g, " ").slice(0, 100);
+}
+
+function mergePrompts(basePrompt: string, editPrompt: string) {
+  return `${basePrompt.trim()}\n\nFollow-up: ${editPrompt.trim()}`;
 }
 
 function buildDeterministicAnswer(
