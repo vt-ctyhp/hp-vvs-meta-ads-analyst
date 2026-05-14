@@ -297,7 +297,7 @@ export async function fetchDashboardData(
       supabase.from("meta_creatives").select("*"),
       supabase
         .from("ai_reports")
-        .select("*")
+        .select("id,title,report_type,generated_at,source_transparency")
         .order("generated_at", { ascending: false })
         .limit(5),
       supabase
@@ -660,7 +660,7 @@ export async function fetchDashboardData(
         title: String(report.title),
         reportType: String(report.report_type),
         generatedAt: String(report.generated_at),
-        content: report.content,
+        content: null,
         sourceTransparency: (report.source_transparency || sourceTransparency) as SourceTransparency,
       })),
       latestSyncRuns: rows<Record<string, unknown>>(syncRunsRes.data).map((run) => ({
