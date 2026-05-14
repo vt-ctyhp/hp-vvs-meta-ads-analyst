@@ -714,13 +714,17 @@ function formatMetricValue(value: string | number | null | undefined, metric: An
 
 function labelFor(value: string) {
   const labels: Record<string, string> = {
+    ad_count: "Ads",
+    ad_set_count: "Ad Sets",
     bookings: "Bookings",
+    campaign_count: "Campaigns",
     clicks: "Clicks",
     conversions: "Conversions",
     cpc: "CPC",
     cpl: "CPL",
     cpm: "CPM",
     ctr: "CTR",
+    creative_count: "Creatives",
     frequency: "Frequency",
     impressions: "Impressions",
     leads: "Leads",

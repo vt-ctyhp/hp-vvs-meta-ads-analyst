@@ -15,6 +15,10 @@ import { createServiceClient } from "./supabase";
 const ANALYSIS_METRICS = [
   "spend",
   "monthly_budget",
+  "campaign_count",
+  "ad_set_count",
+  "ad_count",
+  "creative_count",
   "impressions",
   "reach",
   "clicks",
@@ -174,6 +178,7 @@ type PromptIntent = {
   tableOnly?: boolean;
   tableTitle?: string;
   title?: string;
+  widgets?: AnalysisSpec["widgets"];
   stripCashForGoldFilter?: boolean;
 };
 
@@ -498,8 +503,11 @@ async function createSpecWithAI(prompt: string, model: string) {
             "For ad spend or spend-only requests, include spend first; if no other metric is requested, use only spend.",
             "For monthly budget or budget requests, use the monthly_budget metric. Do not substitute CTR, CPC, CPL, impressions, clicks, or leads for budget.",
             "If the user asks to add budget to a spend table, use metrics ['spend','monthly_budget'] unless they explicitly request more metrics.",
+            "For count/how many/number of campaigns, ad sets, ads, or creatives, use campaign_count, ad_set_count, ad_count, or creative_count. Do not list entity IDs unless the user asks to list or group by each entity.",
+            "If the user asks to group by specific fields, replace dimensions with those fields instead of preserving unrelated existing dimensions.",
             "Use search filters only for free-text ad concepts, product names, or campaign/ad text explicitly named by the user.",
             "For table-format requests, return a table widget first and add charts only when the user asks for charts.",
+            "For chart/graph requests, include a line widget for time-series groupings and a bar widget for non-time groupings.",
             "Keep limits at or below 50 unless the user asks for a leaderboard.",
           ],
         }),
@@ -558,6 +566,10 @@ async function editSpecWithAI(input: {
             "For ad spend or spend-only requests, include spend first; if no other metric is requested, use only spend.",
             "For monthly budget or budget requests, use the monthly_budget metric. Do not substitute CTR, CPC, CPL, impressions, clicks, or leads for budget.",
             "If the user asks to add budget to a spend table, use metrics ['spend','monthly_budget'] unless they explicitly request more metrics.",
+            "For count/how many/number of campaigns, ad sets, ads, or creatives, use campaign_count, ad_set_count, ad_count, or creative_count. Do not list entity IDs unless the user asks to list or group by each entity.",
+            "If the user asks to group by specific fields, replace dimensions with those fields instead of preserving unrelated existing dimensions.",
+            "If the user says just count, only count, or no need to list IDs, remove the entity dimension and use the matching count metric.",
+            "For chart/graph requests, include a line widget for time-series groupings and a bar widget for non-time groupings.",
             "Keep limits at or below 50 unless the user asks for a leaderboard.",
           ],
         }),
@@ -622,9 +634,11 @@ async function generateDeepAnalysis(
 
 async function aggregateSpec(spec: AnalysisSpec) {
   const range = resolveDateRange(spec.dateRange);
+  const countMetrics = spec.metrics.filter(isCountMetric);
+  const aggregateLimit = spec.sort?.field && isCountMetric(spec.sort.field) ? 10000 : spec.limit;
 
   const supabase = createServiceClient();
-  const [aggregateRows, totalRows, accountsRes] = await Promise.all([
+  const [aggregateRows, totalRows, countRowsByMetric, totalCountRowsByMetric, accountsRes] = await Promise.all([
     aggregateMetaInsights({
       start: range.start,
       end: range.end,
@@ -632,7 +646,7 @@ async function aggregateSpec(spec: AnalysisSpec) {
       filters: spec.filters,
       sortField: spec.sort?.field,
       sortDirection: spec.sort?.direction,
-      limit: spec.limit,
+      limit: aggregateLimit,
     }),
     aggregateMetaInsights({
       start: range.start,
@@ -643,6 +657,34 @@ async function aggregateSpec(spec: AnalysisSpec) {
       sortDirection: "desc",
       limit: 1,
     }),
+    Promise.all(
+      countMetrics.map(async (metric) => ({
+        metric,
+        rows: await aggregateMetaInsights({
+          start: range.start,
+          end: range.end,
+          dimensions: uniqueDimensions([...spec.dimensions, countDimensionForMetric(metric)]),
+          filters: spec.filters,
+          sortField: countDimensionForMetric(metric),
+          sortDirection: "asc",
+          limit: 10000,
+        }),
+      })),
+    ),
+    Promise.all(
+      countMetrics.map(async (metric) => ({
+        metric,
+        rows: await aggregateMetaInsights({
+          start: range.start,
+          end: range.end,
+          dimensions: [countDimensionForMetric(metric)],
+          filters: spec.filters,
+          sortField: countDimensionForMetric(metric),
+          sortDirection: "asc",
+          limit: 10000,
+        }),
+      })),
+    ),
     supabase.from("meta_ad_accounts").select("meta_account_id,name"),
   ]);
 
@@ -655,12 +697,34 @@ async function aggregateSpec(spec: AnalysisSpec) {
       account.name || account.meta_account_id,
     ]),
   );
-  const rowsForTable: Array<Record<string, string | number | null>> = aggregateRows.map((row) => ({
-    ...Object.fromEntries(spec.dimensions.map((dimension) => [dimension, aggregateDimensionValue(row, dimension)])),
-    ...Object.fromEntries(spec.metrics.map((metric) => [metric, aggregateMetricValue(row, metric)])),
-    sourceRows: row.source_rows,
-  }));
-  const totals = aggregateMetrics(totalRows[0]);
+  const countRowsLookup = new Map(countRowsByMetric.map((entry) => [entry.metric, entry.rows]));
+  const rowsForTable: Array<Record<string, string | number | null>> = aggregateRows.map((row) => {
+    const metrics = Object.fromEntries(
+      spec.metrics.map((metric) => [
+        metric,
+        isCountMetric(metric)
+          ? countMetricForRow(row, spec.dimensions, countRowsLookup.get(metric) || [], metric)
+          : aggregateMetricValue(row, metric),
+      ]),
+    );
+
+    return {
+      ...Object.fromEntries(spec.dimensions.map((dimension) => [dimension, aggregateDimensionValue(row, dimension)])),
+      ...metrics,
+      sourceRows: row.source_rows,
+    };
+  });
+  const rowsForTableSorted = sortResultRows(rowsForTable, spec).slice(0, spec.limit);
+  const totalCountRowsLookup = new Map(totalCountRowsByMetric.map((entry) => [entry.metric, entry.rows]));
+  const totals = {
+    ...aggregateMetrics(totalRows[0]),
+    ...Object.fromEntries(
+      countMetrics.map((metric) => [
+        metric,
+        totalCountRowsLookup.get(metric)?.filter((row) => hasCountIdentity(row, metric)).length || 0,
+      ]),
+    ),
+  };
   const matchedRows = totalRows[0]?.source_rows || 0;
 
   const sourceTransparency = {
@@ -670,7 +734,7 @@ async function aggregateSpec(spec: AnalysisSpec) {
       meta_daily_insights: matchedRows,
       matched_insights: matchedRows,
       grouped_rows: aggregateRows.length,
-      returned_rows: rowsForTable.length,
+      returned_rows: rowsForTableSorted.length,
     },
   };
 
@@ -679,7 +743,7 @@ async function aggregateSpec(spec: AnalysisSpec) {
     narrowingMessage: "",
     table: {
       columns: buildColumns(spec),
-      rows: rowsForTable,
+      rows: rowsForTableSorted,
     },
     totals,
     sourceTransparency,
@@ -695,16 +759,7 @@ function normalizeSpec(value: unknown, prompt: string): AnalysisSpec {
   const filters = base.filters
     .map((filter) => ({ ...filter, value: filter.value.trim() }))
     .filter((filter) => filter.value);
-  const widgets = intent.tableOnly
-    ? [
-        {
-          type: "table" as const,
-          title: intent.tableTitle || "Comparison table",
-          x: dimensions[0],
-          metrics,
-        },
-      ]
-    : normalizeWidgets(base.widgets, dimensions, metrics, base.grain);
+  const widgets = normalizeWidgets(base.widgets, dimensions, metrics, base.grain);
 
   return {
     title: base.title,
@@ -737,7 +792,7 @@ function normalizeWidgets(
       type: widget.type,
       title: widget.title || labelForWidget(widget.type),
       x: widget.x && dimensions.includes(widget.x) ? widget.x : dimensions[0],
-      metrics: uniqueAllowed(widget.metrics, ANALYSIS_METRICS, metrics).slice(0, 4),
+      metrics: uniqueAllowed(widget.metrics, metrics, metrics).slice(0, 4),
     }));
 
   if (normalized.length) return normalized;
@@ -769,16 +824,7 @@ function fallbackSpec(prompt: string): AnalysisSpec {
     metrics: intent.metrics || DEFAULT_METRICS,
     sort: intent.sort || (weekly ? { field: "week", direction: "asc" } : { field: "spend", direction: "desc" }),
     limit: intent.limit || 50,
-    widgets: intent.tableOnly
-      ? [
-          {
-            type: "table",
-            title: intent.tableTitle || "Comparison table",
-            x: intent.dimensions?.[0],
-            metrics: intent.metrics || DEFAULT_METRICS,
-          },
-        ]
-      : [],
+    widgets: intent.widgets || [],
   };
 }
 
@@ -829,6 +875,10 @@ function aggregateMetrics(row: MetaInsightAggregateRow | undefined): Record<Anal
     return {
       spend: 0,
       monthly_budget: 0,
+      campaign_count: 0,
+      ad_set_count: 0,
+      ad_count: 0,
+      creative_count: 0,
       impressions: 0,
       reach: 0,
       clicks: 0,
@@ -846,6 +896,10 @@ function aggregateMetrics(row: MetaInsightAggregateRow | undefined): Record<Anal
   return {
     spend: row.spend,
     monthly_budget: row.monthly_budget,
+    campaign_count: 0,
+    ad_set_count: 0,
+    ad_count: 0,
+    creative_count: 0,
     impressions: row.impressions,
     reach: row.reach,
     clicks: row.clicks,
@@ -873,6 +927,96 @@ function aggregateDimensionValue(row: MetaInsightAggregateRow, dimension: Analys
   if (dimension === "ad") return row.ad_id || "Unknown ad";
   if (dimension === "creative") return row.creative_id || "Unknown creative";
   return "";
+}
+
+function isCountMetric(value: unknown): value is AnalysisMetric {
+  return (
+    value === "campaign_count" ||
+    value === "ad_set_count" ||
+    value === "ad_count" ||
+    value === "creative_count"
+  );
+}
+
+function countDimensionForMetric(metric: AnalysisMetric): AnalysisDimension {
+  if (metric === "campaign_count") return "campaign";
+  if (metric === "ad_set_count") return "ad_set";
+  if (metric === "ad_count") return "ad";
+  return "creative";
+}
+
+function countIdentityFieldForMetric(metric: AnalysisMetric) {
+  if (metric === "campaign_count") return "campaign_id";
+  if (metric === "ad_set_count") return "ad_set_id";
+  if (metric === "ad_count") return "ad_id";
+  return "creative_id";
+}
+
+function hasCountIdentity(row: MetaInsightAggregateRow, metric: AnalysisMetric) {
+  const value = row[countIdentityFieldForMetric(metric)];
+  return Boolean(value && !String(value).toLowerCase().startsWith("unknown"));
+}
+
+function countMetricForRow(
+  baseRow: MetaInsightAggregateRow,
+  dimensions: AnalysisDimension[],
+  countRows: MetaInsightAggregateRow[],
+  metric: AnalysisMetric,
+) {
+  const baseKey = dimensionKey(baseRow, dimensions);
+  const identityField = countIdentityFieldForMetric(metric);
+  const seen = new Set<string>();
+
+  countRows.forEach((row) => {
+    if (dimensionKey(row, dimensions) !== baseKey || !hasCountIdentity(row, metric)) return;
+    const identity = row[identityField];
+    if (identity) seen.add(identity);
+  });
+
+  return seen.size;
+}
+
+function dimensionKey(row: MetaInsightAggregateRow, dimensions: AnalysisDimension[]) {
+  return dimensions.map((dimension) => aggregateDimensionValue(row, dimension)).join("\u001f");
+}
+
+function uniqueDimensions(dimensions: AnalysisDimension[]) {
+  return Array.from(new Set(dimensions));
+}
+
+function sortResultRows(
+  rows: Array<Record<string, string | number | null>>,
+  spec: AnalysisSpec,
+) {
+  const firstDimension = spec.dimensions[0];
+  const sortField = spec.sort?.field || firstDimension || spec.metrics[0] || "spend";
+  const isDimensionSort = ANALYSIS_DIMENSIONS.includes(sortField as AnalysisDimension);
+  const sortDirection =
+    spec.sort?.direction || (isTimeDimension(sortField) || isDimensionSort ? "asc" : "desc");
+  const direction = sortDirection === "asc" ? 1 : -1;
+
+  return [...rows].sort((a, b) => {
+    const sorted = compareResultValues(a[sortField], b[sortField]);
+    if (sorted !== 0) return sorted * direction;
+
+    for (const dimension of spec.dimensions) {
+      const tieBreak = compareResultValues(a[dimension], b[dimension]);
+      if (tieBreak !== 0) return tieBreak;
+    }
+
+    return 0;
+  });
+}
+
+function compareResultValues(
+  a: string | number | null | undefined,
+  b: string | number | null | undefined,
+) {
+  if (typeof a === "number" || typeof b === "number") {
+    return Number(a || 0) - Number(b || 0);
+  }
+
+  return String(a || "").localeCompare(String(b || ""), undefined, { numeric: true });
 }
 
 function baseResult(input: {
@@ -1009,6 +1153,11 @@ function buildDeterministicAnswer(
   const cpl = aggregated.totals.cpl;
   const includesLeadMetrics = spec.metrics.some((metric) => metric === "leads" || metric === "cpl");
   const firstMetric = spec.metrics.find((metric) => metric !== "impressions") || "spend";
+  const primarySummary = spec.metrics.includes("spend")
+    ? includesLeadMetrics
+      ? `Total spend was ${formatMoney(spend)}, with ${formatNumber(leads)} leads${cpl === null ? "" : ` at ${formatMoney(cpl)} CPL`}.`
+      : `Total spend was ${formatMoney(spend)}.`
+    : `Total ${labelFor(firstMetric).toLowerCase()} ${isCountMetric(firstMetric) ? "were" : "was"} ${formatMetricForAnswer(aggregated.totals[firstMetric], firstMetric)}.`;
   const bestRow = [...aggregated.table.rows].sort((a, b) => {
     const aValue = Number(a[firstMetric] || 0);
     const bValue = Number(b[firstMetric] || 0);
@@ -1017,9 +1166,7 @@ function buildDeterministicAnswer(
 
   return [
     `${spec.title} returned ${aggregated.table.rows.length} grouped rows from ${aggregated.sourceTransparency.recordCounts.matched_insights} matching daily records.`,
-    includesLeadMetrics
-      ? `Total spend was ${formatMoney(spend)}, with ${formatNumber(leads)} leads${cpl === null ? "" : ` at ${formatMoney(cpl)} CPL`}.`
-      : `Total spend was ${formatMoney(spend)}.`,
+    primarySummary,
     bestRow ? `Highest ${labelFor(firstMetric).toLowerCase()} row: ${describeRow(bestRow, spec.dimensions)}.` : "",
   ]
     .filter(Boolean)
@@ -1027,21 +1174,40 @@ function buildDeterministicAnswer(
 }
 
 function inferPromptIntent(prompt: string): PromptIntent {
+  const segments = promptSegments(prompt);
+  const latestPrompt = segments[segments.length - 1] || prompt;
+  const hasFollowUp = segments.length > 1;
   const lower = prompt.toLowerCase();
-  const dimensions = inferDimensionsFromPrompt(lower);
+  const latestLower = latestPrompt.toLowerCase();
+  const promptForMode = hasFollowUp ? latestPrompt : prompt;
+  const promptForModeLower = promptForMode.toLowerCase();
+  const latestMetrics = inferMetricsFromPrompt(latestLower);
+  const metrics = latestMetrics || inferMetricsFromPrompt(lower);
+  const dimensions = inferDimensionsFromPrompt(latestLower, metrics) || inferDimensionsFromPrompt(lower, metrics);
   const dateRange = inferDateRangeFromPrompt(prompt);
-  const wantsMonthly = /\bmonth(?:\s+by\s+month|ly)?\b|\bby month\b|month-by-month/i.test(prompt);
-  const wantsWeekly = /\bweek(?:\s+by\s+week|ly)?\b|\bby week\b|week-by-week/i.test(prompt);
-  const wantsDaily = /\bday(?:\s+by\s+day)?\b|\bdaily\b|\bby day\b|day-by-day/i.test(prompt);
-  const metrics = inferMetricsFromPrompt(lower);
-  const tableOnly = /\btable\b|\btable format\b|\btabular\b/i.test(prompt) && !/\bchart\b|\bgraph\b|\bline\b|\bbar\b/i.test(prompt);
+  const grain = inferGrainFromPrompt(latestPrompt) || inferGrainFromPrompt(prompt);
+  const tableOnly =
+    /\btable\b|\btable format\b|\btabular\b/i.test(promptForMode) &&
+    !/\bchart\b|\bgraph\b|\bline\b|\bbar\b/i.test(promptForMode);
   const firstDimension = dimensions?.[0];
   const wantsBudget = metrics?.includes("monthly_budget") || /\bbudgets?\b/.test(lower);
   const isMonthlyUmbrella = dimensions?.includes("campaign_umbrella") && dimensions.includes("month");
+  const widgets = inferWidgetsFromPrompt({
+    lower: promptForModeLower,
+    dimensions,
+    metrics,
+    tableOnly,
+    tableTitle:
+      tableOnly && isMonthlyUmbrella && wantsBudget
+        ? "Monthly spend and budget by campaign umbrella"
+        : tableOnly && isMonthlyUmbrella
+          ? "Monthly spend by campaign umbrella"
+          : undefined,
+  });
 
   return {
     dateRange,
-    grain: wantsMonthly ? "monthly" : wantsWeekly ? "weekly" : wantsDaily ? "daily" : undefined,
+    grain,
     dimensions,
     metrics,
     sort: firstDimension
@@ -1058,6 +1224,7 @@ function inferPromptIntent(prompt: string): PromptIntent {
         : tableOnly && isMonthlyUmbrella
           ? "Monthly spend by campaign umbrella"
           : undefined,
+    widgets,
     title:
       isMonthlyUmbrella && wantsBudget
         ? "Monthly spend and budget by campaign umbrella"
@@ -1081,40 +1248,35 @@ function applyPromptIntent(spec: AnalysisSpec, intent: PromptIntent): AnalysisSp
     metrics: intent.metrics || spec.metrics,
     sort: intent.sort || spec.sort,
     limit: intent.limit || spec.limit,
-    widgets: intent.tableOnly
-      ? [
-          {
-            type: "table",
-            title: intent.tableTitle || "Comparison table",
-            x: intent.dimensions?.[0] || spec.dimensions[0],
-            metrics: intent.metrics || spec.metrics,
-          },
-        ]
-      : spec.widgets,
+    widgets: intent.widgets || spec.widgets,
   };
 }
 
-function inferDimensionsFromPrompt(lower: string): AnalysisDimension[] | undefined {
-  const wantsMonth = /\bmonth(?:\s+by\s+month|ly)?\b|\bby month\b|month-by-month/.test(lower);
+function inferDimensionsFromPrompt(
+  lower: string,
+  metrics?: AnalysisMetric[],
+): AnalysisDimension[] | undefined {
+  const wantsMonth = /\bmonth(?:\s+by\s+month)?\b|\bby month\b|month-by-month|\bmonthly\b(?!\s+budgets?\b)/.test(lower);
   const wantsWeek = /\bweek(?:\s+by\s+week|ly)?\b|\bby week\b|week-by-week/.test(lower);
   const wantsDay = /\bday(?:\s+by\s+day)?\b|\bdaily\b|\bby day\b|day-by-day/.test(lower);
   const wantsUmbrella = /\bcampaign[-\s]?umbrellas?\b|\binternal campaign umbrellas?\b|\bumbrellas?\b/.test(lower);
-  const wantsCampaign = /\bcampaigns?\b/.test(lower);
+  const wantsCampaign = /\bcampaigns?\b/.test(lower) && !wantsUmbrella;
   const wantsAdSet = /\bad sets?\b/.test(lower);
   const wantsAd = /\bads?\b/.test(lower);
-  const wantsCreative = /\bcreatives?\b/.test(lower);
+  const wantsCreative = /\b(?:ad\s+)?creatives?\b/.test(lower);
   const wantsBrand = /\bbrands?\b/.test(lower);
   const dimensions: AnalysisDimension[] = [];
+  const countMetrics = new Set((metrics || []).filter(isCountMetric));
 
   if (wantsMonth) dimensions.push("month");
   else if (wantsWeek) dimensions.push("week");
   else if (wantsDay) dimensions.push("date");
 
   if (wantsUmbrella) dimensions.push("campaign_umbrella");
-  else if (wantsAdSet) dimensions.push("ad_set");
-  else if (wantsCreative) dimensions.push("creative");
-  else if (wantsAd) dimensions.push("ad");
-  else if (wantsCampaign) dimensions.push("campaign");
+  else if (wantsAdSet && shouldUseEntityDimension(lower, "ad_set", countMetrics)) dimensions.push("ad_set");
+  else if (wantsCreative && shouldUseEntityDimension(lower, "creative", countMetrics)) dimensions.push("creative");
+  else if (wantsAd && shouldUseEntityDimension(lower, "ad", countMetrics)) dimensions.push("ad");
+  else if (wantsCampaign && shouldUseEntityDimension(lower, "campaign", countMetrics)) dimensions.push("campaign");
   else if (wantsBrand) dimensions.push("brand");
 
   return dimensions.length ? dimensions : undefined;
@@ -1128,6 +1290,17 @@ function inferMetricsFromPrompt(lower: string): AnalysisMetric[] | undefined {
 
   if (/\bad spend\b|\bspend\b|\bspent\b|\bcost\b/.test(lower)) add("spend");
   if (/\bmonthly budgets?\b|\bbudgets?\b/.test(lower)) add("monthly_budget");
+  if (/\b(count|number of|how many)\b[^.?!\n]*\bcampaigns?\b/.test(lower) && !/\bcampaign[-\s]?umbrellas?\b/.test(lower)) {
+    add("campaign_count");
+  }
+  if (/\b(count|number of|how many)\b[^.?!\n]*\bad sets?\b/.test(lower)) add("ad_set_count");
+  if (/\b(count|number of|how many)\b[^.?!\n]*\b(?:ad\s+)?creatives?\b/.test(lower)) add("creative_count");
+  if (
+    /\b(count|number of|how many)\b[^.?!\n]*\bads\b/.test(lower) &&
+    !/\b(count|number of|how many)\b[^.?!\n]*\b(?:ad\s+)?creatives?\b/.test(lower)
+  ) {
+    add("ad_count");
+  }
   if (/\bimpressions?\b/.test(lower)) add("impressions");
   if (/\breach\b/.test(lower)) add("reach");
   if (/\bclicks?\b/.test(lower)) add("clicks");
@@ -1141,6 +1314,94 @@ function inferMetricsFromPrompt(lower: string): AnalysisMetric[] | undefined {
   if (/\bfrequency\b/.test(lower)) add("frequency");
 
   return requested.length ? requested : undefined;
+}
+
+function inferGrainFromPrompt(prompt: string): AnalysisGrain | undefined {
+  if (/\bmonth(?:\s+by\s+month)?\b|\bby month\b|month-by-month|\bmonthly\b(?!\s+budgets?\b)/i.test(prompt)) return "monthly";
+  if (/\bweek(?:\s+by\s+week|ly)?\b|\bby week\b|week-by-week/i.test(prompt)) return "weekly";
+  if (/\bday(?:\s+by\s+day)?\b|\bdaily\b|\bby day\b|day-by-day/i.test(prompt)) return "daily";
+  return undefined;
+}
+
+function promptSegments(prompt: string) {
+  return prompt
+    .split(/\n\nFollow-up:\s*/i)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+}
+
+function inferWidgetsFromPrompt(input: {
+  lower: string;
+  dimensions?: AnalysisDimension[];
+  metrics?: AnalysisMetric[];
+  tableOnly: boolean;
+  tableTitle?: string;
+}): AnalysisSpec["widgets"] | undefined {
+  const dimensions = input.dimensions || [];
+  const metrics = input.metrics || [];
+  const x = dimensions.find(isTimeDimension) || dimensions[0];
+  const tableWidget = {
+    type: "table" as const,
+    title: input.tableTitle || "Comparison table",
+    x,
+    metrics,
+  };
+
+  if (input.tableOnly) return [tableWidget];
+  if (!/\b(chart|graph|plot|visuali[sz]e|trend|line|bar)\b/.test(input.lower)) return undefined;
+
+  const chartType =
+    /\bbar\b/.test(input.lower) || (!/\b(line|trend|over time)\b/.test(input.lower) && !x)
+      ? ("bar" as const)
+      : ("line" as const);
+  const chartWidget = {
+    type: chartType,
+    title: chartType === "line" ? "Trend" : "Comparison",
+    x,
+    metrics: metrics.length ? metrics : DEFAULT_METRICS.slice(0, 2),
+  };
+  const wantsTableToo = /\b(add|also|include|with)\b[^.?!\n]*\b(table|chart|graph)\b|\btable\b/.test(input.lower);
+
+  return wantsTableToo ? [tableWidget, chartWidget] : [chartWidget];
+}
+
+function shouldUseEntityDimension(
+  lower: string,
+  dimension: AnalysisDimension,
+  countMetrics: Set<AnalysisMetric>,
+) {
+  const countMetricByDimension: Partial<Record<AnalysisDimension, AnalysisMetric>> = {
+    campaign: "campaign_count",
+    ad_set: "ad_set_count",
+    ad: "ad_count",
+    creative: "creative_count",
+  };
+  const countMetric = countMetricByDimension[dimension];
+  const asksNotToListIds = /\b(no need|don't|do not|without)\b[^.?!\n]*\b(list|show|include)\b[^.?!\n]*\b(ids?|id numbers?)\b/.test(lower);
+  if (countMetric && countMetrics.has(countMetric) && !hasEntityBreakdownCue(lower, dimension)) return false;
+  if (asksNotToListIds) return false;
+  return hasEntityBreakdownCue(lower, dimension);
+}
+
+function hasEntityBreakdownCue(lower: string, dimension: AnalysisDimension) {
+  const patternByDimension: Partial<Record<AnalysisDimension, string>> = {
+    campaign: "campaigns?",
+    ad_set: "ad\\s+sets?",
+    ad: "ads?",
+    creative: "(?:ad\\s+)?creatives?",
+  };
+  const pattern = patternByDimension[dimension];
+  if (!pattern) return false;
+
+  return (
+    new RegExp(`\\b(by|per|each|list|show|compare|breakdown|break down)\\b[^.?!\\n]{0,60}\\b${pattern}\\b`).test(lower) ||
+    new RegExp(`\\bgroup(?:ed)?\\s+by\\b[^.?!\\n]{0,60}\\b${pattern}\\b`).test(lower) ||
+    new RegExp(`\\b${pattern}\\b\\s+by\\s+\\b${pattern}\\b`).test(lower)
+  );
+}
+
+function isTimeDimension(value: unknown): value is AnalysisDimension {
+  return value === "date" || value === "week" || value === "month";
 }
 
 function inferDateRangeFromPrompt(prompt: string): AnalysisSpec["dateRange"] | undefined {
@@ -1272,10 +1533,14 @@ function inferSearchTerm(prompt: string) {
 
 function labelFor(value: string) {
   const labels: Record<string, string> = {
+    ad: "Ad",
+    ad_count: "Ads",
     ad_set: "Ad Set",
+    ad_set_count: "Ad Sets",
     bookings: "Bookings",
     brand: "Brand",
     campaign: "Campaign",
+    campaign_count: "Campaigns",
     campaign_umbrella: "Umbrella",
     clicks: "Clicks",
     conversions: "Conversions",
@@ -1283,6 +1548,7 @@ function labelFor(value: string) {
     cpl: "CPL",
     cpm: "CPM",
     creative: "Creative",
+    creative_count: "Creatives",
     ctr: "CTR",
     date: "Date",
     frequency: "Frequency",
@@ -1321,6 +1587,12 @@ function formatMoney(value: number | null) {
     currency: "USD",
     maximumFractionDigits: value >= 100 ? 0 : 2,
   }).format(value);
+}
+
+function formatMetricForAnswer(value: number | null, metric: AnalysisMetric) {
+  if (metricType(metric) === "money") return formatMoney(value);
+  if (metricType(metric) === "percent") return `${Number(value || 0).toFixed(2)}%`;
+  return formatNumber(value);
 }
 
 function formatNumber(value: number | null) {
