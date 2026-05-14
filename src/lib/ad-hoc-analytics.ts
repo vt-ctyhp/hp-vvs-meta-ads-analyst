@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { format, parseISO, startOfMonth, startOfWeek, subDays } from "date-fns";
+import { format, parseISO, subDays } from "date-fns";
 import { z } from "zod";
 
 import type { Json } from "./database.types";
@@ -9,6 +9,7 @@ import {
   getMissingRequiredEnv,
   getOpenAIAnalysisModel,
 } from "./env";
+import { aggregateMetaInsights, type MetaInsightAggregateRow } from "./meta-insight-aggregates";
 import { createServiceClient } from "./supabase";
 
 const ANALYSIS_METRICS = [
@@ -62,9 +63,8 @@ const DATE_PRESETS = [
 
 const WIDGET_TYPES = ["metric", "table", "line", "bar"] as const;
 const DEFAULT_METRICS: AnalysisMetric[] = ["spend", "impressions", "clicks", "ctr", "cpc", "leads", "cpl"];
-const MAX_DAYS = 365;
+const MAX_DAYS = 10000;
 const MAX_TABLE_ROWS = 100;
-const MAX_INSIGHT_ROWS = 25000;
 const MAX_ANALYSIS_ROWS = 18;
 
 export type AnalysisMetric = (typeof ANALYSIS_METRICS)[number];
@@ -152,35 +152,7 @@ export type SavedAnalysisDashboard = {
   updatedAt: string;
 };
 
-type InsightRow = {
-  brand_id: string | null;
-  meta_account_id: string;
-  campaign_id: string | null;
-  campaign_name: string | null;
-  ad_set_id: string | null;
-  ad_set_name: string | null;
-  ad_id: string | null;
-  ad_name: string | null;
-  creative_id: string | null;
-  campaign_umbrella: string | null;
-  date_start: string;
-  spend: number | string | null;
-  impressions: number | string | null;
-  reach: number | string | null;
-  clicks: number | string | null;
-  leads: number | string | null;
-  bookings: number | string | null;
-  conversions: number | string | null;
-};
-
-type BrandRow = { id: string; code: string; name: string };
 type AccountRow = { meta_account_id: string; name: string | null };
-type AdSetBudgetRow = {
-  meta_account_id: string;
-  ad_set_id: string;
-  daily_budget: number | string | null;
-  lifetime_budget: number | string | null;
-};
 type AnalysisDashboardRecord = {
   id: string;
   title: string;
@@ -191,16 +163,6 @@ type AnalysisDashboardRecord = {
   model_analysis: string | null;
   created_at?: string;
   updated_at?: string;
-};
-type MetricAccumulator = {
-  spend: number;
-  monthly_budget: number;
-  impressions: number;
-  reach: number;
-  clicks: number;
-  leads: number;
-  bookings: number;
-  conversions: number;
 };
 type PromptIntent = {
   dateRange?: AnalysisSpec["dateRange"];
@@ -660,130 +622,55 @@ async function generateDeepAnalysis(
 
 async function aggregateSpec(spec: AnalysisSpec) {
   const range = resolveDateRange(spec.dateRange);
-  const tooBroad = isLikelyTooBroad(spec, range.days);
-  if (tooBroad) {
-    return emptyAggregate(
-      spec,
-      range,
-      "Narrow this request by date range, brand, campaign umbrella, or a search term before generating the dashboard.",
-    );
-  }
 
   const supabase = createServiceClient();
-  const needsBudget = spec.metrics.includes("monthly_budget");
-  const [insightsRes, brandsRes, accountsRes, adSetsRes] = await Promise.all([
-    supabase
-      .from("meta_daily_insights")
-      .select(
-        "brand_id,meta_account_id,campaign_id,campaign_name,ad_set_id,ad_set_name,ad_id,ad_name,creative_id,campaign_umbrella,date_start,spend,impressions,reach,clicks,leads,bookings,conversions",
-      )
-      .gte("date_start", range.start)
-      .lte("date_start", range.end)
-      .order("date_start", { ascending: true })
-      .limit(MAX_INSIGHT_ROWS),
-    supabase.from("brands").select("id,code,name"),
+  const [aggregateRows, totalRows, accountsRes] = await Promise.all([
+    aggregateMetaInsights({
+      start: range.start,
+      end: range.end,
+      dimensions: spec.dimensions,
+      filters: spec.filters,
+      sortField: spec.sort?.field,
+      sortDirection: spec.sort?.direction,
+      limit: spec.limit,
+    }),
+    aggregateMetaInsights({
+      start: range.start,
+      end: range.end,
+      dimensions: [],
+      filters: spec.filters,
+      sortField: "spend",
+      sortDirection: "desc",
+      limit: 1,
+    }),
     supabase.from("meta_ad_accounts").select("meta_account_id,name"),
-    needsBudget
-      ? supabase
-          .from("meta_ad_sets")
-          .select("meta_account_id,ad_set_id,daily_budget,lifetime_budget")
-      : Promise.resolve({ data: [], error: null }),
   ]);
 
-  const firstError = [insightsRes, brandsRes, accountsRes, adSetsRes].find((res) => res.error)?.error;
+  const firstError = accountsRes.error;
   if (firstError) throw firstError;
 
-  const insights = rows<InsightRow>(insightsRes.data);
-  if (insights.length >= MAX_INSIGHT_ROWS) {
-    return emptyAggregate(
-      spec,
-      range,
-      "This request matches too much Meta Ads data. Add a brand, campaign umbrella, ad concept, or shorter date range.",
-    );
-  }
-
-  const brandById = new Map(rows<BrandRow>(brandsRes.data).map((brand) => [brand.id, brand]));
   const accountNameById = new Map(
     rows<AccountRow>(accountsRes.data).map((account) => [
       account.meta_account_id,
       account.name || account.meta_account_id,
     ]),
   );
-  const adSetBudgetByKey = new Map(
-    rows<AdSetBudgetRow>(adSetsRes.data).map((adSet) => [
-      adSetBudgetLookupKey(adSet.meta_account_id, adSet.ad_set_id),
-      adSet,
-    ]),
-  );
-  const filtered = insights.filter((row) => matchesFilters(row, spec.filters, brandById));
-
-  const grouped = new Map<
-    string,
-    {
-      dimensions: Record<string, string>;
-      metrics: MetricAccumulator;
-      budgetKeys: Set<string>;
-      count: number;
-    }
-  >();
-  const totalMetrics = emptyMetrics();
-  const totalBudgetKeys = new Set<string>();
-  for (const row of filtered) {
-    const dimensions = getDimensions(row, spec, brandById);
-    const key = spec.dimensions.map((dimension) => dimensions[dimension] || "").join("::") || "summary";
-    const existing =
-      grouped.get(key) ||
-      {
-        dimensions,
-        metrics: emptyMetrics(),
-        budgetKeys: new Set<string>(),
-        count: 0,
-      };
-
-    existing.metrics.spend += toNumber(row.spend);
-    existing.metrics.impressions += toNumber(row.impressions);
-    existing.metrics.reach += toNumber(row.reach);
-    existing.metrics.clicks += toNumber(row.clicks);
-    existing.metrics.leads += toNumber(row.leads);
-    existing.metrics.bookings += toNumber(row.bookings);
-    existing.metrics.conversions += toNumber(row.conversions);
-    addMonthlyBudget(existing.metrics, existing.budgetKeys, row, adSetBudgetByKey);
-    existing.count += 1;
-    grouped.set(key, existing);
-
-    totalMetrics.spend += toNumber(row.spend);
-    totalMetrics.impressions += toNumber(row.impressions);
-    totalMetrics.reach += toNumber(row.reach);
-    totalMetrics.clicks += toNumber(row.clicks);
-    totalMetrics.leads += toNumber(row.leads);
-    totalMetrics.bookings += toNumber(row.bookings);
-    totalMetrics.conversions += toNumber(row.conversions);
-    addMonthlyBudget(totalMetrics, totalBudgetKeys, row, adSetBudgetByKey);
-  }
-
-  const rowsForTable = Array.from(grouped.values()).map((group) => {
-    const derived = deriveMetrics(group.metrics);
-    return {
-      ...group.dimensions,
-      ...Object.fromEntries(spec.metrics.map((metric) => [metric, derived[metric]])),
-      sourceRows: group.count,
-    };
-  });
-
-  const sortedRows = sortRows(rowsForTable, spec).slice(0, spec.limit);
-  const totals = deriveMetrics(totalMetrics);
+  const rowsForTable: Array<Record<string, string | number | null>> = aggregateRows.map((row) => ({
+    ...Object.fromEntries(spec.dimensions.map((dimension) => [dimension, aggregateDimensionValue(row, dimension)])),
+    ...Object.fromEntries(spec.metrics.map((metric) => [metric, aggregateMetricValue(row, metric)])),
+    sourceRows: row.source_rows,
+  }));
+  const totals = aggregateMetrics(totalRows[0]);
+  const matchedRows = totalRows[0]?.source_rows || 0;
 
   const sourceTransparency = {
     timeRange: range,
-    adAccountsAnalyzed: Array.from(
-      new Set(insights.map((row) => accountNameById.get(row.meta_account_id) || row.meta_account_id)),
-    ),
+    adAccountsAnalyzed: Array.from(accountNameById.values()),
     recordCounts: {
-      meta_daily_insights: insights.length,
-      ...(needsBudget ? { meta_ad_sets: adSetBudgetByKey.size } : {}),
-      matched_insights: filtered.length,
-      grouped_rows: grouped.size,
-      returned_rows: sortedRows.length,
+      meta_daily_insights: matchedRows,
+      matched_insights: matchedRows,
+      grouped_rows: aggregateRows.length,
+      returned_rows: rowsForTable.length,
     },
   };
 
@@ -792,7 +679,7 @@ async function aggregateSpec(spec: AnalysisSpec) {
     narrowingMessage: "",
     table: {
       columns: buildColumns(spec),
-      rows: sortedRows,
+      rows: rowsForTable,
     },
     totals,
     sourceTransparency,
@@ -897,7 +784,7 @@ function fallbackSpec(prompt: string): AnalysisSpec {
 
 function resolveDateRange(dateRange: AnalysisSpec["dateRange"]) {
   const today = new Date();
-  const end = isDateString(dateRange.end) ? parseISO(dateRange.end) : today;
+  let end = isDateString(dateRange.end) ? parseISO(dateRange.end) : today;
   const presetDays: Record<string, number> = {
     last_7_days: 7,
     last_14_days: 14,
@@ -911,62 +798,15 @@ function resolveDateRange(dateRange: AnalysisSpec["dateRange"]) {
     Math.max(dateRange.days || presetDays[dateRange.preset || ""] || 30, 1),
     MAX_DAYS,
   );
-  const start = isDateString(dateRange.start) ? parseISO(dateRange.start) : subDays(end, days - 1);
-  const actualDays = Math.max(1, differenceInCalendarDays(start, end) + 1);
+  let start = isDateString(dateRange.start) ? parseISO(dateRange.start) : subDays(end, days - 1);
+  if (start > end) [start, end] = [end, start];
+  const actualDays = Math.max(1, differenceInCalendarDays(end, start) + 1);
 
   return {
     start: format(start, "yyyy-MM-dd"),
     end: format(end, "yyyy-MM-dd"),
     days: actualDays,
   };
-}
-
-function matchesFilters(
-  row: InsightRow,
-  filters: AnalysisFilter[],
-  brandById: Map<string, BrandRow>,
-) {
-  return filters.every((filter) => {
-    const target = getFilterText(row, filter.field, brandById).toLowerCase();
-    const value = filter.value.toLowerCase();
-    return filter.operator === "equals" ? target === value : target.includes(value);
-  });
-}
-
-function getFilterText(row: InsightRow, field: AnalysisFilterField, brandById: Map<string, BrandRow>) {
-  if (field === "brand") return getBrandCode(row.brand_id, brandById);
-  if (field === "campaign_umbrella") return row.campaign_umbrella || "";
-  if (field === "campaign") return [row.campaign_name, row.campaign_id].filter(Boolean).join(" ");
-  if (field === "ad_set") return [row.ad_set_name, row.ad_set_id].filter(Boolean).join(" ");
-  if (field === "ad") return [row.ad_name, row.ad_id].filter(Boolean).join(" ");
-  if (field === "creative") return row.creative_id || "";
-  return [
-    getBrandCode(row.brand_id, brandById),
-    row.campaign_umbrella,
-    row.campaign_name,
-    row.ad_set_name,
-    row.ad_name,
-    row.creative_id,
-  ]
-    .filter(Boolean)
-    .join(" ");
-}
-
-function getDimensions(row: InsightRow, spec: AnalysisSpec, brandById: Map<string, BrandRow>) {
-  const date = parseISO(row.date_start);
-  const values: Record<string, string> = {
-    date: row.date_start,
-    week: format(startOfWeek(date, { weekStartsOn: 1 }), "yyyy-MM-dd"),
-    month: format(startOfMonth(date), "yyyy-MM"),
-    brand: getBrandCode(row.brand_id, brandById),
-    campaign_umbrella: row.campaign_umbrella || "Needs review",
-    campaign: row.campaign_name || row.campaign_id || "Unknown campaign",
-    ad_set: row.ad_set_name || row.ad_set_id || "Unknown ad set",
-    ad: row.ad_name || row.ad_id || "Unknown ad",
-    creative: row.creative_id || "Unknown creative",
-  };
-
-  return Object.fromEntries(spec.dimensions.map((dimension) => [dimension, values[dimension]]));
 }
 
 function buildColumns(spec: AnalysisSpec): AnalysisTableColumn[] {
@@ -984,54 +824,55 @@ function buildColumns(spec: AnalysisSpec): AnalysisTableColumn[] {
   ];
 }
 
-function sortRows(rowsForTable: Array<Record<string, string | number | null>>, spec: AnalysisSpec) {
-  const sort = spec.sort;
-  const firstDimension = spec.dimensions[0];
-  const field = sort?.field || (["date", "week", "month"].includes(firstDimension) ? firstDimension : "spend");
-  const direction = sort?.direction || (field === "date" || field === "week" || field === "month" ? "asc" : "desc");
-  const tieBreakers = spec.dimensions.filter((dimension) => dimension !== field);
-
-  return [...rowsForTable].sort((a, b) => {
-    const result = compareRowValues(a[field], b[field]);
-    if (result !== 0) return direction === "asc" ? result : -result;
-
-    for (const tieBreaker of tieBreakers) {
-      const tieResult = compareRowValues(a[tieBreaker], b[tieBreaker]);
-      if (tieResult !== 0) return tieResult;
-    }
-
-    return 0;
-  });
-}
-
-function compareRowValues(
-  aValue: string | number | null | undefined,
-  bValue: string | number | null | undefined,
-) {
-  const aNormalized = aValue ?? "";
-  const bNormalized = bValue ?? "";
-  if (typeof aNormalized === "number" && typeof bNormalized === "number") {
-    return aNormalized - bNormalized;
+function aggregateMetrics(row: MetaInsightAggregateRow | undefined): Record<AnalysisMetric, number | null> {
+  if (!row) {
+    return {
+      spend: 0,
+      monthly_budget: 0,
+      impressions: 0,
+      reach: 0,
+      clicks: 0,
+      leads: 0,
+      bookings: 0,
+      conversions: 0,
+      ctr: 0,
+      cpm: 0,
+      cpc: 0,
+      cpl: null,
+      frequency: 0,
+    };
   }
-  return String(aNormalized).localeCompare(String(bNormalized));
+
+  return {
+    spend: row.spend,
+    monthly_budget: row.monthly_budget,
+    impressions: row.impressions,
+    reach: row.reach,
+    clicks: row.clicks,
+    leads: row.leads,
+    bookings: row.bookings,
+    conversions: row.conversions,
+    ctr: row.ctr,
+    cpm: row.cpm,
+    cpc: row.cpc,
+    cpl: row.cpl,
+    frequency: row.frequency,
+  };
 }
 
-function deriveMetrics(metrics: MetricAccumulator): Record<AnalysisMetric, number | null> {
-  return {
-    spend: round(metrics.spend, 2),
-    monthly_budget: round(metrics.monthly_budget, 2),
-    impressions: Math.round(metrics.impressions),
-    reach: Math.round(metrics.reach),
-    clicks: Math.round(metrics.clicks),
-    leads: Math.round(metrics.leads),
-    bookings: Math.round(metrics.bookings),
-    conversions: Math.round(metrics.conversions),
-    ctr: metrics.impressions > 0 ? round((metrics.clicks / metrics.impressions) * 100, 2) : 0,
-    cpm: metrics.impressions > 0 ? round((metrics.spend / metrics.impressions) * 1000, 2) : 0,
-    cpc: metrics.clicks > 0 ? round(metrics.spend / metrics.clicks, 2) : 0,
-    cpl: metrics.leads > 0 ? round(metrics.spend / metrics.leads, 2) : null,
-    frequency: metrics.reach > 0 ? round(metrics.impressions / metrics.reach, 2) : 0,
-  };
+function aggregateMetricValue(row: MetaInsightAggregateRow, metric: AnalysisMetric) {
+  return aggregateMetrics(row)[metric];
+}
+
+function aggregateDimensionValue(row: MetaInsightAggregateRow, dimension: AnalysisDimension) {
+  const value = row[dimension];
+  if (value) return value;
+  if (dimension === "campaign_umbrella") return "Needs review";
+  if (dimension === "campaign") return row.campaign_id || "Unknown campaign";
+  if (dimension === "ad_set") return row.ad_set_id || "Unknown ad set";
+  if (dimension === "ad") return row.ad_id || "Unknown ad";
+  if (dimension === "creative") return row.creative_id || "Unknown creative";
+  return "";
 }
 
 function baseResult(input: {
@@ -1185,35 +1026,6 @@ function buildDeterministicAnswer(
     .join(" ");
 }
 
-function emptyAggregate(spec: AnalysisSpec, range: { start: string; end: string; days: number }, message: string) {
-  return {
-    needsNarrowing: true,
-    narrowingMessage: message,
-    table: {
-      columns: buildColumns(spec),
-      rows: [],
-    },
-    totals: deriveMetrics(emptyMetrics()),
-    sourceTransparency: {
-      timeRange: range,
-      adAccountsAnalyzed: [],
-      recordCounts: {
-        meta_daily_insights: 0,
-        matched_insights: 0,
-        grouped_rows: 0,
-        returned_rows: 0,
-      },
-    },
-  };
-}
-
-function isLikelyTooBroad(spec: AnalysisSpec, days: number) {
-  const highCardinality = spec.dimensions.some((dimension) =>
-    ["campaign", "ad_set", "ad", "creative"].includes(dimension),
-  );
-  return days > 120 && spec.filters.length === 0 && highCardinality;
-}
-
 function inferPromptIntent(prompt: string): PromptIntent {
   const lower = prompt.toLowerCase();
   const dimensions = inferDimensionsFromPrompt(lower);
@@ -1254,52 +1066,6 @@ function inferPromptIntent(prompt: string): PromptIntent {
           : undefined,
     stripCashForGoldFilter: !lower.includes("cash for gold"),
   };
-}
-
-function addMonthlyBudget(
-  metrics: MetricAccumulator,
-  seenKeys: Set<string>,
-  row: InsightRow,
-  adSetBudgetByKey: Map<string, AdSetBudgetRow>,
-) {
-  if (!row.ad_set_id) return;
-  const month = format(startOfMonth(parseISO(row.date_start)), "yyyy-MM");
-  const budgetKey = `${adSetBudgetLookupKey(row.meta_account_id, row.ad_set_id)}::${month}`;
-  if (seenKeys.has(budgetKey)) return;
-
-  const adSet = adSetBudgetByKey.get(adSetBudgetLookupKey(row.meta_account_id, row.ad_set_id));
-  if (!adSet) return;
-
-  const monthlyBudget = monthlyBudgetForAdSet(adSet, row.date_start);
-  if (monthlyBudget === null) return;
-
-  seenKeys.add(budgetKey);
-  metrics.monthly_budget += monthlyBudget;
-}
-
-function adSetBudgetLookupKey(metaAccountId: string, adSetId: string) {
-  return `${metaAccountId}::${adSetId}`;
-}
-
-function monthlyBudgetForAdSet(adSet: AdSetBudgetRow, dateStart: string) {
-  const dailyBudget = toNumberOrNull(adSet.daily_budget);
-  if (dailyBudget !== null && dailyBudget > 0) {
-    const date = parseISO(dateStart);
-    return round(dailyBudget * daysInMonth(date), 2);
-  }
-
-  return null;
-}
-
-function daysInMonth(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
-}
-
-function toNumberOrNull(value: string | number | null | undefined) {
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  if (!value) return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function applyPromptIntent(spec: AnalysisSpec, intent: PromptIntent): AnalysisSpec {
@@ -1456,33 +1222,9 @@ function rows<T>(data: unknown): T[] {
   return Array.isArray(data) ? (data as T[]) : [];
 }
 
-function toNumber(value: string | number | null | undefined) {
-  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
-  if (!value) return 0;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
 function round(value: number, precision = 2) {
   const factor = 10 ** precision;
   return Math.round(value * factor) / factor;
-}
-
-function emptyMetrics(): MetricAccumulator {
-  return {
-    spend: 0,
-    monthly_budget: 0,
-    impressions: 0,
-    reach: 0,
-    clicks: 0,
-    leads: 0,
-    bookings: 0,
-    conversions: 0,
-  };
-}
-
-function getBrandCode(brandId: string | null, brandById: Map<string, BrandRow>) {
-  return (brandId && brandById.get(brandId)?.code) || "Unassigned";
 }
 
 function uniqueAllowed<T extends string>(values: T[], allowed: readonly T[], fallback: T[]) {

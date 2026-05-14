@@ -4,7 +4,7 @@
 
 1. Vercel Cron calls `GET /api/cron/sync` daily at `13:00 UTC`.
 2. The route validates `Authorization: Bearer $CRON_SECRET`.
-3. `syncMetaAds()` validates Meta token permissions.
+3. `syncMetaAds()` validates Meta token permissions and refreshes the latest `META_INCREMENTAL_SYNC_DAYS` days, defaulting to 90.
 4. Configured ad accounts are fetched from Meta Marketing API. HP is required; VVS is optional until access is ready.
 5. Supabase receives upserts for:
    - brands
@@ -44,6 +44,22 @@ Meta preview/image URLs can expire, so previews are treated as refreshable metad
 ## Manual Sync
 
 The dashboard sync button calls `POST /api/sync`. It uses the same read-only sync path as cron and records a `sync_runs` entry with trigger `manual`.
+
+## Historical Backfill
+
+The hidden admin page `/admin/backfill` creates and manages Supabase-backed historical Meta Ads backfill jobs. The page is not in the main navigation. Operators enter `CRON_SECRET` in the page; it is kept in memory and sent as `x-cron-secret` to protected backfill routes.
+
+Backfill jobs split each configured Meta ad account into monthly chunks from `META_BACKFILL_START_DATE` through the requested end date. Each chunk calls Meta insights with `time_range[since]` and `time_range[until]`, then upserts daily ad-level rows by `meta_account_id`, `ad_id`, and `date_start`, so retries do not duplicate data. Empty Meta responses are treated as completed chunks.
+
+Routes:
+
+- `GET /api/meta/backfill` lists recent jobs, chunks, and monthly account coverage.
+- `POST /api/meta/backfill` creates a new monthly chunk job.
+- `PATCH /api/meta/backfill` pauses, resumes, cancels, or retries failed chunks.
+- `POST /api/meta/backfill/run` processes the next queued chunk batch manually.
+- `GET /api/cron/meta-backfill` processes queued chunks from Vercel Cron every 15 minutes.
+
+Dashboard and ad-hoc analysis queries read stored history through `aggregate_meta_daily_insights`, a Postgres RPC that groups and filters server-side. This replaces raw insight row limits for large date ranges.
 
 The inbox sync button calls `POST /api/social-inbox/sync`. It validates the social inbox Meta permissions, fetches managed Page metadata, stores the connected Instagram thread/comment data that Meta returns, and records source-specific warnings in `meta_social_sync_runs`. This manual sync is a proof-of-data path; Meta Webhooks should be added next for real-time message/comment delivery.
 

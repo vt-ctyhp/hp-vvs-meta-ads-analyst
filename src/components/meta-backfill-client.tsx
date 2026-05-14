@@ -1,0 +1,554 @@
+"use client";
+
+import {
+  AlertTriangle,
+  CalendarClock,
+  CheckCircle2,
+  Database,
+  Loader2,
+  Pause,
+  Play,
+  RefreshCcw,
+  RotateCcw,
+  Shield,
+  Square,
+} from "lucide-react";
+import type { ButtonHTMLAttributes, ComponentType } from "react";
+import { useMemo, useState } from "react";
+
+type BackfillStatus = "pending" | "running" | "paused" | "success" | "partial" | "failed" | "canceled";
+type ChunkStatus = "queued" | "running" | "success" | "failed" | "canceled";
+
+type BackfillJob = {
+  id: string;
+  status: BackfillStatus;
+  requestedStart: string;
+  requestedEnd: string;
+  accounts: Array<{ brandCode: string; metaAccountId: string }>;
+  totalChunks: number;
+  completedChunks: number;
+  failedChunks: number;
+  runningChunks: number;
+  metrics: { insightRows?: number } | Record<string, unknown>;
+  errors: unknown;
+  startedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type BackfillChunk = {
+  id: string;
+  jobId: string;
+  metaAccountId: string;
+  brandCode: string;
+  startDate: string;
+  endDate: string;
+  status: ChunkStatus;
+  attempts: number;
+  insightRows: number;
+  error: string | null;
+  lockedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type HistoryCoverage = {
+  metaAccountId: string;
+  accountName: string | null;
+  month: string;
+  insightRows: number;
+  firstDate: string | null;
+  lastDate: string | null;
+};
+
+type BackfillState = {
+  coverageRange: { start: string; end: string };
+  jobs: BackfillJob[];
+  chunks: BackfillChunk[];
+  coverage: HistoryCoverage[];
+};
+
+const STATUS_CLASS: Record<BackfillStatus | ChunkStatus, string> = {
+  pending: "border-hp-rule bg-hp-inset text-hp-body",
+  queued: "border-hp-rule bg-hp-inset text-hp-body",
+  running: "border-hp-pink/30 bg-hp-pink/10 text-hp-ink",
+  paused: "border-signal-warning/30 bg-signal-warning/10 text-signal-warning",
+  success: "border-signal-positive/30 bg-signal-positive/10 text-signal-positive",
+  partial: "border-signal-warning/30 bg-signal-warning/10 text-signal-warning",
+  failed: "border-signal-danger/30 bg-signal-danger/10 text-signal-danger",
+  canceled: "border-hp-muted/30 bg-hp-inset text-hp-muted",
+};
+
+function todayString() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+export function MetaBackfillClient() {
+  const [secret, setSecret] = useState("");
+  const [startDate, setStartDate] = useState("2007-01-01");
+  const [endDate, setEndDate] = useState(todayString());
+  const [state, setState] = useState<BackfillState | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState("");
+
+  const coverageSummary = useMemo(() => summarizeCoverage(state?.coverage || []), [state]);
+
+  async function request(path: string, init: RequestInit = {}) {
+    if (!secret.trim()) throw new Error("CRON_SECRET is required.");
+    const response = await fetch(path, {
+      ...init,
+      headers: {
+        "content-type": "application/json",
+        "x-cron-secret": secret.trim(),
+        ...(init.headers || {}),
+      },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "Request failed");
+    return payload;
+  }
+
+  async function loadState(nextStatus = "Backfill state refreshed.") {
+    setLoading(true);
+    setStatus("");
+    try {
+      const query = new URLSearchParams();
+      if (startDate) query.set("start", startDate);
+      if (endDate) query.set("end", endDate);
+      const payload = await request(`/api/meta/backfill?${query.toString()}`);
+      setState(payload);
+      setStatus(nextStatus);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function createJob() {
+    setLoading(true);
+    setStatus("");
+    try {
+      const payload = await request("/api/meta/backfill", {
+        method: "POST",
+        body: JSON.stringify({ startDate: startDate || null, endDate: endDate || null }),
+      });
+      setStatus(`Created job ${payload.id || ""}.`);
+      await loadState("Backfill job created.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+      setLoading(false);
+    }
+  }
+
+  async function runBatch() {
+    setLoading(true);
+    setStatus("");
+    try {
+      const payload = await request("/api/meta/backfill/run", {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      await loadState(`Processed ${payload.processed || 0} chunk(s).`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+      setLoading(false);
+    }
+  }
+
+  async function updateJob(jobId: string, action: "pause" | "resume" | "cancel" | "retry_failed") {
+    if (action === "cancel" && !window.confirm("Cancel queued chunks for this job?")) return;
+
+    setLoading(true);
+    setStatus("");
+    try {
+      await request("/api/meta/backfill", {
+        method: "PATCH",
+        body: JSON.stringify({ jobId, action }),
+      });
+      await loadState(`Job ${action.replace("_", " ")} complete.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+      setLoading(false);
+    }
+  }
+
+  return (
+    <main className="min-h-screen bg-hp-foundation px-4 py-6 text-hp-body md:px-8">
+      <header className="mx-auto flex max-w-7xl flex-col gap-5 border-b border-hp-rule pb-6 md:flex-row md:items-end md:justify-between">
+        <div>
+          <span className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+            HP/VVS Meta Ads
+          </span>
+          <h1 className="mt-2 font-title text-4xl leading-tight text-hp-ink md:text-5xl">
+            Historical Backfill
+          </h1>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={() => loadState()} disabled={loading} icon={RefreshCcw}>
+            Refresh
+          </Button>
+          <Button onClick={runBatch} disabled={loading} icon={Play} intent="primary">
+            Run Batch
+          </Button>
+        </div>
+      </header>
+
+      <section className="mx-auto mt-8 grid max-w-7xl gap-6 xl:grid-cols-[360px_1fr]">
+        <aside className="space-y-6">
+          <section className="border border-hp-rule bg-hp-card p-4">
+            <PanelTitle icon={Shield} title="Access" />
+            <label className="mt-4 block text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+              CRON_SECRET
+            </label>
+            <input
+              type="password"
+              value={secret}
+              onChange={(event) => setSecret(event.target.value)}
+              className="mt-2 h-11 w-full border border-hp-rule bg-hp-foundation px-3 text-sm text-hp-ink outline-none focus:border-hp-ink"
+              placeholder="Enter secret"
+            />
+          </section>
+
+          <section className="border border-hp-rule bg-hp-card p-4">
+            <PanelTitle icon={CalendarClock} title="Range" />
+            <div className="mt-4 grid gap-3">
+              <DateInput label="Start" value={startDate} onChange={setStartDate} />
+              <DateInput label="End" value={endDate} onChange={setEndDate} />
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <Button onClick={createJob} disabled={loading} icon={Database} intent="primary">
+                Create Job
+              </Button>
+              <Button onClick={() => loadState()} disabled={loading} icon={RefreshCcw}>
+                Load
+              </Button>
+            </div>
+          </section>
+
+          <section className="border border-hp-rule bg-hp-card p-4">
+            <PanelTitle icon={Database} title="Coverage" />
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <Stat label="Accounts" value={coverageSummary.accounts} />
+              <Stat label="Months" value={coverageSummary.months} />
+              <Stat label="Filled" value={coverageSummary.filledMonths} />
+              <Stat label="Rows" value={coverageSummary.rows.toLocaleString()} />
+            </div>
+          </section>
+        </aside>
+
+        <section className="space-y-6">
+          {status ? (
+            <div className="flex items-center gap-2 border border-hp-rule bg-hp-card px-4 py-3 text-sm text-hp-ink">
+              {loading ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+              <span>{status}</span>
+            </div>
+          ) : null}
+
+          <section className="border border-hp-rule bg-hp-card p-4">
+            <div className="flex items-center justify-between gap-3">
+              <PanelTitle icon={Database} title="Jobs" />
+              {loading ? <Loader2 size={18} className="animate-spin text-hp-muted" /> : null}
+            </div>
+            <div className="mt-4 space-y-3">
+              {(state?.jobs || []).map((job) => (
+                <JobRow
+                  key={job.id}
+                  job={job}
+                  onAction={(action) => updateJob(job.id, action)}
+                  disabled={loading}
+                />
+              ))}
+              {state && state.jobs.length === 0 ? (
+                <EmptyState text="No backfill jobs found for this project." />
+              ) : null}
+              {!state ? <EmptyState text="Enter the secret and load backfill state." /> : null}
+            </div>
+          </section>
+
+          <section className="border border-hp-rule bg-hp-card p-4">
+            <PanelTitle icon={CalendarClock} title="Recent Chunks" />
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full min-w-[760px] border-collapse text-sm">
+                <thead className="text-left text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+                  <tr className="border-b border-hp-rule">
+                    <th className="py-2 pr-3 font-normal">Account</th>
+                    <th className="py-2 pr-3 font-normal">Range</th>
+                    <th className="py-2 pr-3 font-normal">Status</th>
+                    <th className="py-2 pr-3 font-normal">Attempts</th>
+                    <th className="py-2 pr-3 font-normal">Rows</th>
+                    <th className="py-2 pr-3 font-normal">Error</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(state?.chunks || []).slice(0, 60).map((chunk) => (
+                    <tr key={chunk.id} className="border-b border-hp-rule/70">
+                      <td className="py-2 pr-3 text-hp-ink">{chunk.brandCode}</td>
+                      <td className="py-2 pr-3">
+                        {chunk.startDate} to {chunk.endDate}
+                      </td>
+                      <td className="py-2 pr-3">
+                        <StatusPill status={chunk.status} />
+                      </td>
+                      <td className="py-2 pr-3">{chunk.attempts}</td>
+                      <td className="py-2 pr-3">{chunk.insightRows.toLocaleString()}</td>
+                      <td className="max-w-[260px] truncate py-2 pr-3 text-signal-danger">
+                        {chunk.error || ""}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {state && state.chunks.length === 0 ? (
+                <EmptyState text="No chunks found yet." />
+              ) : null}
+            </div>
+          </section>
+
+          <section className="border border-hp-rule bg-hp-card p-4">
+            <PanelTitle icon={CheckCircle2} title="Monthly Coverage" />
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full min-w-[640px] border-collapse text-sm">
+                <thead className="text-left text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+                  <tr className="border-b border-hp-rule">
+                    <th className="py-2 pr-3 font-normal">Account</th>
+                    <th className="py-2 pr-3 font-normal">Month</th>
+                    <th className="py-2 pr-3 font-normal">Rows</th>
+                    <th className="py-2 pr-3 font-normal">First Date</th>
+                    <th className="py-2 pr-3 font-normal">Last Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(state?.coverage || [])
+                    .filter((row) => row.insightRows === 0)
+                    .slice(0, 80)
+                    .map((row) => (
+                      <tr
+                        key={`${row.metaAccountId}-${row.month}`}
+                        className="border-b border-hp-rule/70"
+                      >
+                        <td className="py-2 pr-3 text-hp-ink">
+                          {row.accountName || row.metaAccountId}
+                        </td>
+                        <td className="py-2 pr-3">{row.month}</td>
+                        <td className="py-2 pr-3">{row.insightRows.toLocaleString()}</td>
+                        <td className="py-2 pr-3">{row.firstDate || "-"}</td>
+                        <td className="py-2 pr-3">{row.lastDate || "-"}</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+              {state && state.coverage.every((row) => row.insightRows > 0) ? (
+                <EmptyState text="No empty months in the selected coverage range." />
+              ) : null}
+            </div>
+          </section>
+        </section>
+      </section>
+    </main>
+  );
+}
+
+function JobRow({
+  job,
+  disabled,
+  onAction,
+}: {
+  job: BackfillJob;
+  disabled: boolean;
+  onAction: (action: "pause" | "resume" | "cancel" | "retry_failed") => void;
+}) {
+  const progress = job.totalChunks > 0 ? Math.round((job.completedChunks / job.totalChunks) * 100) : 0;
+  const insightRows =
+    typeof job.metrics === "object" && job.metrics && "insightRows" in job.metrics
+      ? Number(job.metrics.insightRows || 0)
+      : 0;
+
+  return (
+    <article className="border border-hp-rule bg-hp-foundation p-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusPill status={job.status} />
+            <span className="font-mono text-xs text-hp-muted">{job.id.slice(0, 8)}</span>
+          </div>
+          <h2 className="mt-2 text-lg text-hp-ink">
+            {job.requestedStart} to {job.requestedEnd}
+          </h2>
+          <p className="mt-1 text-sm text-hp-muted">
+            {job.accounts.map((account) => account.brandCode).join(", ")} ·{" "}
+            {insightRows.toLocaleString()} insight rows
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {job.status === "running" ? (
+            <IconButton label="Pause" icon={Pause} disabled={disabled} onClick={() => onAction("pause")} />
+          ) : null}
+          {job.status === "paused" || job.status === "partial" || job.status === "failed" ? (
+            <IconButton label="Resume" icon={Play} disabled={disabled} onClick={() => onAction("resume")} />
+          ) : null}
+          {job.failedChunks > 0 ? (
+            <IconButton
+              label="Retry failed"
+              icon={RotateCcw}
+              disabled={disabled}
+              onClick={() => onAction("retry_failed")}
+            />
+          ) : null}
+          {job.status !== "success" && job.status !== "canceled" ? (
+            <IconButton label="Cancel" icon={Square} disabled={disabled} onClick={() => onAction("cancel")} />
+          ) : null}
+        </div>
+      </div>
+      <div className="mt-4 h-2 overflow-hidden bg-hp-inset">
+        <div className="h-full bg-hp-pink" style={{ width: `${progress}%` }} />
+      </div>
+      <div className="mt-3 grid gap-2 text-sm md:grid-cols-4">
+        <SmallMetric label="Completed" value={`${job.completedChunks}/${job.totalChunks}`} />
+        <SmallMetric label="Running" value={job.runningChunks.toLocaleString()} />
+        <SmallMetric label="Failed" value={job.failedChunks.toLocaleString()} />
+        <SmallMetric label="Updated" value={formatDateTime(job.updatedAt)} />
+      </div>
+      {Array.isArray(job.errors) && job.errors.length ? (
+        <div className="mt-3 flex items-start gap-2 border border-signal-danger/30 bg-signal-danger/10 p-3 text-sm text-signal-danger">
+          <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+          <span className="line-clamp-2">{String(job.errors[0])}</span>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function DateInput({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">{label}</span>
+      <input
+        type="date"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-2 h-11 w-full border border-hp-rule bg-hp-foundation px-3 text-sm text-hp-ink outline-none focus:border-hp-ink"
+      />
+    </label>
+  );
+}
+
+function Button({
+  children,
+  icon: Icon,
+  intent = "default",
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  icon: ComponentType<{ size?: number; className?: string }>;
+  intent?: "default" | "primary";
+}) {
+  return (
+    <button
+      {...props}
+      className={`flex h-11 items-center justify-center gap-2 border px-4 text-[11px] uppercase tracking-[0.14em] transition-colors ${
+        intent === "primary"
+          ? "border-hp-ink bg-hp-ink text-hp-foundation"
+          : "border-hp-rule text-hp-body hover:border-hp-ink hover:bg-hp-inset"
+      } ${props.className || ""}`}
+    >
+      <Icon size={15} />
+      {children}
+    </button>
+  );
+}
+
+function IconButton({
+  label,
+  icon: Icon,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  label: string;
+  icon: ComponentType<{ size?: number; className?: string }>;
+}) {
+  return (
+    <button
+      {...props}
+      title={label}
+      aria-label={label}
+      className="flex h-10 w-10 items-center justify-center border border-hp-rule text-hp-body transition-colors hover:border-hp-ink hover:bg-hp-inset"
+    >
+      <Icon size={16} />
+    </button>
+  );
+}
+
+function PanelTitle({
+  icon: Icon,
+  title,
+}: {
+  icon: ComponentType<{ size?: number; className?: string }>;
+  title: string;
+}) {
+  return (
+    <div className="flex items-center gap-2 text-hp-ink">
+      <Icon size={18} />
+      <span className="text-[11px] uppercase tracking-[0.14em]">{title}</span>
+    </div>
+  );
+}
+
+function StatusPill({ status }: { status: BackfillStatus | ChunkStatus }) {
+  return (
+    <span className={`inline-flex border px-2 py-1 text-[10px] uppercase tracking-[0.14em] ${STATUS_CLASS[status]}`}>
+      {status}
+    </span>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="border border-hp-rule bg-hp-foundation p-3">
+      <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{label}</div>
+      <div className="mt-1 text-lg text-hp-ink">{value}</div>
+    </div>
+  );
+}
+
+function SmallMetric({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="border border-hp-rule bg-hp-card px-3 py-2">
+      <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{label}</div>
+      <div className="mt-1 text-hp-ink">{value}</div>
+    </div>
+  );
+}
+
+function EmptyState({ text }: { text: string }) {
+  return <div className="border border-dashed border-hp-rule bg-hp-foundation p-4 text-sm text-hp-muted">{text}</div>;
+}
+
+function summarizeCoverage(rows: HistoryCoverage[]) {
+  const accounts = new Set(rows.map((row) => row.metaAccountId));
+  const months = new Set(rows.map((row) => row.month));
+  return {
+    accounts: accounts.size,
+    months: months.size,
+    filledMonths: rows.filter((row) => row.insightRows > 0).length,
+    rows: rows.reduce((sum, row) => sum + row.insightRows, 0),
+  };
+}
+
+function formatDateTime(value: string | null) {
+  if (!value) return "-";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(value));
+}

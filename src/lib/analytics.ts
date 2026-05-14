@@ -8,6 +8,7 @@ import {
   type CampaignUmbrellaClassification,
 } from "./campaign-umbrellas";
 import { ConfigurationError, getMissingRequiredEnv } from "./env";
+import { aggregateMetaInsights, type MetaInsightAggregateRow } from "./meta-insight-aggregates";
 import { createServiceClient } from "./supabase";
 
 export type MetricSummary = {
@@ -273,30 +274,13 @@ export async function fetchDashboardData(
     const supabase = createServiceClient();
     const dateRange = resolveDashboardDateRange(dateRangeInput);
 
-    const [
-      brandsRes,
-      accountsRes,
-      campaignsRes,
-      adSetsRes,
-      adsRes,
-      creativesRes,
-      insightsRes,
-      reportsRes,
-      syncRunsRes,
-    ] = await Promise.all([
+    const metadataPromise = Promise.all([
       supabase.from("brands").select("*"),
       supabase.from("meta_ad_accounts").select("*"),
       supabase.from("meta_campaigns").select("*"),
       supabase.from("meta_ad_sets").select("*"),
       supabase.from("meta_ads").select("*"),
       supabase.from("meta_creatives").select("*"),
-      supabase
-        .from("meta_daily_insights")
-        .select("*")
-        .gte("date_start", dateRange.start)
-        .lte("date_start", dateRange.end)
-        .order("date_start", { ascending: false })
-        .limit(10000),
       supabase
         .from("ai_reports")
         .select("*")
@@ -308,6 +292,86 @@ export async function fetchDashboardData(
         .order("started_at", { ascending: false })
         .limit(8),
     ]);
+    const aggregatePromise = Promise.all([
+      aggregateMetaInsights({
+        start: dateRange.start,
+        end: dateRange.end,
+        dimensions: [],
+        sortField: "spend",
+        sortDirection: "desc",
+        limit: 1,
+      }),
+      aggregateMetaInsights({
+        start: dateRange.start,
+        end: dateRange.end,
+        dimensions: ["brand"],
+        sortField: "spend",
+        sortDirection: "desc",
+        limit: 100,
+      }),
+      aggregateMetaInsights({
+        start: dateRange.start,
+        end: dateRange.end,
+        dimensions: ["campaign_umbrella"],
+        sortField: "spend",
+        sortDirection: "desc",
+        limit: 100,
+      }),
+      aggregateMetaInsights({
+        start: dateRange.start,
+        end: dateRange.end,
+        dimensions: ["campaign"],
+        sortField: "spend",
+        sortDirection: "desc",
+        limit: 5000,
+      }),
+      aggregateMetaInsights({
+        start: dateRange.start,
+        end: dateRange.end,
+        dimensions: ["ad_set"],
+        sortField: "spend",
+        sortDirection: "desc",
+        limit: 5000,
+      }),
+      aggregateMetaInsights({
+        start: dateRange.start,
+        end: dateRange.end,
+        dimensions: ["creative"],
+        sortField: "spend",
+        sortDirection: "desc",
+        limit: 5000,
+      }),
+      aggregateMetaInsights({
+        start: dateRange.start,
+        end: dateRange.end,
+        dimensions: ["date", "brand", "campaign_umbrella"],
+        sortField: "date",
+        sortDirection: "asc",
+        limit: 10000,
+      }),
+    ]);
+
+    const [
+      [
+        brandsRes,
+        accountsRes,
+        campaignsRes,
+        adSetsRes,
+        adsRes,
+        creativesRes,
+        reportsRes,
+        syncRunsRes,
+      ],
+      [
+        overviewRows,
+        byBrandRows,
+        byUmbrellaRows,
+        campaignAggregateRows,
+        adSetAggregateRows,
+        creativeAggregateRows,
+        dailyTrendAggregateRows,
+      ],
+    ] = await Promise.all([metadataPromise, aggregatePromise]);
 
     const firstError = [
       brandsRes,
@@ -316,7 +380,6 @@ export async function fetchDashboardData(
       adSetsRes,
       adsRes,
       creativesRes,
-      insightsRes,
       reportsRes,
       syncRunsRes,
     ].find((res) => res.error)?.error;
@@ -331,51 +394,42 @@ export async function fetchDashboardData(
     const adSets = rows<AdSetRow>(adSetsRes.data);
     const ads = rows<AdRow>(adsRes.data);
     const creatives = rows<CreativeRow>(creativesRes.data);
-    const insights = rows<InsightRow>(insightsRes.data);
 
     const brandById = new Map(brands.map((brand) => [brand.id, brand]));
     const campaignById = new Map(campaigns.map((campaign) => [campaign.campaign_id, campaign]));
     const adSetById = new Map(adSets.map((adSet) => [adSet.ad_set_id, adSet]));
-    const adById = new Map(ads.map((ad) => [ad.ad_id, ad]));
     const creativeById = new Map(creatives.map((creative) => [creative.creative_id, creative]));
+    const adByCreativeId = new Map(
+      ads.filter((ad) => ad.creative_id).map((ad) => [ad.creative_id as string, ad]),
+    );
 
     const getBrandCode = (brandId?: string | null) =>
       (brandId && brandById.get(brandId)?.code) || "Unassigned";
 
-    const getInsightUmbrella = (row: InsightRow) => {
-      const campaign = row.campaign_id ? campaignById.get(row.campaign_id) : undefined;
-      const adSet = row.ad_set_id ? adSetById.get(row.ad_set_id) : undefined;
-      const ad = row.ad_id ? adById.get(row.ad_id) : undefined;
-      return resolveUmbrella(
-        row.campaign_umbrella,
-        ad?.campaign_umbrella,
-        adSet?.campaign_umbrella,
-        campaign?.campaign_umbrella,
-        classifyCampaignUmbrella({
-          campaignName: campaign?.name || row.campaign_name,
-          adSetName: adSet?.name || row.ad_set_name,
-        }).umbrella,
-      );
-    };
-
-    const overview = summarize(insights, getInsightUmbrella);
-    const byBrand = Array.from(groupInsights(insights, (row) => getBrandCode(row.brand_id)).entries())
-      .map(([brandCode, groupRows]) => ({
-        id: brandCode,
-        name: brandCode,
-        brandCode,
-        ...summarize(groupRows, getInsightUmbrella),
-      }))
+    const overview = summaryFromAggregate(overviewRows[0]);
+    const byBrand = byBrandRows
+      .map((row) => {
+        const brandCode = row.brand || "Unassigned";
+        return {
+          id: brandCode,
+          name: brandCode,
+          brandCode,
+          ...summaryFromAggregate(row),
+        };
+      })
       .sort(bySpendDesc);
 
-    const byUmbrella = Array.from(groupInsights(insights, getInsightUmbrella).entries())
-      .map(([umbrella, groupRows]) => ({
-        id: umbrella,
-        name: umbrella,
-        brandCode: "All",
-        campaignUmbrella: resolveUmbrella(umbrella),
-        ...summarize(groupRows, getInsightUmbrella),
-      }))
+    const byUmbrella = byUmbrellaRows
+      .map((row) => {
+        const umbrella = resolveUmbrella(row.campaign_umbrella);
+        return {
+          id: umbrella,
+          name: umbrella,
+          brandCode: "All",
+          campaignUmbrella: umbrella,
+          ...summaryFromAggregate(row, umbrella),
+        };
+      })
       .sort(bySpendDesc);
 
     const campaignUmbrellas = orderedUmbrellas([
@@ -384,12 +438,10 @@ export async function fetchDashboardData(
       ...adSets.map((adSet) => resolveUmbrella(adSet.campaign_umbrella)),
     ]);
 
-    const campaignRows = Array.from(
-      groupInsights(insights, (row) => row.campaign_id || "unknown").entries(),
-    )
-      .map(([campaignId, groupRows]) => {
+    const campaignRows = campaignAggregateRows
+      .map((row) => {
+        const campaignId = row.campaign_id || "unknown";
         const campaign = campaignById.get(campaignId);
-        const first = groupRows[0];
         const classification = resolveCampaignClassification(
           {
             umbrella: campaign?.campaign_umbrella,
@@ -397,30 +449,29 @@ export async function fetchDashboardData(
             reason: campaign?.campaign_umbrella_reason,
           },
           classifyCampaignUmbrella({
-            campaignName: campaign?.name || first?.campaign_name,
-            adSetNames: uniqueStrings(groupRows.map((row) => row.ad_set_name)),
+            campaignName: campaign?.name || row.campaign,
           }),
         );
         return {
           id: campaignId,
-          name: campaign?.name || first?.campaign_name || "Unknown campaign",
-          brandCode: getBrandCode(campaign?.brand_id || first?.brand_id),
+          name: campaign?.name || row.campaign || "Unknown campaign",
+          brandCode: getBrandCode(campaign?.brand_id),
           status: campaign?.status,
           effectiveStatus: campaign?.effective_status,
           objective: campaign?.objective,
           campaignUmbrella: classification.umbrella,
           campaignUmbrellaConfidence: classification.confidence,
           campaignUmbrellaReason: classification.reason,
-          ...summarize(groupRows, getInsightUmbrella),
+          ...summaryFromAggregate(row, classification.umbrella),
         };
       })
       .sort(bySpendDesc);
 
-    const adSetRows = Array.from(groupInsights(insights, (row) => row.ad_set_id || "unknown").entries())
-      .map(([adSetId, groupRows]) => {
+    const adSetRows = adSetAggregateRows
+      .map((row) => {
+        const adSetId = row.ad_set_id || "unknown";
         const adSet = adSetById.get(adSetId);
-        const first = groupRows[0];
-        const campaign = first?.campaign_id ? campaignById.get(first.campaign_id) : undefined;
+        const campaign = adSet?.campaign_id ? campaignById.get(adSet.campaign_id) : undefined;
         const classification = resolveCampaignClassification(
           {
             umbrella: adSet?.campaign_umbrella,
@@ -428,44 +479,57 @@ export async function fetchDashboardData(
             reason: adSet?.campaign_umbrella_reason,
           },
           classifyCampaignUmbrella({
-            campaignName: campaign?.name || first?.campaign_name,
-            adSetName: adSet?.name || first?.ad_set_name,
+            campaignName: campaign?.name,
+            adSetName: adSet?.name || row.ad_set,
           }),
         );
         return {
           id: adSetId,
-          name: adSet?.name || first?.ad_set_name || "Unknown ad set",
-          brandCode: getBrandCode(adSet?.brand_id || first?.brand_id),
+          name: adSet?.name || row.ad_set || "Unknown ad set",
+          brandCode: getBrandCode(adSet?.brand_id),
           status: adSet?.status,
           effectiveStatus: adSet?.effective_status,
           campaignUmbrella: classification.umbrella,
           campaignUmbrellaConfidence: classification.confidence,
           campaignUmbrellaReason: classification.reason,
-          ...summarize(groupRows, getInsightUmbrella),
+          ...summaryFromAggregate(row, classification.umbrella),
         };
       })
       .sort(bySpendDesc);
 
-    const creativeRows = Array.from(
-      groupInsights(insights, (row) => {
-        const ad = row.ad_id ? adById.get(row.ad_id) : undefined;
-        return row.creative_id || ad?.creative_id || "unknown";
-      }).entries(),
-    )
-      .map(([creativeId, groupRows]) => {
-        const first = groupRows[0];
-        const ad = first?.ad_id ? adById.get(first.ad_id) : undefined;
+    const creativeRows = creativeAggregateRows
+      .map((row) => {
+        const creativeId = row.creative_id || "unknown";
+        const ad = adByCreativeId.get(creativeId);
+        const adSet = ad?.ad_set_id ? adSetById.get(ad.ad_set_id) : undefined;
+        const campaign = ad?.campaign_id ? campaignById.get(ad.campaign_id) : undefined;
         const creative = creativeById.get(creativeId || ad?.creative_id || "");
-        const metrics = summarize(groupRows, getInsightUmbrella);
+        const classification = resolveCampaignClassification(
+          {
+            umbrella: ad?.campaign_umbrella || adSet?.campaign_umbrella || campaign?.campaign_umbrella,
+            confidence:
+              ad?.campaign_umbrella_confidence ||
+              adSet?.campaign_umbrella_confidence ||
+              campaign?.campaign_umbrella_confidence,
+            reason:
+              ad?.campaign_umbrella_reason ||
+              adSet?.campaign_umbrella_reason ||
+              campaign?.campaign_umbrella_reason,
+          },
+          classifyCampaignUmbrella({
+            campaignName: campaign?.name,
+            adSetName: adSet?.name,
+          }),
+        );
+        const metrics = summaryFromAggregate(row, classification.umbrella);
         const risk = getFatigueRisk(metrics, overview);
-        const campaignUmbrella = dominantUmbrella(groupRows, getInsightUmbrella);
         return {
           id: creativeId,
-          name: creative?.name || ad?.name || first?.ad_name || "Unknown creative",
-          brandCode: getBrandCode(creative?.brand_id || ad?.brand_id || first?.brand_id),
+          name: creative?.name || ad?.name || row.creative || "Unknown creative",
+          brandCode: getBrandCode(creative?.brand_id || ad?.brand_id),
           status: ad?.status,
           effectiveStatus: ad?.effective_status,
-          campaignUmbrella,
+          campaignUmbrella: classification.umbrella,
           campaignUmbrellaConfidence: ad?.campaign_umbrella_confidence || null,
           campaignUmbrellaReason: ad?.campaign_umbrella_reason || null,
           previewSource: creative?.preview_source,
@@ -483,19 +547,14 @@ export async function fetchDashboardData(
       })
       .sort(bySpendDesc);
 
-    const dailyTrend = Array.from(
-      groupInsights(
-        insights,
-        (row) => `${row.date_start}::${getBrandCode(row.brand_id)}::${getInsightUmbrella(row)}`,
-      ).entries(),
-    )
-      .map(([key, groupRows]) => {
-        const [date, brandCode, campaignUmbrella] = key.split("::");
-        const metrics = summarize(groupRows, getInsightUmbrella);
+    const dailyTrend = dailyTrendAggregateRows
+      .map((row) => {
+        const campaignUmbrella = resolveUmbrella(row.campaign_umbrella);
+        const metrics = summaryFromAggregate(row, campaignUmbrella);
         return {
-          date,
-          brandCode,
-          campaignUmbrella: resolveUmbrella(campaignUmbrella),
+          date: row.date || dateRange.start,
+          brandCode: row.brand || "Unassigned",
+          campaignUmbrella,
           spend: metrics.spend,
           impressions: metrics.impressions,
           clicks: metrics.clicks,
@@ -539,7 +598,13 @@ export async function fetchDashboardData(
         meta_ad_sets: adSets.length,
         meta_ads: ads.length,
         meta_creatives: creatives.length,
-        meta_daily_insights: insights.length,
+        meta_daily_insights: overviewRows[0]?.source_rows || 0,
+        aggregate_by_brand: byBrandRows.length,
+        aggregate_by_umbrella: byUmbrellaRows.length,
+        aggregate_campaigns: campaignAggregateRows.length,
+        aggregate_ad_sets: adSetAggregateRows.length,
+        aggregate_creatives: creativeAggregateRows.length,
+        aggregate_daily_trend: dailyTrendAggregateRows.length,
         campaign_umbrellas: campaignUmbrellas.length,
       },
     };
@@ -585,6 +650,40 @@ export async function fetchDashboardData(
     }
     throw error;
   }
+}
+
+function summaryFromAggregate(
+  row?: MetaInsightAggregateRow,
+  umbrella?: CampaignUmbrella,
+): MetricSummary {
+  const profile = umbrella
+    ? getKpiProfile(umbrella)
+    : {
+        primaryResultLabel: "Primary Results",
+        secondaryResultLabel: null,
+      };
+  const metrics: MetricSummary = {
+    ...EMPTY_METRICS,
+    spend: row?.spend || 0,
+    impressions: row?.impressions || 0,
+    reach: row?.reach || 0,
+    clicks: row?.clicks || 0,
+    leads: row?.leads || 0,
+    bookings: row?.bookings || 0,
+    websiteBookings: row?.website_bookings || 0,
+    messagingContacts: row?.messaging_contacts || 0,
+    newMessagingContacts: row?.new_messaging_contacts || 0,
+    primaryResults: row?.primary_results || 0,
+    primaryResultLabel: profile.primaryResultLabel,
+    secondaryResults:
+      profile.secondaryResultLabel && row?.secondary_results
+        ? row.secondary_results
+        : null,
+    secondaryResultLabel: profile.secondaryResultLabel,
+    conversions: row?.conversions || 0,
+  };
+
+  return deriveRates(metrics);
 }
 
 export function summarize(
@@ -704,14 +803,6 @@ function roundMoney(value: number): number {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function groupInsights(rowsToGroup: InsightRow[], keyFn: (row: InsightRow) => string) {
-  return rowsToGroup.reduce((groups, row) => {
-    const key = keyFn(row) || "unknown";
-    groups.set(key, [...(groups.get(key) || []), row]);
-    return groups;
-  }, new Map<string, InsightRow[]>());
 }
 
 function summarizePrimaryOutcomes(
@@ -837,20 +928,6 @@ function resolveCampaignClassification(
 function orderedUmbrellas(values: Array<string | null | undefined>) {
   const present = new Set(values.filter(isCampaignUmbrella));
   return CAMPAIGN_UMBRELLAS.filter((umbrella) => present.has(umbrella));
-}
-
-function uniqueStrings(values: Array<string | null | undefined>) {
-  return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
-}
-
-function dominantUmbrella(rowsToGroup: InsightRow[], keyFn: (row: InsightRow) => CampaignUmbrella) {
-  const totals = rowsToGroup.reduce((groups, row) => {
-    const key = keyFn(row);
-    groups.set(key, (groups.get(key) || 0) + toNumber(row.spend));
-    return groups;
-  }, new Map<CampaignUmbrella, number>());
-
-  return Array.from(totals.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || "Needs review";
 }
 
 function bySpendDesc(a: MetricSummary, b: MetricSummary) {

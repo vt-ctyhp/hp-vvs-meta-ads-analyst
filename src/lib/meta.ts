@@ -5,6 +5,7 @@ import {
   type CampaignUmbrellaClassification,
   type CampaignUmbrellaOverride,
 } from "./campaign-umbrellas";
+import { buildInsightDateParams, incrementalDatePreset, type InsightDateRange } from "./meta-backfill-utils";
 import { createServiceClient } from "./supabase";
 
 type JsonRecord = Record<string, unknown>;
@@ -39,7 +40,7 @@ type PermissionStatus = {
   warnings?: string[];
 };
 
-type SyncAccountConfig = {
+export type SyncAccountConfig = {
   brandCode: "HP" | "VVS";
   brandName: string;
   accountId: string;
@@ -254,10 +255,31 @@ export async function validateConfiguredMetaAccounts() {
   );
 }
 
-async function syncAccount(account: SyncAccountConfig, brandId: string | null) {
+export async function syncMetaAdsAccountRange(input: {
+  account: SyncAccountConfig;
+  since: string;
+  until: string;
+}) {
+  const brandRows = await ensureBrands([input.account]);
+  const brandId = String(
+    brandRows.find((brand) => String(brand.code) === input.account.brandCode)?.id || "",
+  ) || null;
+
+  return syncAccount(input.account, brandId, {
+    insights: { kind: "range", since: input.since, until: input.until },
+    refreshPreviews: false,
+  });
+}
+
+async function syncAccount(
+  account: SyncAccountConfig,
+  brandId: string | null,
+  options: { insights?: InsightDateRange; refreshPreviews?: boolean } = {},
+) {
   const accountId = normalizeAccountId(account.accountId);
   const metaAccountId = `act_${accountId}`;
   const now = new Date().toISOString();
+  const refreshPreviews = options.refreshPreviews ?? true;
 
   const accountProfile = await graphFetch<JsonRecord>(metaAccountId, {
     fields: "id,name,currency,timezone_name,account_status,business_name",
@@ -395,14 +417,16 @@ async function syncAccount(account: SyncAccountConfig, brandId: string | null) {
   }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_PAGES", 20) });
 
   const previewByAdId = new Map<string, { previewHtml: string | null; previewUrl: string | null }>();
-  for (const ad of ads) {
-    const adId = stringField(ad.id);
-    if (!adId) continue;
-    const creative = recordField(ad.creative);
-    const preview = chooseStoredPreview(creative, null);
-    if (preview.previewSource === "fallback") {
-      const adPreview = await fetchAdPreview(adId);
-      previewByAdId.set(adId, adPreview);
+  if (refreshPreviews) {
+    for (const ad of ads) {
+      const adId = stringField(ad.id);
+      if (!adId) continue;
+      const creative = recordField(ad.creative);
+      const preview = chooseStoredPreview(creative, null);
+      if (preview.previewSource === "fallback") {
+        const adPreview = await fetchAdPreview(adId);
+        previewByAdId.set(adId, adPreview);
+      }
     }
   }
 
@@ -412,7 +436,7 @@ async function syncAccount(account: SyncAccountConfig, brandId: string | null) {
       const creativeId = stringField(creative.id);
       if (!creativeId) return null;
       const adPreview = previewByAdId.get(String(ad.id)) || null;
-      const preview = chooseStoredPreview(creative, adPreview);
+      const preview = refreshPreviews ? chooseStoredPreview(creative, adPreview) : null;
       return {
         brand_id: brandId,
         account_id: accountRow.id,
@@ -425,12 +449,17 @@ async function syncAccount(account: SyncAccountConfig, brandId: string | null) {
         object_type: stringField(creative.object_type),
         object_story_id: stringField(creative.object_story_id),
         effective_object_story_id: stringField(creative.effective_object_story_id),
-        thumbnail_url: stringField(creative.thumbnail_url),
-        image_url: stringField(creative.image_url),
-        video_thumbnail_url: stringField(creative.video_thumbnail_url),
-        preview_url: preview.previewUrl,
-        preview_html: preview.previewHtml,
-        preview_source: preview.previewSource,
+        ...(refreshPreviews
+          ? {
+              thumbnail_url: stringField(creative.thumbnail_url),
+              image_url: stringField(creative.image_url),
+              video_thumbnail_url: stringField(creative.video_thumbnail_url),
+              preview_url: preview?.previewUrl || null,
+              preview_html: preview?.previewHtml || null,
+              preview_source: preview?.previewSource || "fallback",
+              last_preview_refresh_at: now,
+            }
+          : {}),
         asset_metadata: {
           image_hash: creative.image_hash || null,
           video_id: creative.video_id || null,
@@ -438,7 +467,6 @@ async function syncAccount(account: SyncAccountConfig, brandId: string | null) {
         object_story_spec: recordField(creative.object_story_spec),
         asset_feed_spec: recordField(creative.asset_feed_spec),
         raw_json: creative,
-        last_preview_refresh_at: now,
         last_synced_at: now,
       };
     })
@@ -477,7 +505,7 @@ async function syncAccount(account: SyncAccountConfig, brandId: string | null) {
     ads.map((ad) => {
       const creative = recordField(ad.creative);
       const adPreview = previewByAdId.get(String(ad.id)) || null;
-      const preview = chooseStoredPreview(creative, adPreview);
+      const preview = refreshPreviews ? chooseStoredPreview(creative, adPreview) : null;
       const creativeId = stringField(creative.id);
       const adId = stringField(ad.id);
       const classification = adClassifications.get(adId || "") ||
@@ -496,9 +524,13 @@ async function syncAccount(account: SyncAccountConfig, brandId: string | null) {
         name: stringField(ad.name),
         status: stringField(ad.status),
         effective_status: stringField(ad.effective_status),
-        preview_source: preview.previewSource,
-        preview_url: preview.previewUrl,
-        preview_html: preview.previewHtml,
+        ...(refreshPreviews
+          ? {
+              preview_source: preview?.previewSource || "fallback",
+              preview_url: preview?.previewUrl || null,
+              preview_html: preview?.previewHtml || null,
+            }
+          : {}),
         created_time: stringField(ad.created_time),
         updated_time: stringField(ad.updated_time),
         ...umbrellaColumns(classification),
@@ -510,7 +542,7 @@ async function syncAccount(account: SyncAccountConfig, brandId: string | null) {
   );
   const adByMetaId = new Map(adRows.map((row) => [String(row.ad_id), row]));
 
-  const insights = await fetchInsights(metaAccountId);
+  const insights = await fetchInsights(metaAccountId, options.insights);
   await upsertMany(
     "meta_daily_insights",
     insights.map((insight) => {
@@ -596,11 +628,11 @@ async function syncAccount(account: SyncAccountConfig, brandId: string | null) {
     ads: ads.length,
     creatives: creativeRows.length,
     insightRows: insights.length,
-    previewRefreshes: previewByAdId.size + creativeRows.length,
+    previewRefreshes: refreshPreviews ? previewByAdId.size + creativeRows.length : 0,
   };
 }
 
-async function fetchInsights(metaAccountId: string) {
+async function fetchInsights(metaAccountId: string, range?: InsightDateRange) {
   const fullFields = [
     "campaign_id",
     "campaign_name",
@@ -635,7 +667,7 @@ async function fetchInsights(metaAccountId: string) {
     return await graphPages<JsonRecord>(`${metaAccountId}/insights`, {
       level: "ad",
       time_increment: "1",
-      date_preset: getSyncDatePreset(),
+      ...buildInsightDateParams(range || { kind: "preset", datePreset: getSyncDatePreset() }),
       fields: fullFields,
       limit: "100",
     }, { maxPages: getSyncMaxPages("META_SYNC_MAX_INSIGHT_PAGES", 30) });
@@ -664,7 +696,7 @@ async function fetchInsights(metaAccountId: string) {
       return graphPages<JsonRecord>(`${metaAccountId}/insights`, {
         level: "ad",
         time_increment: "1",
-        date_preset: getSyncDatePreset(),
+        ...buildInsightDateParams(range || { kind: "preset", datePreset: getSyncDatePreset() }),
         fields: minimalFields,
         limit: "100",
       }, { maxPages: getSyncMaxPages("META_SYNC_MAX_INSIGHT_PAGES", 30) });
@@ -798,7 +830,7 @@ async function graphPages<T>(
 }
 
 function getSyncDatePreset() {
-  return process.env.META_SYNC_DATE_PRESET?.trim() || "last_30d";
+  return incrementalDatePreset();
 }
 
 function getSyncMaxPages(name: string, fallback: number) {
@@ -815,7 +847,7 @@ function graphUrl(path: string, params: Record<string, string | undefined>) {
   return url.toString();
 }
 
-function getConfiguredAccounts(): SyncAccountConfig[] {
+export function getConfiguredAccounts(): SyncAccountConfig[] {
   const hp = process.env.META_HP_AD_ACCOUNT_ID;
   const vvs = process.env.META_VVS_AD_ACCOUNT_ID;
   const missing = [

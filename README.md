@@ -49,12 +49,17 @@ vercel --prod
 ## Runtime Routes
 
 - `/` executive dashboard, creative leaderboard, gallery, report controls, chat
+- `/analysis` ad-hoc Meta Ads analysis over stored Supabase history
+- `/admin/backfill` hidden Meta Ads historical backfill admin
 - `/inbox` Facebook/Instagram inbox readiness page and human-approved reply UI shell
 - `/api/sync` manual read-only Meta sync
+- `/api/meta/backfill` protected backfill job, chunk, and coverage API
+- `/api/meta/backfill/run` protected manual backfill batch runner
 - `/api/social-inbox` latest stored social inbox threads, messages, comments, and sync runs
 - `/api/social-inbox/sync` manual Facebook/Instagram inbox/comment sync
 - `/api/meta/webhook` Meta webhook callback for future Facebook/Instagram message/comment events
 - `/api/cron/sync` Vercel Cron sync, protected by `CRON_SECRET`
+- `/api/cron/meta-backfill` Vercel Cron historical chunk runner, protected by `CRON_SECRET`
 - `/api/reports` AI executive report generation
 - `/api/chat` AI executive chat
 - `/api/health` environment and Meta permission validation
