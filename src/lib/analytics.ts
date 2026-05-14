@@ -363,6 +363,14 @@ export async function fetchDashboardData(
         sortDirection: "asc",
         limit: 10000,
       }),
+      aggregateMetaInsights({
+        start: dateRange.start,
+        end: dateRange.end,
+        dimensions: ["date"],
+        sortField: "date",
+        sortDirection: "asc",
+        limit: dateRange.days + 5,
+      }),
     ]);
 
     const [
@@ -384,6 +392,7 @@ export async function fetchDashboardData(
         adSetAggregateRows,
         creativeAggregateRows,
         dailyTrendAggregateRows,
+        dateCoverageAggregateRows,
       ],
     ] = await Promise.all([metadataPromise, aggregatePromise]);
 
@@ -585,7 +594,7 @@ export async function fetchDashboardData(
     const dataCoverage = buildDataCoverage(
       dateRange.start,
       dateRange.end,
-      dailyTrendAggregateRows.map((row) => row.date),
+      dateCoverageAggregateRows.map((row) => row.date),
     );
 
     const fatigueRisks = creativeRows
@@ -625,6 +634,7 @@ export async function fetchDashboardData(
         aggregate_ad_sets: adSetAggregateRows.length,
         aggregate_creatives: creativeAggregateRows.length,
         aggregate_daily_trend: dailyTrendAggregateRows.length,
+        aggregate_date_coverage: dateCoverageAggregateRows.length,
         campaign_umbrellas: campaignUmbrellas.length,
       },
     };
