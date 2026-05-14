@@ -11,6 +11,8 @@ export async function POST(request: Request) {
       sessionId?: string | null;
       message?: string;
       days?: number;
+      startDate?: string | null;
+      endDate?: string | null;
     };
 
     if (!body.message?.trim()) {
@@ -21,6 +23,8 @@ export async function POST(request: Request) {
       sessionId: body.sessionId,
       message: body.message,
       days: body.days,
+      startDate: body.startDate,
+      endDate: body.endDate,
     });
 
     return Response.json(result);

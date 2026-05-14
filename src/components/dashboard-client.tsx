@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   BarChart3,
   Bot,
+  CalendarRange,
   ChevronDown,
   GalleryHorizontalEnd,
   MessageSquare,
@@ -53,6 +54,8 @@ export function DashboardClient({ initialData }: Props) {
   const [data] = useState(initialData);
   const [brand, setBrand] = useState("all");
   const [umbrella, setUmbrella] = useState("all");
+  const [startDate, setStartDate] = useState(data.sourceTransparency.timeRange.start || "");
+  const [endDate, setEndDate] = useState(data.sourceTransparency.timeRange.end || "");
   const [query, setQuery] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [sortKey, setSortKey] = useState<SortKey>("spend");
@@ -134,7 +137,11 @@ export function DashboardClient({ initialData }: Props) {
       const response = await fetch("/api/reports", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ days: data.sourceTransparency.timeRange.days }),
+        body: JSON.stringify({
+          days: data.sourceTransparency.timeRange.days,
+          startDate,
+          endDate,
+        }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Report generation failed");
@@ -162,6 +169,8 @@ export function DashboardClient({ initialData }: Props) {
           sessionId: chatSessionId,
           message,
           days: data.sourceTransparency.timeRange.days,
+          startDate,
+          endDate,
         }),
       });
       const payload = await response.json();
@@ -182,6 +191,23 @@ export function DashboardClient({ initialData }: Props) {
     } finally {
       setIsChatting(false);
     }
+  }
+
+  function applyDateRange(nextStart = startDate, nextEnd = endDate) {
+    if (!nextStart || !nextEnd) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("start", nextStart);
+    url.searchParams.set("end", nextEnd);
+    url.searchParams.delete("days");
+    window.location.assign(`${url.pathname}${url.search}`);
+  }
+
+  function applyQuickRange(days: number) {
+    const end = data.sourceTransparency.timeRange.end || toDateInput(new Date());
+    const start = shiftDate(end, -(days - 1));
+    setStartDate(start);
+    setEndDate(end);
+    applyDateRange(start, end);
   }
 
   if (!data.configured) {
@@ -298,25 +324,36 @@ export function DashboardClient({ initialData }: Props) {
       </section>
 
       <section className="mx-auto mt-8 max-w-7xl">
-        <div className="flex flex-col gap-4 border-y border-hp-rule py-5 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-wrap items-center gap-2">
-            {brands.map((brandOption) => (
-              <button
-                key={brandOption}
-                onClick={() => setBrand(brandOption)}
-                className={`border px-4 py-2 text-[11px] uppercase tracking-[0.14em] transition-colors ${
-                  brand === brandOption
-                    ? "border-hp-ink bg-hp-ink text-hp-foundation"
-                    : "border-hp-rule text-hp-body hover:border-hp-ink"
-                }`}
-              >
-                {brandOption === "all" ? "All Brands" : brandOption}
-              </button>
-            ))}
+        <div className="flex flex-col gap-4 border-y border-hp-rule py-5">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex flex-wrap items-center gap-2">
+              {brands.map((brandOption) => (
+                <button
+                  key={brandOption}
+                  onClick={() => setBrand(brandOption)}
+                  className={`h-10 border px-4 text-[11px] uppercase tracking-[0.14em] transition-colors ${
+                    brand === brandOption
+                      ? "border-hp-ink bg-hp-ink text-hp-foundation"
+                      : "border-hp-rule text-hp-body hover:border-hp-ink"
+                  }`}
+                >
+                  {brandOption === "all" ? "All Brands" : brandOption}
+                </button>
+              ))}
+            </div>
+
+            <DateRangeControls
+              startDate={startDate}
+              endDate={endDate}
+              onStartDateChange={setStartDate}
+              onEndDateChange={setEndDate}
+              onApply={() => applyDateRange()}
+              onQuickRange={applyQuickRange}
+            />
           </div>
 
-          <div className="flex flex-col gap-3 md:flex-row md:items-center">
-            <label className="flex min-w-64 items-center gap-2 border-b border-hp-rule px-1 py-2 focus-within:border-hp-pink">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <label className="flex min-w-0 flex-1 items-center gap-2 border-b border-hp-rule px-1 py-2 focus-within:border-hp-pink lg:max-w-xl">
               <Search size={16} className="text-hp-muted" />
               <input
                 value={query}
@@ -326,31 +363,33 @@ export function DashboardClient({ initialData }: Props) {
               />
             </label>
 
-            <select
-              value={umbrella}
-              onChange={(event) => setUmbrella(event.target.value)}
-              className="max-w-72 border border-hp-rule bg-transparent px-3 py-2 text-sm outline-none focus:border-hp-pink"
-            >
-              {umbrellaOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option === "all" ? "All Umbrellas" : option}
-                </option>
-              ))}
-            </select>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <select
+                value={umbrella}
+                onChange={(event) => setUmbrella(event.target.value)}
+                className="h-10 min-w-0 border border-hp-rule bg-transparent px-3 text-sm outline-none focus:border-hp-pink sm:w-72"
+              >
+                {umbrellaOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option === "all" ? "All Umbrellas" : option}
+                  </option>
+                ))}
+              </select>
 
-            <select
-              value={sortKey}
-              onChange={(event) => setSortKey(event.target.value as SortKey)}
-              className="border border-hp-rule bg-transparent px-3 py-2 text-sm outline-none focus:border-hp-pink"
-            >
-              {Object.entries(SORT_LABELS).map(([key, label]) => (
-                <option key={key} value={key}>
-                  {label}
-                </option>
-              ))}
-            </select>
+              <select
+                value={sortKey}
+                onChange={(event) => setSortKey(event.target.value as SortKey)}
+                className="h-10 border border-hp-rule bg-transparent px-3 text-sm outline-none focus:border-hp-pink sm:w-48"
+              >
+                {Object.entries(SORT_LABELS).map(([key, label]) => (
+                  <option key={key} value={key}>
+                    {label}
+                  </option>
+                ))}
+              </select>
 
-            <SegmentedView value={viewMode} onChange={setViewMode} />
+              <SegmentedView value={viewMode} onChange={setViewMode} />
+            </div>
           </div>
         </div>
       </section>
@@ -460,6 +499,62 @@ function MetricTile({ label, value }: { label: string; value: string }) {
   );
 }
 
+function DateRangeControls({
+  startDate,
+  endDate,
+  onStartDateChange,
+  onEndDateChange,
+  onApply,
+  onQuickRange,
+}: {
+  startDate: string;
+  endDate: string;
+  onStartDateChange: (value: string) => void;
+  onEndDateChange: (value: string) => void;
+  onApply: () => void;
+  onQuickRange: (days: number) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+      <div className="flex min-w-0 flex-wrap items-center gap-2 border border-hp-rule px-3 py-2">
+        <CalendarRange size={16} className="text-hp-muted" />
+        <input
+          aria-label="Start date"
+          type="date"
+          value={startDate}
+          onChange={(event) => onStartDateChange(event.target.value)}
+          className="h-8 bg-transparent text-sm outline-none"
+        />
+        <span className="text-hp-muted">to</span>
+        <input
+          aria-label="End date"
+          type="date"
+          value={endDate}
+          onChange={(event) => onEndDateChange(event.target.value)}
+          className="h-8 bg-transparent text-sm outline-none"
+        />
+        <button
+          onClick={onApply}
+          className="h-8 border border-hp-ink px-3 text-[10px] uppercase tracking-[0.14em] text-hp-ink transition-colors hover:bg-hp-ink hover:text-hp-foundation"
+        >
+          Apply
+        </button>
+      </div>
+      <div className="flex items-center gap-1">
+        {[7, 14, 30].map((days) => (
+          <button
+            key={days}
+            onClick={() => onQuickRange(days)}
+            className="h-8 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted transition-colors hover:border-hp-ink hover:text-hp-ink"
+          >
+            {days}D
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function SegmentedView({
   value,
   onChange,
@@ -496,28 +591,39 @@ function PerformanceSection({ title, rows }: { title: string; rows: PerformanceR
     <div className="border border-hp-rule bg-hp-card p-6">
       <SectionHeader eyebrow="Performance" title={title} />
       <div className="overflow-x-auto">
-        <table className="w-full border-collapse text-sm">
+        <table className="min-w-[1120px] table-fixed border-collapse text-sm">
+          <colgroup>
+            <col className="w-[39%]" />
+            <col className="w-[8%]" />
+            <col className="w-[17%]" />
+            <col className="w-[9%]" />
+            <col className="w-[8%]" />
+            <col className="w-[8%]" />
+            <col className="w-[11%]" />
+          </colgroup>
           <thead>
             <tr className="bg-hp-inset text-left text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-              <th className="border-b border-hp-rule px-3 py-3">Name</th>
-              <th className="border-b border-hp-rule px-3 py-3">Brand</th>
-              <th className="border-b border-hp-rule px-3 py-3">Umbrella</th>
-              <th className="border-b border-hp-rule px-3 py-3 text-right">Spend</th>
-              <th className="border-b border-hp-rule px-3 py-3 text-right">CTR</th>
-              <th className="border-b border-hp-rule px-3 py-3 text-right">CPC</th>
-              <th className="border-b border-hp-rule px-3 py-3 text-right">Primary KPI</th>
+              <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Name</th>
+              <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Brand</th>
+              <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Umbrella</th>
+              <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">Spend</th>
+              <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">CTR</th>
+              <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">CPC</th>
+              <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">Primary KPI</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.id} className="border-b border-hp-rule last:border-b-0">
-                <td className="max-w-[360px] px-3 py-3 text-hp-ink">{row.name}</td>
-                <td className="px-3 py-3">{row.brandCode}</td>
-                <td className="max-w-[220px] px-3 py-3 text-xs text-hp-muted">{row.campaignUmbrella}</td>
-                <td className="px-3 py-3 text-right tabular-nums">{formatMetric(row.spend, "money")}</td>
-                <td className="px-3 py-3 text-right tabular-nums">{formatMetric(row.ctr, "percent")}</td>
-                <td className="px-3 py-3 text-right tabular-nums">{formatMetric(row.cpc, "money")}</td>
-                <td className="px-3 py-3 text-right">
+              <tr key={row.id} className="border-b border-hp-rule align-top last:border-b-0">
+                <td className="px-3 py-4 text-hp-ink">
+                  <div className="leading-6 [overflow-wrap:anywhere]">{row.name}</div>
+                </td>
+                <td className="px-3 py-4">{row.brandCode}</td>
+                <td className="px-3 py-4 text-xs leading-5 text-hp-muted">{row.campaignUmbrella}</td>
+                <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.spend, "money")}</td>
+                <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.ctr, "percent")}</td>
+                <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.cpc, "money")}</td>
+                <td className="px-3 py-4 text-right">
                   <ResultCell row={row} align="right" />
                 </td>
               </tr>
@@ -539,33 +645,49 @@ function PerformanceSection({ title, rows }: { title: string; rows: PerformanceR
 function CreativeTable({ rows }: { rows: PerformanceRow[] }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-sm">
+      <table className="min-w-[1240px] table-fixed border-collapse text-sm">
+        <colgroup>
+          <col className="w-[28%]" />
+          <col className="w-[8%]" />
+          <col className="w-[7%]" />
+          <col className="w-[14%]" />
+          <col className="w-[8%]" />
+          <col className="w-[7%]" />
+          <col className="w-[7%]" />
+          <col className="w-[7%]" />
+          <col className="w-[10%]" />
+          <col className="w-[4%]" />
+        </colgroup>
         <thead>
           <tr className="bg-hp-inset text-left text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-            <th className="border-b border-hp-rule px-3 py-3">Creative</th>
-            <th className="border-b border-hp-rule px-3 py-3">Preview</th>
-            <th className="border-b border-hp-rule px-3 py-3">Brand</th>
-            <th className="border-b border-hp-rule px-3 py-3">Umbrella</th>
-            <th className="border-b border-hp-rule px-3 py-3 text-right">Spend</th>
-            <th className="border-b border-hp-rule px-3 py-3 text-right">CTR</th>
-            <th className="border-b border-hp-rule px-3 py-3 text-right">CPC</th>
-            <th className="border-b border-hp-rule px-3 py-3 text-right">Freq.</th>
-            <th className="border-b border-hp-rule px-3 py-3 text-right">Primary KPI</th>
-            <th className="border-b border-hp-rule px-3 py-3">Risk</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Creative</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Preview</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Brand</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Umbrella</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">Spend</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">CTR</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">CPC</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">Freq.</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">Primary KPI</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Risk</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => (
             <tr key={row.id} className="border-b border-hp-rule align-top last:border-b-0">
               <td className="max-w-[360px] px-3 py-4">
-                <div className="text-hp-ink">{row.name}</div>
-                {row.body ? <div className="mt-1 line-clamp-2 text-xs text-hp-muted">{row.body}</div> : null}
+                <div className="text-hp-ink [overflow-wrap:anywhere]">{row.name}</div>
+                {row.body ? (
+                  <div className="mt-1 line-clamp-2 text-xs leading-5 text-hp-muted [overflow-wrap:anywhere]">
+                    {row.body}
+                  </div>
+                ) : null}
               </td>
               <td className="px-3 py-4">
                 <CreativePreview creative={row} compact />
               </td>
               <td className="px-3 py-4">{row.brandCode}</td>
-              <td className="max-w-[180px] px-3 py-4 text-xs text-hp-muted">{row.campaignUmbrella}</td>
+              <td className="px-3 py-4 text-xs leading-5 text-hp-muted">{row.campaignUmbrella}</td>
               <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.spend, "money")}</td>
               <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.ctr, "percent")}</td>
               <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.cpc, "money")}</td>
@@ -924,6 +1046,16 @@ function rowMatchesFilters(row: PerformanceRow, brand: string, umbrella: string,
   ]
     .filter(Boolean)
     .some((value) => String(value).toLowerCase().includes(normalizedQuery));
+}
+
+function shiftDate(date: string, days: number) {
+  const value = new Date(`${date}T00:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return toDateInput(value);
+}
+
+function toDateInput(date: Date) {
+  return date.toISOString().slice(0, 10);
 }
 
 function formatMetric(value: number | null, kind: "money" | "number" | "percent") {

@@ -1,4 +1,4 @@
-import { subDays } from "date-fns";
+import { differenceInCalendarDays, subDays } from "date-fns";
 
 import {
   CAMPAIGN_UMBRELLAS,
@@ -96,6 +96,12 @@ export type DashboardPayload = {
   latestReports: StoredReport[];
   latestSyncRuns: SyncRun[];
   generatedAt: string;
+};
+
+export type DashboardDateRangeInput = {
+  days?: number;
+  startDate?: string | null;
+  endDate?: string | null;
 };
 
 export type StoredReport = {
@@ -221,6 +227,7 @@ const EMPTY_METRICS: MetricSummary = {
 const WEBSITE_BOOKING_ACTION_TYPES = ["offsite_conversion.fb_pixel_custom"];
 const MESSAGING_CONTACT_ACTION_TYPES = ["onsite_conversion.total_messaging_connection"];
 const NEW_MESSAGING_CONTACT_ACTION_TYPES = ["onsite_conversion.messaging_first_reply"];
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export function emptyDashboardPayload(missingEnv = getMissingRequiredEnv()): DashboardPayload {
   return {
@@ -249,7 +256,9 @@ export function emptyDashboardPayload(missingEnv = getMissingRequiredEnv()): Das
   };
 }
 
-export async function fetchDashboardData(days = 30): Promise<DashboardPayload> {
+export async function fetchDashboardData(
+  dateRangeInput: number | DashboardDateRangeInput = 30,
+): Promise<DashboardPayload> {
   const missingEnv = getMissingRequiredEnv([
     "NEXT_PUBLIC_SUPABASE_URL",
     "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
@@ -262,7 +271,7 @@ export async function fetchDashboardData(days = 30): Promise<DashboardPayload> {
 
   try {
     const supabase = createServiceClient();
-    const startDate = subDays(new Date(), days).toISOString().slice(0, 10);
+    const dateRange = resolveDashboardDateRange(dateRangeInput);
 
     const [
       brandsRes,
@@ -284,7 +293,8 @@ export async function fetchDashboardData(days = 30): Promise<DashboardPayload> {
       supabase
         .from("meta_daily_insights")
         .select("*")
-        .gte("date_start", startDate)
+        .gte("date_start", dateRange.start)
+        .lte("date_start", dateRange.end)
         .order("date_start", { ascending: false })
         .limit(10000),
       supabase
@@ -515,12 +525,11 @@ export async function fetchDashboardData(days = 30): Promise<DashboardPayload> {
     const opportunities = buildOpportunities(creativeRows, campaignRows, overview);
     const recommendationQueue = buildRecommendations(fatigueRisks, underperformers, creativeRows);
 
-    const dates = insights.map((row) => row.date_start).sort();
     const sourceTransparency: SourceTransparency = {
       timeRange: {
-        start: dates[0] || null,
-        end: dates.at(-1) || null,
-        days,
+        start: dateRange.start,
+        end: dateRange.end,
+        days: dateRange.days,
       },
       adAccountsAnalyzed: accounts.map((account) => account.name || account.meta_account_id),
       recordCounts: {
@@ -639,6 +648,42 @@ export function formatMetric(value: number | null, kind: "money" | "number" | "p
 
 function rows<T>(data: unknown): T[] {
   return Array.isArray(data) ? (data as T[]) : [];
+}
+
+function resolveDashboardDateRange(input: number | DashboardDateRangeInput) {
+  const requested = typeof input === "number" ? { days: input } : input;
+  const today = new Date();
+  const fallbackDays = normalizeDays(requested.days);
+  const fallbackEnd = toDateString(today);
+  const fallbackStart = toDateString(subDays(today, fallbackDays - 1));
+  let start = normalizeDateString(requested.startDate) || fallbackStart;
+  let end = normalizeDateString(requested.endDate) || fallbackEnd;
+
+  if (start > end) {
+    [start, end] = [end, start];
+  }
+
+  return {
+    start,
+    end,
+    days: differenceInCalendarDays(parseDate(end), parseDate(start)) + 1,
+  };
+}
+
+function normalizeDays(days: number | null | undefined) {
+  return Number.isFinite(days) && Number(days) > 0 ? Math.floor(Number(days)) : 30;
+}
+
+function normalizeDateString(value: string | null | undefined) {
+  return value && DATE_PATTERN.test(value) ? value : null;
+}
+
+function parseDate(value: string) {
+  return new Date(`${value}T00:00:00Z`);
+}
+
+function toDateString(value: Date) {
+  return value.toISOString().slice(0, 10);
 }
 
 function toNumber(value: string | number | null | undefined): number {

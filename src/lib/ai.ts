@@ -1,6 +1,11 @@
 import OpenAI from "openai";
 
-import { fetchDashboardData, type DashboardPayload, type SourceTransparency } from "./analytics";
+import {
+  fetchDashboardData,
+  type DashboardDateRangeInput,
+  type DashboardPayload,
+  type SourceTransparency,
+} from "./analytics";
 import { ConfigurationError, getOpenAIModel } from "./env";
 import { createServiceClient } from "./supabase";
 
@@ -40,8 +45,8 @@ const EMPTY_REPORT: ExecutiveReportContent = {
   creativeTestingGaps: [],
 };
 
-export async function generateExecutiveReport(days = 30) {
-  const dashboard = await fetchDashboardData(days);
+export async function generateExecutiveReport(dateRange: number | DashboardDateRangeInput = 30) {
+  const dashboard = await fetchDashboardData(dateRange);
   if (!dashboard.configured) {
     throw new ConfigurationError(
       `Cannot generate report until configuration is complete: ${dashboard.missingEnv.join(", ")}`,
@@ -106,8 +111,14 @@ export async function answerExecutiveChat(input: {
   sessionId?: string | null;
   message: string;
   days?: number;
+  startDate?: string | null;
+  endDate?: string | null;
 }): Promise<ChatResult> {
-  const dashboard = await fetchDashboardData(input.days || 30);
+  const dashboard = await fetchDashboardData({
+    days: input.days || 30,
+    startDate: input.startDate,
+    endDate: input.endDate,
+  });
   if (!dashboard.configured) {
     throw new ConfigurationError(
       `Cannot answer chat until configuration is complete: ${dashboard.missingEnv.join(", ")}`,
