@@ -33,7 +33,8 @@ export function requireEnv(
     | "OPENAI_MODEL"
     | "OPENAI_FAST_MODEL"
     | "OPENAI_DEEP_MODEL"
-    | "META_API_VERSION",
+    | "META_API_VERSION"
+    | "META_WEBHOOK_VERIFY_TOKEN",
 ): string {
   const value = process.env[name];
   if (!value?.trim()) {

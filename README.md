@@ -53,6 +53,7 @@ vercel --prod
 - `/api/sync` manual read-only Meta sync
 - `/api/social-inbox` latest stored social inbox threads, messages, comments, and sync runs
 - `/api/social-inbox/sync` manual Facebook/Instagram inbox/comment sync
+- `/api/meta/webhook` Meta webhook callback for future Facebook/Instagram message/comment events
 - `/api/cron/sync` Vercel Cron sync, protected by `CRON_SECRET`
 - `/api/reports` AI executive report generation
 - `/api/chat` AI executive chat

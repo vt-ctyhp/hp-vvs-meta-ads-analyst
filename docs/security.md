@@ -15,6 +15,8 @@ Social inbox permissions are validated separately from ads sync. Message/comment
 
 The social inbox sync stores message/comment content and metadata in Supabase. Page access tokens are used server-side only to call Meta and are redacted before Page metadata is stored.
 
+The Meta webhook endpoint verifies `X-Hub-Signature-256` with `META_APP_SECRET` before storing inbound event payloads. The webhook verification token is stored only as `META_WEBHOOK_VERIFY_TOKEN` in the runtime environment.
+
 ## Secret Handling
 
 - Secrets are read from runtime environment variables.

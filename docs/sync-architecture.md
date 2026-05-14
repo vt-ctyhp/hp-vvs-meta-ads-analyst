@@ -47,6 +47,8 @@ The dashboard sync button calls `POST /api/sync`. It uses the same read-only syn
 
 The inbox sync button calls `POST /api/social-inbox/sync`. It validates the social inbox Meta permissions, fetches managed Page metadata, stores the connected Instagram thread/comment data that Meta returns, and records source-specific warnings in `meta_social_sync_runs`. This manual sync is a proof-of-data path; Meta Webhooks should be added next for real-time message/comment delivery.
 
+`/api/meta/webhook` is the signed Meta callback for future message/comment delivery. `GET` handles Meta verification using `META_WEBHOOK_VERIFY_TOKEN`; `POST` verifies `X-Hub-Signature-256`, normalizes message/comment events, and stores them in the social inbox tables. This is the preferred path for Facebook Messenger events when Meta's historical conversations edge does not return data.
+
 ## AI Retrieval
 
 Reports and chat call the Supabase-backed dashboard retrieval layer before invoking OpenAI. The retrieved context includes:

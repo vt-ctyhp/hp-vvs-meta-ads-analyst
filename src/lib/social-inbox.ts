@@ -154,6 +154,11 @@ export type SocialInboxSyncResult = {
   syncRunId?: string;
 };
 
+export type MetaWebhookIngestResult = {
+  messages: number;
+  comments: number;
+};
+
 class MetaSocialGraphError extends Error {
   details?: unknown;
 
@@ -276,6 +281,53 @@ export async function getSocialInboxData(): Promise<SocialInboxData> {
     comments: rows<JsonRecord>(comments.data).map(mapComment),
     syncRuns: rows<JsonRecord>(syncRuns.data).map(mapSyncRun),
   };
+}
+
+export async function ingestMetaWebhookPayload(payload: JsonRecord): Promise<MetaWebhookIngestResult> {
+  const object = stringField(payload.object);
+  const entries = arrayField(payload.entry).filter(isRecord);
+  const result: MetaWebhookIngestResult = {
+    messages: 0,
+    comments: 0,
+  };
+
+  for (const entry of entries) {
+    const messagingEvents = arrayField(entry.messaging).filter(isRecord);
+    for (const event of messagingEvents) {
+      const row = webhookMessageRow(object, entry, event);
+      if (!row) continue;
+      await upsertMany("meta_social_threads", [row.thread], "platform,thread_id");
+      const messages = await upsertMany("meta_social_messages", [row.message], "platform,message_id");
+      result.messages += messages.length;
+    }
+
+    const changeEvents = arrayField(entry.changes).filter(isRecord);
+    for (const change of changeEvents) {
+      const comment = webhookCommentRow(object, entry, change);
+      if (!comment) continue;
+      const comments = await upsertMany("meta_social_comments", [comment], "platform,comment_id");
+      result.comments += comments.length;
+    }
+  }
+
+  if (result.messages || result.comments) {
+    const supabase = dynamicSupabase();
+    const { error } = await supabase.from("meta_social_sync_runs").insert({
+      trigger: "webhook",
+      status: "success",
+      completed_at: new Date().toISOString(),
+      metrics: {
+        pages: 0,
+        threads: result.messages,
+        messages: result.messages,
+        comments: result.comments,
+      },
+      errors: [],
+    }).select("id").single();
+    if (error) throw error;
+  }
+
+  return result;
 }
 
 async function validateSocialInboxPermissions() {
@@ -457,6 +509,90 @@ async function syncConversations({ page, platform, params = {} }: ConversationSy
     threads: threadRows.length,
     messages: messageCount,
     errors,
+  };
+}
+
+function webhookMessageRow(object: string | null, entry: JsonRecord, event: JsonRecord) {
+  const message = recordField(event.message);
+  const messageId = stringField(message.mid) || stringField(message.id);
+  if (!messageId) return null;
+
+  const sender = recordField(event.sender);
+  const recipient = recordField(event.recipient);
+  const senderId = stringField(sender.id);
+  const recipientId = stringField(recipient.id);
+  const platform = object === "instagram" ? "instagram" : "facebook";
+  const pageId = platform === "facebook" ? stringField(entry.id) || recipientId : null;
+  const igUserId = platform === "instagram" ? stringField(entry.id) || recipientId : null;
+  const businessId = platform === "instagram" ? igUserId : pageId;
+  const isEcho = Boolean(message.is_echo);
+  const participantId = isEcho ? recipientId : senderId;
+  const threadId = `${platform}:webhook:${businessId || "unknown"}:${participantId || "unknown"}`;
+  const sentAt = timestampToIso(event.timestamp) || new Date().toISOString();
+  const body = stringField(message.text) || stringField(message.quick_reply);
+
+  return {
+    thread: {
+      platform,
+      thread_id: threadId,
+      page_id: pageId,
+      ig_user_id: igUserId,
+      thread_type: "message",
+      participant_id: participantId,
+      participant_name: null,
+      snippet: body,
+      message_count: 1,
+      unread_count: isEcho ? 0 : 1,
+      last_message_at: sentAt,
+      raw_json: event,
+      last_synced_at: new Date().toISOString(),
+    },
+    message: {
+      platform,
+      thread_id: threadId,
+      message_id: messageId,
+      direction: isEcho ? "outbound" : "inbound",
+      sender_id: senderId,
+      sender_name: null,
+      recipient_id: recipientId,
+      recipient_name: null,
+      body,
+      attachments: arrayField(recordField(message.attachments).data),
+      sent_at: sentAt,
+      raw_json: event,
+    },
+  };
+}
+
+function webhookCommentRow(object: string | null, entry: JsonRecord, change: JsonRecord) {
+  const field = stringField(change.field);
+  const value = recordField(change.value);
+  const item = stringField(value.item);
+  const commentId = stringField(value.comment_id) || stringField(value.id);
+
+  if (!commentId || (field !== "comments" && item !== "comment")) return null;
+
+  const platform = object === "instagram" ? "instagram" : "facebook";
+  const from = recordField(value.from);
+  const createdTime = timestampToIso(value.created_time) || timestampToIso(value.timestamp);
+
+  return {
+    platform,
+    comment_id: commentId,
+    parent_comment_id: stringField(value.parent_id) || stringField(value.parent_comment_id),
+    page_id: platform === "facebook" ? stringField(entry.id) : null,
+    ig_user_id: platform === "instagram" ? stringField(entry.id) : null,
+    content_id: stringField(value.post_id) || stringField(value.media_id),
+    content_permalink: stringField(value.permalink_url),
+    author_id: stringField(value.sender_id) || stringField(from.id),
+    author_name: stringField(value.sender_name) || stringField(from.name) || stringField(from.username),
+    body: stringField(value.message) || stringField(value.text),
+    like_count: numberField(value.like_count) || 0,
+    reply_count: numberField(value.comment_count) || 0,
+    hidden: typeof value.is_hidden === "boolean" ? value.is_hidden : null,
+    created_time: createdTime,
+    raw_json: change,
+    last_synced_at: new Date().toISOString(),
   };
 }
 
@@ -877,6 +1013,14 @@ function numberField(value: unknown): number | null {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
+}
+
+function timestampToIso(value: unknown) {
+  const timestamp = numberField(value);
+  if (timestamp === null) return stringField(value);
+  const millis = timestamp > 10_000_000_000 ? timestamp : timestamp * 1000;
+  const date = new Date(millis);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
 function getPositiveIntegerEnv(name: string, fallback: number) {

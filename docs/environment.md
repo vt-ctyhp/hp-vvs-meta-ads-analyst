@@ -28,5 +28,6 @@ Optional:
 | `META_SOCIAL_SYNC_MESSAGE_LIMIT` | `25` | Max messages pulled per synced thread. |
 | `META_SOCIAL_SYNC_MEDIA_LIMIT` | `20` | Max recent Instagram media items scanned for comments. |
 | `META_SOCIAL_SYNC_FEED_LIMIT` | `15` | Max recent Facebook Page feed items scanned for comments when Meta permits the feed read. |
+| `META_WEBHOOK_VERIFY_TOKEN` | unset | Secret verify token used by Meta to validate `/api/meta/webhook`. Required before enabling Meta webhooks. |
 
 Do not commit `.env`, `.env.local`, or downloaded key material.
