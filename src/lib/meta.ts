@@ -156,15 +156,49 @@ export async function validateReadOnlyMetaToken() {
     );
   }
 
-  const missing = ["ads_read", "read_insights"].filter((permission) => !granted.has(permission));
+  const missing = ["ads_read"].filter((permission) => !granted.has(permission));
   if (missing.length) {
     throw new ConfigurationError(
-      `Meta token is missing required read-only permission(s): ${missing.join(", ")}. Grant ads_read and read_insights, then retry sync.`,
+      `Meta token is missing required read-only permission(s): ${missing.join(", ")}. Grant ads_read, then retry sync.`,
       missing,
     );
   }
 
-  return { granted: Array.from(granted).sort() };
+  return {
+    granted: Array.from(granted).sort(),
+    optionalMissing: ["read_insights"].filter((permission) => !granted.has(permission)),
+  };
+}
+
+export async function validateConfiguredMetaAccounts() {
+  const accounts = getConfiguredAccounts();
+
+  return Promise.all(
+    accounts.map(async (account) => {
+      const accountId = `act_${normalizeAccountId(account.accountId)}`;
+
+      try {
+        const profile = await graphFetch<JsonRecord>(accountId, {
+          fields: "id,name,account_status,currency,timezone_name",
+        });
+
+        return {
+          brandCode: account.brandCode,
+          accountId,
+          ok: true,
+          name: stringField(profile.name),
+          accountStatus: numberField(profile.account_status),
+        };
+      } catch (error) {
+        return {
+          brandCode: account.brandCode,
+          accountId,
+          ok: false,
+          error: errorToMessage(error),
+        };
+      }
+    }),
+  );
 }
 
 async function syncAccount(account: SyncAccountConfig, brandId: string | null) {

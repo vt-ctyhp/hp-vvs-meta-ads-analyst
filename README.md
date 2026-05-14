@@ -60,10 +60,10 @@ vercel --prod
 Allowed:
 
 - `ads_read`
-- `read_insights`
+- `read_insights` if required by the Meta app/account for insights reads
 
 Forbidden:
 
 - `ads_management`
 
-If the token is missing read permissions or includes `ads_management`, sync stops and returns the exact setup issue.
+If the token is missing required read permissions, includes `ads_management`, or cannot read the configured HP account, sync stops and returns the exact setup issue.

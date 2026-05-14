@@ -1,5 +1,5 @@
 import { getMissingRequiredEnv } from "@/lib/env";
-import { validateReadOnlyMetaToken } from "@/lib/meta";
+import { validateConfiguredMetaAccounts, validateReadOnlyMetaToken } from "@/lib/meta";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,7 +23,12 @@ export async function GET() {
 async function validateMeta() {
   try {
     const permissions = await validateReadOnlyMetaToken();
-    return { ok: true, permissions };
+    const accounts = await validateConfiguredMetaAccounts();
+    return {
+      ok: accounts.every((account) => account.ok),
+      permissions,
+      accounts,
+    };
   } catch (error) {
     return {
       ok: false,
