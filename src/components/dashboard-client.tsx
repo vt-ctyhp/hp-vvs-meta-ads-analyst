@@ -51,8 +51,6 @@ const SORT_LABELS: Record<SortKey, string> = {
   frequency: "Frequency",
 };
 
-const CREATIVE_EXPORT_GALLERY_LIMIT = 24;
-
 export function DashboardClient({ initialData }: Props) {
   const [data] = useState(initialData);
   const [brand, setBrand] = useState("all");
@@ -70,6 +68,7 @@ export function DashboardClient({ initialData }: Props) {
   const [chatSessionId, setChatSessionId] = useState<string | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [isChatting, setIsChatting] = useState(false);
+  const [hidePdfFinancials, setHidePdfFinancials] = useState(false);
 
   const brands = useMemo(
     () => ["all", ...Array.from(new Set(data.byBrand.map((row) => row.brandCode)))],
@@ -215,8 +214,14 @@ export function DashboardClient({ initialData }: Props) {
 
   async function exportCreativesPdf() {
     const activeRange = data.sourceTransparency.timeRange;
+    const hideFinancialSort = hidePdfFinancials && isFinancialSortKey(sortKey);
+    const exportRows = hideFinancialSort
+      ? [...filteredCreatives].sort(
+          (a, b) => Number(b.primaryResults || 0) - Number(a.primaryResults || 0),
+        )
+      : filteredCreatives;
     const html = buildCreativePdfHtml({
-      rows: filteredCreatives,
+      rows: exportRows,
       dateRange: formatDateRange(
         activeRange.start || startDate,
         activeRange.end || endDate,
@@ -224,8 +229,9 @@ export function DashboardClient({ initialData }: Props) {
       umbrellaName: formatUmbrellaName(umbrella),
       brandName: brand === "all" ? "All Brands" : brand,
       searchQuery: query,
-      sortLabel: SORT_LABELS[sortKey],
+      sortLabel: hideFinancialSort ? SORT_LABELS.primaryResults : SORT_LABELS[sortKey],
       generatedAt: new Date(),
+      hideFinancials: hidePdfFinancials,
     });
 
     await printHtmlDocument(html);
@@ -425,13 +431,24 @@ export function DashboardClient({ initialData }: Props) {
               eyebrow="Creative Leaderboard"
               title="Creative gallery and table"
               actions={
-                <button
-                  onClick={() => void exportCreativesPdf()}
-                  className="flex h-10 items-center justify-center gap-2 border border-hp-ink px-3 text-[10px] uppercase tracking-[0.14em] text-hp-ink transition-colors hover:bg-hp-ink hover:text-hp-foundation"
-                >
-                  <FileDown size={15} />
-                  Export PDF
-                </button>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <label className="flex h-10 items-center gap-2 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                    <input
+                      type="checkbox"
+                      checked={hidePdfFinancials}
+                      onChange={(event) => setHidePdfFinancials(event.target.checked)}
+                      className="h-4 w-4 accent-hp-ink"
+                    />
+                    Hide financials
+                  </label>
+                  <button
+                    onClick={() => void exportCreativesPdf()}
+                    className="flex h-10 items-center justify-center gap-2 border border-hp-ink px-3 text-[10px] uppercase tracking-[0.14em] text-hp-ink transition-colors hover:bg-hp-ink hover:text-hp-foundation"
+                  >
+                    <FileDown size={15} />
+                    Export PDF
+                  </button>
+                </div>
               }
             />
             {viewMode === "table" && <CreativeTable rows={filteredCreatives.slice(0, 50)} />}
@@ -1085,6 +1102,7 @@ type CreativePdfHtmlOptions = {
   searchQuery: string;
   sortLabel: string;
   generatedAt: Date;
+  hideFinancials: boolean;
 };
 
 async function printHtmlDocument(html: string) {
@@ -1159,24 +1177,26 @@ function buildCreativePdfHtml({
   searchQuery,
   sortLabel,
   generatedAt,
+  hideFinancials,
 }: CreativePdfHtmlOptions) {
-  const galleryRows = rows.slice(0, CREATIVE_EXPORT_GALLERY_LIMIT);
-  const totalSpend = rows.reduce((sum, row) => sum + row.spend, 0);
-  const totalPrimaryResults = rows.reduce((sum, row) => sum + row.primaryResults, 0);
-  const totalNewMessagingContacts = rows.reduce(
-    (sum, row) => sum + row.newMessagingContacts,
-    0,
-  );
-  const highRiskCount = rows.filter((row) => row.riskLevel === "high").length;
   const generatedLabel = new Intl.DateTimeFormat("en-US", {
-    dateStyle: "medium",
+    dateStyle: "short",
     timeStyle: "short",
   }).format(generatedAt);
   const searchLabel = searchQuery.trim() ? searchQuery.trim() : "None";
-  const subtitleParts = [
+  const reportContext = [
     `Brand: ${brandName}`,
     `Sorted by: ${sortLabel}`,
     `Search: ${searchLabel}`,
+    hideFinancials ? "Financials hidden" : null,
+    `${formatMetric(rows.length, "number")} rows`,
+  ]
+    .filter(Boolean)
+    .join(" | ");
+  const reportTitle = [
+    "Creative Export",
+    umbrellaName,
+    dateRange,
   ];
 
   return `<!doctype html>
@@ -1187,7 +1207,7 @@ function buildCreativePdfHtml({
     <style>
       @page {
         size: letter landscape;
-        margin: 0.34in;
+        margin: 0.3in;
       }
 
       * {
@@ -1200,7 +1220,7 @@ function buildCreativePdfHtml({
         background: #ffffff;
         color: #2a2725;
         font-family: Georgia, "Times New Roman", serif;
-        font-size: 9.5px;
+        font-size: 9px;
         line-height: 1.35;
       }
 
@@ -1209,161 +1229,20 @@ function buildCreativePdfHtml({
         print-color-adjust: exact;
       }
 
-      .report-header {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) 2.35in;
-        gap: 0.22in;
-        align-items: end;
-        border-bottom: 1px solid #2a2725;
-        padding-bottom: 0.14in;
-        margin-bottom: 0.16in;
-      }
-
-      .kicker,
-      .label,
       th {
         color: #8a8178;
-        font-size: 7px;
-        letter-spacing: 0.08em;
+        font-size: 7.4px;
+        letter-spacing: 0.06em;
         text-transform: uppercase;
       }
 
-      h1 {
-        margin: 0.04in 0 0;
-        color: #2a2725;
-        font-size: 23px;
-        font-weight: 500;
-        line-height: 1.05;
-        overflow-wrap: anywhere;
-      }
-
-      h2 {
-        margin: 0.02in 0 0;
-        color: #2a2725;
-        font-size: 14px;
-        font-weight: 500;
-        line-height: 1.15;
-      }
-
-      .subtitle,
-      .meta,
       .muted {
         color: #4a4540;
       }
 
-      .meta {
-        display: grid;
-        gap: 0.05in;
-        text-align: right;
-      }
-
-      .meta strong {
-        display: block;
-        color: #2a2725;
-        font-size: 9px;
-        font-weight: 700;
-      }
-
-      .summary {
-        display: grid;
-        grid-template-columns: repeat(5, minmax(0, 1fr));
-        gap: 0.08in;
-        margin-bottom: 0.18in;
-      }
-
-      .metric {
-        min-height: 0.42in;
-        border: 1px solid #d4cfc4;
-        padding: 0.06in 0.08in;
-        break-inside: avoid;
-      }
-
-      .metric-value {
-        margin-top: 0.03in;
-        color: #2a2725;
-        font-size: 13px;
-        font-variant-numeric: tabular-nums;
-        line-height: 1.1;
-        overflow-wrap: anywhere;
-      }
-
-      .section-heading {
-        display: flex;
-        align-items: end;
-        justify-content: space-between;
-        gap: 0.16in;
-        border-top: 1px solid #d4cfc4;
-        padding-top: 0.1in;
-        margin: 0.04in 0 0.1in;
-        break-after: avoid;
-        page-break-after: avoid;
-      }
-
-      .section-count {
-        color: #8a8178;
-        font-size: 8px;
-        text-align: right;
-        white-space: nowrap;
-      }
-
-      .gallery-grid {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 0.08in;
-        margin-bottom: 0.18in;
-      }
-
-      .gallery-card {
-        min-width: 0;
-        border: 1px solid #d4cfc4;
-        background: #fbf7f1;
-        break-inside: avoid;
-        page-break-inside: avoid;
-      }
-
-      .gallery-media {
-        height: 0.92in;
-        border-bottom: 1px solid #d4cfc4;
-        background: #efe8dd;
-      }
-
-      .gallery-body {
-        padding: 0.07in;
-      }
-
-      .gallery-name,
       .table-name {
         color: #2a2725;
         font-weight: 700;
-        overflow-wrap: anywhere;
-      }
-
-      .gallery-name {
-        max-height: 2.6em;
-        overflow: hidden;
-      }
-
-      .gallery-umbrella {
-        margin-top: 0.03in;
-        color: #8a8178;
-        font-size: 7px;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        overflow-wrap: anywhere;
-      }
-
-      .gallery-metrics {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 0.05in;
-        margin-top: 0.06in;
-      }
-
-      .mini-value {
-        margin-top: 0.01in;
-        color: #2a2725;
-        font-size: 8px;
-        font-variant-numeric: tabular-nums;
         overflow-wrap: anywhere;
       }
 
@@ -1417,7 +1296,7 @@ function buildCreativePdfHtml({
       th,
       td {
         border-bottom: 1px solid #d4cfc4;
-        padding: 0.04in 0.05in;
+        padding: 0.035in 0.045in;
         text-align: left;
         vertical-align: top;
         overflow-wrap: anywhere;
@@ -1431,22 +1310,64 @@ function buildCreativePdfHtml({
       }
 
       td {
-        font-size: 8px;
+        font-size: 8.2px;
       }
 
       .table-copy {
         margin-top: 0.02in;
         color: #8a8178;
-        font-size: 7px;
-        max-height: 3.7em;
+        font-size: 7.2px;
+        max-height: 3.45em;
         overflow: hidden;
       }
 
       .table-preview {
-        width: 0.48in;
-        height: 0.48in;
+        width: 0.38in;
+        height: 0.38in;
         border: 1px solid #d4cfc4;
         background: #efe8dd;
+      }
+
+      .report-row th {
+        background: #ffffff;
+        border-bottom: 0;
+        color: #2a2725;
+        font-size: 10px;
+        letter-spacing: 0;
+        padding: 0 0 0.035in;
+        text-transform: none;
+      }
+
+      .report-frame {
+        display: grid;
+        grid-template-columns: minmax(1.55in, 1fr) minmax(0, 3.9in) minmax(1.55in, 1fr);
+        gap: 0.12in;
+        align-items: end;
+      }
+
+      .report-generated {
+        text-align: left;
+      }
+
+      .report-title {
+        color: #2a2725;
+        font-size: 10.5px;
+        font-weight: 700;
+        line-height: 1.2;
+        text-align: center;
+        overflow-wrap: anywhere;
+      }
+
+      .report-context {
+        color: #8a8178;
+        font-size: 6.8px;
+        line-height: 1.25;
+        text-align: right;
+        overflow-wrap: anywhere;
+      }
+
+      .column-row th {
+        white-space: nowrap;
       }
 
       .num {
@@ -1476,129 +1397,86 @@ function buildCreativePdfHtml({
     </style>
   </head>
   <body>
-    <header class="report-header">
-      <div>
-        <div class="kicker">Creative Gallery and Table PDF Export</div>
-        <h1>${escapeHtml(umbrellaName)}</h1>
-        <div class="subtitle">Internal Campaign Umbrella</div>
-      </div>
-      <div class="meta">
-        <div>
-          <strong>Date range</strong>
-          ${escapeHtml(dateRange)}
-        </div>
-        <div>
-          <strong>Filters</strong>
-          ${escapeHtml(subtitleParts.join(" | "))}
-        </div>
-        <div>
-          <strong>Generated</strong>
-          ${escapeHtml(generatedLabel)}
-        </div>
-      </div>
-    </header>
-
-    <section class="summary" aria-label="Creative export summary">
-      ${metricMarkup("Creatives", formatMetric(rows.length, "number"))}
-      ${metricMarkup("Spend", formatMetric(totalSpend, "money"))}
-      ${metricMarkup("Primary Results", formatMetric(totalPrimaryResults, "number"))}
-      ${metricMarkup("New Msg Contacts", formatMetric(totalNewMessagingContacts, "number"))}
-      ${metricMarkup("High Risk", formatMetric(highRiskCount, "number"))}
-    </section>
-
-    <section>
-      <div class="section-heading">
-        <div>
-          <div class="kicker">Creative Gallery</div>
-          <h2>Top previews by ${escapeHtml(sortLabel)}</h2>
-        </div>
-        <div class="section-count">Top ${formatMetric(galleryRows.length, "number")} of ${formatMetric(rows.length, "number")}</div>
-      </div>
-      ${
-        galleryRows.length
-          ? `<div class="gallery-grid">${galleryRows.map(galleryCardMarkup).join("")}</div>`
-          : `<div class="empty-state">No creatives match the selected filters.</div>`
-      }
-    </section>
-
-    <section>
-      <div class="section-heading">
-        <div>
-          <div class="kicker">Creative Table</div>
-          <h2>Filtered creative performance</h2>
-        </div>
-        <div class="section-count">${formatMetric(rows.length, "number")} rows</div>
-      </div>
-      ${rows.length ? creativeTableMarkup(rows) : `<div class="empty-state">No creatives match the selected filters.</div>`}
-    </section>
+    ${rows.length ? creativeTableMarkup(rows, {
+      generatedLabel,
+      reportContext,
+      reportTitle: reportTitle.map((part) => escapeHtml(part)).join(" - "),
+      hideFinancials,
+    }) : `<div class="empty-state">No creatives match the selected filters.</div>`}
   </body>
 </html>`;
 }
 
-function metricMarkup(label: string, value: string) {
-  return `<div class="metric">
-    <div class="label">${escapeHtml(label)}</div>
-    <div class="metric-value">${escapeHtml(value)}</div>
-  </div>`;
-}
+type CreativeTablePrintOptions = {
+  generatedLabel: string;
+  hideFinancials: boolean;
+  reportContext: string;
+  reportTitle: string;
+};
 
-function galleryCardMarkup(row: PerformanceRow) {
-  return `<article class="gallery-card">
-    <div class="gallery-media preview">${creativePreviewMarkup(row)}</div>
-    <div class="gallery-body">
-      <div class="gallery-name">${escapeHtml(truncateText(row.name, 74))}</div>
-      <div class="gallery-umbrella">${escapeHtml(row.brandCode)} | ${escapeHtml(row.campaignUmbrella || "Unassigned")}</div>
-      <div class="gallery-metrics">
-        ${miniMetricMarkup("Spend", formatMetric(row.spend, "money"))}
-        ${miniMetricMarkup("CTR", formatMetric(row.ctr, "percent"))}
-        ${miniMetricMarkup(row.primaryResultLabel, formatMetric(row.primaryResults, "number"))}
-      </div>
-    </div>
-  </article>`;
-}
+function creativeTableMarkup(rows: PerformanceRow[], options: CreativeTablePrintOptions) {
+  const columnCount = options.hideFinancials ? 8 : 10;
 
-function miniMetricMarkup(label: string, value: string) {
-  return `<div>
-    <div class="label">${escapeHtml(truncateText(label, 22))}</div>
-    <div class="mini-value">${escapeHtml(value)}</div>
-  </div>`;
-}
-
-function creativeTableMarkup(rows: PerformanceRow[]) {
   return `<table>
-    <colgroup>
-      <col style="width: 25%" />
-      <col style="width: 9%" />
-      <col style="width: 6%" />
-      <col style="width: 13%" />
-      <col style="width: 8%" />
-      <col style="width: 7%" />
-      <col style="width: 7%" />
-      <col style="width: 6%" />
-      <col style="width: 13%" />
-      <col style="width: 6%" />
-    </colgroup>
+    ${creativeTableColgroupMarkup(options.hideFinancials)}
     <thead>
-      <tr>
+      <tr class="report-row">
+        <th colspan="${columnCount}">
+          <div class="report-frame">
+            <div class="report-generated">${escapeHtml(options.generatedLabel)}</div>
+            <div class="report-title">${options.reportTitle}</div>
+            <div class="report-context">${escapeHtml(options.reportContext)}</div>
+          </div>
+        </th>
+      </tr>
+      <tr class="column-row">
         <th>Creative</th>
         <th>Preview</th>
         <th>Brand</th>
         <th>Umbrella</th>
-        <th class="num">Spend</th>
+        ${options.hideFinancials ? "" : `<th class="num">Spend</th>`}
         <th class="num">CTR</th>
-        <th class="num">CPC</th>
+        ${options.hideFinancials ? "" : `<th class="num">CPC</th>`}
         <th class="num">Freq.</th>
         <th class="num">Primary KPI</th>
         <th>Risk</th>
       </tr>
     </thead>
     <tbody>
-      ${rows.map(creativeTableRowMarkup).join("")}
+      ${rows.map((row) => creativeTableRowMarkup(row, options.hideFinancials)).join("")}
     </tbody>
   </table>`;
 }
 
-function creativeTableRowMarkup(row: PerformanceRow) {
+function creativeTableColgroupMarkup(hideFinancials: boolean) {
+  if (hideFinancials) {
+    return `<colgroup>
+      <col style="width: 34%" />
+      <col style="width: 7%" />
+      <col style="width: 6%" />
+      <col style="width: 17%" />
+      <col style="width: 8%" />
+      <col style="width: 7%" />
+      <col style="width: 15%" />
+      <col style="width: 6%" />
+    </colgroup>`;
+  }
+
+  return `<colgroup>
+    <col style="width: 27%" />
+    <col style="width: 7%" />
+    <col style="width: 6%" />
+    <col style="width: 14%" />
+    <col style="width: 7%" />
+    <col style="width: 7%" />
+    <col style="width: 7%" />
+    <col style="width: 6%" />
+    <col style="width: 13%" />
+    <col style="width: 6%" />
+  </colgroup>`;
+}
+
+function creativeTableRowMarkup(row: PerformanceRow, hideFinancials: boolean) {
   return `<tr>
     <td>
       <div class="table-name">${escapeHtml(truncateText(row.name, 120))}</div>
@@ -1607,9 +1485,9 @@ function creativeTableRowMarkup(row: PerformanceRow) {
     <td><div class="table-preview preview">${creativePreviewMarkup(row)}</div></td>
     <td>${escapeHtml(row.brandCode)}</td>
     <td>${escapeHtml(row.campaignUmbrella || "Unassigned")}</td>
-    <td class="num">${escapeHtml(formatMetric(row.spend, "money"))}</td>
+    ${hideFinancials ? "" : `<td class="num">${escapeHtml(formatMetric(row.spend, "money"))}</td>`}
     <td class="num">${escapeHtml(formatMetric(row.ctr, "percent"))}</td>
-    <td class="num">${escapeHtml(formatMetric(row.cpc, "money"))}</td>
+    ${hideFinancials ? "" : `<td class="num">${escapeHtml(formatMetric(row.cpc, "money"))}</td>`}
     <td class="num">${Number.isFinite(row.frequency) ? `${row.frequency.toFixed(2)}x` : "n/a"}</td>
     <td class="num">
       ${escapeHtml(formatMetric(row.primaryResults, "number"))}
@@ -1711,6 +1589,10 @@ function rowMatchesFilters(row: PerformanceRow, brand: string, umbrella: string,
   ]
     .filter(Boolean)
     .some((value) => String(value).toLowerCase().includes(normalizedQuery));
+}
+
+function isFinancialSortKey(sortKey: SortKey) {
+  return sortKey === "spend" || sortKey === "cpc";
 }
 
 function shiftDate(date: string, days: number) {
