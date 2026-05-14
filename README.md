@@ -29,9 +29,10 @@ The app only uses read endpoints. It does not request or use `ads_management`, a
    vercel env add META_APP_SECRET
    vercel env add META_ACCESS_TOKEN
    vercel env add META_HP_AD_ACCOUNT_ID
-   vercel env add META_VVS_AD_ACCOUNT_ID
    vercel env add CRON_SECRET
    ```
+
+`META_VVS_AD_ACCOUNT_ID` is optional until VVS access is ready.
 
 3. Deploy a preview:
 

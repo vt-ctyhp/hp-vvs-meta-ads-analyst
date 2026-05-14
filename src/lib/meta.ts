@@ -585,7 +585,6 @@ function getConfiguredAccounts(): SyncAccountConfig[] {
   const vvs = process.env.META_VVS_AD_ACCOUNT_ID;
   const missing = [
     !hp ? "META_HP_AD_ACCOUNT_ID" : null,
-    !vvs ? "META_VVS_AD_ACCOUNT_ID" : null,
     !process.env.META_ACCESS_TOKEN ? "META_ACCESS_TOKEN" : null,
   ].filter(Boolean) as string[];
 
@@ -596,10 +595,15 @@ function getConfiguredAccounts(): SyncAccountConfig[] {
     );
   }
 
-  return [
+  const accounts: SyncAccountConfig[] = [
     { brandCode: "HP", brandName: "Hung Phat", accountId: hp! },
-    { brandCode: "VVS", brandName: "VVS", accountId: vvs! },
   ];
+
+  if (vvs?.trim()) {
+    accounts.push({ brandCode: "VVS", brandName: "VVS", accountId: vvs });
+  }
+
+  return accounts;
 }
 
 function requireMetaAccessToken() {

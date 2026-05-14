@@ -5,7 +5,7 @@
 1. Vercel Cron calls `GET /api/cron/sync` daily at `13:00 UTC`.
 2. The route validates `Authorization: Bearer $CRON_SECRET`.
 3. `syncMetaAds()` validates Meta token permissions.
-4. HP and VVS ad accounts are fetched from Meta Marketing API.
+4. Configured ad accounts are fetched from Meta Marketing API. HP is required; VVS is optional until access is ready.
 5. Supabase receives upserts for:
    - brands
    - ad accounts
