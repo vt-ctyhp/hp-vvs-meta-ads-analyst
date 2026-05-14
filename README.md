@@ -49,6 +49,7 @@ vercel --prod
 ## Runtime Routes
 
 - `/` executive dashboard, creative leaderboard, gallery, report controls, chat
+- `/inbox` Facebook/Instagram inbox readiness page and human-approved reply UI shell
 - `/api/sync` manual read-only Meta sync
 - `/api/cron/sync` Vercel Cron sync, protected by `CRON_SECRET`
 - `/api/reports` AI executive report generation
