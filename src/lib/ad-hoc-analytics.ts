@@ -13,6 +13,7 @@ import { createServiceClient } from "./supabase";
 
 const ANALYSIS_METRICS = [
   "spend",
+  "monthly_budget",
   "impressions",
   "reach",
   "clicks",
@@ -174,6 +175,12 @@ type InsightRow = {
 
 type BrandRow = { id: string; code: string; name: string };
 type AccountRow = { meta_account_id: string; name: string | null };
+type AdSetBudgetRow = {
+  meta_account_id: string;
+  ad_set_id: string;
+  daily_budget: number | string | null;
+  lifetime_budget: number | string | null;
+};
 type AnalysisDashboardRecord = {
   id: string;
   title: string;
@@ -187,6 +194,7 @@ type AnalysisDashboardRecord = {
 };
 type MetricAccumulator = {
   spend: number;
+  monthly_budget: number;
   impressions: number;
   reach: number;
   clicks: number;
@@ -526,6 +534,8 @@ async function createSpecWithAI(prompt: string, model: string) {
             "For month by month, monthly, or by month, use grain monthly and include the month dimension.",
             "For since/from/starting a specific date, use preset custom with start as YYYY-MM-DD and omit end unless the user gives one.",
             "For ad spend or spend-only requests, include spend first; if no other metric is requested, use only spend.",
+            "For monthly budget or budget requests, use the monthly_budget metric. Do not substitute CTR, CPC, CPL, impressions, clicks, or leads for budget.",
+            "If the user asks to add budget to a spend table, use metrics ['spend','monthly_budget'] unless they explicitly request more metrics.",
             "Use search filters only for free-text ad concepts, product names, or campaign/ad text explicitly named by the user.",
             "For table-format requests, return a table widget first and add charts only when the user asks for charts.",
             "Keep limits at or below 50 unless the user asks for a leaderboard.",
@@ -584,6 +594,8 @@ async function editSpecWithAI(input: {
             "For month by month, monthly, or by month, use grain monthly and include the month dimension.",
             "For since/from/starting a specific date, use preset custom with start as YYYY-MM-DD and omit end unless the user gives one.",
             "For ad spend or spend-only requests, include spend first; if no other metric is requested, use only spend.",
+            "For monthly budget or budget requests, use the monthly_budget metric. Do not substitute CTR, CPC, CPL, impressions, clicks, or leads for budget.",
+            "If the user asks to add budget to a spend table, use metrics ['spend','monthly_budget'] unless they explicitly request more metrics.",
             "Keep limits at or below 50 unless the user asks for a leaderboard.",
           ],
         }),
@@ -592,8 +604,9 @@ async function editSpecWithAI(input: {
   });
 
   const content = response.choices[0]?.message?.content;
+  const promptContext = mergePrompts(input.currentPrompt, input.editPrompt);
   return {
-    spec: normalizeSpec(parseJson(content) || input.currentSpec, input.editPrompt),
+    spec: normalizeSpec(parseJson(content) || input.currentSpec, promptContext),
     usage: {
       input:
         response.usage?.prompt_tokens ||
@@ -657,7 +670,8 @@ async function aggregateSpec(spec: AnalysisSpec) {
   }
 
   const supabase = createServiceClient();
-  const [insightsRes, brandsRes, accountsRes] = await Promise.all([
+  const needsBudget = spec.metrics.includes("monthly_budget");
+  const [insightsRes, brandsRes, accountsRes, adSetsRes] = await Promise.all([
     supabase
       .from("meta_daily_insights")
       .select(
@@ -669,9 +683,14 @@ async function aggregateSpec(spec: AnalysisSpec) {
       .limit(MAX_INSIGHT_ROWS),
     supabase.from("brands").select("id,code,name"),
     supabase.from("meta_ad_accounts").select("meta_account_id,name"),
+    needsBudget
+      ? supabase
+          .from("meta_ad_sets")
+          .select("meta_account_id,ad_set_id,daily_budget,lifetime_budget")
+      : Promise.resolve({ data: [], error: null }),
   ]);
 
-  const firstError = [insightsRes, brandsRes, accountsRes].find((res) => res.error)?.error;
+  const firstError = [insightsRes, brandsRes, accountsRes, adSetsRes].find((res) => res.error)?.error;
   if (firstError) throw firstError;
 
   const insights = rows<InsightRow>(insightsRes.data);
@@ -690,9 +709,25 @@ async function aggregateSpec(spec: AnalysisSpec) {
       account.name || account.meta_account_id,
     ]),
   );
+  const adSetBudgetByKey = new Map(
+    rows<AdSetBudgetRow>(adSetsRes.data).map((adSet) => [
+      adSetBudgetLookupKey(adSet.meta_account_id, adSet.ad_set_id),
+      adSet,
+    ]),
+  );
   const filtered = insights.filter((row) => matchesFilters(row, spec.filters, brandById));
 
-  const grouped = new Map<string, { dimensions: Record<string, string>; metrics: MetricAccumulator; count: number }>();
+  const grouped = new Map<
+    string,
+    {
+      dimensions: Record<string, string>;
+      metrics: MetricAccumulator;
+      budgetKeys: Set<string>;
+      count: number;
+    }
+  >();
+  const totalMetrics = emptyMetrics();
+  const totalBudgetKeys = new Set<string>();
   for (const row of filtered) {
     const dimensions = getDimensions(row, spec, brandById);
     const key = spec.dimensions.map((dimension) => dimensions[dimension] || "").join("::") || "summary";
@@ -701,6 +736,7 @@ async function aggregateSpec(spec: AnalysisSpec) {
       {
         dimensions,
         metrics: emptyMetrics(),
+        budgetKeys: new Set<string>(),
         count: 0,
       };
 
@@ -711,8 +747,18 @@ async function aggregateSpec(spec: AnalysisSpec) {
     existing.metrics.leads += toNumber(row.leads);
     existing.metrics.bookings += toNumber(row.bookings);
     existing.metrics.conversions += toNumber(row.conversions);
+    addMonthlyBudget(existing.metrics, existing.budgetKeys, row, adSetBudgetByKey);
     existing.count += 1;
     grouped.set(key, existing);
+
+    totalMetrics.spend += toNumber(row.spend);
+    totalMetrics.impressions += toNumber(row.impressions);
+    totalMetrics.reach += toNumber(row.reach);
+    totalMetrics.clicks += toNumber(row.clicks);
+    totalMetrics.leads += toNumber(row.leads);
+    totalMetrics.bookings += toNumber(row.bookings);
+    totalMetrics.conversions += toNumber(row.conversions);
+    addMonthlyBudget(totalMetrics, totalBudgetKeys, row, adSetBudgetByKey);
   }
 
   const rowsForTable = Array.from(grouped.values()).map((group) => {
@@ -725,18 +771,7 @@ async function aggregateSpec(spec: AnalysisSpec) {
   });
 
   const sortedRows = sortRows(rowsForTable, spec).slice(0, spec.limit);
-  const totals = deriveMetrics(
-    filtered.reduce((acc, row) => {
-      acc.spend += toNumber(row.spend);
-      acc.impressions += toNumber(row.impressions);
-      acc.reach += toNumber(row.reach);
-      acc.clicks += toNumber(row.clicks);
-      acc.leads += toNumber(row.leads);
-      acc.bookings += toNumber(row.bookings);
-      acc.conversions += toNumber(row.conversions);
-      return acc;
-    }, emptyMetrics()),
-  );
+  const totals = deriveMetrics(totalMetrics);
 
   const sourceTransparency = {
     timeRange: range,
@@ -745,6 +780,7 @@ async function aggregateSpec(spec: AnalysisSpec) {
     ),
     recordCounts: {
       meta_daily_insights: insights.length,
+      ...(needsBudget ? { meta_ad_sets: adSetBudgetByKey.size } : {}),
       matched_insights: filtered.length,
       grouped_rows: grouped.size,
       returned_rows: sortedRows.length,
@@ -983,6 +1019,7 @@ function compareRowValues(
 function deriveMetrics(metrics: MetricAccumulator): Record<AnalysisMetric, number | null> {
   return {
     spend: round(metrics.spend, 2),
+    monthly_budget: round(metrics.monthly_budget, 2),
     impressions: Math.round(metrics.impressions),
     reach: Math.round(metrics.reach),
     clicks: Math.round(metrics.clicks),
@@ -1187,6 +1224,8 @@ function inferPromptIntent(prompt: string): PromptIntent {
   const metrics = inferMetricsFromPrompt(lower);
   const tableOnly = /\btable\b|\btable format\b|\btabular\b/i.test(prompt) && !/\bchart\b|\bgraph\b|\bline\b|\bbar\b/i.test(prompt);
   const firstDimension = dimensions?.[0];
+  const wantsBudget = metrics?.includes("monthly_budget") || /\bbudgets?\b/.test(lower);
+  const isMonthlyUmbrella = dimensions?.includes("campaign_umbrella") && dimensions.includes("month");
 
   return {
     dateRange,
@@ -1202,15 +1241,65 @@ function inferPromptIntent(prompt: string): PromptIntent {
     limit: dimensions?.includes("campaign_umbrella") ? MAX_TABLE_ROWS : undefined,
     tableOnly,
     tableTitle:
-      tableOnly && dimensions?.includes("campaign_umbrella") && dimensions.includes("month")
-        ? "Monthly spend by campaign umbrella"
-        : undefined,
+      tableOnly && isMonthlyUmbrella && wantsBudget
+        ? "Monthly spend and budget by campaign umbrella"
+        : tableOnly && isMonthlyUmbrella
+          ? "Monthly spend by campaign umbrella"
+          : undefined,
     title:
-      dimensions?.includes("campaign_umbrella") && dimensions.includes("month") && metrics?.length === 1 && metrics[0] === "spend"
-        ? "Ad spend by campaign umbrella by month"
-        : undefined,
+      isMonthlyUmbrella && wantsBudget
+        ? "Monthly spend and budget by campaign umbrella"
+        : isMonthlyUmbrella && metrics?.length === 1 && metrics[0] === "spend"
+          ? "Ad spend by campaign umbrella by month"
+          : undefined,
     stripCashForGoldFilter: !lower.includes("cash for gold"),
   };
+}
+
+function addMonthlyBudget(
+  metrics: MetricAccumulator,
+  seenKeys: Set<string>,
+  row: InsightRow,
+  adSetBudgetByKey: Map<string, AdSetBudgetRow>,
+) {
+  if (!row.ad_set_id) return;
+  const month = format(startOfMonth(parseISO(row.date_start)), "yyyy-MM");
+  const budgetKey = `${adSetBudgetLookupKey(row.meta_account_id, row.ad_set_id)}::${month}`;
+  if (seenKeys.has(budgetKey)) return;
+
+  const adSet = adSetBudgetByKey.get(adSetBudgetLookupKey(row.meta_account_id, row.ad_set_id));
+  if (!adSet) return;
+
+  const monthlyBudget = monthlyBudgetForAdSet(adSet, row.date_start);
+  if (monthlyBudget === null) return;
+
+  seenKeys.add(budgetKey);
+  metrics.monthly_budget += monthlyBudget;
+}
+
+function adSetBudgetLookupKey(metaAccountId: string, adSetId: string) {
+  return `${metaAccountId}::${adSetId}`;
+}
+
+function monthlyBudgetForAdSet(adSet: AdSetBudgetRow, dateStart: string) {
+  const dailyBudget = toNumberOrNull(adSet.daily_budget);
+  if (dailyBudget !== null && dailyBudget > 0) {
+    const date = parseISO(dateStart);
+    return round(dailyBudget * daysInMonth(date), 2);
+  }
+
+  return null;
+}
+
+function daysInMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+}
+
+function toNumberOrNull(value: string | number | null | undefined) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (!value) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function applyPromptIntent(spec: AnalysisSpec, intent: PromptIntent): AnalysisSpec {
@@ -1272,6 +1361,7 @@ function inferMetricsFromPrompt(lower: string): AnalysisMetric[] | undefined {
   };
 
   if (/\bad spend\b|\bspend\b|\bspent\b|\bcost\b/.test(lower)) add("spend");
+  if (/\bmonthly budgets?\b|\bbudgets?\b/.test(lower)) add("monthly_budget");
   if (/\bimpressions?\b/.test(lower)) add("impressions");
   if (/\breach\b/.test(lower)) add("reach");
   if (/\bclicks?\b/.test(lower)) add("clicks");
@@ -1381,6 +1471,7 @@ function round(value: number, precision = 2) {
 function emptyMetrics(): MetricAccumulator {
   return {
     spend: 0,
+    monthly_budget: 0,
     impressions: 0,
     reach: 0,
     clicks: 0,
@@ -1441,6 +1532,7 @@ function labelFor(value: string) {
     impressions: "Impressions",
     leads: "Leads",
     month: "Month",
+    monthly_budget: "Monthly Budget",
     reach: "Reach",
     spend: "Spend",
     week: "Week",
@@ -1456,7 +1548,7 @@ function labelForWidget(type: AnalysisWidgetType) {
 }
 
 function metricType(metric: AnalysisMetric): AnalysisTableColumn["type"] {
-  if (["spend", "cpc", "cpl", "cpm"].includes(metric)) return "money";
+  if (["spend", "monthly_budget", "cpc", "cpl", "cpm"].includes(metric)) return "money";
   if (["ctr", "frequency"].includes(metric)) return metric === "ctr" ? "percent" : "number";
   return "number";
 }

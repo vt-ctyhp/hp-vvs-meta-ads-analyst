@@ -705,7 +705,9 @@ function formatCell(value: string | number | null | undefined, column: AnalysisT
 }
 
 function formatMetricValue(value: string | number | null | undefined, metric: AnalysisMetric) {
-  if (["spend", "cpc", "cpl", "cpm"].includes(metric)) return formatMoney(Number(value || 0));
+  if (["spend", "monthly_budget", "cpc", "cpl", "cpm"].includes(metric)) {
+    return formatMoney(Number(value || 0));
+  }
   if (metric === "ctr") return `${Number(value || 0).toFixed(2)}%`;
   return formatNumber(Number(value || 0));
 }
@@ -722,6 +724,7 @@ function labelFor(value: string) {
     frequency: "Frequency",
     impressions: "Impressions",
     leads: "Leads",
+    monthly_budget: "Monthly Budget",
     reach: "Reach",
     spend: "Spend",
   };
