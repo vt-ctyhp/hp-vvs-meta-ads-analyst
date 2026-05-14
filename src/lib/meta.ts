@@ -1,4 +1,10 @@
 import { ConfigurationError, getMetaApiVersion } from "./env";
+import {
+  classifyCampaignUmbrella,
+  isCampaignUmbrella,
+  type CampaignUmbrellaClassification,
+  type CampaignUmbrellaOverride,
+} from "./campaign-umbrellas";
 import { createServiceClient } from "./supabase";
 
 type JsonRecord = Record<string, unknown>;
@@ -231,60 +237,110 @@ async function syncAccount(account: SyncAccountConfig, brandId: string | null) {
     limit: "100",
   }, { maxPages: getSyncMaxPages("META_SYNC_MAX_CAMPAIGN_PAGES", 12) });
 
-  const campaignRows = await upsertMany(
-    "meta_campaigns",
-    campaigns.map((campaign) => ({
-      brand_id: brandId,
-      account_id: accountRow.id,
-      meta_account_id: metaAccountId,
-      campaign_id: stringField(campaign.id),
-      name: stringField(campaign.name),
-      objective: stringField(campaign.objective),
-      buying_type: stringField(campaign.buying_type),
-      status: stringField(campaign.status),
-      effective_status: stringField(campaign.effective_status),
-      start_time: stringField(campaign.start_time),
-      stop_time: stringField(campaign.stop_time),
-      created_time: stringField(campaign.created_time),
-      updated_time: stringField(campaign.updated_time),
-      raw_json: campaign,
-      last_synced_at: now,
-    })),
-    "meta_account_id,campaign_id",
-  );
-  const campaignByMetaId = new Map(campaignRows.map((row) => [String(row.campaign_id), row]));
-
   const adSets = await graphPages<JsonRecord>(`${metaAccountId}/adsets`, {
     fields:
       "id,name,campaign_id,status,effective_status,optimization_goal,billing_event,bid_strategy,daily_budget,lifetime_budget,start_time,end_time,created_time,updated_time,targeting",
     limit: "100",
   }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_SET_PAGES", 12) });
 
+  const overrides = await fetchCampaignUmbrellaOverrides(metaAccountId);
+  const campaignRawByMetaId = new Map(campaigns.map((campaign) => [String(campaign.id), campaign]));
+  const adSetRawByMetaId = new Map(adSets.map((adSet) => [String(adSet.id), adSet]));
+  const adSetNamesByCampaignId = groupAdSetNamesByCampaignId(adSets);
+  const campaignClassifications = new Map<string, CampaignUmbrellaClassification>();
+
+  for (const campaign of campaigns) {
+    const campaignId = stringField(campaign.id);
+    if (!campaignId) continue;
+    campaignClassifications.set(
+      campaignId,
+      classifyCampaignUmbrella({
+        campaignName: stringField(campaign.name),
+        adSetNames: adSetNamesByCampaignId.get(campaignId) || [],
+        override: getUmbrellaOverride(overrides, "campaign", campaignId),
+      }),
+    );
+  }
+
+  const campaignRows = await upsertMany(
+    "meta_campaigns",
+    campaigns.map((campaign) => {
+      const campaignId = stringField(campaign.id);
+      const classification = campaignClassifications.get(campaignId || "") ||
+        classifyCampaignUmbrella({ campaignName: stringField(campaign.name) });
+
+      return {
+        brand_id: brandId,
+        account_id: accountRow.id,
+        meta_account_id: metaAccountId,
+        campaign_id: campaignId,
+        name: stringField(campaign.name),
+        objective: stringField(campaign.objective),
+        buying_type: stringField(campaign.buying_type),
+        status: stringField(campaign.status),
+        effective_status: stringField(campaign.effective_status),
+        start_time: stringField(campaign.start_time),
+        stop_time: stringField(campaign.stop_time),
+        created_time: stringField(campaign.created_time),
+        updated_time: stringField(campaign.updated_time),
+        ...umbrellaColumns(classification),
+        raw_json: campaign,
+        last_synced_at: now,
+      };
+    }),
+    "meta_account_id,campaign_id",
+  );
+  const campaignByMetaId = new Map(campaignRows.map((row) => [String(row.campaign_id), row]));
+
+  const adSetClassifications = new Map<string, CampaignUmbrellaClassification>();
+  for (const adSet of adSets) {
+    const adSetId = stringField(adSet.id);
+    if (!adSetId) continue;
+    const campaignId = stringField(adSet.campaign_id);
+    const campaign = campaignId ? campaignRawByMetaId.get(campaignId) : undefined;
+    adSetClassifications.set(
+      adSetId,
+      classifyCampaignUmbrella({
+        campaignName: stringField(campaign?.name),
+        adSetName: stringField(adSet.name),
+        inherited: campaignId ? campaignClassifications.get(campaignId) : null,
+        override: getUmbrellaOverride(overrides, "ad_set", adSetId),
+      }),
+    );
+  }
+
   const adSetRows = await upsertMany(
     "meta_ad_sets",
-    adSets.map((adSet) => ({
-      brand_id: brandId,
-      account_id: accountRow.id,
-      campaign_ref_id: campaignByMetaId.get(String(adSet.campaign_id))?.id || null,
-      meta_account_id: metaAccountId,
-      campaign_id: stringField(adSet.campaign_id),
-      ad_set_id: stringField(adSet.id),
-      name: stringField(adSet.name),
-      status: stringField(adSet.status),
-      effective_status: stringField(adSet.effective_status),
-      optimization_goal: stringField(adSet.optimization_goal),
-      billing_event: stringField(adSet.billing_event),
-      bid_strategy: stringField(adSet.bid_strategy),
-      daily_budget: moneyCents(adSet.daily_budget),
-      lifetime_budget: moneyCents(adSet.lifetime_budget),
-      start_time: stringField(adSet.start_time),
-      end_time: stringField(adSet.end_time),
-      created_time: stringField(adSet.created_time),
-      updated_time: stringField(adSet.updated_time),
-      targeting: recordField(adSet.targeting),
-      raw_json: adSet,
-      last_synced_at: now,
-    })),
+    adSets.map((adSet) => {
+      const adSetId = stringField(adSet.id);
+      const classification = adSetClassifications.get(adSetId || "") ||
+        classifyCampaignUmbrella({ adSetName: stringField(adSet.name) });
+
+      return {
+        brand_id: brandId,
+        account_id: accountRow.id,
+        campaign_ref_id: campaignByMetaId.get(String(adSet.campaign_id))?.id || null,
+        meta_account_id: metaAccountId,
+        campaign_id: stringField(adSet.campaign_id),
+        ad_set_id: adSetId,
+        name: stringField(adSet.name),
+        status: stringField(adSet.status),
+        effective_status: stringField(adSet.effective_status),
+        optimization_goal: stringField(adSet.optimization_goal),
+        billing_event: stringField(adSet.billing_event),
+        bid_strategy: stringField(adSet.bid_strategy),
+        daily_budget: moneyCents(adSet.daily_budget),
+        lifetime_budget: moneyCents(adSet.lifetime_budget),
+        start_time: stringField(adSet.start_time),
+        end_time: stringField(adSet.end_time),
+        created_time: stringField(adSet.created_time),
+        updated_time: stringField(adSet.updated_time),
+        targeting: recordField(adSet.targeting),
+        ...umbrellaColumns(classification),
+        raw_json: adSet,
+        last_synced_at: now,
+      };
+    }),
     "meta_account_id,ad_set_id",
   );
   const adSetByMetaId = new Map(adSetRows.map((row) => [String(row.ad_set_id), row]));
@@ -352,6 +408,27 @@ async function syncAccount(account: SyncAccountConfig, brandId: string | null) {
   );
   const creativeByMetaId = new Map(creativeRows.map((row) => [String(row.creative_id), row]));
 
+  const adClassifications = new Map<string, CampaignUmbrellaClassification>();
+  for (const ad of ads) {
+    const adId = stringField(ad.id);
+    if (!adId) continue;
+    const campaignId = stringField(ad.campaign_id);
+    const adSetId = stringField(ad.adset_id);
+    const campaign = campaignId ? campaignRawByMetaId.get(campaignId) : undefined;
+    const adSet = adSetId ? adSetRawByMetaId.get(adSetId) : undefined;
+    adClassifications.set(
+      adId,
+      classifyCampaignUmbrella({
+        campaignName: stringField(campaign?.name),
+        adSetName: stringField(adSet?.name),
+        inherited: (adSetId && adSetClassifications.get(adSetId)) ||
+          (campaignId && campaignClassifications.get(campaignId)) ||
+          null,
+        override: getUmbrellaOverride(overrides, "ad", adId),
+      }),
+    );
+  }
+
   const adRows = await upsertMany(
     "meta_ads",
     ads.map((ad) => {
@@ -359,6 +436,9 @@ async function syncAccount(account: SyncAccountConfig, brandId: string | null) {
       const adPreview = previewByAdId.get(String(ad.id)) || null;
       const preview = chooseStoredPreview(creative, adPreview);
       const creativeId = stringField(creative.id);
+      const adId = stringField(ad.id);
+      const classification = adClassifications.get(adId || "") ||
+        classifyCampaignUmbrella({ campaignName: stringField(ad.name) });
       return {
         brand_id: brandId,
         account_id: accountRow.id,
@@ -368,7 +448,7 @@ async function syncAccount(account: SyncAccountConfig, brandId: string | null) {
         meta_account_id: metaAccountId,
         campaign_id: stringField(ad.campaign_id),
         ad_set_id: stringField(ad.adset_id),
-        ad_id: stringField(ad.id),
+        ad_id: adId,
         creative_id: creativeId,
         name: stringField(ad.name),
         status: stringField(ad.status),
@@ -378,6 +458,7 @@ async function syncAccount(account: SyncAccountConfig, brandId: string | null) {
         preview_html: preview.previewHtml,
         created_time: stringField(ad.created_time),
         updated_time: stringField(ad.updated_time),
+        ...umbrellaColumns(classification),
         raw_json: ad,
         last_synced_at: now,
       };
@@ -393,17 +474,28 @@ async function syncAccount(account: SyncAccountConfig, brandId: string | null) {
       const adId = stringField(insight.ad_id);
       const ad = adByMetaId.get(adId || "");
       const creativeId = stringField(ad?.creative_id);
+      const campaignId = stringField(insight.campaign_id);
+      const adSetId = stringField(insight.adset_id);
+      const inheritedClassification = (adId && adClassifications.get(adId)) ||
+        (adSetId && adSetClassifications.get(adSetId)) ||
+        (campaignId && campaignClassifications.get(campaignId)) ||
+        null;
+      const classification = inheritedClassification ||
+        classifyCampaignUmbrella({
+          campaignName: stringField(insight.campaign_name),
+          adSetName: stringField(insight.adset_name),
+        });
       return {
         brand_id: brandId,
         account_id: accountRow.id,
-        campaign_ref_id: campaignByMetaId.get(String(insight.campaign_id))?.id || null,
-        ad_set_ref_id: adSetByMetaId.get(String(insight.adset_id))?.id || null,
+        campaign_ref_id: campaignByMetaId.get(String(campaignId))?.id || null,
+        ad_set_ref_id: adSetByMetaId.get(String(adSetId))?.id || null,
         ad_ref_id: ad?.id || null,
         creative_ref_id: creativeByMetaId.get(creativeId || "")?.id || null,
         meta_account_id: metaAccountId,
-        campaign_id: stringField(insight.campaign_id),
+        campaign_id: campaignId,
         campaign_name: stringField(insight.campaign_name),
-        ad_set_id: stringField(insight.adset_id),
+        ad_set_id: adSetId,
         ad_set_name: stringField(insight.adset_name),
         ad_id: adId,
         ad_name: stringField(insight.ad_name),
@@ -434,6 +526,7 @@ async function syncAccount(account: SyncAccountConfig, brandId: string | null) {
         },
         actions: Array.isArray(insight.actions) ? insight.actions : [],
         action_values: Array.isArray(insight.action_values) ? insight.action_values : [],
+        ...umbrellaColumns(classification),
         raw_json: insight,
       };
     }),
@@ -681,6 +774,46 @@ async function ensureBrands(accounts: SyncAccountConfig[]) {
   return (data || []) as JsonRecord[];
 }
 
+async function fetchCampaignUmbrellaOverrides(metaAccountId: string) {
+  const supabase = createServiceClient();
+  const { data, error } = await supabase
+    .from("campaign_umbrella_overrides")
+    .select("entity_type, entity_id, campaign_umbrella, reason")
+    .eq("meta_account_id", metaAccountId);
+
+  if (error) throw error;
+
+  return rows<JsonRecord>(data).reduce((overrides, row) => {
+    const entityType = stringField(row.entity_type);
+    const entityId = stringField(row.entity_id);
+    const umbrella = stringField(row.campaign_umbrella);
+    if (!entityType || !entityId || !isCampaignUmbrella(umbrella)) return overrides;
+    overrides.set(`${entityType}:${entityId}`, {
+      umbrella,
+      reason: stringField(row.reason),
+    });
+    return overrides;
+  }, new Map<string, CampaignUmbrellaOverride>());
+}
+
+function getUmbrellaOverride(
+  overrides: Map<string, CampaignUmbrellaOverride>,
+  entityType: "campaign" | "ad_set" | "ad",
+  entityId: string | null,
+) {
+  if (!entityId) return null;
+  return overrides.get(`${entityType}:${entityId}`) || null;
+}
+
+function umbrellaColumns(classification: CampaignUmbrellaClassification) {
+  return {
+    campaign_umbrella: classification.umbrella,
+    campaign_umbrella_confidence: classification.confidence,
+    campaign_umbrella_source: classification.source,
+    campaign_umbrella_reason: classification.reason,
+  };
+}
+
 async function upsertSingle(table: string, row: JsonRecord, onConflict: string) {
   const rows = await upsertMany(table, [row], onConflict);
   return rows[0];
@@ -726,6 +859,16 @@ function uniqueBy<T>(items: T[], keyFn: (item: T) => string) {
   });
 }
 
+function groupAdSetNamesByCampaignId(adSets: JsonRecord[]) {
+  return adSets.reduce((groups, adSet) => {
+    const campaignId = stringField(adSet.campaign_id);
+    const name = stringField(adSet.name);
+    if (!campaignId || !name) return groups;
+    groups.set(campaignId, [...(groups.get(campaignId) || []), name]);
+    return groups;
+  }, new Map<string, string[]>());
+}
+
 function recordField(value: unknown): JsonRecord {
   return isRecord(value) ? value : {};
 }
@@ -752,6 +895,10 @@ function numberString(value: unknown): string {
 function moneyCents(value: unknown): number | null {
   const amount = numberField(value);
   return amount === null ? null : amount / 100;
+}
+
+function rows<T>(data: unknown): T[] {
+  return Array.isArray(data) ? (data as T[]) : [];
 }
 
 function extractActionCount(actions: unknown, actionTypes: string[]) {

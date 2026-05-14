@@ -1,0 +1,2 @@
+-- Placeholder for a migration version already marked as applied in the linked
+-- Supabase project before this worktree was created.

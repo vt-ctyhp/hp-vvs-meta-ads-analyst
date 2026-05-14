@@ -51,6 +51,7 @@ const SORT_LABELS: Record<SortKey, string> = {
 export function DashboardClient({ initialData }: Props) {
   const [data] = useState(initialData);
   const [brand, setBrand] = useState("all");
+  const [umbrella, setUmbrella] = useState("all");
   const [query, setQuery] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [sortKey, setSortKey] = useState<SortKey>("spend");
@@ -68,29 +69,48 @@ export function DashboardClient({ initialData }: Props) {
     [data.byBrand],
   );
 
+  const umbrellaOptions = useMemo(
+    () => ["all", ...data.campaignUmbrellas],
+    [data.campaignUmbrellas],
+  );
+
+  const filteredCampaigns = useMemo(
+    () =>
+      data.campaigns
+        .filter((row) => rowMatchesFilters(row, brand, umbrella, query))
+        .sort((a, b) => Number(b[sortKey] || 0) - Number(a[sortKey] || 0)),
+    [brand, data.campaigns, query, sortKey, umbrella],
+  );
+
+  const filteredAdSets = useMemo(
+    () =>
+      data.adSets
+        .filter((row) => rowMatchesFilters(row, brand, umbrella, query))
+        .sort((a, b) => Number(b[sortKey] || 0) - Number(a[sortKey] || 0)),
+    [brand, data.adSets, query, sortKey, umbrella],
+  );
+
   const filteredCreatives = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
     return data.creatives
-      .filter((creative) => brand === "all" || creative.brandCode === brand)
-      .filter((creative) => {
-        if (!normalizedQuery) return true;
-        return [creative.name, creative.title, creative.body, creative.brandCode]
-          .filter(Boolean)
-          .some((value) => String(value).toLowerCase().includes(normalizedQuery));
-      })
+      .filter((creative) => rowMatchesFilters(creative, brand, umbrella, query))
       .sort((a, b) => Number(b[sortKey] || 0) - Number(a[sortKey] || 0));
-  }, [brand, data.creatives, query, sortKey]);
+  }, [brand, data.creatives, query, sortKey, umbrella]);
 
   const trendRows = useMemo(() => {
     const byDate = new Map<string, Record<string, string | number>>();
-    for (const row of data.dailyTrend) {
+    for (const row of data.dailyTrend.filter((trend) => {
+      return (
+        (brand === "all" || trend.brandCode === brand) &&
+        (umbrella === "all" || trend.campaignUmbrella === umbrella)
+      );
+    })) {
       const existing = byDate.get(row.date) || { date: row.date };
       existing[`${row.brandCode} spend`] = row.spend;
       existing[`${row.brandCode} ctr`] = row.ctr;
       byDate.set(row.date, existing);
     }
     return Array.from(byDate.values());
-  }, [data.dailyTrend]);
+  }, [brand, data.dailyTrend, umbrella]);
 
   async function runManualSync() {
     setIsSyncing(true);
@@ -200,9 +220,32 @@ export function DashboardClient({ initialData }: Props) {
         </div>
       </section>
 
+      <section className="mx-auto mt-8 max-w-7xl border border-hp-rule bg-hp-card p-6">
+        <SectionHeader eyebrow="Campaign Umbrellas" title="Spend by internal grouping" />
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {data.byUmbrella.map((row) => (
+            <button
+              key={row.id}
+              onClick={() => setUmbrella(row.campaignUmbrella || row.name)}
+              className={`border p-4 text-left transition-colors ${
+                umbrella === row.campaignUmbrella
+                  ? "border-hp-ink bg-hp-ink text-hp-foundation"
+                  : "border-hp-rule hover:border-hp-ink"
+              }`}
+            >
+              <div className="min-h-10 text-sm font-medium leading-5">{row.name}</div>
+              <div className="mt-3 flex items-end justify-between gap-3">
+                <span className="text-xl tabular-nums">{formatMetric(row.spend, "money")}</span>
+                <span className="text-xs tabular-nums">{formatMetric(row.ctr, "percent")} CTR</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      </section>
+
       <section className="mx-auto mt-8 grid max-w-7xl gap-6 xl:grid-cols-[1.2fr_0.8fr]">
         <div className="border border-hp-rule bg-hp-card p-6">
-          <SectionHeader eyebrow="Trend Analysis" title="HP vs VVS spend and response" />
+          <SectionHeader eyebrow="Trend Analysis" title="Filtered spend and response" />
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={trendRows} margin={{ top: 8, right: 18, bottom: 0, left: 0 }}>
@@ -275,10 +318,22 @@ export function DashboardClient({ initialData }: Props) {
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search creatives"
+                placeholder="Search names, copy, umbrella"
                 className="w-full bg-transparent text-sm outline-none placeholder:text-hp-muted"
               />
             </label>
+
+            <select
+              value={umbrella}
+              onChange={(event) => setUmbrella(event.target.value)}
+              className="max-w-72 border border-hp-rule bg-transparent px-3 py-2 text-sm outline-none focus:border-hp-pink"
+            >
+              {umbrellaOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option === "all" ? "All Umbrellas" : option}
+                </option>
+              ))}
+            </select>
 
             <select
               value={sortKey}
@@ -299,8 +354,8 @@ export function DashboardClient({ initialData }: Props) {
 
       <section className="mx-auto mt-8 grid max-w-7xl gap-6 xl:grid-cols-[1fr_380px]">
         <div className="space-y-8">
-          <PerformanceSection title="Campaign Performance" rows={data.campaigns.slice(0, 10)} />
-          <PerformanceSection title="Ad Set Performance" rows={data.adSets.slice(0, 10)} />
+          <PerformanceSection title="Campaign Performance" rows={filteredCampaigns.slice(0, 10)} />
+          <PerformanceSection title="Ad Set Performance" rows={filteredAdSets.slice(0, 10)} />
 
           <div className="border border-hp-rule bg-hp-card p-6">
             <SectionHeader eyebrow="Creative Leaderboard" title="Creative gallery and table" />
@@ -443,6 +498,7 @@ function PerformanceSection({ title, rows }: { title: string; rows: PerformanceR
             <tr className="bg-hp-inset text-left text-[11px] uppercase tracking-[0.14em] text-hp-muted">
               <th className="border-b border-hp-rule px-3 py-3">Name</th>
               <th className="border-b border-hp-rule px-3 py-3">Brand</th>
+              <th className="border-b border-hp-rule px-3 py-3">Umbrella</th>
               <th className="border-b border-hp-rule px-3 py-3 text-right">Spend</th>
               <th className="border-b border-hp-rule px-3 py-3 text-right">CTR</th>
               <th className="border-b border-hp-rule px-3 py-3 text-right">CPC</th>
@@ -454,12 +510,20 @@ function PerformanceSection({ title, rows }: { title: string; rows: PerformanceR
               <tr key={row.id} className="border-b border-hp-rule last:border-b-0">
                 <td className="max-w-[360px] px-3 py-3 text-hp-ink">{row.name}</td>
                 <td className="px-3 py-3">{row.brandCode}</td>
+                <td className="max-w-[220px] px-3 py-3 text-xs text-hp-muted">{row.campaignUmbrella}</td>
                 <td className="px-3 py-3 text-right tabular-nums">{formatMetric(row.spend, "money")}</td>
                 <td className="px-3 py-3 text-right tabular-nums">{formatMetric(row.ctr, "percent")}</td>
                 <td className="px-3 py-3 text-right tabular-nums">{formatMetric(row.cpc, "money")}</td>
                 <td className="px-3 py-3 text-right tabular-nums">{formatMetric(row.leads, "number")}</td>
               </tr>
             ))}
+            {!rows.length ? (
+              <tr>
+                <td colSpan={7} className="px-3 py-8 text-center text-sm text-hp-muted">
+                  No rows match the selected filters.
+                </td>
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>
@@ -476,6 +540,7 @@ function CreativeTable({ rows }: { rows: PerformanceRow[] }) {
             <th className="border-b border-hp-rule px-3 py-3">Creative</th>
             <th className="border-b border-hp-rule px-3 py-3">Preview</th>
             <th className="border-b border-hp-rule px-3 py-3">Brand</th>
+            <th className="border-b border-hp-rule px-3 py-3">Umbrella</th>
             <th className="border-b border-hp-rule px-3 py-3 text-right">Spend</th>
             <th className="border-b border-hp-rule px-3 py-3 text-right">CTR</th>
             <th className="border-b border-hp-rule px-3 py-3 text-right">CPC</th>
@@ -494,6 +559,7 @@ function CreativeTable({ rows }: { rows: PerformanceRow[] }) {
                 <CreativePreview creative={row} compact />
               </td>
               <td className="px-3 py-4">{row.brandCode}</td>
+              <td className="max-w-[180px] px-3 py-4 text-xs text-hp-muted">{row.campaignUmbrella}</td>
               <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.spend, "money")}</td>
               <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.ctr, "percent")}</td>
               <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.cpc, "money")}</td>
@@ -503,6 +569,13 @@ function CreativeTable({ rows }: { rows: PerformanceRow[] }) {
               </td>
             </tr>
           ))}
+          {!rows.length ? (
+            <tr>
+              <td colSpan={9} className="px-3 py-8 text-center text-sm text-hp-muted">
+                No creatives match the selected filters.
+              </td>
+            </tr>
+          ) : null}
         </tbody>
       </table>
     </div>
@@ -520,6 +593,9 @@ function CreativeCards({ rows }: { rows: PerformanceRow[] }) {
               <div className="flex items-start justify-between gap-3">
                 <h3 className="font-title text-xl leading-tight text-hp-ink">{row.name}</h3>
                 <RiskBadge level={row.riskLevel} />
+              </div>
+              <div className="mt-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                {row.campaignUmbrella}
               </div>
               <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
                 <MiniMetric label="Spend" value={formatMetric(row.spend, "money")} />
@@ -545,6 +621,9 @@ function CreativeGallery({ rows }: { rows: PerformanceRow[] }) {
             <div className="flex items-start justify-between gap-3">
               <h3 className="font-title text-xl leading-tight text-hp-ink">{row.name}</h3>
               <span className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">{row.brandCode}</span>
+            </div>
+            <div className="mt-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+              {row.campaignUmbrella}
             </div>
             <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
               <MiniMetric label="Spend" value={formatMetric(row.spend, "money")} />
@@ -789,6 +868,27 @@ function SourcePanel({ data }: { data: DashboardPayload }) {
       </div>
     </section>
   );
+}
+
+function rowMatchesFilters(row: PerformanceRow, brand: string, umbrella: string, query: string) {
+  if (brand !== "all" && row.brandCode !== brand) return false;
+  if (umbrella !== "all" && row.campaignUmbrella !== umbrella) return false;
+
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return true;
+
+  return [
+    row.name,
+    row.title,
+    row.body,
+    row.brandCode,
+    row.campaignUmbrella,
+    row.objective,
+    row.status,
+    row.effectiveStatus,
+  ]
+    .filter(Boolean)
+    .some((value) => String(value).toLowerCase().includes(normalizedQuery));
 }
 
 function formatMetric(value: number | null, kind: "money" | "number" | "percent") {

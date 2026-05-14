@@ -55,6 +55,12 @@ vercel --prod
 - `/api/chat` AI executive chat
 - `/api/health` environment and Meta permission validation
 
+## Campaign Umbrellas
+
+HP campaigns are classified into internal campaign umbrellas during sync. The classifier uses campaign names first, then ad set names for fallback/refinement, and stores the result on campaigns, ad sets, ads, and daily insights. The dashboard can filter campaigns, ad sets, creatives, and trends by umbrella.
+
+Manual corrections can be stored in `campaign_umbrella_overrides` without changing Meta campaign/ad set/ad names.
+
 ## Meta Permissions
 
 Allowed:

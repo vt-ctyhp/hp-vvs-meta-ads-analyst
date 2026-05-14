@@ -16,6 +16,19 @@
    - daily ad-level insights
    - sync run status and metrics
 
+During sync, campaigns, ad sets, ads, and daily insight rows are classified into HP internal campaign umbrellas. Classification uses campaign names first and ad set names as fallback or refinement. Manual overrides in `campaign_umbrella_overrides` take precedence.
+
+Current umbrella labels:
+
+- `Facebook US Product`
+- `Book Appts US`
+- `US Promotions (WKDS / OOAK)`
+- `Cash for Gold US`
+- `Facebook VN Product`
+- `VN Promotions (WKDS / OOAK)`
+- `Excluded / Non-umbrella`
+- `Needs review`
+
 ## Preview Refresh
 
 Creative preview metadata is refreshed during sync. Storage priority:

@@ -207,12 +207,14 @@ function compactDashboard(dashboard: DashboardPayload) {
   return {
     overview: dashboard.overview,
     byBrand: dashboard.byBrand,
+    byUmbrella: dashboard.byUmbrella,
     topCampaigns: dashboard.campaigns.slice(0, 12),
     topAdSets: dashboard.adSets.slice(0, 12),
     topCreatives: dashboard.creatives.slice(0, 16).map((creative) => ({
       id: creative.id,
       name: creative.name,
       brandCode: creative.brandCode,
+      campaignUmbrella: creative.campaignUmbrella,
       spend: creative.spend,
       impressions: creative.impressions,
       clicks: creative.clicks,

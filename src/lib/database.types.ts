@@ -840,6 +840,39 @@ export type Database = {
           },
         ]
       }
+      campaign_umbrella_overrides: {
+        Row: {
+          campaign_umbrella: string
+          created_at: string
+          entity_id: string
+          entity_type: string
+          id: string
+          meta_account_id: string
+          reason: string | null
+          updated_at: string
+        }
+        Insert: {
+          campaign_umbrella: string
+          created_at?: string
+          entity_id: string
+          entity_type: string
+          id?: string
+          meta_account_id: string
+          reason?: string | null
+          updated_at?: string
+        }
+        Update: {
+          campaign_umbrella?: string
+          created_at?: string
+          entity_id?: string
+          entity_type?: string
+          id?: string
+          meta_account_id?: string
+          reason?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       client_status: {
         Row: {
           center_stone_status: string | null
@@ -2724,6 +2757,10 @@ export type Database = {
           brand_id: string | null
           campaign_id: string | null
           campaign_ref_id: string | null
+          campaign_umbrella: string | null
+          campaign_umbrella_confidence: string | null
+          campaign_umbrella_reason: string | null
+          campaign_umbrella_source: string | null
           created_at: string
           created_time: string | null
           daily_budget: number | null
@@ -2750,6 +2787,10 @@ export type Database = {
           brand_id?: string | null
           campaign_id?: string | null
           campaign_ref_id?: string | null
+          campaign_umbrella?: string | null
+          campaign_umbrella_confidence?: string | null
+          campaign_umbrella_reason?: string | null
+          campaign_umbrella_source?: string | null
           created_at?: string
           created_time?: string | null
           daily_budget?: number | null
@@ -2776,6 +2817,10 @@ export type Database = {
           brand_id?: string | null
           campaign_id?: string | null
           campaign_ref_id?: string | null
+          campaign_umbrella?: string | null
+          campaign_umbrella_confidence?: string | null
+          campaign_umbrella_reason?: string | null
+          campaign_umbrella_source?: string | null
           created_at?: string
           created_time?: string | null
           daily_budget?: number | null
@@ -2827,6 +2872,10 @@ export type Database = {
           brand_id: string | null
           campaign_id: string | null
           campaign_ref_id: string | null
+          campaign_umbrella: string | null
+          campaign_umbrella_confidence: string | null
+          campaign_umbrella_reason: string | null
+          campaign_umbrella_source: string | null
           created_at: string
           created_time: string | null
           creative_id: string | null
@@ -2852,6 +2901,10 @@ export type Database = {
           brand_id?: string | null
           campaign_id?: string | null
           campaign_ref_id?: string | null
+          campaign_umbrella?: string | null
+          campaign_umbrella_confidence?: string | null
+          campaign_umbrella_reason?: string | null
+          campaign_umbrella_source?: string | null
           created_at?: string
           created_time?: string | null
           creative_id?: string | null
@@ -2877,6 +2930,10 @@ export type Database = {
           brand_id?: string | null
           campaign_id?: string | null
           campaign_ref_id?: string | null
+          campaign_umbrella?: string | null
+          campaign_umbrella_confidence?: string | null
+          campaign_umbrella_reason?: string | null
+          campaign_umbrella_source?: string | null
           created_at?: string
           created_time?: string | null
           creative_id?: string | null
@@ -2938,6 +2995,10 @@ export type Database = {
           brand_id: string | null
           buying_type: string | null
           campaign_id: string
+          campaign_umbrella: string | null
+          campaign_umbrella_confidence: string | null
+          campaign_umbrella_reason: string | null
+          campaign_umbrella_source: string | null
           created_at: string
           created_time: string | null
           effective_status: string | null
@@ -2958,6 +3019,10 @@ export type Database = {
           brand_id?: string | null
           buying_type?: string | null
           campaign_id: string
+          campaign_umbrella?: string | null
+          campaign_umbrella_confidence?: string | null
+          campaign_umbrella_reason?: string | null
+          campaign_umbrella_source?: string | null
           created_at?: string
           created_time?: string | null
           effective_status?: string | null
@@ -2978,6 +3043,10 @@ export type Database = {
           brand_id?: string | null
           buying_type?: string | null
           campaign_id?: string
+          campaign_umbrella?: string | null
+          campaign_umbrella_confidence?: string | null
+          campaign_umbrella_reason?: string | null
+          campaign_umbrella_source?: string | null
           created_at?: string
           created_time?: string | null
           effective_status?: string | null
@@ -3128,6 +3197,10 @@ export type Database = {
           campaign_id: string | null
           campaign_name: string | null
           campaign_ref_id: string | null
+          campaign_umbrella: string | null
+          campaign_umbrella_confidence: string | null
+          campaign_umbrella_reason: string | null
+          campaign_umbrella_source: string | null
           clicks: number
           conversions: number
           cpc: number
@@ -3166,6 +3239,10 @@ export type Database = {
           campaign_id?: string | null
           campaign_name?: string | null
           campaign_ref_id?: string | null
+          campaign_umbrella?: string | null
+          campaign_umbrella_confidence?: string | null
+          campaign_umbrella_reason?: string | null
+          campaign_umbrella_source?: string | null
           clicks?: number
           conversions?: number
           cpc?: number
@@ -3204,6 +3281,10 @@ export type Database = {
           campaign_id?: string | null
           campaign_name?: string | null
           campaign_ref_id?: string | null
+          campaign_umbrella?: string | null
+          campaign_umbrella_confidence?: string | null
+          campaign_umbrella_reason?: string | null
+          campaign_umbrella_source?: string | null
           clicks?: number
           conversions?: number
           cpc?: number
@@ -5146,6 +5227,7 @@ export type Database = {
         | "diamond_order_admin"
         | "diamond_order_assistant"
         | "read_only"
+        | "wax_request_admin"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -5355,6 +5437,7 @@ export const Constants = {
         "diamond_order_admin",
         "diamond_order_assistant",
         "read_only",
+        "wax_request_admin",
       ],
     },
   },
