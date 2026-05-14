@@ -226,7 +226,7 @@ export async function runMetaAdsBackfillBatch(input: { limit?: number } = {}) {
   const claimed = rows<JsonRecord>(claim.data).map(mapChunk);
   const results: Array<{
     chunkId: string;
-    status: "success" | "failed";
+    status: "success" | "failed" | "deferred";
     insightRows: number;
     error?: string;
   }> = [];
@@ -252,6 +252,21 @@ export async function runMetaAdsBackfillBatch(input: { limit?: number } = {}) {
       results.push({ chunkId: chunk.id, status: "success", insightRows: result.insightRows });
     } catch (error) {
       const message = errorToMessage(error);
+      if (isMetaRateLimitError(message)) {
+        const update = await supabase
+          .from("meta_ads_backfill_chunks")
+          .update({
+            status: "queued",
+            error: message,
+            locked_at: null,
+            completed_at: null,
+          })
+          .eq("id", chunk.id);
+        if (update.error) throw update.error;
+        results.push({ chunkId: chunk.id, status: "deferred", insightRows: 0, error: message });
+        break;
+      }
+
       const update = await supabase
         .from("meta_ads_backfill_chunks")
         .update({
@@ -359,6 +374,10 @@ function getBackfillStartDate() {
 function getBackfillChunksPerRun() {
   const value = Number(process.env.META_BACKFILL_CHUNKS_PER_RUN);
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : 1;
+}
+
+function isMetaRateLimitError(message: string) {
+  return /rate[- ]?limit|too many calls|application request limit/i.test(message);
 }
 
 function chunkRow(brandCode: string, metaAccountId: string, chunk: DateChunk) {
