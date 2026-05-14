@@ -16,6 +16,10 @@ type MetaPaging<T> = {
   };
 };
 
+type PageOptions = {
+  maxPages?: number;
+};
+
 type MetaPermission = {
   permission: string;
   status: string;
@@ -224,8 +228,8 @@ async function syncAccount(account: SyncAccountConfig, brandId: string | null) {
   const campaigns = await graphPages<JsonRecord>(`${metaAccountId}/campaigns`, {
     fields:
       "id,name,objective,status,effective_status,buying_type,start_time,stop_time,created_time,updated_time",
-    limit: "200",
-  });
+    limit: "100",
+  }, { maxPages: getSyncMaxPages("META_SYNC_MAX_CAMPAIGN_PAGES", 12) });
 
   const campaignRows = await upsertMany(
     "meta_campaigns",
@@ -253,8 +257,8 @@ async function syncAccount(account: SyncAccountConfig, brandId: string | null) {
   const adSets = await graphPages<JsonRecord>(`${metaAccountId}/adsets`, {
     fields:
       "id,name,campaign_id,status,effective_status,optimization_goal,billing_event,bid_strategy,daily_budget,lifetime_budget,start_time,end_time,created_time,updated_time,targeting",
-    limit: "200",
-  });
+    limit: "100",
+  }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_SET_PAGES", 12) });
 
   const adSetRows = await upsertMany(
     "meta_ad_sets",
@@ -288,8 +292,8 @@ async function syncAccount(account: SyncAccountConfig, brandId: string | null) {
   const ads = await graphPages<JsonRecord>(`${metaAccountId}/ads`, {
     fields:
       "id,name,campaign_id,adset_id,status,effective_status,created_time,updated_time,creative{id,name,title,body,thumbnail_url,image_url,image_hash,object_type,object_story_id,effective_object_story_id,object_story_spec,asset_feed_spec,call_to_action_type,video_id}",
-    limit: "200",
-  });
+    limit: "50",
+  }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_PAGES", 20) });
 
   const previewByAdId = new Map<string, { previewHtml: string | null; previewUrl: string | null }>();
   for (const ad of ads) {
@@ -481,10 +485,10 @@ async function fetchInsights(metaAccountId: string) {
     return await graphPages<JsonRecord>(`${metaAccountId}/insights`, {
       level: "ad",
       time_increment: "1",
-      date_preset: "last_90d",
+      date_preset: getSyncDatePreset(),
       fields: fullFields,
-      limit: "500",
-    });
+      limit: "100",
+    }, { maxPages: getSyncMaxPages("META_SYNC_MAX_INSIGHT_PAGES", 30) });
   } catch (error) {
     const minimalFields = [
       "campaign_id",
@@ -510,10 +514,10 @@ async function fetchInsights(metaAccountId: string) {
       return graphPages<JsonRecord>(`${metaAccountId}/insights`, {
         level: "ad",
         time_increment: "1",
-        date_preset: "last_90d",
+        date_preset: getSyncDatePreset(),
         fields: minimalFields,
-        limit: "500",
-      });
+        limit: "100",
+      }, { maxPages: getSyncMaxPages("META_SYNC_MAX_INSIGHT_PAGES", 30) });
     }
     throw error;
   }
@@ -583,11 +587,16 @@ async function graphFetch<T>(path: string, params: Record<string, string | undef
   return json as T;
 }
 
-async function graphPages<T>(path: string, params: Record<string, string | undefined>) {
+async function graphPages<T>(
+  path: string,
+  params: Record<string, string | undefined>,
+  options: PageOptions = {},
+) {
   const data: T[] = [];
   let nextUrl: string | undefined = graphUrl(path, params);
+  let page = 0;
 
-  while (nextUrl) {
+  while (nextUrl && (!options.maxPages || page < options.maxPages)) {
     const response = await fetch(nextUrl, { cache: "no-store" });
     const json = (await response.json()) as MetaPaging<T>;
 
@@ -600,9 +609,19 @@ async function graphPages<T>(path: string, params: Record<string, string | undef
 
     data.push(...(json.data || []));
     nextUrl = json.paging?.next;
+    page += 1;
   }
 
   return data;
+}
+
+function getSyncDatePreset() {
+  return process.env.META_SYNC_DATE_PRESET?.trim() || "last_30d";
+}
+
+function getSyncMaxPages(name: string, fallback: number) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
 function graphUrl(path: string, params: Record<string, string | undefined>) {
