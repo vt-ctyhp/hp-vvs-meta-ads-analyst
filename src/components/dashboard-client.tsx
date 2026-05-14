@@ -394,12 +394,12 @@ export function DashboardClient({ initialData }: Props) {
         </div>
       </section>
 
-      <section className="mx-auto mt-8 grid max-w-7xl gap-6 xl:grid-cols-[1fr_380px]">
-        <div className="space-y-8">
+      <section className="mx-auto mt-8 grid w-full max-w-7xl min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,360px)]">
+        <div className="min-w-0 space-y-8">
           <PerformanceSection title="Campaign Performance" rows={filteredCampaigns.slice(0, 10)} />
           <PerformanceSection title="Ad Set Performance" rows={filteredAdSets.slice(0, 10)} />
 
-          <div className="border border-hp-rule bg-hp-card p-6">
+          <div className="min-w-0 border border-hp-rule bg-hp-card p-4 sm:p-6">
             <SectionHeader eyebrow="Creative Leaderboard" title="Creative gallery and table" />
             {viewMode === "table" && <CreativeTable rows={filteredCreatives.slice(0, 50)} />}
             {viewMode === "cards" && <CreativeCards rows={filteredCreatives.slice(0, 18)} />}
@@ -407,7 +407,7 @@ export function DashboardClient({ initialData }: Props) {
           </div>
         </div>
 
-        <aside className="space-y-6">
+        <aside className="min-w-0 space-y-6">
           <ActionPanel
             isSyncing={isSyncing}
             isReporting={isReporting}
@@ -588,18 +588,18 @@ function SegmentedView({
 
 function PerformanceSection({ title, rows }: { title: string; rows: PerformanceRow[] }) {
   return (
-    <div className="border border-hp-rule bg-hp-card p-6">
+    <div className="min-w-0 border border-hp-rule bg-hp-card p-4 sm:p-6">
       <SectionHeader eyebrow="Performance" title={title} />
-      <div className="overflow-x-auto">
-        <table className="min-w-[1120px] table-fixed border-collapse text-sm">
+      <div className="w-full overflow-x-auto">
+        <table className="w-full min-w-[760px] table-fixed border-collapse text-sm">
           <colgroup>
-            <col className="w-[39%]" />
-            <col className="w-[8%]" />
-            <col className="w-[17%]" />
+            <col className="w-[31%]" />
+            <col className="w-[7%]" />
+            <col className="w-[16%]" />
             <col className="w-[9%]" />
             <col className="w-[8%]" />
             <col className="w-[8%]" />
-            <col className="w-[11%]" />
+            <col className="w-[21%]" />
           </colgroup>
           <thead>
             <tr className="bg-hp-inset text-left text-[11px] uppercase tracking-[0.14em] text-hp-muted">
@@ -616,10 +616,12 @@ function PerformanceSection({ title, rows }: { title: string; rows: PerformanceR
             {rows.map((row) => (
               <tr key={row.id} className="border-b border-hp-rule align-top last:border-b-0">
                 <td className="px-3 py-4 text-hp-ink">
-                  <div className="leading-6 [overflow-wrap:anywhere]">{row.name}</div>
+                  <div className="max-w-full leading-6 [overflow-wrap:anywhere]">{row.name}</div>
                 </td>
                 <td className="px-3 py-4">{row.brandCode}</td>
-                <td className="px-3 py-4 text-xs leading-5 text-hp-muted">{row.campaignUmbrella}</td>
+                <td className="px-3 py-4 text-xs leading-5 text-hp-muted [overflow-wrap:anywhere]">
+                  {row.campaignUmbrella}
+                </td>
                 <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.spend, "money")}</td>
                 <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.ctr, "percent")}</td>
                 <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.cpc, "money")}</td>
@@ -644,18 +646,18 @@ function PerformanceSection({ title, rows }: { title: string; rows: PerformanceR
 
 function CreativeTable({ rows }: { rows: PerformanceRow[] }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="min-w-[1240px] table-fixed border-collapse text-sm">
+    <div className="w-full overflow-x-auto">
+      <table className="w-full min-w-[840px] table-fixed border-collapse text-sm">
         <colgroup>
-          <col className="w-[28%]" />
-          <col className="w-[8%]" />
-          <col className="w-[7%]" />
-          <col className="w-[14%]" />
-          <col className="w-[8%]" />
-          <col className="w-[7%]" />
-          <col className="w-[7%]" />
-          <col className="w-[7%]" />
+          <col className="w-[26%]" />
           <col className="w-[10%]" />
+          <col className="w-[6%]" />
+          <col className="w-[13%]" />
+          <col className="w-[9%]" />
+          <col className="w-[7%]" />
+          <col className="w-[7%]" />
+          <col className="w-[7%]" />
+          <col className="w-[11%]" />
           <col className="w-[4%]" />
         </colgroup>
         <thead>
@@ -675,8 +677,8 @@ function CreativeTable({ rows }: { rows: PerformanceRow[] }) {
         <tbody>
           {rows.map((row) => (
             <tr key={row.id} className="border-b border-hp-rule align-top last:border-b-0">
-              <td className="max-w-[360px] px-3 py-4">
-                <div className="text-hp-ink [overflow-wrap:anywhere]">{row.name}</div>
+              <td className="px-3 py-4">
+                <div className="max-w-full text-hp-ink [overflow-wrap:anywhere]">{row.name}</div>
                 {row.body ? (
                   <div className="mt-1 line-clamp-2 text-xs leading-5 text-hp-muted [overflow-wrap:anywhere]">
                     {row.body}
@@ -687,7 +689,9 @@ function CreativeTable({ rows }: { rows: PerformanceRow[] }) {
                 <CreativePreview creative={row} compact />
               </td>
               <td className="px-3 py-4">{row.brandCode}</td>
-              <td className="px-3 py-4 text-xs leading-5 text-hp-muted">{row.campaignUmbrella}</td>
+              <td className="px-3 py-4 text-xs leading-5 text-hp-muted [overflow-wrap:anywhere]">
+                {row.campaignUmbrella}
+              </td>
               <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.spend, "money")}</td>
               <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.ctr, "percent")}</td>
               <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.cpc, "money")}</td>
@@ -788,7 +792,7 @@ function CreativePreview({
   gallery?: boolean;
 }) {
   const imageSrc = creative.previewUrl || creative.thumbnailUrl || creative.imageUrl || creative.videoThumbnailUrl;
-  const dimensions = compact ? "h-16 w-16" : gallery ? "aspect-[4/3] w-full" : "h-28 w-28";
+  const dimensions = compact ? "h-14 w-14" : gallery ? "aspect-[4/3] w-full" : "h-28 w-28";
 
   if (creative.previewHtml && creative.previewSource === "ad_preview") {
     return (
@@ -839,11 +843,11 @@ function ResultCell({ row, align = "left" }: { row: PerformanceRow; align?: "lef
   return (
     <div className={align === "right" ? "text-right" : "text-left"}>
       <div className="tabular-nums text-hp-ink">{formatMetric(row.primaryResults, "number")}</div>
-      <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+      <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted [overflow-wrap:anywhere]">
         {row.primaryResultLabel}
       </div>
       {row.secondaryResultLabel && row.secondaryResults !== null ? (
-        <div className="mt-1 text-xs tabular-nums text-hp-muted">
+        <div className="mt-1 text-xs tabular-nums text-hp-muted [overflow-wrap:anywhere]">
           {formatMetric(row.secondaryResults, "number")} {row.secondaryResultLabel}
         </div>
       ) : null}
@@ -893,7 +897,7 @@ function InsightPanel({
           {items.length ? (
             <ol className="space-y-3 text-sm">
               {items.map((item) => (
-                <li key={item} className="leading-6 text-hp-body">
+                <li key={item} className="leading-6 text-hp-body [overflow-wrap:anywhere]">
                   {item}
                 </li>
               ))}
@@ -969,7 +973,7 @@ function ChatPanel({
           messages.map((message, index) => (
             <div
               key={`${message.role}-${index}`}
-              className={`text-sm leading-6 ${
+              className={`text-sm leading-6 [overflow-wrap:anywhere] ${
                 message.role === "user" ? "text-hp-ink" : "text-hp-body"
               }`}
             >
