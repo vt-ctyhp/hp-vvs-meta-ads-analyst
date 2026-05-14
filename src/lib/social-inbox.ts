@@ -292,7 +292,10 @@ export async function ingestMetaWebhookPayload(payload: JsonRecord): Promise<Met
   };
 
   for (const entry of entries) {
-    const messagingEvents = arrayField(entry.messaging).filter(isRecord);
+    const messagingEvents = [
+      ...arrayField(entry.messaging).filter(isRecord),
+      ...arrayField(entry.standby).filter(isRecord),
+    ];
     for (const event of messagingEvents) {
       const row = webhookMessageRow(object, entry, event);
       if (!row) continue;
