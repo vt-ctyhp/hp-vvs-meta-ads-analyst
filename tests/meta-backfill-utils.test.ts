@@ -53,7 +53,7 @@ describe("Meta insight date params", () => {
   });
 
   it("defaults incremental sync to the attribution settlement window and honors overrides", () => {
-    assert.equal(incrementalDatePreset({}), "last_35d");
+    assert.equal(incrementalDatePreset({}), "last_90d");
     assert.equal(incrementalDatePreset({ META_INCREMENTAL_SYNC_DAYS: "14" }), "last_14d");
     assert.equal(
       incrementalDatePreset({

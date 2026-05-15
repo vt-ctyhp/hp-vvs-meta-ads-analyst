@@ -12,6 +12,7 @@ import {
   incrementalSyncDays,
   type InsightDateRange,
 } from "./meta-backfill-utils";
+import { resolveMetaKpi } from "./meta-kpi";
 import { createServiceClient } from "./supabase";
 
 type JsonRecord = Record<string, unknown>;
@@ -97,6 +98,14 @@ type AccountSyncAudit = {
   delta: InsightAggregateSnapshot;
   changedBuckets: InsightBucketSnapshot[];
   warnings: string[];
+};
+
+type InsightRankingDiagnostics = {
+  objective: string | null;
+  optimizationGoal: string | null;
+  qualityRanking: string | null;
+  engagementRateRanking: string | null;
+  conversionRateRanking: string | null;
 };
 
 type SyncAuditSummary = {
@@ -755,7 +764,11 @@ async function syncAccount(
   );
   const adByMetaId = new Map(adRows.map((row) => [String(row.ad_id), row]));
 
-  const insights = await fetchInsights(metaAccountId, options.insights);
+  const insightRange = options.insights || getSyncInsightDateRange();
+  const [insights, rankingByAdId] = await Promise.all([
+    fetchInsights(metaAccountId, insightRange),
+    fetchInsightRankingDiagnostics(metaAccountId, insightRange),
+  ]);
   const allowFinalizedUpdates = options.allowFinalizedInsightUpdates === true;
   const finalizedCutoff = allowFinalizedUpdates ? null : finalizedInsightCutoffDate();
   const mappedInsightRows = insights.map((insight) =>
@@ -771,6 +784,7 @@ async function syncAccount(
       adClassifications,
       adSetClassifications,
       campaignClassifications,
+      rankingByAdId,
     }),
   );
   const validInsightRows = mappedInsightRows.filter(isValidInsightRow);
@@ -791,7 +805,7 @@ async function syncAccount(
   const audit = buildAccountSyncAudit({
     account,
     metaAccountId,
-    range: options.insights || { kind: "preset", datePreset: getSyncDatePreset() },
+    range: insightRange,
     fetchedRows: insights.length,
     validRows: validInsightRows.length,
     storedRows: dedupedInsightRows.length,
@@ -830,21 +844,38 @@ function mapInsightToDailyRow(input: {
   adClassifications: Map<string, CampaignUmbrellaClassification>;
   adSetClassifications: Map<string, CampaignUmbrellaClassification>;
   campaignClassifications: Map<string, CampaignUmbrellaClassification>;
+  rankingByAdId: Map<string, InsightRankingDiagnostics>;
 }) {
   const adId = stringField(input.insight.ad_id);
+  const ranking = adId ? input.rankingByAdId.get(adId) : undefined;
   const ad = input.adByMetaId.get(adId || "");
   const creativeId = stringField(ad?.creative_id);
   const campaignId = stringField(input.insight.campaign_id);
   const adSetId = stringField(input.insight.adset_id);
+  const campaignName = stringField(input.insight.campaign_name);
+  const adSetName = stringField(input.insight.adset_name);
+  const objective = stringField(input.insight.objective) || ranking?.objective || null;
+  const optimizationGoal =
+    stringField(input.insight.optimization_goal) || ranking?.optimizationGoal || null;
   const inheritedClassification = (adId && input.adClassifications.get(adId)) ||
     (adSetId && input.adSetClassifications.get(adSetId)) ||
     (campaignId && input.campaignClassifications.get(campaignId)) ||
     null;
   const classification = inheritedClassification ||
     classifyCampaignUmbrella({
-      campaignName: stringField(input.insight.campaign_name),
-      adSetName: stringField(input.insight.adset_name),
+      campaignName,
+      adSetName,
     });
+  const kpi = resolveMetaKpi({
+    spend: numberField(input.insight.spend) || 0,
+    actions: input.insight.actions,
+    costPerActionType: input.insight.cost_per_action_type,
+    campaignName,
+    adSetName,
+    campaignUmbrella: classification.umbrella,
+    objective,
+    optimizationGoal,
+  });
 
   return {
     brand_id: input.brandId,
@@ -855,9 +886,11 @@ function mapInsightToDailyRow(input: {
     creative_ref_id: input.creativeByMetaId.get(creativeId || "")?.id || null,
     meta_account_id: input.metaAccountId,
     campaign_id: campaignId,
-    campaign_name: stringField(input.insight.campaign_name),
+    campaign_name: campaignName,
+    objective,
     ad_set_id: adSetId,
-    ad_set_name: stringField(input.insight.adset_name),
+    ad_set_name: adSetName,
+    optimization_goal: optimizationGoal,
     ad_id: adId,
     ad_name: stringField(input.insight.ad_name),
     creative_id: creativeId,
@@ -873,6 +906,18 @@ function mapInsightToDailyRow(input: {
     clicks: numberString(input.insight.clicks),
     inline_link_clicks: numberString(input.insight.inline_link_clicks),
     unique_clicks: numberString(input.insight.unique_clicks),
+    cost_per_action_type: Array.isArray(input.insight.cost_per_action_type)
+      ? input.insight.cost_per_action_type
+      : [],
+    quality_ranking: stringField(input.insight.quality_ranking) || ranking?.qualityRanking || null,
+    engagement_rate_ranking:
+      stringField(input.insight.engagement_rate_ranking) || ranking?.engagementRateRanking || null,
+    conversion_rate_ranking:
+      stringField(input.insight.conversion_rate_ranking) || ranking?.conversionRateRanking || null,
+    kpi_label: kpi.resultKpiLabel,
+    kpi_action_type: kpi.resultActionType,
+    kpi_value: kpi.resultCount,
+    cost_per_kpi: kpi.costPerResult,
     conversions: extractActionCount(input.insight.actions, ["offsite_conversion", "purchase", "complete_registration"]),
     leads: extractExactActionCount(input.insight.actions, [
       "lead",
@@ -891,6 +936,7 @@ function mapInsightToDailyRow(input: {
             "appointment",
           ]),
     video_metrics: {
+      video_play_actions: input.insight.video_play_actions || [],
       video_30_sec_watched_actions: input.insight.video_30_sec_watched_actions || [],
       video_avg_time_watched_actions: input.insight.video_avg_time_watched_actions || [],
       video_p25_watched_actions: input.insight.video_p25_watched_actions || [],
@@ -898,6 +944,7 @@ function mapInsightToDailyRow(input: {
       video_p75_watched_actions: input.insight.video_p75_watched_actions || [],
       video_p95_watched_actions: input.insight.video_p95_watched_actions || [],
       video_p100_watched_actions: input.insight.video_p100_watched_actions || [],
+      video_thruplay_watched_actions: input.insight.video_thruplay_watched_actions || [],
     },
     actions: Array.isArray(input.insight.actions) ? input.insight.actions : [],
     action_values: Array.isArray(input.insight.action_values) ? input.insight.action_values : [],
@@ -1150,8 +1197,10 @@ async function fetchInsights(metaAccountId: string, range?: InsightDateRange) {
   const fullFields = [
     "campaign_id",
     "campaign_name",
+    "objective",
     "adset_id",
     "adset_name",
+    "optimization_goal",
     "ad_id",
     "ad_name",
     "date_start",
@@ -1165,9 +1214,12 @@ async function fetchInsights(metaAccountId: string, range?: InsightDateRange) {
     "ctr",
     "clicks",
     "inline_link_clicks",
+    "inline_link_click_ctr",
     "unique_clicks",
     "actions",
     "action_values",
+    "cost_per_action_type",
+    "video_play_actions",
     "video_30_sec_watched_actions",
     "video_avg_time_watched_actions",
     "video_p25_watched_actions",
@@ -1175,6 +1227,10 @@ async function fetchInsights(metaAccountId: string, range?: InsightDateRange) {
     "video_p75_watched_actions",
     "video_p95_watched_actions",
     "video_p100_watched_actions",
+    "video_thruplay_watched_actions",
+    "quality_ranking",
+    "engagement_rate_ranking",
+    "conversion_rate_ranking",
   ].join(",");
 
   try {
@@ -1219,6 +1275,46 @@ async function fetchInsights(metaAccountId: string, range?: InsightDateRange) {
   }
 }
 
+async function fetchInsightRankingDiagnostics(metaAccountId: string, range: InsightDateRange) {
+  try {
+    const rows = await graphPages<JsonRecord>(`${metaAccountId}/insights`, {
+      level: "ad",
+      time_increment: "all_days",
+      ...buildInsightDateParams(range),
+      fields: [
+        "ad_id",
+        "objective",
+        "optimization_goal",
+        "quality_ranking",
+        "engagement_rate_ranking",
+        "conversion_rate_ranking",
+      ].join(","),
+      limit: "100",
+    }, { maxPages: getSyncMaxPages("META_SYNC_MAX_RANKING_PAGES", 30) });
+
+    return new Map(
+      rows
+        .map((row) => {
+          const adId = stringField(row.ad_id);
+          if (!adId) return null;
+          return [
+            adId,
+            {
+              objective: stringField(row.objective),
+              optimizationGoal: stringField(row.optimization_goal),
+              qualityRanking: stringField(row.quality_ranking),
+              engagementRateRanking: stringField(row.engagement_rate_ranking),
+              conversionRateRanking: stringField(row.conversion_rate_ranking),
+            } satisfies InsightRankingDiagnostics,
+          ] as const;
+        })
+        .filter((entry): entry is readonly [string, InsightRankingDiagnostics] => Boolean(entry)),
+    );
+  } catch {
+    return new Map<string, InsightRankingDiagnostics>();
+  }
+}
+
 async function fetchAccountInsightsTotal(
   metaAccountId: string,
   range: { since: string; until: string },
@@ -1252,8 +1348,10 @@ async function fetchCreativeAnalysisInsights(
   const coreFields = [
     "campaign_id",
     "campaign_name",
+    "objective",
     "adset_id",
     "adset_name",
+    "optimization_goal",
     "ad_id",
     "ad_name",
     "date_start",
@@ -1461,6 +1559,22 @@ async function graphPages<T>(
 
 function getSyncDatePreset() {
   return incrementalDatePreset();
+}
+
+function getSyncInsightDateRange(): InsightDateRange {
+  const until = toGraphDateString(new Date());
+  const sinceDate = new Date(`${until}T00:00:00Z`);
+  sinceDate.setUTCDate(sinceDate.getUTCDate() - incrementalSyncDays() + 1);
+
+  return {
+    kind: "range",
+    since: toGraphDateString(sinceDate),
+    until,
+  };
+}
+
+function toGraphDateString(value: Date) {
+  return value.toISOString().slice(0, 10);
 }
 
 function getSyncMaxPages(name: string, fallback: number) {

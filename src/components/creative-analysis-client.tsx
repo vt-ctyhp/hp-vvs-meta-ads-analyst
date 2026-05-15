@@ -304,7 +304,7 @@ export function CreativeAnalysisClient({ initialData }: Props) {
 
       <section className="mx-auto mt-6 grid max-w-7xl gap-4 sm:grid-cols-2 xl:grid-cols-7">
         <SummaryCard label="Total spend" value={formatMoney(summary.totalSpend, true)} />
-        <SummaryCard label="Bookings/leads/results" value={formatNumber(summary.totalResults)} />
+        <SummaryCard label="KPI results" value={formatNumber(summary.totalResults)} />
         <SummaryCard label="Average CPA" value={formatMoney(summary.averageCpa)} />
         <SummaryCard label="Best CPA" value={summary.bestByCpa?.adName || "n/a"} detail={formatMoney(summary.bestByCpa?.costPerResult ?? null)} />
         <SummaryCard label="Best hook" value={summary.bestByHook?.adName || "n/a"} detail={formatRate(summary.bestByHook?.hookRate ?? null)} />
@@ -326,7 +326,7 @@ export function CreativeAnalysisClient({ initialData }: Props) {
 
         {filteredRows.length ? (
           <div className="overflow-x-auto scrollbar-thin">
-            <table className="w-full min-w-[1540px] border-collapse">
+            <table className="w-full min-w-[1700px] border-collapse">
               <thead>
                 <tr className="bg-hp-inset">
                   {[
@@ -341,7 +341,9 @@ export function CreativeAnalysisClient({ initialData }: Props) {
                     "Hook rate",
                     "Hold rate",
                     "CTR",
-                    "Cost per result",
+                    "KPI",
+                    "Results",
+                    "Cost/KPI",
                     "Quality",
                     "Engagement",
                     "Conversion",
@@ -395,6 +397,10 @@ export function CreativeAnalysisClient({ initialData }: Props) {
                     <TableMetric>{formatRate(row.hookRate)}</TableMetric>
                     <TableMetric>{formatRate(row.holdRate)}</TableMetric>
                     <TableMetric>{formatPercentNumber(row.ctr)}</TableMetric>
+                    <TableCell>
+                      <KpiLabel row={row} />
+                    </TableCell>
+                    <TableMetric>{formatNumber(row.resultCount)}</TableMetric>
                     <TableMetric>{formatMoney(row.costPerResult)}</TableMetric>
                     <TableCell>{rankingLabel(row.qualityRanking)}</TableCell>
                     <TableCell>{rankingLabel(row.engagementRateRanking)}</TableCell>
@@ -542,6 +548,21 @@ function TableCell({ children }: { children: ReactNode }) {
 
 function TableMetric({ children }: { children: ReactNode }) {
   return <td className="px-4 py-3 text-sm tabular-nums text-hp-ink">{children}</td>;
+}
+
+function KpiLabel({ row }: { row: CreativeAnalysisRow }) {
+  return (
+    <div>
+      <p className="whitespace-nowrap text-sm text-hp-ink">{row.resultKpiLabel}</p>
+      {row.resultActionType ? (
+        <p className="mt-1 max-w-[160px] truncate text-[11px] text-hp-muted" title={row.resultActionType}>
+          {friendlyActionType(row.resultActionType)}
+        </p>
+      ) : (
+        <p className="mt-1 text-[11px] text-hp-muted">No action</p>
+      )}
+    </div>
+  );
 }
 
 function PreviewThumb({ row }: { row: CreativeAnalysisRow }) {
@@ -703,6 +724,12 @@ function CreativeDetailDrawer({
                 <MetricLine label="Completion rate" value={formatRate(row.completionRate)} />
                 <MetricLine label="CTR" value={formatPercentNumber(row.ctr)} />
                 <MetricLine label="Inline link clicks" value={formatNumber(row.inlineLinkClicks)} />
+                <MetricLine
+                  label="Primary KPI"
+                  value={row.resultKpiLabel}
+                  detail={row.resultActionType || "No matching action returned"}
+                />
+                <MetricLine label="KPI results" value={formatNumber(row.resultCount)} />
                 <MetricLine label={row.resultLabel} value={formatMoney(row.costPerResult)} />
                 <MetricLine label="Video plays" value={formatNumber(sumActionValues(row.rawMetrics.videoPlayActions))} />
                 <MetricLine label="Video 25%" value={formatNumber(sumActionValues(row.rawMetrics.videoP25WatchedActions))} />
@@ -834,6 +861,14 @@ function rankingLabel(value: string | null) {
   if (!value) return "Unavailable";
   return value
     .toLowerCase()
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function friendlyActionType(value: string) {
+  return value
+    .replace(/^onsite_conversion\./, "")
+    .replace(/^offsite_conversion\.fb_pixel_/, "")
     .replace(/_/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }

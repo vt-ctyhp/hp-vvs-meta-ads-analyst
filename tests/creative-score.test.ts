@@ -62,6 +62,44 @@ describe("creative score helpers", () => {
     assert.equal(metrics.holdRateEstimated, false);
   });
 
+  it("uses the campaign KPI when resolving cost efficiency", () => {
+    const metrics = deriveCreativeMetrics(
+      input({
+        campaignName: "CBI | Prospecting | VN | Promotion | Messenger Campaign",
+        objective: "OUTCOME_ENGAGEMENT",
+        optimizationGoal: "REPLIES",
+        actions: [
+          { action_type: "onsite_conversion.total_messaging_connection", value: 8 },
+          { action_type: "onsite_conversion.lead", value: 2 },
+        ],
+        costPerActionType: [
+          { action_type: "onsite_conversion.total_messaging_connection", value: 12.5 },
+          { action_type: "onsite_conversion.lead", value: 5 },
+        ],
+      }),
+    );
+
+    assert.equal(metrics.resultKpiLabel, "Messages");
+    assert.equal(metrics.resultCount, 8);
+    assert.equal(metrics.costPerResult, 12.5);
+  });
+
+  it("uses bookings for appointment campaigns", () => {
+    const metrics = deriveCreativeMetrics(
+      input({
+        campaignName: "CBI_Evergreen_Scheduled_Test_BookAppointment_Prospecting_US_2025",
+        actions: [
+          { action_type: "offsite_conversion.fb_pixel_custom", value: 4 },
+          { action_type: "onsite_conversion.total_messaging_connection", value: 20 },
+        ],
+      }),
+    );
+
+    assert.equal(metrics.resultKpiLabel, "Bookings");
+    assert.equal(metrics.resultCount, 4);
+    assert.equal(metrics.costPerResult, 25);
+  });
+
   it("flags high hook and weak conversion as clickbait risk", () => {
     const [diagnostic] = buildCreativeDiagnostics([
       input({

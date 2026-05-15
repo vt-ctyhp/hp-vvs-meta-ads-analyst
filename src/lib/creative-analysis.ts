@@ -6,6 +6,7 @@ import {
   type CreativeScoreInput,
   type CreativeStatus,
 } from "./creative-score";
+import { classifyCampaignUmbrella } from "./campaign-umbrellas";
 import { ConfigurationError, getMissingRequiredEnv } from "./env";
 import {
   fetchMetaCreativeAnalysisInsightsForRange,
@@ -45,8 +46,11 @@ export type CreativeAnalysisRow = CreativeDiagnostic & {
   adName: string;
   campaignId: string | null;
   campaignName: string;
+  campaignUmbrella: string | null;
   adSetId: string | null;
   adSetName: string;
+  objective: string | null;
+  optimizationGoal: string | null;
   creativeId: string | null;
   creativeName: string | null;
   creativeTitle: string | null;
@@ -93,8 +97,11 @@ type RawCreativeInsight = CreativeScoreInput & {
   adName: string;
   campaignId: string | null;
   campaignName: string;
+  campaignUmbrella: string | null;
   adSetId: string | null;
   adSetName: string;
+  objective: string | null;
+  optimizationGoal: string | null;
   creativeId: string | null;
   dataSource: "meta_live" | "stored_history";
 };
@@ -131,11 +138,14 @@ type StoredInsightRow = {
   meta_account_id: string;
   campaign_id: string | null;
   campaign_name: string | null;
+  campaign_umbrella: string | null;
   ad_set_id: string | null;
   ad_set_name: string | null;
   ad_id: string | null;
   ad_name: string | null;
   creative_id: string | null;
+  objective: string | null;
+  optimization_goal: string | null;
   date_start: string;
   spend: number | string | null;
   impressions: number | string | null;
@@ -146,6 +156,14 @@ type StoredInsightRow = {
   inline_link_clicks: number | string | null;
   ctr: number | string | null;
   cpc: number | string | null;
+  cost_per_action_type: unknown;
+  quality_ranking: string | null;
+  engagement_rate_ranking: string | null;
+  conversion_rate_ranking: string | null;
+  kpi_label: string | null;
+  kpi_action_type: string | null;
+  kpi_value: number | string | null;
+  cost_per_kpi: number | string | null;
   actions: unknown;
   video_metrics: unknown;
   raw_json: unknown;
@@ -158,7 +176,7 @@ const REQUIRED_ENV = [
   "META_ACCESS_TOKEN",
   "META_HP_AD_ACCOUNT_ID",
 ] as const;
-const LIVE_META_TIMEOUT_MS = 3500;
+const LIVE_META_TIMEOUT_MS = 12000;
 
 export function emptyCreativeAnalysisPayload(
   missingEnv = getMissingRequiredEnv(REQUIRED_ENV),
@@ -306,6 +324,12 @@ function mapLiveInsight(row: MetaCreativeAnalysisInsight): RawCreativeInsight {
   const clicks = numberValue(row.clicks);
   const inlineLinkClicks = numberValue(row.inline_link_clicks);
   const spend = numberValue(row.spend);
+  const campaignName = stringField(row.campaign_name) || "Unknown campaign";
+  const adSetName = stringField(row.adset_name) || "Unknown ad set";
+  const campaignUmbrella = classifyCampaignUmbrella({
+    campaignName,
+    adSetName,
+  }).umbrella;
 
   return {
     id: insightKey(metaAccountId, adId),
@@ -314,9 +338,12 @@ function mapLiveInsight(row: MetaCreativeAnalysisInsight): RawCreativeInsight {
     adId,
     adName: stringField(row.ad_name) || "Unknown ad",
     campaignId: stringField(row.campaign_id),
-    campaignName: stringField(row.campaign_name) || "Unknown campaign",
+    campaignName,
+    campaignUmbrella,
     adSetId: stringField(row.adset_id),
-    adSetName: stringField(row.adset_name) || "Unknown ad set",
+    adSetName,
+    objective: stringField(row.objective),
+    optimizationGoal: stringField(row.optimization_goal),
     creativeId: null,
     dataSource: "meta_live",
     spend,
@@ -358,6 +385,14 @@ function aggregateStoredInsightRows(
     const metaAccountId = storedRow.meta_account_id;
     const key = insightKey(metaAccountId, adId);
     const brandCode = (storedRow.brand_id && brandById.get(storedRow.brand_id)?.code) || "Unassigned";
+    const campaignName = storedRow.campaign_name || "Unknown campaign";
+    const adSetName = storedRow.ad_set_name || "Unknown ad set";
+    const campaignUmbrella =
+      storedRow.campaign_umbrella ||
+      classifyCampaignUmbrella({
+        campaignName,
+        adSetName,
+      }).umbrella;
     const current = grouped.get(key) || {
       id: key,
       brandCode,
@@ -365,9 +400,12 @@ function aggregateStoredInsightRows(
       adId,
       adName: storedRow.ad_name || "Unknown ad",
       campaignId: storedRow.campaign_id,
-      campaignName: storedRow.campaign_name || "Unknown campaign",
+      campaignName,
+      campaignUmbrella,
       adSetId: storedRow.ad_set_id,
-      adSetName: storedRow.ad_set_name || "Unknown ad set",
+      adSetName,
+      objective: storedRow.objective,
+      optimizationGoal: storedRow.optimization_goal,
       creativeId: storedRow.creative_id,
       dataSource: "stored_history" as const,
       spend: 0,
@@ -400,6 +438,9 @@ function aggregateStoredInsightRows(
     current.clicks += numberValue(storedRow.clicks);
     current.inlineLinkClicks += numberValue(storedRow.inline_link_clicks);
     current.creativeId ||= storedRow.creative_id;
+    current.campaignUmbrella ||= campaignUmbrella;
+    current.objective ||= storedRow.objective;
+    current.optimizationGoal ||= storedRow.optimization_goal;
 
     const rawJson = recordValue(storedRow.raw_json);
     const videoMetrics = recordValue(storedRow.video_metrics);
@@ -414,7 +455,7 @@ function aggregateStoredInsightRows(
     const thruplay = actionAccumulator(actionGroups, `${key}:thruplay`);
 
     mergeActions(actions, storedRow.actions);
-    mergeActions(costs, rawJson.cost_per_action_type);
+    mergeActions(costs, storedRow.cost_per_action_type || rawJson.cost_per_action_type);
     mergeActions(play, rawJson.video_play_actions || videoMetrics.video_play_actions);
     mergeActions(p25, rawJson.video_p25_watched_actions || videoMetrics.video_p25_watched_actions);
     mergeActions(p50, rawJson.video_p50_watched_actions || videoMetrics.video_p50_watched_actions);
@@ -426,9 +467,12 @@ function aggregateStoredInsightRows(
       rawJson.video_thruplay_watched_actions || videoMetrics.video_thruplay_watched_actions,
     );
 
-    current.qualityRanking ||= stringField(rawJson.quality_ranking);
-    current.engagementRateRanking ||= stringField(rawJson.engagement_rate_ranking);
-    current.conversionRateRanking ||= stringField(rawJson.conversion_rate_ranking);
+    current.qualityRanking ||=
+      stringField(storedRow.quality_ranking) || stringField(rawJson.quality_ranking);
+    current.engagementRateRanking ||=
+      stringField(storedRow.engagement_rate_ranking) || stringField(rawJson.engagement_rate_ranking);
+    current.conversionRateRanking ||=
+      stringField(storedRow.conversion_rate_ranking) || stringField(rawJson.conversion_rate_ranking);
 
     grouped.set(key, current);
   }
@@ -532,8 +576,11 @@ function enrichCreativeRow(input: {
     adName: input.row.adName,
     campaignId: input.row.campaignId,
     campaignName: input.row.campaignName,
+    campaignUmbrella: input.row.campaignUmbrella,
     adSetId: input.row.adSetId,
     adSetName: input.row.adSetName,
+    objective: input.row.objective,
+    optimizationGoal: input.row.optimizationGoal,
     creativeId,
     creativeName: creative?.name || null,
     creativeTitle: creative?.title || null,
@@ -591,11 +638,14 @@ async function fetchStoredInsightRows(
           "meta_account_id",
           "campaign_id",
           "campaign_name",
+          "campaign_umbrella",
           "ad_set_id",
           "ad_set_name",
           "ad_id",
           "ad_name",
           "creative_id",
+          "objective",
+          "optimization_goal",
           "date_start",
           "spend",
           "impressions",
@@ -606,6 +656,14 @@ async function fetchStoredInsightRows(
           "inline_link_clicks",
           "ctr",
           "cpc",
+          "cost_per_action_type",
+          "quality_ranking",
+          "engagement_rate_ranking",
+          "conversion_rate_ranking",
+          "kpi_label",
+          "kpi_action_type",
+          "kpi_value",
+          "cost_per_kpi",
           "actions",
           "video_metrics",
           "raw_json",

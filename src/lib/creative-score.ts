@@ -1,3 +1,11 @@
+import {
+  actionArray,
+  actionCount,
+  resolveMetaKpi,
+  totalActionValue,
+  type MetaKpiAction,
+} from "./meta-kpi.ts";
+
 export type CreativeStatus =
   | "Scale Candidate"
   | "Needs Hook Improvement"
@@ -8,10 +16,7 @@ export type CreativeStatus =
 
 export type RankingValue = string | null | undefined;
 
-export type CreativeAction = {
-  action_type?: string | null;
-  value?: string | number | null;
-};
+export type CreativeAction = MetaKpiAction;
 
 export type CreativeScoreInput = {
   id: string;
@@ -27,6 +32,11 @@ export type CreativeScoreInput = {
   cpc: number;
   actions: unknown;
   costPerActionType: unknown;
+  campaignName?: string | null;
+  adSetName?: string | null;
+  campaignUmbrella?: string | null;
+  objective?: string | null;
+  optimizationGoal?: string | null;
   videoPlayActions: unknown;
   videoP25WatchedActions: unknown;
   videoP50WatchedActions: unknown;
@@ -54,6 +64,7 @@ export type CreativeMetricDiagnostics = {
   clickEfficiency: number | null;
   costPerResult: number | null;
   resultCount: number;
+  resultKpiLabel: string;
   resultLabel: string;
   resultActionType: string | null;
 };
@@ -104,30 +115,6 @@ type Benchmarks = {
   bestCostPerResult: number | null;
   medianCostPerResult: number | null;
 };
-
-const BOOKING_ACTION_TYPES = [
-  "offsite_conversion.fb_pixel_custom",
-  "schedule",
-  "submit_application",
-  "booking",
-  "appointment",
-];
-const LEAD_ACTION_TYPES = [
-  "lead",
-  "onsite_conversion.lead",
-  "onsite_conversion.lead_grouped",
-  "onsite_web_lead",
-  "offsite_conversion.fb_pixel_lead",
-];
-const PURCHASE_ACTION_TYPES = [
-  "purchase",
-  "offsite_conversion.fb_pixel_purchase",
-];
-const MESSAGE_ACTION_TYPES = [
-  "onsite_conversion.total_messaging_connection",
-  "onsite_conversion.messaging_first_reply",
-  "onsite_conversion.messaging_conversation_started_7d",
-];
 
 export function buildCreativeDiagnostics(inputs: CreativeScoreInput[]): CreativeDiagnostic[] {
   const baseRows = inputs.map((input) => {
@@ -205,6 +192,7 @@ export function deriveCreativeMetrics(input: CreativeScoreInput): CreativeMetric
     clickEfficiency,
     costPerResult: result.costPerResult,
     resultCount: result.resultCount,
+    resultKpiLabel: result.resultKpiLabel,
     resultLabel: result.resultLabel,
     resultActionType: result.resultActionType,
   };
@@ -273,6 +261,7 @@ function scoreCreative(row: BaseDiagnostics, benchmarks: Benchmarks): CreativeDi
     clickEfficiency: row.clickEfficiency,
     costPerResult: row.costPerResult,
     resultCount: row.resultCount,
+    resultKpiLabel: row.resultKpiLabel,
     resultLabel: row.resultLabel,
     resultActionType: row.resultActionType,
     internalScore: scoreBreakdown.total,
@@ -299,34 +288,16 @@ function buildBenchmarks(rows: BaseDiagnostics[]): Benchmarks {
 }
 
 function resolveCostEfficiency(input: CreativeScoreInput) {
-  const actions = actionArray(input.actions);
-  const costActions = actionArray(input.costPerActionType);
-  const candidates = [
-    { label: "Cost per booking", types: BOOKING_ACTION_TYPES },
-    { label: "Cost per lead", types: LEAD_ACTION_TYPES },
-    { label: "Cost per purchase", types: PURCHASE_ACTION_TYPES },
-    { label: "Cost per messaging result", types: MESSAGE_ACTION_TYPES },
-  ];
-
-  for (const candidate of candidates) {
-    const resultCount = exactActionCount(actions, candidate.types);
-    const costFromMeta = firstExactActionValue(costActions, candidate.types);
-    if (costFromMeta !== null || resultCount > 0) {
-      return {
-        costPerResult: costFromMeta !== null ? costFromMeta : input.spend / resultCount,
-        resultCount,
-        resultLabel: candidate.label,
-        resultActionType: candidate.types[0],
-      };
-    }
-  }
-
-  return {
-    costPerResult: null,
-    resultCount: 0,
-    resultLabel: "Cost per result",
-    resultActionType: null,
-  };
+  return resolveMetaKpi({
+    spend: input.spend,
+    actions: input.actions,
+    costPerActionType: input.costPerActionType,
+    campaignName: input.campaignName,
+    adSetName: input.adSetName,
+    campaignUmbrella: input.campaignUmbrella,
+    objective: input.objective,
+    optimizationGoal: input.optimizationGoal,
+  });
 }
 
 function buildFatigueSignal(row: BaseDiagnostics): CreativeFatigueSignal {
@@ -525,42 +496,6 @@ function rankingScore(value: RankingValue) {
   return null;
 }
 
-function actionArray(value: unknown): CreativeAction[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter(isRecord).map((item) => ({
-    action_type: typeof item.action_type === "string" ? item.action_type : null,
-    value: typeof item.value === "string" || typeof item.value === "number" ? item.value : null,
-  }));
-}
-
-function totalActionValue(value: unknown) {
-  return actionArray(value).reduce((sum, action) => sum + numberValue(action.value), 0);
-}
-
-function actionCount(actions: CreativeAction[], actionTypes: string[]) {
-  return actions.reduce((sum, action) => {
-    const type = action.action_type || "";
-    if (!actionTypes.some((target) => type.includes(target))) return sum;
-    return sum + numberValue(action.value);
-  }, 0);
-}
-
-function exactActionCount(actions: CreativeAction[], actionTypes: string[]) {
-  return actions.reduce((sum, action) => {
-    if (!action.action_type || !actionTypes.includes(action.action_type)) return sum;
-    return sum + numberValue(action.value);
-  }, 0);
-}
-
-function firstExactActionValue(actions: CreativeAction[], actionTypes: string[]) {
-  for (const action of actions) {
-    if (action.action_type && actionTypes.includes(action.action_type)) {
-      return numberValue(action.value);
-    }
-  }
-  return null;
-}
-
 function values(input: Array<number | null | undefined>) {
   return input.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
 }
@@ -584,15 +519,6 @@ function averageDefined(input: number[]) {
   return input.length ? average(input) : 50;
 }
 
-function numberValue(value: string | number | null | undefined) {
-  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
-  if (typeof value === "string" && value.length) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-  return 0;
-}
-
 function clamp(value: number, minValue: number, maxValue: number) {
   return Math.max(minValue, Math.min(maxValue, value));
 }
@@ -600,8 +526,4 @@ function clamp(value: number, minValue: number, maxValue: number) {
 function round(value: number, precision = 2) {
   const factor = 10 ** precision;
   return Math.round(value * factor) / factor;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

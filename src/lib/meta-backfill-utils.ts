@@ -10,6 +10,7 @@ export type InsightDateRange =
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MONTH_PATTERN = /^\d{4}-\d{2}$/;
 export const DEFAULT_INCREMENTAL_SYNC_DAYS = 35;
+const SUPPORTED_DAY_PRESETS = [3, 7, 14, 28, 30, 90] as const;
 
 export function monthlyDateChunks(start: string, end: string): DateChunk[] {
   const startDate = parseDate(start);
@@ -47,7 +48,9 @@ export function incrementalDatePreset(env: Record<string, string | undefined> = 
   const explicitPreset = env.META_SYNC_DATE_PRESET?.trim();
   if (explicitPreset) return explicitPreset;
 
-  return `last_${incrementalSyncDays(env)}d`;
+  const days = incrementalSyncDays(env);
+  const presetDays = SUPPORTED_DAY_PRESETS.find((supportedDays) => supportedDays >= days) || 90;
+  return `last_${presetDays}d`;
 }
 
 export function incrementalSyncDays(env: Record<string, string | undefined> = process.env) {

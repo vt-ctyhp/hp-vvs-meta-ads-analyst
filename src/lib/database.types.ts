@@ -3568,7 +3568,10 @@ export type Database = {
           campaign_umbrella_reason: string | null
           campaign_umbrella_source: string | null
           clicks: number
+          conversion_rate_ranking: string | null
           conversions: number
+          cost_per_action_type: Json
+          cost_per_kpi: number | null
           cpc: number
           cpm: number
           created_at: string
@@ -3577,12 +3580,19 @@ export type Database = {
           ctr: number
           date_start: string
           date_stop: string
+          engagement_rate_ranking: string | null
           frequency: number
           id: string
           impressions: number
           inline_link_clicks: number
+          kpi_action_type: string | null
+          kpi_label: string | null
+          kpi_value: number
           leads: number
           meta_account_id: string
+          objective: string | null
+          optimization_goal: string | null
+          quality_ranking: string | null
           raw_json: Json
           reach: number
           spend: number
@@ -3610,7 +3620,10 @@ export type Database = {
           campaign_umbrella_reason?: string | null
           campaign_umbrella_source?: string | null
           clicks?: number
+          conversion_rate_ranking?: string | null
           conversions?: number
+          cost_per_action_type?: Json
+          cost_per_kpi?: number | null
           cpc?: number
           cpm?: number
           created_at?: string
@@ -3619,12 +3632,19 @@ export type Database = {
           ctr?: number
           date_start: string
           date_stop: string
+          engagement_rate_ranking?: string | null
           frequency?: number
           id?: string
           impressions?: number
           inline_link_clicks?: number
+          kpi_action_type?: string | null
+          kpi_label?: string | null
+          kpi_value?: number
           leads?: number
           meta_account_id: string
+          objective?: string | null
+          optimization_goal?: string | null
+          quality_ranking?: string | null
           raw_json?: Json
           reach?: number
           spend?: number
@@ -3652,7 +3672,10 @@ export type Database = {
           campaign_umbrella_reason?: string | null
           campaign_umbrella_source?: string | null
           clicks?: number
+          conversion_rate_ranking?: string | null
           conversions?: number
+          cost_per_action_type?: Json
+          cost_per_kpi?: number | null
           cpc?: number
           cpm?: number
           created_at?: string
@@ -3661,12 +3684,19 @@ export type Database = {
           ctr?: number
           date_start?: string
           date_stop?: string
+          engagement_rate_ranking?: string | null
           frequency?: number
           id?: string
           impressions?: number
           inline_link_clicks?: number
+          kpi_action_type?: string | null
+          kpi_label?: string | null
+          kpi_value?: number
           leads?: number
           meta_account_id?: string
+          objective?: string | null
+          optimization_goal?: string | null
+          quality_ranking?: string | null
           raw_json?: Json
           reach?: number
           spend?: number
