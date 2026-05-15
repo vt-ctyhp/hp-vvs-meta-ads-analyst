@@ -100,7 +100,14 @@ export function CreativeAnalysisClient({ initialData }: Props) {
       .filter((row) => !Number.isFinite(minimumSpend) || row.spend >= minimumSpend)
       .filter((row) => {
         if (!normalizedQuery) return true;
-        return [row.adName, row.campaignName, row.adSetName, row.creativeName || ""]
+        return [
+          row.adName,
+          row.campaignName,
+          row.adSetName,
+          row.creativeName || "",
+          row.adConfiguredStatus || "",
+          row.adEffectiveStatus || "",
+        ]
           .join(" ")
           .toLowerCase()
           .includes(normalizedQuery);
@@ -326,13 +333,14 @@ export function CreativeAnalysisClient({ initialData }: Props) {
 
         {filteredRows.length ? (
           <div className="overflow-x-auto scrollbar-thin">
-            <table className="w-full min-w-[1700px] border-collapse">
+            <table className="w-full min-w-[1820px] border-collapse">
               <thead>
                 <tr className="bg-hp-inset">
                   {[
                     "Rank",
                     "Creative preview",
                     "Ad name",
+                    "Ad active",
                     "Campaign",
                     "Ad set",
                     "Spend",
@@ -388,6 +396,9 @@ export function CreativeAnalysisClient({ initialData }: Props) {
                       <div className="mt-1 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
                         {row.brandCode}
                       </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <AdDeliveryBadge row={row} />
                     </td>
                     <TableCell>{row.campaignName}</TableCell>
                     <TableCell>{row.adSetName}</TableCell>
@@ -618,6 +629,27 @@ function StatusBadge({ status }: { status: CreativeAnalysisRow["status"] }) {
   );
 }
 
+function AdDeliveryBadge({ row }: { row: CreativeAnalysisRow }) {
+  const state = adDeliveryState(row);
+  const className =
+    state === "active"
+      ? "border-signal-positive text-signal-positive"
+      : state === "inactive"
+        ? "border-signal-warning text-signal-warning"
+        : "border-hp-rule text-hp-muted";
+
+  return (
+    <div>
+      <span className={`inline-flex whitespace-nowrap border px-2 py-1 text-[11px] ${className}`}>
+        {state === "active" ? "Active" : state === "inactive" ? "Inactive" : "Unknown"}
+      </span>
+      <p className="mt-1 max-w-[150px] truncate text-[11px] text-hp-muted">
+        {metaStatusLabel(row.adEffectiveStatus || row.adConfiguredStatus)}
+      </p>
+    </div>
+  );
+}
+
 function CreativeDetailDrawer({
   row,
   note,
@@ -641,6 +673,9 @@ function CreativeDetailDrawer({
             <p className="mt-2 text-sm text-hp-muted">
               {row.campaignName} / {row.adSetName}
             </p>
+            <div className="mt-3">
+              <AdDeliveryBadge row={row} />
+            </div>
           </div>
           <button
             onClick={onClose}
@@ -664,6 +699,18 @@ function CreativeDetailDrawer({
               <p>
                 <span className="text-hp-muted">Post/story ID:</span>{" "}
                 {row.effectiveObjectStoryId || row.objectStoryId || "n/a"}
+              </p>
+              <p>
+                <span className="text-hp-muted">Configured status:</span>{" "}
+                {metaStatusLabel(row.adConfiguredStatus)}
+              </p>
+              <p>
+                <span className="text-hp-muted">Effective status:</span>{" "}
+                {metaStatusLabel(row.adEffectiveStatus)}
+              </p>
+              <p>
+                <span className="text-hp-muted">Status synced:</span>{" "}
+                {formatDateTime(row.adStatusSyncedAt)}
               </p>
               {row.previewUrl ? (
                 <a
@@ -865,12 +912,41 @@ function rankingLabel(value: string | null) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function adDeliveryState(row: CreativeAnalysisRow) {
+  const effective = row.adEffectiveStatus?.toUpperCase();
+  const configured = row.adConfiguredStatus?.toUpperCase();
+
+  if (effective) return effective === "ACTIVE" ? "active" : "inactive";
+  if (configured) return configured === "ACTIVE" ? "active" : "inactive";
+  return "unknown";
+}
+
+function metaStatusLabel(value: string | null) {
+  if (!value) return "Unavailable";
+  return value
+    .toLowerCase()
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 function friendlyActionType(value: string) {
   return value
     .replace(/^onsite_conversion\./, "")
     .replace(/^offsite_conversion\.fb_pixel_/, "")
     .replace(/_/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatDateTime(value: string | null) {
+  if (!value) return "Unavailable";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unavailable";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function sumActionValues(value: unknown) {

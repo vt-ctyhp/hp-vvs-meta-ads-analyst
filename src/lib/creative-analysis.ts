@@ -44,6 +44,9 @@ export type CreativeAnalysisRow = CreativeDiagnostic & {
   metaAccountId: string;
   adId: string;
   adName: string;
+  adConfiguredStatus: string | null;
+  adEffectiveStatus: string | null;
+  adStatusSyncedAt: string | null;
   campaignId: string | null;
   campaignName: string;
   campaignUmbrella: string | null;
@@ -113,6 +116,9 @@ type AdRow = {
   meta_account_id: string;
   ad_id: string;
   creative_id: string | null;
+  status: string | null;
+  effective_status: string | null;
+  last_synced_at: string | null;
   preview_url: string | null;
   preview_html: string | null;
   preview_source: string | null;
@@ -506,7 +512,7 @@ async function fetchCreativeMetadata(
   const adRows = await selectRowsByRemoteId<AdRow>(
     supabase,
     "meta_ads",
-    "brand_id,meta_account_id,ad_id,creative_id,preview_url,preview_html,preview_source",
+    "brand_id,meta_account_id,ad_id,creative_id,status,effective_status,last_synced_at,preview_url,preview_html,preview_source",
     "ad_id",
     adIds,
   );
@@ -574,6 +580,9 @@ function enrichCreativeRow(input: {
     metaAccountId: input.row.metaAccountId,
     adId: input.row.adId,
     adName: input.row.adName,
+    adConfiguredStatus: ad?.status || null,
+    adEffectiveStatus: ad?.effective_status || null,
+    adStatusSyncedAt: ad?.last_synced_at || null,
     campaignId: input.row.campaignId,
     campaignName: input.row.campaignName,
     campaignUmbrella: input.row.campaignUmbrella,
