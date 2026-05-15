@@ -105,7 +105,7 @@ export function CreativeAnalysisClient({ initialData }: Props) {
           .toLowerCase()
           .includes(normalizedQuery);
       })
-      .sort((a, b) => b.spend - a.spend);
+      .sort(compareCreativeRank);
   }, [adSet, brand, campaign, data.rows, minSpend, query, status]);
 
   const summary = useMemo(() => buildSummary(filteredRows), [filteredRows]);
@@ -326,10 +326,11 @@ export function CreativeAnalysisClient({ initialData }: Props) {
 
         {filteredRows.length ? (
           <div className="overflow-x-auto scrollbar-thin">
-            <table className="w-full min-w-[1500px] border-collapse">
+            <table className="w-full min-w-[1540px] border-collapse">
               <thead>
                 <tr className="bg-hp-inset">
                   {[
+                    "Rank",
                     "Creative preview",
                     "Ad name",
                     "Campaign",
@@ -358,11 +359,14 @@ export function CreativeAnalysisClient({ initialData }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {filteredRows.map((row) => (
+                {filteredRows.map((row, index) => (
                   <tr
                     key={row.id}
                     className="border-b border-hp-rule bg-hp-card transition-colors hover:bg-hp-inset"
                   >
+                    <td className="px-4 py-3 text-sm tabular-nums text-hp-ink">
+                      #{index + 1}
+                    </td>
                     <td className="px-4 py-3">
                       <button
                         onClick={() => setSelectedId(row.id)}
@@ -445,6 +449,42 @@ export function CreativeAnalysisClient({ initialData }: Props) {
       ) : null}
     </main>
   );
+}
+
+function compareCreativeRank(a: CreativeAnalysisRow, b: CreativeAnalysisRow) {
+  return (
+    b.internalScore - a.internalScore ||
+    statusRank(a.status) - statusRank(b.status) ||
+    compareNullableCost(a.costPerResult, b.costPerResult) ||
+    (b.resultCount || 0) - (a.resultCount || 0) ||
+    (b.hookRate || 0) - (a.hookRate || 0) ||
+    b.spend - a.spend ||
+    a.adName.localeCompare(b.adName)
+  );
+}
+
+function statusRank(status: CreativeAnalysisRow["status"]) {
+  switch (status) {
+    case "Scale Candidate":
+      return 0;
+    case "Brand Fit Review":
+      return 1;
+    case "Needs Retention Improvement":
+      return 2;
+    case "Needs Hook Improvement":
+      return 3;
+    case "Clickbait Risk":
+      return 4;
+    case "Fatigue Watch":
+      return 5;
+  }
+}
+
+function compareNullableCost(a: number | null, b: number | null) {
+  if (a === null && b === null) return 0;
+  if (a === null) return 1;
+  if (b === null) return -1;
+  return a - b;
 }
 
 function FilterSelect({
