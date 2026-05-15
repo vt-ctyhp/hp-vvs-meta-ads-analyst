@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Brain, Inbox } from "lucide-react";
+import { BarChart3, Brain, Gauge, Inbox } from "lucide-react";
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: BarChart3 },
+  { href: "/creative-analysis", label: "Creative Analysis", icon: Gauge },
   { href: "/analysis", label: "AI Analysis", icon: Brain },
   { href: "/inbox", label: "Inbox", icon: Inbox },
 ];

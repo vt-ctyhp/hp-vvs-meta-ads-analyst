@@ -49,6 +49,7 @@ vercel --prod
 ## Runtime Routes
 
 - `/` executive dashboard, creative leaderboard, gallery, report controls, chat
+- `/creative-analysis` internal creative scorecard using visible Meta Ads Insights metrics, creative previews, ad relevance diagnostics where available, and an Internal Creative Diagnostic Score
 - `/analysis` ad-hoc Meta Ads analysis over stored Supabase history
 - `/admin/backfill` hidden Meta Ads historical backfill admin
 - `/inbox` Facebook/Instagram inbox readiness page and human-approved reply UI shell
@@ -69,6 +70,12 @@ vercel --prod
 HP campaigns are classified into internal campaign umbrellas during sync. The classifier uses campaign names first, then ad set names for fallback/refinement, and stores the result on campaigns, ad sets, ads, and daily insights. The dashboard can filter campaigns, ad sets, creatives, and trends by umbrella.
 
 Manual corrections can be stored in `campaign_umbrella_overrides` without changing Meta campaign/ad set/ad names.
+
+## Creative Analysis Score
+
+The Creative Analysis page labels its score as an Internal Creative Diagnostic Score. It is an internal weighted score built from visible Meta Ads metrics such as hook estimates, retention proxies, click intent, conversion efficiency, Meta ranking diagnostics where returned, and fatigue signals from comparison history.
+
+It is not Meta's secret algorithm, private ranking model, or an official Meta score. Meta relevance diagnostics can be unavailable depending on objective, account permissions, attribution, or delivery context, so missing rankings are treated as unavailable rather than as poor performance. Final business judgment should still consider appointment quality, close rate, AOV, and whether each creative feels premium enough for HP/VVS.
 
 ## Meta Permissions
 

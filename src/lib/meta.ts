@@ -117,6 +117,21 @@ export type MetaAccountInsightTotals = {
   conversions: number;
 };
 
+export type MetaCreativeAnalysisInsight = JsonRecord & {
+  brand_code: SyncAccountConfig["brandCode"];
+  meta_account_id: string;
+};
+
+export type MetaCreativeAnalysisInsightsResult = {
+  rows: MetaCreativeAnalysisInsight[];
+  warnings: string[];
+  unavailableFields: string[];
+  adAccounts: Array<{
+    brandCode: SyncAccountConfig["brandCode"];
+    metaAccountId: string;
+  }>;
+};
+
 type DynamicSupabaseClient = {
   from: (table: string) => {
     upsert: (
@@ -408,6 +423,59 @@ export async function fetchMetaAccountInsightTotalsForRange(input: {
       );
     }),
   );
+}
+
+export async function fetchMetaCreativeAnalysisInsightsForRange(input: {
+  since: string;
+  until: string;
+}): Promise<MetaCreativeAnalysisInsightsResult> {
+  const accounts = getConfiguredAccounts();
+  const accountResults = await Promise.all(
+    accounts.map(async (account) => {
+      const metaAccountId = `act_${normalizeAccountId(account.accountId)}`;
+
+      try {
+        const result = await fetchCreativeAnalysisInsights(metaAccountId, input);
+        const rows = result.rows.map((row) => ({
+          ...row,
+          brand_code: account.brandCode,
+          meta_account_id: metaAccountId,
+        }));
+        const warnings = result.unavailableFields.length
+          ? [
+              `${account.brandCode}: Meta did not return ${result.unavailableFields.join(", ")} for this Insights request.`,
+            ]
+          : [];
+
+        return {
+          rows,
+          warnings,
+          unavailableFields: result.unavailableFields,
+        };
+      } catch (error) {
+        return {
+          rows: [],
+          warnings: [`${account.brandCode}: ${errorToMessage(error)}`],
+          unavailableFields: [],
+        };
+      }
+    }),
+  );
+
+  const unavailableFields = new Set<string>();
+  accountResults.forEach((result) =>
+    result.unavailableFields.forEach((field) => unavailableFields.add(field)),
+  );
+
+  return {
+    rows: accountResults.flatMap((result) => result.rows),
+    warnings: accountResults.flatMap((result) => result.warnings),
+    unavailableFields: Array.from(unavailableFields).sort(),
+    adAccounts: accounts.map((account) => ({
+      brandCode: account.brandCode,
+      metaAccountId: `act_${normalizeAccountId(account.accountId)}`,
+    })),
+  };
 }
 
 async function syncAccount(
@@ -1173,6 +1241,93 @@ async function fetchAccountInsightsTotal(
     }
     throw error;
   }
+}
+
+async function fetchCreativeAnalysisInsights(
+  metaAccountId: string,
+  range: { since: string; until: string },
+) {
+  const coreFields = [
+    "campaign_id",
+    "campaign_name",
+    "adset_id",
+    "adset_name",
+    "ad_id",
+    "ad_name",
+    "date_start",
+    "date_stop",
+    "spend",
+    "impressions",
+    "reach",
+    "frequency",
+    "cpm",
+    "clicks",
+    "inline_link_clicks",
+    "ctr",
+    "cpc",
+    "actions",
+  ];
+  const optionalFields = [
+    "inline_link_click_ctr",
+    "cost_per_action_type",
+    "video_play_actions",
+    "video_p25_watched_actions",
+    "video_p50_watched_actions",
+    "video_p75_watched_actions",
+    "video_p95_watched_actions",
+    "video_p100_watched_actions",
+    "video_thruplay_watched_actions",
+    "quality_ranking",
+    "engagement_rate_ranking",
+    "conversion_rate_ranking",
+  ];
+  let fields = [...coreFields, ...optionalFields];
+  const unavailableFields = new Set<string>();
+
+  for (let attempt = 0; attempt < optionalFields.length + 3; attempt += 1) {
+    try {
+      const rows = await graphPages<JsonRecord>(`${metaAccountId}/insights`, {
+        level: "ad",
+        time_increment: "all_days",
+        ...buildInsightDateParams({ kind: "range", since: range.since, until: range.until }),
+        fields: fields.join(","),
+        limit: "100",
+      }, { maxPages: getSyncMaxPages("META_CREATIVE_ANALYSIS_MAX_INSIGHT_PAGES", 30) });
+
+      return {
+        rows,
+        unavailableFields: Array.from(unavailableFields),
+      };
+    } catch (error) {
+      if (!(error instanceof MetaGraphError)) throw error;
+
+      const message = error.message.toLowerCase();
+      const unavailableField = fields
+        .filter((field) => !coreFields.includes(field))
+        .find((field) => message.includes(field.toLowerCase()));
+
+      if (unavailableField) {
+        unavailableFields.add(unavailableField);
+        fields = fields.filter((field) => field !== unavailableField);
+        continue;
+      }
+
+      if (fields.length !== coreFields.length) {
+        fields
+          .filter((field) => !coreFields.includes(field))
+          .forEach((field) => unavailableFields.add(field));
+        fields = coreFields;
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  return {
+    rows: [],
+    unavailableFields: Array.from(unavailableFields),
+  };
 }
 
 async function fetchAdPreview(adId: string) {
