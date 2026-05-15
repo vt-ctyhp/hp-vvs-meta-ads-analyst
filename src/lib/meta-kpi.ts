@@ -113,10 +113,15 @@ export function resolveMetaKpi(input: MetaKpiInput): ResolvedMetaKpi {
     }
   }
 
+  const fallbackLabel = fallbackKpiLabel(input);
+  const fallbackCandidate = KPI_CANDIDATES.find(
+    (candidate) => candidate.resultKpiLabel === fallbackLabel,
+  );
+
   return {
-    resultKpiLabel: fallbackKpiLabel(input),
-    resultLabel: "Cost per result",
-    resultActionType: null,
+    resultKpiLabel: fallbackLabel,
+    resultLabel: fallbackCandidate?.resultLabel || "Cost per result",
+    resultActionType: fallbackCandidate?.types[0] || null,
     resultCount: 0,
     costPerResult: null,
   };

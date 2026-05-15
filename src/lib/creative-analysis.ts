@@ -12,6 +12,7 @@ import {
   fetchMetaCreativeAnalysisInsightsForRange,
   type MetaCreativeAnalysisInsight,
 } from "./meta";
+import { resolveMetaKpi } from "./meta-kpi";
 import { createServiceClient } from "./supabase";
 
 type JsonRecord = Record<string, unknown>;
@@ -108,6 +109,14 @@ type RawCreativeInsight = CreativeScoreInput & {
   optimizationGoal: string | null;
   creativeId: string | null;
   dataSource: "meta_live" | "stored_history";
+};
+
+type StoredKpiAggregate = {
+  label: string;
+  actionType: string | null;
+  count: number;
+  spend: number;
+  latestDate: string;
 };
 
 type BrandRow = { id: string; code: string; name: string | null };
@@ -383,7 +392,10 @@ function mapLiveInsight(row: MetaCreativeAnalysisInsight): RawCreativeInsight {
     cpc: numberValue(row.cpc) || (clicks > 0 ? spend / clicks : 0),
     actions: arrayValue(row.actions),
     costPerActionType: arrayValue(row.cost_per_action_type),
-    videoPlayActions: arrayValue(row.video_play_actions),
+    videoPlayActions: firstNonEmptyActionArray(
+      row.video_play_actions,
+      exactActionRecords(row.actions, ["video_view"]),
+    ),
     videoP25WatchedActions: arrayValue(row.video_p25_watched_actions),
     videoP50WatchedActions: arrayValue(row.video_p50_watched_actions),
     videoP75WatchedActions: arrayValue(row.video_p75_watched_actions),
@@ -402,6 +414,7 @@ function aggregateStoredInsightRows(
 ): RawCreativeInsight[] {
   const grouped = new Map<string, RawCreativeInsight>();
   const actionGroups = new Map<string, ActionAccumulator>();
+  const storedKpiGroups = new Map<string, Map<string, StoredKpiAggregate>>();
 
   for (const storedRow of storedRows) {
     const adId = storedRow.ad_id || "unknown";
@@ -478,17 +491,28 @@ function aggregateStoredInsightRows(
     const thruplay = actionAccumulator(actionGroups, `${key}:thruplay`);
 
     mergeActions(actions, storedRow.actions);
-    mergeActions(costs, storedRow.cost_per_action_type || rawJson.cost_per_action_type);
-    mergeActions(play, rawJson.video_play_actions || videoMetrics.video_play_actions);
-    mergeActions(p25, rawJson.video_p25_watched_actions || videoMetrics.video_p25_watched_actions);
-    mergeActions(p50, rawJson.video_p50_watched_actions || videoMetrics.video_p50_watched_actions);
-    mergeActions(p75, rawJson.video_p75_watched_actions || videoMetrics.video_p75_watched_actions);
-    mergeActions(p95, rawJson.video_p95_watched_actions || videoMetrics.video_p95_watched_actions);
-    mergeActions(p100, rawJson.video_p100_watched_actions || videoMetrics.video_p100_watched_actions);
+    mergeActions(costs, firstNonEmptyActionArray(storedRow.cost_per_action_type, rawJson.cost_per_action_type));
+    mergeActions(
+      play,
+      firstNonEmptyActionArray(
+        rawJson.video_play_actions,
+        videoMetrics.video_play_actions,
+        exactActionRecords(storedRow.actions, ["video_view"]),
+      ),
+    );
+    mergeActions(p25, firstNonEmptyActionArray(rawJson.video_p25_watched_actions, videoMetrics.video_p25_watched_actions));
+    mergeActions(p50, firstNonEmptyActionArray(rawJson.video_p50_watched_actions, videoMetrics.video_p50_watched_actions));
+    mergeActions(p75, firstNonEmptyActionArray(rawJson.video_p75_watched_actions, videoMetrics.video_p75_watched_actions));
+    mergeActions(p95, firstNonEmptyActionArray(rawJson.video_p95_watched_actions, videoMetrics.video_p95_watched_actions));
+    mergeActions(p100, firstNonEmptyActionArray(rawJson.video_p100_watched_actions, videoMetrics.video_p100_watched_actions));
     mergeActions(
       thruplay,
-      rawJson.video_thruplay_watched_actions || videoMetrics.video_thruplay_watched_actions,
+      firstNonEmptyActionArray(
+        rawJson.video_thruplay_watched_actions,
+        videoMetrics.video_thruplay_watched_actions,
+      ),
     );
+    mergeStoredKpi(storedKpiGroups, key, storedRow);
 
     current.qualityRanking ||=
       stringField(storedRow.quality_ranking) || stringField(rawJson.quality_ranking);
@@ -517,6 +541,12 @@ function aggregateStoredInsightRows(
     row.videoP95WatchedActions = actionAccumulatorRows(actionGroups, `${row.id}:p95`);
     row.videoP100WatchedActions = actionAccumulatorRows(actionGroups, `${row.id}:p100`);
     row.videoThruplayWatchedActions = actionAccumulatorRows(actionGroups, `${row.id}:thruplay`);
+    const storedKpi = chooseStoredKpi(row, storedKpiGroups.get(row.id));
+    row.storedResultKpiLabel = storedKpi?.label || null;
+    row.storedResultActionType = storedKpi?.actionType || null;
+    row.storedResultCount = storedKpi ? round(storedKpi.count) : null;
+    row.storedCostPerResult =
+      storedKpi && storedKpi.count > 0 ? round(storedKpi.spend / storedKpi.count) : null;
     return row;
   });
 }
@@ -811,6 +841,75 @@ function actionAccumulatorRows(groups: Map<string, ActionAccumulator>, key: stri
     action_type,
     value,
   }));
+}
+
+function firstNonEmptyActionArray(...values: unknown[]) {
+  for (const value of values) {
+    if (Array.isArray(value) && value.length) return value;
+  }
+  return [];
+}
+
+function exactActionRecords(value: unknown, actionTypes: string[]) {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (item) =>
+      isRecord(item) &&
+      typeof item.action_type === "string" &&
+      actionTypes.includes(item.action_type),
+  );
+}
+
+function mergeStoredKpi(
+  groups: Map<string, Map<string, StoredKpiAggregate>>,
+  key: string,
+  storedRow: StoredInsightRow,
+) {
+  const label = stringField(storedRow.kpi_label);
+  if (!label) return;
+
+  const actionType = stringField(storedRow.kpi_action_type);
+  const kpiKey = `${label}:${actionType || ""}`;
+  const group = groups.get(key) || new Map<string, StoredKpiAggregate>();
+  const current = group.get(kpiKey) || {
+    label,
+    actionType,
+    count: 0,
+    spend: 0,
+    latestDate: storedRow.date_start,
+  };
+
+  current.count += numberValue(storedRow.kpi_value);
+  current.spend += numberValue(storedRow.spend);
+  if (storedRow.date_start > current.latestDate) current.latestDate = storedRow.date_start;
+  group.set(kpiKey, current);
+  groups.set(key, group);
+}
+
+function chooseStoredKpi(
+  row: RawCreativeInsight,
+  groups: Map<string, StoredKpiAggregate> | undefined,
+) {
+  if (!groups?.size) return null;
+
+  const preferredLabel = resolveMetaKpi({
+    spend: row.spend,
+    actions: row.actions,
+    costPerActionType: row.costPerActionType,
+    campaignName: row.campaignName,
+    adSetName: row.adSetName,
+    campaignUmbrella: row.campaignUmbrella,
+    objective: row.objective,
+    optimizationGoal: row.optimizationGoal,
+  }).resultKpiLabel;
+  const candidates = Array.from(groups.values());
+  const matching = candidates.filter((candidate) => candidate.label === preferredLabel);
+
+  return (matching.length ? matching : candidates).sort(compareStoredKpi)[0] || null;
+}
+
+function compareStoredKpi(a: StoredKpiAggregate, b: StoredKpiAggregate) {
+  return b.count - a.count || b.spend - a.spend || b.latestDate.localeCompare(a.latestDate);
 }
 
 function arrayValue(value: unknown) {

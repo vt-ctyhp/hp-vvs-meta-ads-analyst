@@ -100,6 +100,37 @@ describe("creative score helpers", () => {
     assert.equal(metrics.costPerResult, 25);
   });
 
+  it("falls back to stored KPI fields when actions are unavailable", () => {
+    const metrics = deriveCreativeMetrics(
+      input({
+        campaignName: "CBI | Prospecting - VN | Promotion | Messenger Campaign",
+        actions: [],
+        storedResultKpiLabel: "Messages",
+        storedResultActionType: "onsite_conversion.total_messaging_connection",
+        storedResultCount: 14,
+        storedCostPerResult: 0.38,
+      }),
+    );
+
+    assert.equal(metrics.resultKpiLabel, "Messages");
+    assert.equal(metrics.resultActionType, "onsite_conversion.total_messaging_connection");
+    assert.equal(metrics.resultCount, 14);
+    assert.equal(metrics.costPerResult, 0.38);
+  });
+
+  it("keeps the expected KPI action type even with no returned results", () => {
+    const metrics = deriveCreativeMetrics(
+      input({
+        campaignName: "CBI_Evergreen_Scheduled_Test_BookAppointment_Prospecting_US_2025",
+        actions: [],
+      }),
+    );
+
+    assert.equal(metrics.resultKpiLabel, "Bookings");
+    assert.equal(metrics.resultActionType, "offsite_conversion.fb_pixel_custom");
+    assert.equal(metrics.resultCount, 0);
+  });
+
   it("flags high hook and weak conversion as clickbait risk", () => {
     const [diagnostic] = buildCreativeDiagnostics([
       input({

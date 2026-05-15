@@ -47,6 +47,10 @@ export type CreativeScoreInput = {
   qualityRanking?: RankingValue;
   engagementRateRanking?: RankingValue;
   conversionRateRanking?: RankingValue;
+  storedResultKpiLabel?: string | null;
+  storedResultActionType?: string | null;
+  storedResultCount?: number | null;
+  storedCostPerResult?: number | null;
   previous?: CreativeScoreInput | null;
 };
 
@@ -288,7 +292,7 @@ function buildBenchmarks(rows: BaseDiagnostics[]): Benchmarks {
 }
 
 function resolveCostEfficiency(input: CreativeScoreInput) {
-  return resolveMetaKpi({
+  const resolved = resolveMetaKpi({
     spend: input.spend,
     actions: input.actions,
     costPerActionType: input.costPerActionType,
@@ -298,6 +302,55 @@ function resolveCostEfficiency(input: CreativeScoreInput) {
     objective: input.objective,
     optimizationGoal: input.optimizationGoal,
   });
+  const storedResultCount =
+    typeof input.storedResultCount === "number" && Number.isFinite(input.storedResultCount)
+      ? input.storedResultCount
+      : null;
+  const storedCostPerResult =
+    typeof input.storedCostPerResult === "number" && Number.isFinite(input.storedCostPerResult)
+      ? input.storedCostPerResult
+      : null;
+
+  if (
+    resolved.resultCount > 0 ||
+    resolved.costPerResult !== null ||
+    (storedResultCount === null && storedCostPerResult === null && !input.storedResultKpiLabel)
+  ) {
+    return resolved;
+  }
+
+  const resultKpiLabel = input.storedResultKpiLabel || resolved.resultKpiLabel;
+  const resultCount = storedResultCount ?? resolved.resultCount;
+
+  return {
+    resultKpiLabel,
+    resultLabel: resultLabelForKpi(resultKpiLabel, resolved.resultLabel),
+    resultActionType: input.storedResultActionType || resolved.resultActionType,
+    resultCount,
+    costPerResult:
+      storedCostPerResult !== null
+        ? storedCostPerResult
+        : resultCount > 0
+          ? input.spend / resultCount
+          : resolved.costPerResult,
+  };
+}
+
+function resultLabelForKpi(label: string, fallback: string) {
+  switch (label) {
+    case "Bookings":
+      return "Cost per booking";
+    case "Messages":
+      return "Cost per message";
+    case "Leads":
+      return "Cost per lead";
+    case "Purchases":
+      return "Cost per purchase";
+    case "Conversions":
+      return "Cost per conversion";
+    default:
+      return fallback;
+  }
 }
 
 function buildFatigueSignal(row: BaseDiagnostics): CreativeFatigueSignal {
