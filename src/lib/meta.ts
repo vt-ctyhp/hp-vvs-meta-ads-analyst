@@ -142,6 +142,21 @@ export type MetaCreativeAnalysisInsightsResult = {
   }>;
 };
 
+type MetaActionMetricRows = Array<Record<string, unknown>>;
+
+export type MetaAdVideoMetrics = {
+  adId: string;
+  adName: string | null;
+  actions: MetaActionMetricRows;
+  videoPlayActions: MetaActionMetricRows;
+  videoP25WatchedActions: MetaActionMetricRows;
+  videoP50WatchedActions: MetaActionMetricRows;
+  videoP75WatchedActions: MetaActionMetricRows;
+  videoP95WatchedActions: MetaActionMetricRows;
+  videoP100WatchedActions: MetaActionMetricRows;
+  videoThruplayWatchedActions: MetaActionMetricRows;
+};
+
 type DynamicSupabaseClient = {
   from: (table: string) => {
     upsert: (
@@ -489,6 +504,67 @@ export async function fetchMetaCreativeAnalysisInsightsForRange(input: {
       brandCode: account.brandCode,
       metaAccountId: `act_${normalizeAccountId(account.accountId)}`,
     })),
+  };
+}
+
+export async function fetchMetaAdVideoMetricsForRange(input: {
+  metaAccountId: string;
+  adId: string;
+  since: string;
+  until: string;
+  signal?: AbortSignal;
+}): Promise<MetaAdVideoMetrics> {
+  const metaAccountId = `act_${normalizeAccountId(input.metaAccountId)}`;
+  const configuredAccountIds = new Set(
+    getConfiguredAccounts().map((account) => `act_${normalizeAccountId(account.accountId)}`),
+  );
+
+  if (!configuredAccountIds.has(metaAccountId)) {
+    throw new Error("Meta account is not configured for this app.");
+  }
+
+  const rows = await graphPages<JsonRecord>(`${metaAccountId}/insights`, {
+    level: "ad",
+    time_increment: "all_days",
+    ...buildInsightDateParams({ kind: "range", since: input.since, until: input.until }),
+    fields: [
+      "ad_id",
+      "ad_name",
+      "actions",
+      "video_play_actions",
+      "video_p25_watched_actions",
+      "video_p50_watched_actions",
+      "video_p75_watched_actions",
+      "video_p95_watched_actions",
+      "video_p100_watched_actions",
+      "video_thruplay_watched_actions",
+    ].join(","),
+    filtering: JSON.stringify([
+      {
+        field: "ad.id",
+        operator: "IN",
+        value: [input.adId],
+      },
+    ]),
+    limit: "10",
+  }, {
+    maxPages: 1,
+    signal: input.signal,
+  });
+
+  const row = rows[0] || {};
+
+  return {
+    adId: stringField(row.ad_id) || input.adId,
+    adName: stringField(row.ad_name),
+    actions: actionMetricRows(row.actions),
+    videoPlayActions: actionMetricRows(row.video_play_actions),
+    videoP25WatchedActions: actionMetricRows(row.video_p25_watched_actions),
+    videoP50WatchedActions: actionMetricRows(row.video_p50_watched_actions),
+    videoP75WatchedActions: actionMetricRows(row.video_p75_watched_actions),
+    videoP95WatchedActions: actionMetricRows(row.video_p95_watched_actions),
+    videoP100WatchedActions: actionMetricRows(row.video_p100_watched_actions),
+    videoThruplayWatchedActions: actionMetricRows(row.video_thruplay_watched_actions),
   };
 }
 
@@ -1231,9 +1307,6 @@ async function fetchInsights(metaAccountId: string, range?: InsightDateRange) {
     "video_p95_watched_actions",
     "video_p100_watched_actions",
     "video_thruplay_watched_actions",
-    "quality_ranking",
-    "engagement_rate_ranking",
-    "conversion_rate_ranking",
   ].join(",");
 
   try {
@@ -1767,6 +1840,10 @@ function moneyCents(value: unknown): number | null {
 
 function rows<T>(data: unknown): T[] {
   return Array.isArray(data) ? (data as T[]) : [];
+}
+
+function actionMetricRows(value: unknown): MetaActionMetricRows {
+  return Array.isArray(value) ? value.filter(isRecord) : [];
 }
 
 function extractActionCount(actions: unknown, actionTypes: string[]) {

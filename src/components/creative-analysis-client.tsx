@@ -14,7 +14,7 @@ import {
   X,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   CREATIVE_STATUS_OPTIONS,
@@ -24,6 +24,29 @@ import {
 
 type Props = {
   initialData: CreativeAnalysisPayload;
+};
+
+type LiveVideoMetrics = {
+  adId: string;
+  adName: string | null;
+  actions: unknown;
+  videoPlayActions: unknown;
+  videoP25WatchedActions: unknown;
+  videoP50WatchedActions: unknown;
+  videoP75WatchedActions: unknown;
+  videoP95WatchedActions: unknown;
+  videoP100WatchedActions: unknown;
+  videoThruplayWatchedActions: unknown;
+};
+
+type LiveVideoMetricsState =
+  | { status: "loading" }
+  | { status: "ready"; metrics: LiveVideoMetrics }
+  | { status: "error"; error: string };
+
+type SelectedActionMetric = {
+  value: unknown;
+  detail?: string;
 };
 
 const MONEY_FORMATTER = new Intl.NumberFormat("en-US", {
@@ -53,6 +76,10 @@ export function CreativeAnalysisClient({ initialData }: Props) {
   const [isApplyingRange, setIsApplyingRange] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [notesByCreative, setNotesByCreative] = useState<Record<string, string>>({});
+  const [liveVideoByCreative, setLiveVideoByCreative] = useState<
+    Record<string, LiveVideoMetricsState>
+  >({});
+  const requestedVideoMetrics = useRef(new Set<string>());
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -120,6 +147,76 @@ export function CreativeAnalysisClient({ initialData }: Props) {
     () => data.rows.find((row) => row.id === selectedId) || null,
     [data.rows, selectedId],
   );
+  const selectedVideoState = selected ? liveVideoByCreative[selected.id] : undefined;
+
+  useEffect(() => {
+    const start = data.sourceTransparency.timeRange.start;
+    const end = data.sourceTransparency.timeRange.end;
+    if (!selected || !start || !end) return;
+
+    const cacheKey = `${selected.id}:${start}:${end}`;
+    if (requestedVideoMetrics.current.has(cacheKey)) return;
+
+    requestedVideoMetrics.current.add(cacheKey);
+    const controller = new AbortController();
+    setLiveVideoByCreative((current) => ({
+      ...current,
+      [selected.id]: { status: "loading" },
+    }));
+
+    const params = new URLSearchParams({
+      metaAccountId: selected.metaAccountId,
+      adId: selected.adId,
+      start,
+      end,
+    });
+
+    fetch(`/api/creative-analysis/ad-video-metrics?${params.toString()}`, {
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const payload = (await response.json().catch(() => null)) as {
+          metrics?: LiveVideoMetrics;
+          error?: string;
+        } | null;
+
+        if (!response.ok) {
+          throw new Error(payload?.error || "Unable to load live Meta video metrics.");
+        }
+
+        if (!payload?.metrics) {
+          throw new Error("Meta returned no video metrics for this creative.");
+        }
+
+        return payload.metrics;
+      })
+      .then((metrics) => {
+        setLiveVideoByCreative((current) => ({
+          ...current,
+          [selected.id]: { status: "ready", metrics },
+        }));
+      })
+      .catch((error) => {
+        if (isAbortError(error)) {
+          requestedVideoMetrics.current.delete(cacheKey);
+          return;
+        }
+
+        setLiveVideoByCreative((current) => ({
+          ...current,
+          [selected.id]: {
+            status: "error",
+            error: error instanceof Error ? error.message : "Unable to load live Meta video metrics.",
+          },
+        }));
+      });
+
+    return () => controller.abort();
+  }, [
+    data.sourceTransparency.timeRange.end,
+    data.sourceTransparency.timeRange.start,
+    selected,
+  ]);
 
   function applyQuickRange(days: number) {
     const url = new URL(window.location.href);
@@ -457,6 +554,7 @@ export function CreativeAnalysisClient({ initialData }: Props) {
       {selected ? (
         <CreativeDetailDrawer
           row={selected}
+          liveVideoState={selectedVideoState}
           note={notesByCreative[selected.id] || ""}
           onNoteChange={(note) =>
             setNotesByCreative((notes) => ({ ...notes, [selected.id]: note }))
@@ -652,15 +750,56 @@ function AdDeliveryBadge({ row }: { row: CreativeAnalysisRow }) {
 
 function CreativeDetailDrawer({
   row,
+  liveVideoState,
   note,
   onNoteChange,
   onClose,
 }: {
   row: CreativeAnalysisRow;
+  liveVideoState: LiveVideoMetricsState | undefined;
   note: string;
   onNoteChange: (note: string) => void;
   onClose: () => void;
 }) {
+  const liveVideoMetrics = liveVideoState?.status === "ready" ? liveVideoState.metrics : null;
+  const videoMetrics = {
+    plays: selectVideoActionMetric(
+      liveVideoState,
+      liveVideoMetrics?.videoPlayActions,
+      row.rawMetrics.videoPlayActions,
+    ),
+    p25: selectVideoActionMetric(
+      liveVideoState,
+      liveVideoMetrics?.videoP25WatchedActions,
+      row.rawMetrics.videoP25WatchedActions,
+    ),
+    p50: selectVideoActionMetric(
+      liveVideoState,
+      liveVideoMetrics?.videoP50WatchedActions,
+      row.rawMetrics.videoP50WatchedActions,
+    ),
+    p75: selectVideoActionMetric(
+      liveVideoState,
+      liveVideoMetrics?.videoP75WatchedActions,
+      row.rawMetrics.videoP75WatchedActions,
+    ),
+    p95: selectVideoActionMetric(
+      liveVideoState,
+      liveVideoMetrics?.videoP95WatchedActions,
+      row.rawMetrics.videoP95WatchedActions,
+    ),
+    p100: selectVideoActionMetric(
+      liveVideoState,
+      liveVideoMetrics?.videoP100WatchedActions,
+      row.rawMetrics.videoP100WatchedActions,
+    ),
+    thruplay: selectVideoActionMetric(
+      liveVideoState,
+      liveVideoMetrics?.videoThruplayWatchedActions,
+      row.rawMetrics.videoThruplayWatchedActions,
+    ),
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-hp-ink/30">
       <aside className="ml-auto flex h-full w-full max-w-3xl flex-col overflow-y-auto border-l border-hp-rule bg-hp-foundation">
@@ -758,7 +897,14 @@ function CreativeDetailDrawer({
             </section>
 
             <section className="border border-hp-rule bg-hp-card p-4">
-              <p className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">Raw metrics</p>
+              <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+                  Raw metrics
+                </p>
+                {liveVideoState?.status === "loading" ? (
+                  <p className="text-xs text-hp-muted">Checking live Meta video diagnostics...</p>
+                ) : null}
+              </div>
               <div className="mt-4 grid gap-x-5 gap-y-3 sm:grid-cols-2">
                 <MetricLine label="Spend" value={formatMoney(row.spend)} />
                 <MetricLine label="Impressions" value={formatNumber(row.impressions)} />
@@ -778,13 +924,41 @@ function CreativeDetailDrawer({
                 />
                 <MetricLine label="KPI results" value={formatNumber(row.resultCount)} />
                 <MetricLine label={row.resultLabel} value={formatMoney(row.costPerResult)} />
-                <MetricLine label="Video plays" value={formatNumber(sumActionValues(row.rawMetrics.videoPlayActions))} />
-                <MetricLine label="Video 25%" value={formatNumber(sumActionValues(row.rawMetrics.videoP25WatchedActions))} />
-                <MetricLine label="Video 50%" value={formatNumber(sumActionValues(row.rawMetrics.videoP50WatchedActions))} />
-                <MetricLine label="Video 75%" value={formatNumber(sumActionValues(row.rawMetrics.videoP75WatchedActions))} />
-                <MetricLine label="Video 95%" value={formatNumber(sumActionValues(row.rawMetrics.videoP95WatchedActions))} />
-                <MetricLine label="Video 100%" value={formatNumber(sumActionValues(row.rawMetrics.videoP100WatchedActions))} />
-                <MetricLine label="ThruPlays" value={formatNumber(sumActionValues(row.rawMetrics.videoThruplayWatchedActions))} />
+                <MetricLine
+                  label="Video plays"
+                  value={formatActionMetric(videoMetrics.plays.value)}
+                  detail={videoMetrics.plays.detail}
+                />
+                <MetricLine
+                  label="Video 25%"
+                  value={formatActionMetric(videoMetrics.p25.value)}
+                  detail={videoMetrics.p25.detail}
+                />
+                <MetricLine
+                  label="Video 50%"
+                  value={formatActionMetric(videoMetrics.p50.value)}
+                  detail={videoMetrics.p50.detail}
+                />
+                <MetricLine
+                  label="Video 75%"
+                  value={formatActionMetric(videoMetrics.p75.value)}
+                  detail={videoMetrics.p75.detail}
+                />
+                <MetricLine
+                  label="Video 95%"
+                  value={formatActionMetric(videoMetrics.p95.value)}
+                  detail={videoMetrics.p95.detail}
+                />
+                <MetricLine
+                  label="Video 100%"
+                  value={formatActionMetric(videoMetrics.p100.value)}
+                  detail={videoMetrics.p100.detail}
+                />
+                <MetricLine
+                  label="ThruPlays"
+                  value={formatActionMetric(videoMetrics.thruplay.value)}
+                  detail={videoMetrics.thruplay.detail}
+                />
                 <MetricLine label="Quality ranking" value={rankingLabel(row.qualityRanking)} />
                 <MetricLine label="Engagement ranking" value={rankingLabel(row.engagementRateRanking)} />
                 <MetricLine label="Conversion ranking" value={rankingLabel(row.conversionRateRanking)} />
@@ -949,6 +1123,69 @@ function formatDateTime(value: string | null) {
   }).format(date);
 }
 
+function formatActionMetric(value: unknown) {
+  if (!hasActionMetric(value)) return "n/a";
+  return formatNumber(sumActionValues(value));
+}
+
+function selectVideoActionMetric(
+  state: LiveVideoMetricsState | undefined,
+  liveValue: unknown,
+  storedValue: unknown,
+): SelectedActionMetric {
+  if (hasActionMetric(liveValue)) {
+    return { value: liveValue, detail: "Live Meta video diagnostic" };
+  }
+
+  if (hasActionMetric(storedValue)) {
+    const storedDetail = storedVideoMetricDetail(storedValue);
+    if (state?.status === "loading") {
+      return {
+        value: storedValue,
+        detail: `${storedDetail} Checking live Meta video diagnostics.`,
+      };
+    }
+    if (state?.status === "error") {
+      return {
+        value: storedValue,
+        detail: `${storedDetail} Live Meta detail check failed.`,
+      };
+    }
+    return { value: storedValue, detail: storedDetail };
+  }
+
+  if (state?.status === "loading") {
+    return { value: [], detail: "Checking live Meta video diagnostics." };
+  }
+
+  if (state?.status === "error") {
+    return { value: [], detail: state.error };
+  }
+
+  return { value: [], detail: "Not returned by Meta for this range." };
+}
+
+function hasActionMetric(value: unknown) {
+  return Array.isArray(value) && value.length > 0;
+}
+
+function storedVideoMetricDetail(value: unknown) {
+  const types = actionTypes(value);
+  if (types.includes("video_view")) return "Stored fallback from Meta video_view.";
+  return "Stored Supabase metric.";
+}
+
+function actionTypes(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (typeof item !== "object" || item === null || Array.isArray(item)) return null;
+      const rawType = (item as { action_type?: unknown }).action_type;
+      return typeof rawType === "string" ? rawType : null;
+    })
+    .filter((type): type is string => Boolean(type));
+}
+
 function sumActionValues(value: unknown) {
   if (!Array.isArray(value)) return 0;
   return value.reduce((sum, item) => {
@@ -957,4 +1194,8 @@ function sumActionValues(value: unknown) {
     const parsed = typeof rawValue === "number" ? rawValue : Number(rawValue);
     return Number.isFinite(parsed) ? sum + parsed : sum;
   }, 0);
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof Error && error.name === "AbortError";
 }
