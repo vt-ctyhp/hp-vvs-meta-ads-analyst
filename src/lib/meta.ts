@@ -464,9 +464,12 @@ export async function fetchMetaCreativeAnalysisInsightsForRange(input: {
           unavailableFields: result.unavailableFields,
         };
       } catch (error) {
+        const message = isAbortError(error)
+          ? "Live Meta Insights timed out; using stored Supabase history."
+          : errorToMessage(error);
         return {
           rows: [],
-          warnings: [`${account.brandCode}: ${errorToMessage(error)}`],
+          warnings: [`${account.brandCode}: ${message}`],
           unavailableFields: [],
         };
       }
@@ -1793,4 +1796,8 @@ function isRecord(value: unknown): value is JsonRecord {
 function errorToMessage(error: unknown) {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof Error && error.name === "AbortError";
 }
