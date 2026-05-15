@@ -5,6 +5,7 @@ import {
   buildInsightDateParams,
   finalizedInsightCutoffDate,
   incrementalDatePreset,
+  monthDateRange,
   monthlyDateChunks,
 } from "../src/lib/meta-backfill-utils.ts";
 
@@ -69,5 +70,11 @@ describe("Meta insight date params", () => {
       finalizedInsightCutoffDate({ META_INCREMENTAL_SYNC_DAYS: "14" }, new Date("2026-05-14T12:00:00Z")),
       "2026-05-01",
     );
+  });
+
+  it("resolves a month input into its full calendar date range", () => {
+    assert.deepEqual(monthDateRange("2026-02"), { start: "2026-02-01", end: "2026-02-28" });
+    assert.deepEqual(monthDateRange("2024-02"), { start: "2024-02-01", end: "2024-02-29" });
+    assert.equal(monthDateRange("2026-13"), null);
   });
 });

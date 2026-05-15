@@ -11,7 +11,8 @@ export async function GET(request: Request) {
   }
 
   try {
-    return Response.json(await getMetaDataHealth());
+    const url = new URL(request.url);
+    return Response.json(await getMetaDataHealth({ compareMonth: url.searchParams.get("compareMonth") }));
   } catch (error) {
     return jsonError(error);
   }

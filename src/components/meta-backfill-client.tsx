@@ -2,16 +2,20 @@
 
 import {
   AlertTriangle,
+  BarChart3,
   CalendarClock,
   CheckCircle2,
   Database,
   Loader2,
+  Lock,
   Pause,
   Play,
   RefreshCcw,
   RotateCcw,
+  Search,
   Shield,
   Square,
+  Unlock,
 } from "lucide-react";
 import type { ButtonHTMLAttributes, ComponentType } from "react";
 import { useMemo, useState } from "react";
@@ -83,6 +87,7 @@ type DataHealth = {
     totalRows: number;
     uniqueAccountAdDateKeys: number;
     duplicateKeyCount: number;
+    duplicateSamples?: Array<{ key: string; count: number; spend: number }>;
     nullKeyRows: number;
     dateRange: { min: string | null; max: string | null };
   };
@@ -90,7 +95,26 @@ type DataHealth = {
     duplicateRowsOk: boolean;
     nullKeysOk: boolean;
     hasInsightRows: boolean;
+    spendJumpsOk: boolean;
+    recentSyncWarningsOk: boolean;
   };
+  accounts: Array<{
+    metaAccountId: string | null;
+    name: string | null;
+    lastSyncedAt: string | null;
+    updatedAt: string | null;
+  }>;
+  lastSync: {
+    id: string | null;
+    trigger: string | null;
+    status: string | null;
+    startedAt: string | null;
+    completedAt: string | null;
+    warnings: string[];
+    errors: unknown;
+  } | null;
+  monthlyTotals: MonthlyDiagnostic[];
+  lockedMonths: MonthlyDiagnostic[];
   monthlyUmbrella: Array<{
     month: string;
     campaignUmbrella: string;
@@ -100,6 +124,36 @@ type DataHealth = {
     bookings: number;
     conversions: number;
   }>;
+  spendAlerts: Array<{
+    month: string;
+    campaignUmbrella: string;
+    spend: number;
+    previousSpend: number;
+    spendDelta: number;
+    spendDeltaPct: number;
+  }>;
+  warnings: string[];
+  metaComparison: {
+    month: string;
+    start: string;
+    end: string;
+    comparedAt: string;
+    accounts: Array<{
+      brandCode: string;
+      metaAccountId: string;
+      supabase: MetricTotals;
+      meta: MetricTotals;
+      delta: MetricTotals;
+      spendDeltaPct: number | null;
+    }>;
+    totals: {
+      supabase: MetricTotals;
+      meta: MetricTotals;
+      delta: MetricTotals;
+      spendDeltaPct: number | null;
+    } | null;
+    error: string | null;
+  } | null;
   recentSyncRuns: Array<{
     id: string;
     trigger: string;
@@ -113,6 +167,27 @@ type DataHealth = {
     } & Record<string, unknown>;
     errors: unknown;
   }>;
+};
+
+type MetricTotals = {
+  rows: number;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  leads: number;
+  bookings: number;
+  conversions: number;
+};
+
+type MonthlyDiagnostic = MetricTotals & {
+  month: string;
+  monthStart: string;
+  monthEnd: string;
+  lockStatus: "locked" | "settling" | "active";
+  isLocked: boolean;
+  previousSpend: number | null;
+  spendDelta: number;
+  spendDeltaPct: number | null;
 };
 
 const STATUS_CLASS: Record<BackfillStatus | ChunkStatus, string> = {
@@ -136,6 +211,7 @@ export function MetaBackfillClient() {
   const [endDate, setEndDate] = useState(todayString());
   const [state, setState] = useState<BackfillState | null>(null);
   const [dataHealth, setDataHealth] = useState<DataHealth | null>(null);
+  const [compareMonth, setCompareMonth] = useState(todayString().slice(0, 7));
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
 
@@ -173,13 +249,44 @@ export function MetaBackfillClient() {
     }
   }
 
-  async function loadDataHealth() {
+  async function loadDataHealth(options: { compare?: boolean } = {}) {
     setLoading(true);
     setStatus("");
     try {
-      const payload = await request("/api/meta/data-health");
+      const query = new URLSearchParams();
+      if (options.compare && compareMonth) query.set("compareMonth", compareMonth);
+      const queryString = query.toString();
+      const payload = await request(`/api/meta/data-health${queryString ? `?${queryString}` : ""}`);
       setDataHealth(payload);
-      setStatus("Data health refreshed.");
+      setStatus(options.compare ? `Compared ${compareMonth} against Meta.` : "Data health refreshed.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function resyncMonth(month: string) {
+    const range = monthRange(month);
+    const label = range ? `${range.start} to ${range.end}` : month;
+    if (!window.confirm(`Re-sync ${month} from Meta and overwrite stored daily rows for ${label}?`)) return;
+
+    setLoading(true);
+    setStatus("");
+    try {
+      const payload = await request("/api/meta/backfill/month-resync", {
+        method: "POST",
+        body: JSON.stringify({ month }),
+      });
+      const query = new URLSearchParams();
+      if (compareMonth === month) query.set("compareMonth", month);
+      const queryString = query.toString();
+      const health = await request(`/api/meta/data-health${queryString ? `?${queryString}` : ""}`);
+      setDataHealth(health);
+      const insightRows = Number(payload.metrics?.insightRows || 0);
+      setStatus(
+        `Re-synced ${month}: ${insightRows.toLocaleString()} insight row(s).`,
+      );
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     } finally {
@@ -250,7 +357,7 @@ export function MetaBackfillClient() {
           <Button onClick={() => loadState()} disabled={loading} icon={RefreshCcw}>
             Refresh
           </Button>
-          <Button onClick={loadDataHealth} disabled={loading} icon={Shield}>
+          <Button onClick={() => loadDataHealth()} disabled={loading} icon={Shield}>
             Data Health
           </Button>
           <Button onClick={runBatch} disabled={loading} icon={Play} intent="primary">
@@ -310,7 +417,14 @@ export function MetaBackfillClient() {
             </div>
           ) : null}
 
-          <DataHealthPanel health={dataHealth} />
+          <DataHealthPanel
+            health={dataHealth}
+            compareMonth={compareMonth}
+            disabled={loading}
+            onCompareMonth={() => loadDataHealth({ compare: true })}
+            onCompareMonthChange={setCompareMonth}
+            onResyncMonth={resyncMonth}
+          />
 
           <section className="border border-hp-rule bg-hp-card p-4">
             <div className="flex items-center justify-between gap-3">
@@ -486,16 +600,60 @@ function JobRow({
   );
 }
 
-function DataHealthPanel({ health }: { health: DataHealth | null }) {
-  const recentWarnings = (health?.recentSyncRuns || [])
-    .flatMap((run) => run.metrics.audit?.warnings || [])
-    .slice(0, 5);
+function DataHealthPanel({
+  health,
+  compareMonth,
+  disabled,
+  onCompareMonth,
+  onCompareMonthChange,
+  onResyncMonth,
+}: {
+  health: DataHealth | null;
+  compareMonth: string;
+  disabled: boolean;
+  onCompareMonth: () => void;
+  onCompareMonthChange: (month: string) => void;
+  onResyncMonth: (month: string) => void;
+}) {
+  const recentWarnings = (health?.warnings || []).slice(0, 8);
   const recentUmbrellaRows = (health?.monthlyUmbrella || []).slice(-12).reverse();
+  const recentMonthlyRows = (health?.monthlyTotals || []).slice(-12).reverse();
+  const lockedRows = (health?.lockedMonths || []).slice(-8).reverse();
+  const maxRecentSpend = Math.max(...recentMonthlyRows.map((row) => row.spend), 1);
+  const checks = health
+    ? [
+        {
+          label: "Duplicate account/ad/date keys",
+          ok: health.checks.duplicateRowsOk,
+          value: health.insights.duplicateKeyCount.toLocaleString(),
+        },
+        {
+          label: "Missing required insight keys",
+          ok: health.checks.nullKeysOk,
+          value: health.insights.nullKeyRows.toLocaleString(),
+        },
+        {
+          label: "Stored insight history",
+          ok: health.checks.hasInsightRows,
+          value: health.insights.totalRows.toLocaleString(),
+        },
+        {
+          label: "Unusual spend jumps",
+          ok: health.checks.spendJumpsOk,
+          value: health.spendAlerts.length.toLocaleString(),
+        },
+        {
+          label: "Recent sync warnings",
+          ok: health.checks.recentSyncWarningsOk,
+          value: (health.lastSync?.warnings.length || 0).toLocaleString(),
+        },
+      ]
+    : [];
 
   return (
     <section className="border border-hp-rule bg-hp-card p-4">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <PanelTitle icon={Shield} title="Data Health" />
+        <PanelTitle icon={Shield} title="Data Health Dashboard" />
         {health ? (
           <span className="text-xs text-hp-muted">Checked {formatDateTime(health.generatedAt)}</span>
         ) : null}
@@ -507,7 +665,7 @@ function DataHealthPanel({ health }: { health: DataHealth | null }) {
             <Stat label="Insight Rows" value={health.insights.totalRows.toLocaleString()} />
             <Stat label="Duplicate Keys" value={health.insights.duplicateKeyCount.toLocaleString()} />
             <Stat label="Null Keys" value={health.insights.nullKeyRows.toLocaleString()} />
-            <Stat label="Refresh Window" value={health.syncPolicy.incrementalDatePreset} />
+            <Stat label="Locked Months" value={health.lockedMonths.length.toLocaleString()} />
           </div>
           <div className="mt-3 grid gap-3 md:grid-cols-4">
             <SmallMetric
@@ -515,9 +673,40 @@ function DataHealthPanel({ health }: { health: DataHealth | null }) {
               value={`${health.insights.dateRange.min || "-"} to ${health.insights.dateRange.max || "-"}`}
             />
             <SmallMetric label="Finalized Before" value={health.syncPolicy.finalizedCutoffDate} />
-            <SmallMetric label="Finalized Rows" value={health.syncPolicy.finalizedRows.toLocaleString()} />
-            <SmallMetric label="Refreshable Rows" value={health.syncPolicy.refreshableRows.toLocaleString()} />
+            <SmallMetric label="Refresh Window" value={health.syncPolicy.incrementalDatePreset} />
+            <SmallMetric
+              label="Last Sync"
+              value={
+                health.lastSync
+                  ? `${health.lastSync.status || "unknown"} · ${formatDateTime(health.lastSync.completedAt || health.lastSync.startedAt)}`
+                  : "-"
+              }
+            />
           </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-5">
+            {checks.map((check) => (
+              <div
+                key={check.label}
+                className={`border p-3 ${
+                  check.ok
+                    ? "border-signal-positive/30 bg-signal-positive/10"
+                    : "border-signal-warning/30 bg-signal-warning/10"
+                }`}
+              >
+                <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                  {check.ok ? (
+                    <CheckCircle2 size={14} className="text-signal-positive" />
+                  ) : (
+                    <AlertTriangle size={14} className="text-signal-warning" />
+                  )}
+                  <span>{check.label}</span>
+                </div>
+                <div className="mt-2 text-lg text-hp-ink">{check.value}</div>
+              </div>
+            ))}
+          </div>
+
           {recentWarnings.length ? (
             <div className="mt-3 border border-signal-warning/30 bg-signal-warning/10 p-3 text-sm text-signal-warning">
               {recentWarnings.map((warning, index) => (
@@ -529,6 +718,140 @@ function DataHealthPanel({ health }: { health: DataHealth | null }) {
               No duplicate keys, null insight keys, or recent sync warnings were reported.
             </div>
           )}
+
+          <div className="mt-5 border-t border-hp-rule pt-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+              <PanelTitle icon={Search} title="Meta vs Supabase" />
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                <label className="block">
+                  <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                    Month
+                  </span>
+                  <input
+                    type="month"
+                    value={compareMonth}
+                    onChange={(event) => onCompareMonthChange(event.target.value)}
+                    className="mt-1 h-10 border border-hp-rule bg-hp-foundation px-3 text-sm text-hp-ink outline-none focus:border-hp-ink"
+                  />
+                </label>
+                <Button onClick={onCompareMonth} disabled={disabled} icon={Search}>
+                  Compare
+                </Button>
+              </div>
+            </div>
+            <MetaComparisonView comparison={health.metaComparison} />
+          </div>
+
+          <div className="mt-5 border-t border-hp-rule pt-4">
+            <PanelTitle icon={Lock} title="Finalized Month Locks" />
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full min-w-[700px] border-collapse text-sm">
+                <thead className="text-left text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+                  <tr className="border-b border-hp-rule">
+                    <th className="py-2 pr-3 font-normal">Month</th>
+                    <th className="py-2 pr-3 font-normal">Status</th>
+                    <th className="py-2 pr-3 font-normal">Spend</th>
+                    <th className="py-2 pr-3 font-normal">Rows</th>
+                    <th className="py-2 pr-3 font-normal">Manual Override</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lockedRows.map((row) => (
+                    <tr key={row.month} className="border-b border-hp-rule/70">
+                      <td className="py-2 pr-3 text-hp-ink">{row.month}</td>
+                      <td className="py-2 pr-3">
+                        <LockStatusPill status={row.lockStatus} />
+                      </td>
+                      <td className="py-2 pr-3 tabular-nums">{formatMoney(row.spend)}</td>
+                      <td className="py-2 pr-3">{row.rows.toLocaleString()}</td>
+                      <td className="py-2 pr-3">
+                        <button
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => onResyncMonth(row.month)}
+                          className="inline-flex h-9 items-center gap-2 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-body transition-colors hover:border-hp-ink hover:bg-hp-inset disabled:opacity-50"
+                        >
+                          <RefreshCcw size={13} />
+                          Re-sync
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {lockedRows.length === 0 ? (
+                <EmptyState text="No finalized months are locked yet." />
+              ) : null}
+            </div>
+          </div>
+
+          <div className="mt-5 border-t border-hp-rule pt-4">
+            <PanelTitle icon={BarChart3} title="Monthly Rows and Spend" />
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full min-w-[760px] border-collapse text-sm">
+                <thead className="text-left text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+                  <tr className="border-b border-hp-rule">
+                    <th className="py-2 pr-3 font-normal">Month</th>
+                    <th className="py-2 pr-3 font-normal">Lock</th>
+                    <th className="py-2 pr-3 font-normal">Rows</th>
+                    <th className="py-2 pr-3 font-normal">Spend</th>
+                    <th className="py-2 pr-3 font-normal">Delta</th>
+                    <th className="py-2 pr-3 font-normal">Leads</th>
+                    <th className="py-2 pr-3 font-normal">Bookings</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recentMonthlyRows.map((row) => (
+                    <tr key={row.month} className="border-b border-hp-rule/70">
+                      <td className="py-2 pr-3 text-hp-ink">{row.month}</td>
+                      <td className="py-2 pr-3">
+                        <LockStatusPill status={row.lockStatus} />
+                      </td>
+                      <td className="py-2 pr-3">{row.rows.toLocaleString()}</td>
+                      <td className="py-2 pr-3 tabular-nums">
+                        <div>{formatMoney(row.spend)}</div>
+                        <div className="mt-1 h-1.5 w-28 bg-hp-inset">
+                          <div
+                            className="h-full bg-hp-ink"
+                            style={{ width: `${Math.max(4, Math.round((row.spend / maxRecentSpend) * 100))}%` }}
+                          />
+                        </div>
+                      </td>
+                      <td className={deltaClassName(row.spendDelta)}>
+                        {formatDeltaMoney(row.spendDelta)}
+                        {row.spendDeltaPct !== null ? ` (${formatPct(row.spendDeltaPct)})` : ""}
+                      </td>
+                      <td className="py-2 pr-3">{row.leads.toLocaleString()}</td>
+                      <td className="py-2 pr-3">{row.bookings.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {health.spendAlerts.length ? (
+            <div className="mt-5 border-t border-hp-rule pt-4">
+              <PanelTitle icon={AlertTriangle} title="Spend Jump Alerts" />
+              <div className="mt-3 grid gap-2 md:grid-cols-2">
+                {health.spendAlerts.slice(0, 6).map((alert) => (
+                  <div
+                    key={`${alert.month}-${alert.campaignUmbrella}`}
+                    className="border border-signal-warning/30 bg-signal-warning/10 p-3 text-sm"
+                  >
+                    <div className="text-hp-ink">
+                      {alert.month} · {alert.campaignUmbrella}
+                    </div>
+                    <div className="mt-1 text-signal-warning">
+                      {formatMoney(alert.previousSpend)} to {formatMoney(alert.spend)} ·{" "}
+                      {formatDeltaMoney(alert.spendDelta)} ({formatPct(alert.spendDeltaPct)})
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
           <div className="mt-4 overflow-x-auto">
             <table className="w-full min-w-[680px] border-collapse text-sm">
               <thead className="text-left text-[11px] uppercase tracking-[0.14em] text-hp-muted">
@@ -557,9 +880,84 @@ function DataHealthPanel({ health }: { health: DataHealth | null }) {
           </div>
         </>
       ) : (
-        <EmptyState text="Click Data Health to check duplicate keys, sync policy, and recent monthly totals." />
+        <EmptyState text="Click Data Health to check duplicate keys, sync policy, locked months, spend jumps, and monthly totals." />
       )}
     </section>
+  );
+}
+
+function MetaComparisonView({ comparison }: { comparison: DataHealth["metaComparison"] }) {
+  if (!comparison) {
+    return (
+      <EmptyState text="Choose a month and click Compare to pull live Meta totals and compare them against Supabase." />
+    );
+  }
+
+  if (comparison.error) {
+    return (
+      <div className="mt-3 flex items-start gap-2 border border-signal-warning/30 bg-signal-warning/10 p-3 text-sm text-signal-warning">
+        <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+        <span>{comparison.error}</span>
+      </div>
+    );
+  }
+
+  const totals = comparison.totals;
+
+  return (
+    <div className="mt-3 overflow-x-auto">
+      <div className="mb-2 text-xs text-hp-muted">
+        {comparison.month} · {comparison.start} to {comparison.end} · Supabase minus Meta
+      </div>
+      <table className="w-full min-w-[760px] border-collapse text-sm">
+        <thead className="text-left text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+          <tr className="border-b border-hp-rule">
+            <th className="py-2 pr-3 font-normal">Account</th>
+            <th className="py-2 pr-3 font-normal">Supabase Spend</th>
+            <th className="py-2 pr-3 font-normal">Meta Spend</th>
+            <th className="py-2 pr-3 font-normal">Difference</th>
+            <th className="py-2 pr-3 font-normal">Rows</th>
+            <th className="py-2 pr-3 font-normal">Clicks</th>
+          </tr>
+        </thead>
+        <tbody>
+          {comparison.accounts.map((account) => (
+            <tr key={account.metaAccountId} className="border-b border-hp-rule/70">
+              <td className="py-2 pr-3 text-hp-ink">{account.brandCode}</td>
+              <td className="py-2 pr-3 tabular-nums">{formatMoney(account.supabase.spend)}</td>
+              <td className="py-2 pr-3 tabular-nums">{formatMoney(account.meta.spend)}</td>
+              <td className={deltaClassName(account.delta.spend)}>
+                {formatDeltaMoney(account.delta.spend)}
+                {account.spendDeltaPct !== null ? ` (${formatPct(account.spendDeltaPct)})` : ""}
+              </td>
+              <td className="py-2 pr-3">
+                {account.supabase.rows.toLocaleString()} / {account.meta.rows.toLocaleString()}
+              </td>
+              <td className={deltaClassName(account.delta.clicks)}>
+                {account.supabase.clicks.toLocaleString()} / {account.meta.clicks.toLocaleString()}
+              </td>
+            </tr>
+          ))}
+          {totals ? (
+            <tr className="border-b border-hp-rule bg-hp-inset/60">
+              <td className="py-2 pr-3 text-hp-ink">Total</td>
+              <td className="py-2 pr-3 tabular-nums">{formatMoney(totals.supabase.spend)}</td>
+              <td className="py-2 pr-3 tabular-nums">{formatMoney(totals.meta.spend)}</td>
+              <td className={deltaClassName(totals.delta.spend)}>
+                {formatDeltaMoney(totals.delta.spend)}
+                {totals.spendDeltaPct !== null ? ` (${formatPct(totals.spendDeltaPct)})` : ""}
+              </td>
+              <td className="py-2 pr-3">
+                {totals.supabase.rows.toLocaleString()} / {totals.meta.rows.toLocaleString()}
+              </td>
+              <td className={deltaClassName(totals.delta.clicks)}>
+                {totals.supabase.clicks.toLocaleString()} / {totals.meta.clicks.toLocaleString()}
+              </td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -652,6 +1050,24 @@ function StatusPill({ status }: { status: BackfillStatus | ChunkStatus }) {
   );
 }
 
+function LockStatusPill({ status }: { status: MonthlyDiagnostic["lockStatus"] }) {
+  const Icon = status === "locked" ? Lock : status === "settling" ? CalendarClock : Unlock;
+  const label = status === "locked" ? "locked" : status === "settling" ? "settling" : "active";
+  const className =
+    status === "locked"
+      ? "border-hp-rule bg-hp-inset text-hp-body"
+      : status === "settling"
+        ? "border-signal-warning/30 bg-signal-warning/10 text-signal-warning"
+        : "border-signal-positive/30 bg-signal-positive/10 text-signal-positive";
+
+  return (
+    <span className={`inline-flex items-center gap-1 border px-2 py-1 text-[10px] uppercase tracking-[0.14em] ${className}`}>
+      <Icon size={12} />
+      {label}
+    </span>
+  );
+}
+
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="border border-hp-rule bg-hp-foundation p-3">
@@ -701,4 +1117,34 @@ function formatMoney(value: number) {
     currency: "USD",
     maximumFractionDigits: value >= 100 ? 0 : 2,
   }).format(value);
+}
+
+function formatDeltaMoney(value: number) {
+  const formatted = formatMoney(Math.abs(value));
+  if (value > 0) return `+${formatted}`;
+  if (value < 0) return `-${formatted}`;
+  return formatted;
+}
+
+function formatPct(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "percent",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function deltaClassName(value: number) {
+  const tone = value > 0 ? "text-signal-warning" : value < 0 ? "text-signal-positive" : "text-hp-body";
+  return `py-2 pr-3 tabular-nums ${tone}`;
+}
+
+function monthRange(month: string) {
+  if (!/^\d{4}-\d{2}$/.test(month)) return null;
+  const start = new Date(`${month}-01T00:00:00Z`);
+  if (Number.isNaN(start.getTime()) || start.toISOString().slice(0, 7) !== month) return null;
+  const end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 0));
+  return {
+    start: start.toISOString().slice(0, 10),
+    end: end.toISOString().slice(0, 10),
+  };
 }

@@ -105,6 +105,18 @@ type SyncAuditSummary = {
   warnings: string[];
 };
 
+export type MetaAccountInsightTotals = {
+  brandCode: SyncAccountConfig["brandCode"];
+  metaAccountId: string;
+  rows: number;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  leads: number;
+  bookings: number;
+  conversions: number;
+};
+
 type DynamicSupabaseClient = {
   from: (table: string) => {
     upsert: (
@@ -340,6 +352,62 @@ export async function syncMetaAdsAccountRange(input: {
     refreshPreviews: false,
     allowFinalizedInsightUpdates: true,
   });
+}
+
+export async function fetchMetaAccountInsightTotalsForRange(input: {
+  since: string;
+  until: string;
+}): Promise<MetaAccountInsightTotals[]> {
+  const accounts = getConfiguredAccounts();
+
+  return Promise.all(
+    accounts.map(async (account) => {
+      const metaAccountId = `act_${normalizeAccountId(account.accountId)}`;
+      const insights = await fetchAccountInsightsTotal(metaAccountId, input);
+
+      return insights.reduce<MetaAccountInsightTotals>(
+        (total, insight) => ({
+          ...total,
+          rows: total.rows + 1,
+          spend: roundCurrency(total.spend + (numberField(insight.spend) || 0)),
+          impressions: total.impressions + Math.round(numberField(insight.impressions) || 0),
+          clicks: total.clicks + Math.round(numberField(insight.clicks) || 0),
+          leads:
+            total.leads +
+            extractExactActionCount(insight.actions, [
+              "lead",
+              "onsite_conversion.lead",
+              "onsite_conversion.lead_grouped",
+              "onsite_web_lead",
+              "offsite_conversion.fb_pixel_lead",
+            ]),
+          bookings:
+            total.bookings +
+            extractExactActionCount(insight.actions, [
+              "offsite_conversion.fb_pixel_custom",
+              "schedule",
+              "submit_application",
+              "booking",
+              "appointment",
+            ]),
+          conversions:
+            total.conversions +
+            extractActionCount(insight.actions, ["offsite_conversion", "purchase", "complete_registration"]),
+        }),
+        {
+          brandCode: account.brandCode,
+          metaAccountId,
+          rows: 0,
+          spend: 0,
+          impressions: 0,
+          clicks: 0,
+          leads: 0,
+          bookings: 0,
+          conversions: 0,
+        },
+      );
+    }),
+  );
 }
 
 async function syncAccount(
@@ -1076,6 +1144,32 @@ async function fetchInsights(metaAccountId: string, range?: InsightDateRange) {
         fields: minimalFields,
         limit: "100",
       }, { maxPages: getSyncMaxPages("META_SYNC_MAX_INSIGHT_PAGES", 30) });
+    }
+    throw error;
+  }
+}
+
+async function fetchAccountInsightsTotal(
+  metaAccountId: string,
+  range: { since: string; until: string },
+) {
+  try {
+    return await graphPages<JsonRecord>(`${metaAccountId}/insights`, {
+      level: "account",
+      time_increment: "all_days",
+      ...buildInsightDateParams({ kind: "range", since: range.since, until: range.until }),
+      fields: "spend,impressions,clicks,actions",
+      limit: "25",
+    }, { maxPages: 5 });
+  } catch (error) {
+    if (error instanceof MetaGraphError) {
+      return graphPages<JsonRecord>(`${metaAccountId}/insights`, {
+        level: "account",
+        time_increment: "all_days",
+        ...buildInsightDateParams({ kind: "range", since: range.since, until: range.until }),
+        fields: "spend,impressions,clicks",
+        limit: "25",
+      }, { maxPages: 5 });
     }
     throw error;
   }

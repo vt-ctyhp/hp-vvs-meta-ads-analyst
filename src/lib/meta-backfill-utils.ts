@@ -8,6 +8,7 @@ export type InsightDateRange =
   | { kind: "range"; since: string; until: string };
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const MONTH_PATTERN = /^\d{4}-\d{2}$/;
 export const DEFAULT_INCREMENTAL_SYNC_DAYS = 35;
 
 export function monthlyDateChunks(start: string, end: string): DateChunk[] {
@@ -66,6 +67,16 @@ export function finalizedInsightCutoffDate(
 
 export function normalizeDateInput(value: string | null | undefined) {
   return value && DATE_PATTERN.test(value) ? value : null;
+}
+
+export function monthDateRange(value: string | null | undefined): DateChunk | null {
+  if (!value || !MONTH_PATTERN.test(value)) return null;
+  const start = parseDate(`${value}-01`);
+  if (!start) return null;
+  return {
+    start: formatDate(start),
+    end: formatDate(endOfMonth(start)),
+  };
 }
 
 export function todayString(now = new Date()) {

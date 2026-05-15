@@ -2,7 +2,12 @@ import {
   finalizedInsightCutoffDate,
   incrementalDatePreset,
   incrementalSyncDays,
+  monthDateRange,
 } from "./meta-backfill-utils";
+import {
+  fetchMetaAccountInsightTotalsForRange,
+  type MetaAccountInsightTotals,
+} from "./meta";
 import { createServiceClient } from "./supabase";
 
 type JsonRecord = Record<string, unknown>;
@@ -17,7 +22,42 @@ type SupabaseSelectClient = {
   };
 };
 
-export async function getMetaDataHealth() {
+type MetricTotals = {
+  rows: number;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  leads: number;
+  bookings: number;
+  conversions: number;
+};
+
+type MonthlyDiagnostic = MetricTotals & {
+  month: string;
+  monthStart: string;
+  monthEnd: string;
+  lockStatus: "locked" | "settling" | "active";
+  isLocked: boolean;
+  previousSpend: number | null;
+  spendDelta: number;
+  spendDeltaPct: number | null;
+};
+
+type MonthlyUmbrellaDiagnostic = MetricTotals & {
+  month: string;
+  campaignUmbrella: string;
+};
+
+type SpendAlert = {
+  month: string;
+  campaignUmbrella: string;
+  spend: number;
+  previousSpend: number;
+  spendDelta: number;
+  spendDeltaPct: number;
+};
+
+export async function getMetaDataHealth(input: { compareMonth?: string | null } = {}) {
   const cutoff = finalizedInsightCutoffDate();
   const [accounts, insightRows, syncRuns] = await Promise.all([
     fetchAll("meta_ad_accounts", "meta_account_id,name,last_synced_at,updated_at"),
@@ -28,7 +68,11 @@ export async function getMetaDataHealth() {
     fetchRecentSyncRuns(),
   ]);
   const duplicateSummary = summarizeDuplicateKeys(insightRows);
+  const monthlyTotals = summarizeMonthlyTotals(insightRows, cutoff);
   const monthlyUmbrella = summarizeMonthlyUmbrella(insightRows);
+  const spendAlerts = summarizeSpendAlerts(monthlyUmbrella, cutoff);
+  const recentAuditWarnings = syncRuns.flatMap((run) => syncRunAuditWarnings(run)).slice(0, 12);
+  const compareMonth = normalizeMonthInput(input.compareMonth);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -53,12 +97,27 @@ export async function getMetaDataHealth() {
       nullKeyRows: duplicateSummary.nullKeyRows,
       dateRange: dateRangeForRows(insightRows),
     },
-    monthlyUmbrella: monthlyUmbrella.slice(-80),
+    lastSync: mapLastSync(syncRuns[0]),
+    monthlyTotals: monthlyTotals.slice(-36),
+    lockedMonths: monthlyTotals.filter((month) => month.isLocked).slice(-24),
+    monthlyUmbrella: monthlyUmbrella.slice(-120),
+    spendAlerts,
+    warnings: buildHealthWarnings({
+      duplicateKeyCount: duplicateSummary.duplicateKeyCount,
+      nullKeyRows: duplicateSummary.nullKeyRows,
+      spendAlerts,
+      recentAuditWarnings,
+    }),
     recentSyncRuns: syncRuns,
+    metaComparison: compareMonth
+      ? await compareMetaAndSupabaseMonth(compareMonth, insightRows)
+      : null,
     checks: {
       duplicateRowsOk: duplicateSummary.duplicateKeyCount === 0,
       nullKeysOk: duplicateSummary.nullKeyRows === 0,
       hasInsightRows: insightRows.length > 0,
+      spendJumpsOk: spendAlerts.length === 0,
+      recentSyncWarningsOk: recentAuditWarnings.length === 0,
     },
   };
 }
@@ -79,7 +138,7 @@ async function fetchRecentSyncRuns() {
     status: stringField(run.status),
     startedAt: stringField(run.started_at),
     completedAt: stringField(run.completed_at),
-    metrics: run.metrics || {},
+    metrics: recordField(run.metrics),
     errors: run.errors || [],
   }));
 }
@@ -141,18 +200,47 @@ function summarizeDuplicateKeys(insightRows: JsonRecord[]) {
   };
 }
 
+function summarizeMonthlyTotals(insightRows: JsonRecord[], cutoff: string) {
+  const byMonth = new Map<string, MonthlyDiagnostic>();
+
+  insightRows.forEach((row) => {
+    const date = stringField(row.date_start);
+    if (!date) return;
+
+    const month = date.slice(0, 7);
+    const range = monthDateRange(month);
+    if (!range) return;
+
+    const current = byMonth.get(month) || {
+      month,
+      monthStart: range.start,
+      monthEnd: range.end,
+      lockStatus: lockStatusForMonth(month, cutoff),
+      isLocked: lockStatusForMonth(month, cutoff) === "locked",
+      previousSpend: null,
+      spendDelta: 0,
+      spendDeltaPct: null,
+      ...emptyMetricTotals(),
+    };
+    addInsightRowToTotals(current, row);
+    byMonth.set(month, current);
+  });
+
+  const sorted = Array.from(byMonth.values()).sort((a, b) => a.month.localeCompare(b.month));
+  return sorted.map((month, index) => {
+    const previous = index > 0 ? sorted[index - 1] : null;
+    const spendDelta = roundCurrency(month.spend - (previous?.spend || 0));
+    return {
+      ...month,
+      previousSpend: previous ? previous.spend : null,
+      spendDelta,
+      spendDeltaPct: previous && previous.spend > 0 ? spendDelta / previous.spend : null,
+    };
+  });
+}
+
 function summarizeMonthlyUmbrella(insightRows: JsonRecord[]) {
-  const byKey = new Map<string, {
-    month: string;
-    campaignUmbrella: string;
-    rows: number;
-    spend: number;
-    impressions: number;
-    clicks: number;
-    leads: number;
-    bookings: number;
-    conversions: number;
-  }>();
+  const byKey = new Map<string, MonthlyUmbrellaDiagnostic>();
 
   insightRows.forEach((row) => {
     const date = stringField(row.date_start);
@@ -164,27 +252,170 @@ function summarizeMonthlyUmbrella(insightRows: JsonRecord[]) {
     const current = byKey.get(key) || {
       month,
       campaignUmbrella,
-      rows: 0,
-      spend: 0,
-      impressions: 0,
-      clicks: 0,
-      leads: 0,
-      bookings: 0,
-      conversions: 0,
+      ...emptyMetricTotals(),
     };
-    current.rows += 1;
-    current.spend = roundCurrency(current.spend + numberField(row.spend));
-    current.impressions += Math.round(numberField(row.impressions));
-    current.clicks += Math.round(numberField(row.clicks));
-    current.leads += Math.round(numberField(row.leads));
-    current.bookings += Math.round(numberField(row.bookings));
-    current.conversions += Math.round(numberField(row.conversions));
+    addInsightRowToTotals(current, row);
     byKey.set(key, current);
   });
 
   return Array.from(byKey.values()).sort((a, b) =>
     `${a.month}|${a.campaignUmbrella}`.localeCompare(`${b.month}|${b.campaignUmbrella}`),
   );
+}
+
+function summarizeSpendAlerts(monthlyUmbrella: MonthlyUmbrellaDiagnostic[], cutoff: string) {
+  const byUmbrella = new Map<string, MonthlyUmbrellaDiagnostic[]>();
+  monthlyUmbrella.forEach((row) => {
+    byUmbrella.set(row.campaignUmbrella, [...(byUmbrella.get(row.campaignUmbrella) || []), row]);
+  });
+
+  const alerts: SpendAlert[] = [];
+  byUmbrella.forEach((rowsForUmbrella, campaignUmbrella) => {
+    const sorted = [...rowsForUmbrella].sort((a, b) => a.month.localeCompare(b.month));
+    sorted.forEach((row, index) => {
+      const previous = index > 0 ? sorted[index - 1] : null;
+      if (lockStatusForMonth(row.month, cutoff) === "active") return;
+      if (!previous || previous.spend <= 0) return;
+
+      const spendDelta = roundCurrency(row.spend - previous.spend);
+      const spendDeltaPct = spendDelta / previous.spend;
+      if (Math.abs(spendDelta) < 300 || Math.abs(spendDeltaPct) < 0.5) return;
+
+      alerts.push({
+        month: row.month,
+        campaignUmbrella,
+        spend: row.spend,
+        previousSpend: previous.spend,
+        spendDelta,
+        spendDeltaPct,
+      });
+    });
+  });
+
+  return alerts
+    .sort((a, b) => Math.abs(b.spendDelta) - Math.abs(a.spendDelta))
+    .slice(0, 12);
+}
+
+async function compareMetaAndSupabaseMonth(month: string, insightRows: JsonRecord[]) {
+  const range = monthDateRange(month);
+  if (!range) return null;
+
+  try {
+    const metaTotals = await fetchMetaAccountInsightTotalsForRange({
+      since: range.start,
+      until: range.end,
+    });
+    const supabaseByAccount = summarizeAccountTotalsForRange(insightRows, range);
+    const accounts = metaTotals.map((meta) => {
+      const supabase = supabaseByAccount.get(meta.metaAccountId) || emptyMetricTotals();
+      const delta = diffMetricTotals(supabase, meta);
+      return {
+        brandCode: meta.brandCode,
+        metaAccountId: meta.metaAccountId,
+        supabase,
+        meta,
+        delta,
+        spendDeltaPct: meta.spend > 0 ? delta.spend / meta.spend : null,
+      };
+    });
+    const totals = accounts.reduce(
+      (acc, account) => ({
+        supabase: addTotals(acc.supabase, account.supabase),
+        meta: addTotals(acc.meta, account.meta),
+      }),
+      { supabase: emptyMetricTotals(), meta: emptyMetricTotals() },
+    );
+
+    return {
+      month,
+      start: range.start,
+      end: range.end,
+      comparedAt: new Date().toISOString(),
+      accounts,
+      totals: {
+        ...totals,
+        delta: diffMetricTotals(totals.supabase, totals.meta),
+        spendDeltaPct:
+          totals.meta.spend > 0
+            ? diffMetricTotals(totals.supabase, totals.meta).spend / totals.meta.spend
+            : null,
+      },
+      error: null,
+    };
+  } catch (error) {
+    return {
+      month,
+      start: range.start,
+      end: range.end,
+      comparedAt: new Date().toISOString(),
+      accounts: [],
+      totals: null,
+      error: errorToMessage(error),
+    };
+  }
+}
+
+function summarizeAccountTotalsForRange(insightRows: JsonRecord[], range: { start: string; end: string }) {
+  const byAccount = new Map<string, MetricTotals>();
+  insightRows.forEach((row) => {
+    const date = stringField(row.date_start);
+    const metaAccountId = stringField(row.meta_account_id);
+    if (!date || !metaAccountId || date < range.start || date > range.end) return;
+
+    const current = byAccount.get(metaAccountId) || emptyMetricTotals();
+    addInsightRowToTotals(current, row);
+    byAccount.set(metaAccountId, current);
+  });
+  return byAccount;
+}
+
+function buildHealthWarnings(input: {
+  duplicateKeyCount: number;
+  nullKeyRows: number;
+  spendAlerts: SpendAlert[];
+  recentAuditWarnings: string[];
+}) {
+  const warnings: string[] = [];
+  if (input.duplicateKeyCount) {
+    warnings.push(`${input.duplicateKeyCount} duplicate account/ad/date key(s) were found.`);
+  }
+  if (input.nullKeyRows) {
+    warnings.push(`${input.nullKeyRows} insight row(s) are missing account, ad, or date keys.`);
+  }
+  input.spendAlerts.slice(0, 6).forEach((alert) => {
+    warnings.push(
+      `${alert.month} ${alert.campaignUmbrella} spend moved ${formatPct(alert.spendDeltaPct)} vs prior month.`,
+    );
+  });
+  warnings.push(...input.recentAuditWarnings.slice(0, 6));
+  return warnings;
+}
+
+function mapLastSync(run: Awaited<ReturnType<typeof fetchRecentSyncRuns>>[number] | undefined) {
+  if (!run) return null;
+  return {
+    id: run.id,
+    trigger: run.trigger,
+    status: run.status,
+    startedAt: run.startedAt,
+    completedAt: run.completedAt,
+    warnings: syncRunAuditWarnings(run),
+    errors: run.errors,
+  };
+}
+
+function syncRunAuditWarnings(run: { metrics: JsonRecord }) {
+  const audit = recordField(run.metrics.audit);
+  return Array.isArray(audit.warnings) ? audit.warnings.map(String) : [];
+}
+
+function lockStatusForMonth(month: string, cutoff: string): "locked" | "settling" | "active" {
+  const range = monthDateRange(month);
+  if (!range) return "active";
+  if (range.end < cutoff) return "locked";
+  if (range.start < cutoff) return "settling";
+  return "active";
 }
 
 function dateRangeForRows(inputRows: JsonRecord[]) {
@@ -201,8 +432,16 @@ function dateRangeForRows(inputRows: JsonRecord[]) {
   );
 }
 
+function normalizeMonthInput(value: string | null | undefined) {
+  return monthDateRange(value) && value ? value : null;
+}
+
 function rows<T>(data: unknown): T[] {
   return Array.isArray(data) ? (data as T[]) : [];
+}
+
+function recordField(value: unknown): JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as JsonRecord) : {};
 }
 
 function stringField(value: unknown): string | null {
@@ -220,6 +459,64 @@ function numberField(value: unknown) {
   return 0;
 }
 
+function emptyMetricTotals(): MetricTotals {
+  return {
+    rows: 0,
+    spend: 0,
+    impressions: 0,
+    clicks: 0,
+    leads: 0,
+    bookings: 0,
+    conversions: 0,
+  };
+}
+
+function addInsightRowToTotals<T extends MetricTotals>(totals: T, row: JsonRecord) {
+  totals.rows += 1;
+  totals.spend = roundCurrency(totals.spend + numberField(row.spend));
+  totals.impressions += Math.round(numberField(row.impressions));
+  totals.clicks += Math.round(numberField(row.clicks));
+  totals.leads += Math.round(numberField(row.leads));
+  totals.bookings += Math.round(numberField(row.bookings));
+  totals.conversions += Math.round(numberField(row.conversions));
+  return totals;
+}
+
+function addTotals<T extends MetricTotals>(left: T, right: MetricTotals) {
+  return {
+    rows: left.rows + right.rows,
+    spend: roundCurrency(left.spend + right.spend),
+    impressions: left.impressions + right.impressions,
+    clicks: left.clicks + right.clicks,
+    leads: left.leads + right.leads,
+    bookings: left.bookings + right.bookings,
+    conversions: left.conversions + right.conversions,
+  };
+}
+
+function diffMetricTotals(supabase: MetricTotals, meta: MetricTotals | MetaAccountInsightTotals) {
+  return {
+    rows: supabase.rows - meta.rows,
+    spend: roundCurrency(supabase.spend - meta.spend),
+    impressions: supabase.impressions - meta.impressions,
+    clicks: supabase.clicks - meta.clicks,
+    leads: supabase.leads - meta.leads,
+    bookings: supabase.bookings - meta.bookings,
+    conversions: supabase.conversions - meta.conversions,
+  };
+}
+
 function roundCurrency(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+function formatPct(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "percent",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function errorToMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }

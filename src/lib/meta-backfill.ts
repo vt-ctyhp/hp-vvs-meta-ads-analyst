@@ -1,6 +1,7 @@
 import { ConfigurationError, getOptionalEnv } from "./env";
 import { getConfiguredAccounts, syncMetaAdsAccountRange, validateMetaAdsSyncPermissions } from "./meta";
 import {
+  monthDateRange,
   monthlyDateChunks,
   normalizeDateInput,
   todayString,
@@ -299,6 +300,87 @@ export async function runMetaAdsBackfillBatch(input: { limit?: number } = {}) {
   };
 }
 
+export async function resyncMetaAdsMonth(input: { month?: string | null }) {
+  const range = monthDateRange(input.month);
+  if (!range || !input.month) {
+    throw new Error("A valid month in YYYY-MM format is required.");
+  }
+
+  await validateMetaAdsSyncPermissions();
+
+  const supabase = createServiceClient() as unknown as SupabaseAny;
+  const accounts = getConfiguredAccounts();
+  const runInsert = await supabase
+    .from("sync_runs")
+    .insert({
+      trigger: "manual_month_resync",
+      status: "running",
+      ad_account_ids: accounts.map((account) => account.accountId),
+      metrics: { month: input.month, range, insightRows: 0 },
+    })
+    .select("id")
+    .single();
+
+  if (runInsert.error) throw runInsert.error;
+
+  const syncRunId = String((runInsert.data as JsonRecord).id);
+  const metrics: {
+    month: string;
+    range: DateChunk;
+    accounts: number;
+    insightRows: number;
+    audit: { accounts: unknown[]; warnings: string[]; allowFinalizedUpdates: boolean };
+  } = {
+    month: input.month,
+    range,
+    accounts: 0,
+    insightRows: 0,
+    audit: { accounts: [], warnings: [], allowFinalizedUpdates: true },
+  };
+  const errors: string[] = [];
+
+  for (const account of accounts) {
+    try {
+      const result = await syncMetaAdsAccountRange({
+        account,
+        since: range.start,
+        until: range.end,
+      });
+      const audit = recordField((result as { audit?: unknown }).audit);
+      const warnings = Array.isArray(audit.warnings) ? audit.warnings.map(String) : [];
+
+      metrics.accounts += 1;
+      metrics.insightRows += result.insightRows;
+      metrics.audit.accounts.push(audit);
+      metrics.audit.warnings.push(...warnings);
+    } catch (error) {
+      errors.push(`${account.brandCode}: ${errorToMessage(error)}`);
+    }
+  }
+
+  const status = errors.length ? (metrics.accounts > 0 ? "partial" : "failed") : "success";
+  const update = await supabase
+    .from("sync_runs")
+    .update({
+      status,
+      completed_at: new Date().toISOString(),
+      metrics,
+      errors,
+    })
+    .eq("id", syncRunId);
+
+  if (update.error) throw update.error;
+
+  return {
+    status,
+    month: input.month,
+    range,
+    metrics,
+    errors,
+    syncRunId,
+  };
+}
+
 async function refreshBackfillJobRollup(jobId: string) {
   const supabase = createServiceClient() as unknown as SupabaseAny;
   const [jobRes, chunksRes] = await Promise.all([
@@ -512,6 +594,10 @@ function chunkStatusValue(value: unknown): ChunkStatus {
 
 function rows<T>(data: unknown): T[] {
   return Array.isArray(data) ? (data as T[]) : [];
+}
+
+function recordField(value: unknown): JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as JsonRecord) : {};
 }
 
 function numberField(value: unknown) {
