@@ -33,7 +33,7 @@ type BackfillJob = {
   completedChunks: number;
   failedChunks: number;
   runningChunks: number;
-  metrics: { insightRows?: number } | Record<string, unknown>;
+  metrics: unknown;
   errors: unknown;
   startedAt: string | null;
   completedAt: string | null;
@@ -155,10 +155,10 @@ type DataHealth = {
     error: string | null;
   } | null;
   recentSyncRuns: Array<{
-    id: string;
-    trigger: string;
-    status: string;
-    startedAt: string;
+    id: string | null;
+    trigger: string | null;
+    status: string | null;
+    startedAt: string | null;
     completedAt: string | null;
     metrics: {
       audit?: {
@@ -205,17 +205,30 @@ function todayString() {
   return new Date().toISOString().slice(0, 10);
 }
 
-export function MetaBackfillClient() {
+type MetaBackfillClientProps = {
+  initialState?: BackfillState | null;
+  initialDataHealth?: DataHealth | null;
+  initialError?: string | null;
+};
+
+export function MetaBackfillClient({
+  initialState = null,
+  initialDataHealth = null,
+  initialError = null,
+}: MetaBackfillClientProps = {}) {
   const [secret, setSecret] = useState("");
   const [startDate, setStartDate] = useState("2007-01-01");
   const [endDate, setEndDate] = useState(todayString());
-  const [state, setState] = useState<BackfillState | null>(null);
-  const [dataHealth, setDataHealth] = useState<DataHealth | null>(null);
+  const [state, setState] = useState<BackfillState | null>(initialState);
+  const [dataHealth, setDataHealth] = useState<DataHealth | null>(initialDataHealth);
   const [compareMonth, setCompareMonth] = useState(todayString().slice(0, 7));
   const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState(
+    initialError ? `Could not load read-only admin data: ${initialError}` : "",
+  );
 
   const coverageSummary = useMemo(() => summarizeCoverage(state?.coverage || []), [state]);
+  const hasSecret = Boolean(secret.trim());
 
   async function request(path: string, init: RequestInit = {}) {
     if (!secret.trim()) throw new Error("CRON_SECRET is required.");
@@ -354,13 +367,13 @@ export function MetaBackfillClient() {
           </h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button onClick={() => loadState()} disabled={loading} icon={RefreshCcw}>
+          <Button onClick={() => loadState()} disabled={loading || !hasSecret} icon={RefreshCcw}>
             Refresh
           </Button>
-          <Button onClick={() => loadDataHealth()} disabled={loading} icon={Shield}>
+          <Button onClick={() => loadDataHealth()} disabled={loading || !hasSecret} icon={Shield}>
             Data Health
           </Button>
-          <Button onClick={runBatch} disabled={loading} icon={Play} intent="primary">
+          <Button onClick={runBatch} disabled={loading || !hasSecret} icon={Play} intent="primary">
             Run Batch
           </Button>
         </div>
@@ -371,15 +384,19 @@ export function MetaBackfillClient() {
           <section className="border border-hp-rule bg-hp-card p-4">
             <PanelTitle icon={Shield} title="Access" />
             <label className="mt-4 block text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-              CRON_SECRET
+              Operator Secret
             </label>
             <input
               type="password"
               value={secret}
               onChange={(event) => setSecret(event.target.value)}
               className="mt-2 h-11 w-full border border-hp-rule bg-hp-foundation px-3 text-sm text-hp-ink outline-none focus:border-hp-ink"
-              placeholder="Enter secret"
+              placeholder="Required for sync actions"
             />
+            <p className="mt-2 text-xs leading-relaxed text-hp-muted">
+              Read-only data loads automatically. Enter the secret only to refresh live data,
+              create jobs, run batches, compare against Meta, or re-sync locked months.
+            </p>
           </section>
 
           <section className="border border-hp-rule bg-hp-card p-4">
@@ -389,10 +406,10 @@ export function MetaBackfillClient() {
               <DateInput label="End" value={endDate} onChange={setEndDate} />
             </div>
             <div className="mt-4 grid grid-cols-2 gap-2">
-              <Button onClick={createJob} disabled={loading} icon={Database} intent="primary">
+              <Button onClick={createJob} disabled={loading || !hasSecret} icon={Database} intent="primary">
                 Create Job
               </Button>
-              <Button onClick={() => loadState()} disabled={loading} icon={RefreshCcw}>
+              <Button onClick={() => loadState()} disabled={loading || !hasSecret} icon={RefreshCcw}>
                 Load
               </Button>
             </div>
@@ -421,6 +438,7 @@ export function MetaBackfillClient() {
             health={dataHealth}
             compareMonth={compareMonth}
             disabled={loading}
+            operatorReady={hasSecret}
             onCompareMonth={() => loadDataHealth({ compare: true })}
             onCompareMonthChange={setCompareMonth}
             onResyncMonth={resyncMonth}
@@ -604,6 +622,7 @@ function DataHealthPanel({
   health,
   compareMonth,
   disabled,
+  operatorReady,
   onCompareMonth,
   onCompareMonthChange,
   onResyncMonth,
@@ -611,6 +630,7 @@ function DataHealthPanel({
   health: DataHealth | null;
   compareMonth: string;
   disabled: boolean;
+  operatorReady: boolean;
   onCompareMonth: () => void;
   onCompareMonthChange: (month: string) => void;
   onResyncMonth: (month: string) => void;
@@ -734,11 +754,16 @@ function DataHealthPanel({
                     className="mt-1 h-10 border border-hp-rule bg-hp-foundation px-3 text-sm text-hp-ink outline-none focus:border-hp-ink"
                   />
                 </label>
-                <Button onClick={onCompareMonth} disabled={disabled} icon={Search}>
+                <Button onClick={onCompareMonth} disabled={disabled || !operatorReady} icon={Search}>
                   Compare
                 </Button>
               </div>
             </div>
+            {!operatorReady ? (
+              <p className="mt-2 text-xs text-hp-muted">
+                Live Meta comparisons require the operator secret because they call the Meta API.
+              </p>
+            ) : null}
             <MetaComparisonView comparison={health.metaComparison} />
           </div>
 
@@ -767,7 +792,7 @@ function DataHealthPanel({
                       <td className="py-2 pr-3">
                         <button
                           type="button"
-                          disabled={disabled}
+                          disabled={disabled || !operatorReady}
                           onClick={() => onResyncMonth(row.month)}
                           className="inline-flex h-9 items-center gap-2 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-body transition-colors hover:border-hp-ink hover:bg-hp-inset disabled:opacity-50"
                         >
