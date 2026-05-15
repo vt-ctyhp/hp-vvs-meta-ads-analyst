@@ -65,6 +65,7 @@ type BrandLabel = "HP" | "VVS" | "Unassigned";
 type SourceFilter = "all" | "facebook" | "instagram";
 type ItemTypeFilter = "all" | "messages" | "comments";
 type StatusFilter = "all" | "unread" | "needs-reply";
+type ReplyLanguage = "auto" | "en" | "vi";
 
 type QueueDisplayItem = {
   id: string;
@@ -92,6 +93,27 @@ type SyncResponse = {
   error?: string;
 };
 
+type SuggestReplyResponse = {
+  suggestionId?: string;
+  draft?: string;
+  language?: "en" | "vi";
+  model?: string;
+  toneNotes?: string[];
+  contextUsed?: {
+    brand: BrandLabel;
+    sourceType: "message" | "comment";
+    platform: "facebook" | "instagram";
+    messageCount: number;
+    includedMessages: number;
+    omittedMessages: number;
+    usedThreadSummary: boolean;
+    playbookEntries: number;
+    brandVoiceVersion: number | null;
+    customerName: string | null;
+  };
+  error?: string;
+};
+
 const HP_SOCIAL_IDS = new Set(["100615618793615", "17841473309777050"]);
 const VVS_SOCIAL_IDS = new Set<string>();
 
@@ -113,6 +135,13 @@ export function SocialInboxClient({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(dataError);
+  const [replyLanguage, setReplyLanguage] = useState<ReplyLanguage>("auto");
+  const [replyContextId, setReplyContextId] = useState<string | null>(null);
+  const [replyInstruction, setReplyInstruction] = useState("");
+  const [replyDraft, setReplyDraft] = useState("");
+  const [isSuggesting, setIsSuggesting] = useState(false);
+  const [suggestionStatus, setSuggestionStatus] = useState<string | null>(null);
+  const [suggestionMeta, setSuggestionMeta] = useState<SuggestReplyResponse | null>(null);
 
   const queue = useMemo(() => buildQueue(inboxData), [inboxData]);
   const filteredQueue = useMemo(
@@ -153,6 +182,12 @@ export function SocialInboxClient({
     selectedItem?.type === "comment"
       ? inboxData.comments.find((comment) => comment.comment_id === selectedItem.sourceId) || null
       : null;
+  const selectedContextId = selectedItem?.id || null;
+  const isReplyContextActive = replyContextId === selectedContextId;
+  const activeReplyDraft = isReplyContextActive ? replyDraft : "";
+  const activeReplyInstruction = isReplyContextActive ? replyInstruction : "";
+  const activeSuggestionStatus = isReplyContextActive ? suggestionStatus : null;
+  const activeSuggestionMeta = isReplyContextActive ? suggestionMeta : null;
 
   async function handleSync() {
     setIsSyncing(true);
@@ -185,6 +220,44 @@ export function SocialInboxClient({
       setSyncStatus(error instanceof Error ? error.message : String(error));
     } finally {
       setIsSyncing(false);
+    }
+  }
+
+  async function handleSuggestReply() {
+    if (!selectedItem) return;
+    const instruction = isReplyContextActive ? replyInstruction : "";
+    setReplyContextId(selectedItem.id);
+    setIsSuggesting(true);
+    setSuggestionStatus("Drafting a human-approved reply...");
+    setSuggestionMeta(null);
+
+    try {
+      const response = await fetch("/api/social-inbox/suggest-reply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          platform: selectedItem.platform,
+          sourceType: selectedItem.type,
+          sourceId: selectedItem.sourceId,
+          brand: selectedItem.brand,
+          language: replyLanguage,
+          instruction,
+        }),
+      });
+      const payload = (await response.json()) as SuggestReplyResponse;
+      if (!response.ok) {
+        throw new Error(payload.error || "Could not generate a reply draft.");
+      }
+
+      setReplyDraft(payload.draft || "");
+      setSuggestionMeta(payload);
+      setSuggestionStatus(
+        `Draft ready in ${payload.language === "vi" ? "Vietnamese" : "English"}. Review before sending.`,
+      );
+    } catch (error) {
+      setSuggestionStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsSuggesting(false);
     }
   }
 
@@ -354,14 +427,24 @@ export function SocialInboxClient({
 
               <div className="border-t border-hp-rule p-4">
                 <textarea
-                  disabled
+                  value={activeReplyDraft}
+                  onChange={(event) => {
+                    setReplyContextId(selectedContextId);
+                    setReplyDraft(event.target.value);
+                  }}
+                  disabled={!selectedItem}
                   rows={4}
-                  placeholder="Human-approved reply composer will be enabled after send APIs are wired."
-                  className="w-full resize-none border border-hp-rule bg-hp-inset p-3 text-sm leading-6 outline-none placeholder:text-hp-muted disabled:opacity-70"
+                  placeholder={
+                    selectedItem
+                      ? "Generate an AI draft, then edit it here before sending is enabled."
+                      : "Select a message or comment to draft a reply."
+                  }
+                  className="w-full resize-none border border-hp-rule bg-hp-inset p-3 text-sm leading-6 outline-none placeholder:text-hp-muted focus:border-hp-ink disabled:opacity-70"
                 />
                 <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-xs leading-5 text-hp-muted">
-                    AI drafts can be inserted here later, but a user must review and click send.
+                    AI drafts are editable only. A human must review and click send when send APIs
+                    are enabled.
                   </p>
                   <button
                     disabled
@@ -380,17 +463,60 @@ export function SocialInboxClient({
                   <Sparkles size={17} />
                   <span className="text-[11px] uppercase tracking-[0.14em]">AI Suggestion</span>
                 </div>
-                <p className="text-sm leading-6 text-hp-muted">
-                  Draft generation is intentionally disabled until send/reply APIs and customer
-                  context retrieval are wired. Suggestions will never send automatically.
-                </p>
+                <div className="grid gap-3">
+                  <FilterSelect
+                    label="Draft Language"
+                    value={replyLanguage}
+                    onChange={(value) => setReplyLanguage(value as ReplyLanguage)}
+                    options={[
+                      ["auto", "Auto Detect"],
+                      ["en", "English"],
+                      ["vi", "Vietnamese"],
+                    ]}
+                  />
+                  <label className="block">
+                    <span className="mb-1.5 block text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                      Staff Guidance
+                    </span>
+                    <textarea
+                      value={activeReplyInstruction}
+                      onChange={(event) => {
+                        setReplyContextId(selectedContextId);
+                        setReplyInstruction(event.target.value);
+                      }}
+                      rows={3}
+                      placeholder="Optional: add price, appointment, sizing, or tone guidance."
+                      className="w-full resize-none border border-hp-rule bg-hp-foundation p-3 text-sm leading-5 text-hp-body outline-none placeholder:text-hp-muted focus:border-hp-ink"
+                    />
+                  </label>
+                </div>
                 <button
-                  disabled
-                  className="mt-4 flex h-10 w-full items-center justify-center gap-2 border border-hp-rule text-[11px] uppercase tracking-[0.14em] text-hp-muted"
+                  disabled={!selectedItem || isSuggesting}
+                  onClick={handleSuggestReply}
+                  className="mt-4 flex h-10 w-full items-center justify-center gap-2 border border-hp-ink text-[11px] uppercase tracking-[0.14em] text-hp-ink transition-colors hover:bg-hp-ink hover:text-hp-foundation disabled:border-hp-rule disabled:text-hp-muted disabled:hover:bg-transparent disabled:hover:text-hp-muted"
                 >
-                  <Sparkles size={14} />
-                  Suggest Reply
+                  <Sparkles size={14} className={isSuggesting ? "animate-pulse" : ""} />
+                  {isSuggesting ? "Drafting" : "Suggest Reply"}
                 </button>
+                {activeSuggestionStatus ? (
+                  <p className="mt-3 text-sm leading-6 text-hp-muted">{activeSuggestionStatus}</p>
+                ) : null}
+                {activeSuggestionMeta?.contextUsed ? (
+                  <div className="mt-4 border-t border-hp-rule pt-3 text-xs leading-5 text-hp-muted">
+                    <p className="text-[10px] uppercase tracking-[0.14em] text-hp-ink">
+                      Context Used
+                    </p>
+                    <p>
+                      {activeSuggestionMeta.contextUsed.includedMessages} of{" "}
+                      {activeSuggestionMeta.contextUsed.messageCount} messages ·{" "}
+                      {activeSuggestionMeta.contextUsed.playbookEntries} playbook notes · Voice v
+                      {activeSuggestionMeta.contextUsed.brandVoiceVersion || "fallback"}
+                    </p>
+                    {activeSuggestionMeta.toneNotes?.length ? (
+                      <p className="mt-2">{activeSuggestionMeta.toneNotes.slice(0, 2).join(" ")}</p>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
 
               <SyncRunPanel data={inboxData} />

@@ -23,6 +23,10 @@ Tables:
 - `meta_social_messages`
 - `meta_social_comments`
 - `meta_social_sync_runs`
+- `brand_voice_guidelines`
+- `reply_playbook_entries`
+- `social_thread_summaries`
+- `ai_reply_suggestions`
 
 Campaign umbrella metadata is stored on:
 
@@ -51,3 +55,6 @@ Important indexes:
 - latest sync runs
 - latest reports
 - latest ad-hoc analysis dashboards and run history
+- social inbox platform/thread/comment lookups
+- active brand voice prompt lookup by brand/language
+- saved reply suggestion lookup by source thread/comment

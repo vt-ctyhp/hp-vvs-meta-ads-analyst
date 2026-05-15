@@ -1,0 +1,2 @@
+-- Remote migration already applied outside this local checkout.
+-- Placeholder keeps Supabase CLI migration history aligned.

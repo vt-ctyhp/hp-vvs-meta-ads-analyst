@@ -62,6 +62,7 @@ vercel --prod
 - `/api/meta/backfill/run` protected manual backfill batch runner
 - `/api/social-inbox` latest stored social inbox threads, messages, comments, and sync runs
 - `/api/social-inbox/sync` manual Facebook/Instagram inbox/comment sync
+- `/api/social-inbox/suggest-reply` server-side OpenAI draft generator for human-approved inbox replies
 - `/api/meta/webhook` Meta webhook callback for future Facebook/Instagram message/comment events
 - `/api/cron/sync` Vercel Cron sync, protected by `CRON_SECRET`
 - `/api/cron/meta-backfill` Vercel Cron historical chunk runner, protected by `CRON_SECRET`
@@ -113,3 +114,11 @@ Forbidden:
 - `ads_management`
 
 If the token is missing required ads sync permissions, includes `ads_management`, or cannot read the configured HP account, sync stops and returns the exact setup issue. Social reply features must still require a human click before sending.
+
+## Docs
+
+- [Environment variables](docs/environment.md)
+- [Security notes](docs/security.md)
+- [Supabase schema](docs/supabase-schema.md)
+- [Sync architecture](docs/sync-architecture.md)
+- [AI reply suggestions](docs/ai-reply-suggestions.md)

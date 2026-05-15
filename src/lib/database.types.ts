@@ -181,6 +181,57 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_reply_suggestions: {
+        Row: {
+          brand: string
+          comment_id: string | null
+          context_used: Json
+          created_at: string
+          draft: string
+          id: string
+          language: string
+          model: string
+          platform: string
+          prompt_version: number | null
+          source_type: string
+          status: string
+          thread_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          brand: string
+          comment_id?: string | null
+          context_used?: Json
+          created_at?: string
+          draft: string
+          id?: string
+          language: string
+          model: string
+          platform: string
+          prompt_version?: number | null
+          source_type: string
+          status?: string
+          thread_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          brand?: string
+          comment_id?: string | null
+          context_used?: Json
+          created_at?: string
+          draft?: string
+          id?: string
+          language?: string
+          model?: string
+          platform?: string
+          prompt_version?: number | null
+          source_type?: string
+          status?: string
+          thread_id?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       ai_reports: {
         Row: {
           ad_account_ids: Json
@@ -225,6 +276,7 @@ export type Database = {
       }
       appointment_artifacts: {
         Row: {
+          analysis_group_id: string | null
           approved_at: string | null
           approved_by: string | null
           appt_id: string
@@ -256,6 +308,7 @@ export type Database = {
           workflow_stage: Database["public"]["Enums"]["artifact_workflow_stage"]
         }
         Insert: {
+          analysis_group_id?: string | null
           approved_at?: string | null
           approved_by?: string | null
           appt_id: string
@@ -287,6 +340,7 @@ export type Database = {
           workflow_stage?: Database["public"]["Enums"]["artifact_workflow_stage"]
         }
         Update: {
+          analysis_group_id?: string | null
           approved_at?: string | null
           approved_by?: string | null
           appt_id?: string
@@ -318,6 +372,13 @@ export type Database = {
           workflow_stage?: Database["public"]["Enums"]["artifact_workflow_stage"]
         }
         Relationships: [
+          {
+            foreignKeyName: "appointment_artifacts_analysis_group_id_fkey"
+            columns: ["analysis_group_id"]
+            isOneToOne: false
+            referencedRelation: "recording_analysis_groups"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "appointment_artifacts_approved_by_fkey"
             columns: ["approved_by"]
@@ -495,6 +556,46 @@ export type Database = {
           },
         ]
       }
+      appointment_notice_reads: {
+        Row: {
+          notice_id: string
+          read_at: string
+          user_id: string
+        }
+        Insert: {
+          notice_id: string
+          read_at?: string
+          user_id: string
+        }
+        Update: {
+          notice_id?: string
+          read_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "appointment_notice_reads_notice_id_fkey"
+            columns: ["notice_id"]
+            isOneToOne: false
+            referencedRelation: "appointment_notices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "appointment_notice_reads_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "appointment_notice_reads_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       appointment_notices: {
         Row: {
           acknowledged_by_advisor_at: string | null
@@ -512,6 +613,8 @@ export type Database = {
           root_id: string
           target_advisor_id: string | null
           target_joc_id: string | null
+          target_queue_label: string | null
+          target_role: Database["public"]["Enums"]["user_role"] | null
         }
         Insert: {
           acknowledged_by_advisor_at?: string | null
@@ -529,6 +632,8 @@ export type Database = {
           root_id: string
           target_advisor_id?: string | null
           target_joc_id?: string | null
+          target_queue_label?: string | null
+          target_role?: Database["public"]["Enums"]["user_role"] | null
         }
         Update: {
           acknowledged_by_advisor_at?: string | null
@@ -546,6 +651,8 @@ export type Database = {
           root_id?: string
           target_advisor_id?: string | null
           target_joc_id?: string | null
+          target_queue_label?: string | null
+          target_role?: Database["public"]["Enums"]["user_role"] | null
         }
         Relationships: [
           {
@@ -751,6 +858,45 @@ export type Database = {
           wax_deadline_admin?: string | null
           wax_print_status?: string | null
           wax_request_url?: string | null
+        }
+        Relationships: []
+      }
+      brand_voice_guidelines: {
+        Row: {
+          active: boolean
+          brand: string
+          created_at: string
+          full_guideline: string
+          id: string
+          language: string
+          runtime_prompt: string
+          title: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          active?: boolean
+          brand: string
+          created_at?: string
+          full_guideline: string
+          id?: string
+          language: string
+          runtime_prompt: string
+          title: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          active?: boolean
+          brand?: string
+          created_at?: string
+          full_guideline?: string
+          id?: string
+          language?: string
+          runtime_prompt?: string
+          title?: string
+          updated_at?: string
+          version?: number
         }
         Relationships: []
       }
@@ -2410,8 +2556,10 @@ export type Database = {
           carat_min: number | null
           clarity_max: string | null
           clarity_min: string | null
+          clarity_preferences: string[] | null
           color_max: string | null
           color_min: string | null
+          color_preferences: string[] | null
           created_at: string
           created_by: string | null
           id: string
@@ -2434,8 +2582,10 @@ export type Database = {
           carat_min?: number | null
           clarity_max?: string | null
           clarity_min?: string | null
+          clarity_preferences?: string[] | null
           color_max?: string | null
           color_min?: string | null
+          color_preferences?: string[] | null
           created_at?: string
           created_by?: string | null
           id?: string
@@ -2458,8 +2608,10 @@ export type Database = {
           carat_min?: number | null
           clarity_max?: string | null
           clarity_min?: string | null
+          clarity_preferences?: string[] | null
           color_max?: string | null
           color_min?: string | null
+          color_preferences?: string[] | null
           created_at?: string
           created_by?: string | null
           id?: string
@@ -3083,6 +3235,125 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      meta_ads_backfill_chunks: {
+        Row: {
+          attempts: number
+          brand_code: string
+          completed_at: string | null
+          created_at: string
+          end_date: string
+          error: string | null
+          id: string
+          insight_rows: number
+          job_id: string
+          locked_at: string | null
+          meta_account_id: string
+          retry_after: string | null
+          start_date: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          brand_code: string
+          completed_at?: string | null
+          created_at?: string
+          end_date: string
+          error?: string | null
+          id?: string
+          insight_rows?: number
+          job_id: string
+          locked_at?: string | null
+          meta_account_id: string
+          retry_after?: string | null
+          start_date: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          brand_code?: string
+          completed_at?: string | null
+          created_at?: string
+          end_date?: string
+          error?: string | null
+          id?: string
+          insight_rows?: number
+          job_id?: string
+          locked_at?: string | null
+          meta_account_id?: string
+          retry_after?: string | null
+          start_date?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meta_ads_backfill_chunks_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: false
+            referencedRelation: "meta_ads_backfill_jobs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      meta_ads_backfill_jobs: {
+        Row: {
+          accounts: Json
+          chunk_grain: string
+          completed_at: string | null
+          completed_chunks: number
+          created_at: string
+          errors: Json
+          failed_chunks: number
+          id: string
+          metrics: Json
+          requested_end: string
+          requested_start: string
+          running_chunks: number
+          started_at: string | null
+          status: string
+          total_chunks: number
+          updated_at: string
+        }
+        Insert: {
+          accounts?: Json
+          chunk_grain?: string
+          completed_at?: string | null
+          completed_chunks?: number
+          created_at?: string
+          errors?: Json
+          failed_chunks?: number
+          id?: string
+          metrics?: Json
+          requested_end: string
+          requested_start: string
+          running_chunks?: number
+          started_at?: string | null
+          status?: string
+          total_chunks?: number
+          updated_at?: string
+        }
+        Update: {
+          accounts?: Json
+          chunk_grain?: string
+          completed_at?: string | null
+          completed_chunks?: number
+          created_at?: string
+          errors?: Json
+          failed_chunks?: number
+          id?: string
+          metrics?: Json
+          requested_end?: string
+          requested_start?: string
+          running_chunks?: number
+          started_at?: string | null
+          status?: string
+          total_chunks?: number
+          updated_at?: string
+        }
+        Relationships: []
       }
       meta_campaigns: {
         Row: {
@@ -4146,6 +4417,178 @@ export type Database = {
         }
         Relationships: []
       }
+      post_consult_task_drafts: {
+        Row: {
+          appt_id: string | null
+          center_stone_status: string | null
+          created_at: string
+          design_status: string | null
+          id: string
+          internal_notes: string | null
+          logistics_status: string | null
+          lost_lead_notes: string | null
+          lost_lead_reason: string | null
+          next_steps: string | null
+          production_status: string | null
+          root_id: string
+          sales_stage: string | null
+          task_id: string
+          updated_at: string
+          updated_by: string | null
+          version: number
+        }
+        Insert: {
+          appt_id?: string | null
+          center_stone_status?: string | null
+          created_at?: string
+          design_status?: string | null
+          id?: string
+          internal_notes?: string | null
+          logistics_status?: string | null
+          lost_lead_notes?: string | null
+          lost_lead_reason?: string | null
+          next_steps?: string | null
+          production_status?: string | null
+          root_id: string
+          sales_stage?: string | null
+          task_id: string
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+        }
+        Update: {
+          appt_id?: string | null
+          center_stone_status?: string | null
+          created_at?: string
+          design_status?: string | null
+          id?: string
+          internal_notes?: string | null
+          logistics_status?: string | null
+          lost_lead_notes?: string | null
+          lost_lead_reason?: string | null
+          next_steps?: string | null
+          production_status?: string | null
+          root_id?: string
+          sales_stage?: string | null
+          task_id?: string
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "post_consult_task_drafts_appt_id_fkey"
+            columns: ["appt_id"]
+            isOneToOne: false
+            referencedRelation: "appointment_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "post_consult_task_drafts_root_id_fkey"
+            columns: ["root_id"]
+            isOneToOne: false
+            referencedRelation: "root_appointments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "post_consult_task_drafts_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: true
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "post_consult_task_drafts_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "post_consult_task_drafts_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      post_consult_task_files: {
+        Row: {
+          appt_id: string | null
+          created_at: string
+          created_by: string | null
+          file_kind: string
+          id: string
+          root_id: string
+          storage_asset_id: string
+          task_id: string
+        }
+        Insert: {
+          appt_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          file_kind: string
+          id?: string
+          root_id: string
+          storage_asset_id: string
+          task_id: string
+        }
+        Update: {
+          appt_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          file_kind?: string
+          id?: string
+          root_id?: string
+          storage_asset_id?: string
+          task_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "post_consult_task_files_appt_id_fkey"
+            columns: ["appt_id"]
+            isOneToOne: false
+            referencedRelation: "appointment_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "post_consult_task_files_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "post_consult_task_files_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "post_consult_task_files_root_id_fkey"
+            columns: ["root_id"]
+            isOneToOne: false
+            referencedRelation: "root_appointments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "post_consult_task_files_storage_asset_id_fkey"
+            columns: ["storage_asset_id"]
+            isOneToOne: false
+            referencedRelation: "storage_assets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "post_consult_task_files_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       quotations: {
         Row: {
           created_at: string
@@ -4198,6 +4641,263 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      recording_analysis_groups: {
+        Row: {
+          appt_id: string
+          created_at: string
+          group_type: string
+          id: string
+          root_id: string
+          status: string
+          task_id: string | null
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          appt_id: string
+          created_at?: string
+          group_type: string
+          id?: string
+          root_id: string
+          status?: string
+          task_id?: string | null
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          appt_id?: string
+          created_at?: string
+          group_type?: string
+          id?: string
+          root_id?: string
+          status?: string
+          task_id?: string | null
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recording_analysis_groups_appt_id_fkey"
+            columns: ["appt_id"]
+            isOneToOne: false
+            referencedRelation: "appointment_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recording_analysis_groups_root_id_fkey"
+            columns: ["root_id"]
+            isOneToOne: false
+            referencedRelation: "root_appointments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recording_analysis_groups_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      recording_sessions: {
+        Row: {
+          analysis_group_id: string | null
+          appointment_artifact_id: string | null
+          appt_id: string
+          artifact_type: Database["public"]["Enums"]["artifact_type"]
+          consent_confirmed_at: string | null
+          consent_confirmed_by: string | null
+          created_at: string
+          device_info: Json | null
+          duration_seconds: number | null
+          id: string
+          last_error: string | null
+          last_error_at: string | null
+          launch_token_expires_at: string
+          launch_token_hash: string
+          launch_token_used_at: string | null
+          native_started_at: string | null
+          native_stopped_at: string | null
+          recording_type: Database["public"]["Enums"]["recording_type"]
+          requested_by: string | null
+          root_id: string
+          source_context: Json
+          status: Database["public"]["Enums"]["recording_session_status"]
+          storage_asset_id: string | null
+          updated_at: string
+          upload_bucket: string | null
+          upload_mime_type: string | null
+          upload_path: string | null
+          upload_size_bytes: number | null
+          version: number
+        }
+        Insert: {
+          analysis_group_id?: string | null
+          appointment_artifact_id?: string | null
+          appt_id: string
+          artifact_type: Database["public"]["Enums"]["artifact_type"]
+          consent_confirmed_at?: string | null
+          consent_confirmed_by?: string | null
+          created_at?: string
+          device_info?: Json | null
+          duration_seconds?: number | null
+          id?: string
+          last_error?: string | null
+          last_error_at?: string | null
+          launch_token_expires_at: string
+          launch_token_hash: string
+          launch_token_used_at?: string | null
+          native_started_at?: string | null
+          native_stopped_at?: string | null
+          recording_type: Database["public"]["Enums"]["recording_type"]
+          requested_by?: string | null
+          root_id: string
+          source_context?: Json
+          status?: Database["public"]["Enums"]["recording_session_status"]
+          storage_asset_id?: string | null
+          updated_at?: string
+          upload_bucket?: string | null
+          upload_mime_type?: string | null
+          upload_path?: string | null
+          upload_size_bytes?: number | null
+          version?: number
+        }
+        Update: {
+          analysis_group_id?: string | null
+          appointment_artifact_id?: string | null
+          appt_id?: string
+          artifact_type?: Database["public"]["Enums"]["artifact_type"]
+          consent_confirmed_at?: string | null
+          consent_confirmed_by?: string | null
+          created_at?: string
+          device_info?: Json | null
+          duration_seconds?: number | null
+          id?: string
+          last_error?: string | null
+          last_error_at?: string | null
+          launch_token_expires_at?: string
+          launch_token_hash?: string
+          launch_token_used_at?: string | null
+          native_started_at?: string | null
+          native_stopped_at?: string | null
+          recording_type?: Database["public"]["Enums"]["recording_type"]
+          requested_by?: string | null
+          root_id?: string
+          source_context?: Json
+          status?: Database["public"]["Enums"]["recording_session_status"]
+          storage_asset_id?: string | null
+          updated_at?: string
+          upload_bucket?: string | null
+          upload_mime_type?: string | null
+          upload_path?: string | null
+          upload_size_bytes?: number | null
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recording_sessions_analysis_group_id_fkey"
+            columns: ["analysis_group_id"]
+            isOneToOne: false
+            referencedRelation: "recording_analysis_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recording_sessions_appointment_artifact_id_fkey"
+            columns: ["appointment_artifact_id"]
+            isOneToOne: false
+            referencedRelation: "appointment_artifacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recording_sessions_appt_id_fkey"
+            columns: ["appt_id"]
+            isOneToOne: false
+            referencedRelation: "appointment_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recording_sessions_consent_confirmed_by_fkey"
+            columns: ["consent_confirmed_by"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "recording_sessions_consent_confirmed_by_fkey"
+            columns: ["consent_confirmed_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recording_sessions_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "recording_sessions_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recording_sessions_root_id_fkey"
+            columns: ["root_id"]
+            isOneToOne: false
+            referencedRelation: "root_appointments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recording_sessions_storage_asset_id_fkey"
+            columns: ["storage_asset_id"]
+            isOneToOne: false
+            referencedRelation: "storage_assets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reply_playbook_entries: {
+        Row: {
+          active: boolean
+          answer_guidance: string
+          brand: string
+          category: string
+          created_at: string
+          id: string
+          language: string
+          source: string | null
+          trigger_keywords: string[]
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          answer_guidance: string
+          brand: string
+          category: string
+          created_at?: string
+          id?: string
+          language: string
+          source?: string | null
+          trigger_keywords?: string[]
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          answer_guidance?: string
+          brand?: string
+          category?: string
+          created_at?: string
+          id?: string
+          language?: string
+          source?: string | null
+          trigger_keywords?: string[]
+          updated_at?: string
+        }
+        Relationships: []
       }
       root_appointments: {
         Row: {
@@ -4402,6 +5102,48 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      social_thread_summaries: {
+        Row: {
+          created_at: string
+          id: string
+          language: string
+          last_message_at: string | null
+          message_count: number
+          model: string | null
+          platform: string
+          source_message_ids: Json
+          summary: string
+          thread_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          language?: string
+          last_message_at?: string | null
+          message_count?: number
+          model?: string | null
+          platform: string
+          source_message_ids?: Json
+          summary: string
+          thread_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          language?: string
+          last_message_at?: string | null
+          message_count?: number
+          model?: string | null
+          platform?: string
+          source_message_ids?: Json
+          summary?: string
+          thread_id?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       stones: {
         Row: {
@@ -4857,6 +5599,52 @@ export type Database = {
           trigger?: string
         }
         Relationships: []
+      }
+      task_collaborators: {
+        Row: {
+          collaborator_role: Database["public"]["Enums"]["user_role"] | null
+          collaborator_user_id: string | null
+          created_at: string
+          id: string
+          task_id: string
+        }
+        Insert: {
+          collaborator_role?: Database["public"]["Enums"]["user_role"] | null
+          collaborator_user_id?: string | null
+          created_at?: string
+          id?: string
+          task_id: string
+        }
+        Update: {
+          collaborator_role?: Database["public"]["Enums"]["user_role"] | null
+          collaborator_user_id?: string | null
+          created_at?: string
+          id?: string
+          task_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "task_collaborators_collaborator_user_id_fkey"
+            columns: ["collaborator_user_id"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "task_collaborators_collaborator_user_id_fkey"
+            columns: ["collaborator_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "task_collaborators_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       task_gen_queue: {
         Row: {
@@ -5386,6 +6174,51 @@ export type Database = {
       }
     }
     Functions: {
+      aggregate_meta_daily_insights: {
+        Args: {
+          p_dimensions?: string[]
+          p_end: string
+          p_filters?: Json
+          p_limit?: number
+          p_sort_direction?: string
+          p_sort_field?: string
+          p_start: string
+        }
+        Returns: {
+          ad: string
+          ad_id: string
+          ad_set: string
+          ad_set_id: string
+          bookings: number
+          brand: string
+          campaign: string
+          campaign_id: string
+          campaign_umbrella: string
+          clicks: number
+          conversions: number
+          cpc: number
+          cpl: number
+          cpm: number
+          creative: string
+          creative_id: string
+          ctr: number
+          date: string
+          frequency: number
+          impressions: number
+          leads: number
+          messaging_contacts: number
+          month: string
+          monthly_budget: number
+          new_messaging_contacts: number
+          primary_results: number
+          reach: number
+          secondary_results: number
+          source_rows: number
+          spend: number
+          website_bookings: number
+          week: string
+        }[]
+      }
       apply_appointment_read_model_import: {
         Args: { p_import_batch_id?: string }
         Returns: {
@@ -5414,9 +6247,37 @@ export type Database = {
           target_table: string
         }[]
       }
+      blocked_vendor_term: { Args: never; Returns: string }
+      can_operate_task: { Args: { p_task_id: string }; Returns: boolean }
       can_read_broadcast: { Args: { p_broadcast_id: string }; Returns: boolean }
       can_read_root: { Args: { p_root_id: string }; Returns: boolean }
       can_write_root: { Args: { p_root_id: string }; Returns: boolean }
+      claim_meta_ads_backfill_chunks: {
+        Args: { p_limit?: number }
+        Returns: {
+          attempts: number
+          brand_code: string
+          completed_at: string | null
+          created_at: string
+          end_date: string
+          error: string | null
+          id: string
+          insight_rows: number
+          job_id: string
+          locked_at: string | null
+          meta_account_id: string
+          retry_after: string | null
+          start_date: string
+          status: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "meta_ads_backfill_chunks"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       create_payment_document_with_ledger: {
         Args: {
           p_amount_received: number
@@ -5465,6 +6326,17 @@ export type Database = {
           p_reason: string
         }
         Returns: Json
+      }
+      meta_ads_history_coverage: {
+        Args: { p_end?: string; p_start?: string }
+        Returns: {
+          account_name: string
+          first_date: string
+          insight_rows: number
+          last_date: string
+          meta_account_id: string
+          month: string
+        }[]
       }
       next_customer_code: { Args: { p_at?: string }; Returns: string }
       next_doc_number: {
@@ -5533,6 +6405,8 @@ export type Database = {
         }
         Returns: string
       }
+      scrub_blocked_vendor_jsonb: { Args: { p_value: Json }; Returns: Json }
+      scrub_blocked_vendor_text: { Args: { p_value: string }; Returns: string }
       void_payment_document_and_recalculate_status: {
         Args: { p_document_id: string; p_reason: string; p_voided_by: string }
         Returns: {
@@ -5575,6 +6449,9 @@ export type Database = {
         | "client_advisor_recap"
         | "transcript"
         | "summary"
+        | "consultation_recap_recording"
+        | "diamond_viewing_recap_recording"
+        | "general_recording"
       artifact_workflow_stage:
         | "uploaded"
         | "transcription_queued"
@@ -5605,6 +6482,20 @@ export type Database = {
         | "same_day_booking"
         | "field_edit"
       qualification_tier: "none" | "backup" | "primary"
+      recording_session_status:
+        | "created"
+        | "recording"
+        | "stopped"
+        | "uploading"
+        | "uploaded"
+        | "failed_upload"
+        | "abandoned"
+      recording_type:
+        | "consultation"
+        | "diamond_viewing"
+        | "consultation_recap"
+        | "diamond_viewing_recap"
+        | "general"
       schedule_change_type:
         | "full_day_off"
         | "working"
@@ -5632,18 +6523,23 @@ export type Database = {
         | "design_deck_pdf"
         | "design_deck_pptx"
         | "loupe360_upload"
+        | "appointment_intake_form_photo"
+        | "appointment_inspiration_image"
+        | "consultation_recap_recording"
+        | "diamond_viewing_recap_recording"
+        | "general_recording"
       task_owner_kind: "user" | "role"
       task_status: "pending" | "snoozed" | "completed" | "blocked" | "canceled"
       user_role:
         | "admin"
-        | "marketing"
-        | "sales"
         | "client_advisor"
         | "joc"
         | "diamond_order_admin"
         | "diamond_order_assistant"
         | "read_only"
         | "wax_request_admin"
+        | "marketing"
+        | "sales"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -5780,6 +6676,9 @@ export const Constants = {
         "client_advisor_recap",
         "transcript",
         "summary",
+        "consultation_recap_recording",
+        "diamond_viewing_recap_recording",
+        "general_recording",
       ],
       artifact_workflow_stage: [
         "uploaded",
@@ -5814,6 +6713,22 @@ export const Constants = {
         "field_edit",
       ],
       qualification_tier: ["none", "backup", "primary"],
+      recording_session_status: [
+        "created",
+        "recording",
+        "stopped",
+        "uploading",
+        "uploaded",
+        "failed_upload",
+        "abandoned",
+      ],
+      recording_type: [
+        "consultation",
+        "diamond_viewing",
+        "consultation_recap",
+        "diamond_viewing_recap",
+        "general",
+      ],
       schedule_change_type: [
         "full_day_off",
         "working",
@@ -5843,19 +6758,24 @@ export const Constants = {
         "design_deck_pdf",
         "design_deck_pptx",
         "loupe360_upload",
+        "appointment_intake_form_photo",
+        "appointment_inspiration_image",
+        "consultation_recap_recording",
+        "diamond_viewing_recap_recording",
+        "general_recording",
       ],
       task_owner_kind: ["user", "role"],
       task_status: ["pending", "snoozed", "completed", "blocked", "canceled"],
       user_role: [
         "admin",
-        "marketing",
-        "sales",
         "client_advisor",
         "joc",
         "diamond_order_admin",
         "diamond_order_assistant",
         "read_only",
         "wax_request_admin",
+        "marketing",
+        "sales",
       ],
     },
   },
