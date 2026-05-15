@@ -47,7 +47,7 @@ The dashboard sync button calls `POST /api/sync`. It uses the same read-only syn
 
 ## Historical Backfill
 
-The hidden admin page `/admin/backfill` creates and manages Supabase-backed historical Meta Ads backfill jobs. The page is not in the main navigation. Operators enter `CRON_SECRET` in the page; it is kept in memory and sent as `x-cron-secret` to protected backfill routes.
+The `/admin/backfill` page creates and manages Supabase-backed historical Meta Ads backfill jobs and is surfaced in the main navigation for users with backfill permission. Admin users can enter `CRON_SECRET` for protected sync actions; marketing users have read-only visibility into coverage, jobs, and data health.
 
 Backfill jobs split each configured Meta ad account into monthly chunks from `META_BACKFILL_START_DATE` through the requested end date. Each chunk calls Meta insights with `time_range[since]` and `time_range[until]`, then upserts daily ad-level rows by `meta_account_id`, `ad_id`, and `date_start`, so retries do not duplicate data. Empty Meta responses are treated as completed chunks.
 

@@ -17,8 +17,12 @@ import {
   Square,
   Unlock,
 } from "lucide-react";
+import Link from "next/link";
 import type { ButtonHTMLAttributes, ComponentType } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+import type { AppPermission } from "@/lib/access-control";
+import { createBrowserClient } from "@/lib/supabase";
 
 type BackfillStatus = "pending" | "running" | "paused" | "success" | "partial" | "failed" | "canceled";
 type ChunkStatus = "queued" | "running" | "success" | "failed" | "canceled";
@@ -205,10 +209,25 @@ function todayString() {
   return new Date().toISOString().slice(0, 10);
 }
 
+async function readOnlyRequest<T>(path: string, accessToken: string): Promise<T> {
+  const response = await fetch(path, {
+    headers: { authorization: `Bearer ${accessToken}` },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || "Request failed");
+  return payload as T;
+}
+
 type MetaBackfillClientProps = {
   initialState?: BackfillState | null;
   initialDataHealth?: DataHealth | null;
   initialError?: string | null;
+};
+
+type AccessState = {
+  status: "loading" | "signed-out" | "denied" | "ready";
+  permissions: AppPermission[];
+  accessToken: string | null;
 };
 
 export function MetaBackfillClient({
@@ -216,6 +235,11 @@ export function MetaBackfillClient({
   initialDataHealth = null,
   initialError = null,
 }: MetaBackfillClientProps = {}) {
+  const [access, setAccess] = useState<AccessState>({
+    status: "loading",
+    permissions: [],
+    accessToken: null,
+  });
   const [secret, setSecret] = useState("");
   const [startDate, setStartDate] = useState("2007-01-01");
   const [endDate, setEndDate] = useState(todayString());
@@ -223,14 +247,101 @@ export function MetaBackfillClient({
   const [dataHealth, setDataHealth] = useState<DataHealth | null>(initialDataHealth);
   const [compareMonth, setCompareMonth] = useState(todayString().slice(0, 7));
   const [loading, setLoading] = useState(false);
+  const [readOnlyLoaded, setReadOnlyLoaded] = useState(Boolean(initialState || initialDataHealth));
   const [status, setStatus] = useState(
     initialError ? `Could not load read-only admin data: ${initialError}` : "",
   );
 
   const coverageSummary = useMemo(() => summarizeCoverage(state?.coverage || []), [state]);
   const hasSecret = Boolean(secret.trim());
+  const canManageBackfill = access.permissions.includes("manage_backfill");
+  const operatorReady = canManageBackfill && hasSecret;
+
+  useEffect(() => {
+    let mounted = true;
+    const supabase = createBrowserClient();
+
+    async function loadAccess() {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (!token) {
+        if (mounted) setAccess({ status: "signed-out", permissions: [], accessToken: null });
+        return;
+      }
+
+      const response = await fetch("/api/auth/me", {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      const payload = await response.json().catch(() => null);
+      const permissions = Array.isArray(payload?.permissions)
+        ? (payload.permissions as AppPermission[])
+        : [];
+
+      if (!payload?.authenticated) {
+        if (mounted) setAccess({ status: "signed-out", permissions: [], accessToken: null });
+        return;
+      }
+
+      if (!permissions.includes("view_backfill") && !permissions.includes("manage_backfill")) {
+        if (mounted) setAccess({ status: "denied", permissions, accessToken: token });
+        return;
+      }
+
+      if (mounted) setAccess({ status: "ready", permissions, accessToken: token });
+    }
+
+    void loadAccess();
+    const subscription = supabase.auth.onAuthStateChange(() => {
+      void loadAccess();
+    });
+
+    return () => {
+      mounted = false;
+      subscription.data.subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (access.status !== "ready" || !access.accessToken || readOnlyLoaded) return;
+
+    async function loadReadOnlyData() {
+      if (!access.accessToken) return;
+
+      setLoading(true);
+      setStatus("");
+      try {
+        const query = new URLSearchParams();
+        if (startDate) query.set("start", startDate);
+        if (endDate) query.set("end", endDate);
+
+        const [nextState, nextHealth] = await Promise.all([
+          readOnlyRequest<BackfillState>(`/api/meta/backfill?${query.toString()}`, access.accessToken),
+          readOnlyRequest<DataHealth>("/api/meta/data-health", access.accessToken),
+        ]);
+
+        setState(nextState);
+        setDataHealth(nextHealth);
+        setReadOnlyLoaded(true);
+        setStatus(canManageBackfill ? "Backfill data loaded." : "Read-only backfill data loaded.");
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : String(error));
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    void loadReadOnlyData();
+  }, [
+    access.accessToken,
+    access.status,
+    canManageBackfill,
+    endDate,
+    readOnlyLoaded,
+    startDate,
+  ]);
 
   async function request(path: string, init: RequestInit = {}) {
+    if (!canManageBackfill) throw new Error("Admin access is required for backfill actions.");
     if (!secret.trim()) throw new Error("CRON_SECRET is required.");
     const response = await fetch(path, {
       ...init,
@@ -355,6 +466,35 @@ export function MetaBackfillClient({
     }
   }
 
+  if (access.status === "loading") {
+    return (
+      <BackfillAccessState
+        title="Checking access"
+        body="Loading your internal permissions."
+      />
+    );
+  }
+
+  if (access.status === "signed-out") {
+    return (
+      <BackfillAccessState
+        title="Sign in required"
+        body="Backfill access requires an approved internal account."
+        actionHref="/login?next=/admin/backfill"
+        actionLabel="Sign in"
+      />
+    );
+  }
+
+  if (access.status === "denied") {
+    return (
+      <BackfillAccessState
+        title="Access restricted"
+        body="This page is available to admin users and marketing users with read-only backfill access."
+      />
+    );
+  }
+
   return (
     <main className="min-h-screen bg-hp-foundation px-4 py-6 text-hp-body md:px-8">
       <header className="mx-auto flex max-w-7xl flex-col gap-5 border-b border-hp-rule pb-6 md:flex-row md:items-end md:justify-between">
@@ -367,15 +507,23 @@ export function MetaBackfillClient({
           </h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button onClick={() => loadState()} disabled={loading || !hasSecret} icon={RefreshCcw}>
-            Refresh
-          </Button>
-          <Button onClick={() => loadDataHealth()} disabled={loading || !hasSecret} icon={Shield}>
-            Data Health
-          </Button>
-          <Button onClick={runBatch} disabled={loading || !hasSecret} icon={Play} intent="primary">
-            Run Batch
-          </Button>
+          {canManageBackfill ? (
+            <>
+              <Button onClick={() => loadState()} disabled={loading || !operatorReady} icon={RefreshCcw}>
+                Refresh
+              </Button>
+              <Button onClick={() => loadDataHealth()} disabled={loading || !operatorReady} icon={Shield}>
+                Data Health
+              </Button>
+              <Button onClick={runBatch} disabled={loading || !operatorReady} icon={Play} intent="primary">
+                Run Batch
+              </Button>
+            </>
+          ) : (
+            <span className="border border-hp-rule bg-hp-card px-4 py-3 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+              Read-only
+            </span>
+          )}
         </div>
       </header>
 
@@ -383,37 +531,48 @@ export function MetaBackfillClient({
         <aside className="space-y-6">
           <section className="border border-hp-rule bg-hp-card p-4">
             <PanelTitle icon={Shield} title="Access" />
-            <label className="mt-4 block text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-              Operator Secret
-            </label>
-            <input
-              type="password"
-              value={secret}
-              onChange={(event) => setSecret(event.target.value)}
-              className="mt-2 h-11 w-full border border-hp-rule bg-hp-foundation px-3 text-sm text-hp-ink outline-none focus:border-hp-ink"
-              placeholder="Required for sync actions"
-            />
-            <p className="mt-2 text-xs leading-relaxed text-hp-muted">
-              Read-only data loads automatically. Enter the secret only to refresh live data,
-              create jobs, run batches, compare against Meta, or re-sync locked months.
-            </p>
+            {canManageBackfill ? (
+              <>
+                <label className="mt-4 block text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+                  Operator Secret
+                </label>
+                <input
+                  type="password"
+                  value={secret}
+                  onChange={(event) => setSecret(event.target.value)}
+                  className="mt-2 h-11 w-full border border-hp-rule bg-hp-foundation px-3 text-sm text-hp-ink outline-none focus:border-hp-ink"
+                  placeholder="Required for sync actions"
+                />
+                <p className="mt-2 text-xs leading-relaxed text-hp-muted">
+                  Enter the secret to refresh live data, create jobs, run batches, compare
+                  against Meta, or re-sync locked months.
+                </p>
+              </>
+            ) : (
+              <p className="mt-4 text-sm leading-6 text-hp-body">
+                Marketing can inspect coverage, jobs, and data health here. Sync actions and
+                overrides are admin-only.
+              </p>
+            )}
           </section>
 
-          <section className="border border-hp-rule bg-hp-card p-4">
-            <PanelTitle icon={CalendarClock} title="Range" />
-            <div className="mt-4 grid gap-3">
-              <DateInput label="Start" value={startDate} onChange={setStartDate} />
-              <DateInput label="End" value={endDate} onChange={setEndDate} />
-            </div>
-            <div className="mt-4 grid grid-cols-2 gap-2">
-              <Button onClick={createJob} disabled={loading || !hasSecret} icon={Database} intent="primary">
-                Create Job
-              </Button>
-              <Button onClick={() => loadState()} disabled={loading || !hasSecret} icon={RefreshCcw}>
-                Load
-              </Button>
-            </div>
-          </section>
+          {canManageBackfill ? (
+            <section className="border border-hp-rule bg-hp-card p-4">
+              <PanelTitle icon={CalendarClock} title="Range" />
+              <div className="mt-4 grid gap-3">
+                <DateInput label="Start" value={startDate} onChange={setStartDate} />
+                <DateInput label="End" value={endDate} onChange={setEndDate} />
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                <Button onClick={createJob} disabled={loading || !operatorReady} icon={Database} intent="primary">
+                  Create Job
+                </Button>
+                <Button onClick={() => loadState()} disabled={loading || !operatorReady} icon={RefreshCcw}>
+                  Load
+                </Button>
+              </div>
+            </section>
+          ) : null}
 
           <section className="border border-hp-rule bg-hp-card p-4">
             <PanelTitle icon={Database} title="Coverage" />
@@ -437,8 +596,8 @@ export function MetaBackfillClient({
           <DataHealthPanel
             health={dataHealth}
             compareMonth={compareMonth}
-            disabled={loading}
-            operatorReady={hasSecret}
+            disabled={loading || !canManageBackfill}
+            operatorReady={operatorReady}
             onCompareMonth={() => loadDataHealth({ compare: true })}
             onCompareMonthChange={setCompareMonth}
             onResyncMonth={resyncMonth}
@@ -455,13 +614,22 @@ export function MetaBackfillClient({
                   key={job.id}
                   job={job}
                   onAction={(action) => updateJob(job.id, action)}
-                  disabled={loading}
+                  disabled={loading || !operatorReady}
+                  canManage={canManageBackfill}
                 />
               ))}
               {state && state.jobs.length === 0 ? (
                 <EmptyState text="No backfill jobs found for this project." />
               ) : null}
-              {!state ? <EmptyState text="Enter the secret and load backfill state." /> : null}
+              {!state ? (
+                <EmptyState
+                  text={
+                    canManageBackfill
+                      ? "Enter the secret and load backfill state."
+                      : "No read-only backfill state is available."
+                  }
+                />
+              ) : null}
             </div>
           </section>
 
@@ -548,12 +716,46 @@ export function MetaBackfillClient({
   );
 }
 
+function BackfillAccessState({
+  title,
+  body,
+  actionHref,
+  actionLabel,
+}: {
+  title: string;
+  body: string;
+  actionHref?: string;
+  actionLabel?: string;
+}) {
+  return (
+    <main className="min-h-screen bg-hp-foundation px-4 py-8 text-hp-body md:px-8">
+      <section className="mx-auto max-w-3xl border border-hp-rule bg-hp-card p-6">
+        <span className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+          HP/VVS Meta Ads
+        </span>
+        <h1 className="mt-3 font-title text-4xl leading-tight text-hp-ink">{title}</h1>
+        <p className="mt-4 text-sm leading-6 text-hp-body">{body}</p>
+        {actionHref && actionLabel ? (
+          <Link
+            href={actionHref}
+            className="mt-6 inline-flex bg-hp-ink px-5 py-3 text-[11px] uppercase tracking-[0.14em] text-hp-foundation transition-colors hover:bg-hp-pink"
+          >
+            {actionLabel}
+          </Link>
+        ) : null}
+      </section>
+    </main>
+  );
+}
+
 function JobRow({
   job,
+  canManage,
   disabled,
   onAction,
 }: {
   job: BackfillJob;
+  canManage: boolean;
   disabled: boolean;
   onAction: (action: "pause" | "resume" | "cancel" | "retry_failed") => void;
 }) {
@@ -579,25 +781,27 @@ function JobRow({
             {insightRows.toLocaleString()} insight rows
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {job.status === "running" ? (
-            <IconButton label="Pause" icon={Pause} disabled={disabled} onClick={() => onAction("pause")} />
-          ) : null}
-          {job.status === "paused" || job.status === "partial" || job.status === "failed" ? (
-            <IconButton label="Resume" icon={Play} disabled={disabled} onClick={() => onAction("resume")} />
-          ) : null}
-          {job.failedChunks > 0 ? (
-            <IconButton
-              label="Retry failed"
-              icon={RotateCcw}
-              disabled={disabled}
-              onClick={() => onAction("retry_failed")}
-            />
-          ) : null}
-          {job.status !== "success" && job.status !== "canceled" ? (
-            <IconButton label="Cancel" icon={Square} disabled={disabled} onClick={() => onAction("cancel")} />
-          ) : null}
-        </div>
+        {canManage ? (
+          <div className="flex flex-wrap gap-2">
+            {job.status === "running" ? (
+              <IconButton label="Pause" icon={Pause} disabled={disabled} onClick={() => onAction("pause")} />
+            ) : null}
+            {job.status === "paused" || job.status === "partial" || job.status === "failed" ? (
+              <IconButton label="Resume" icon={Play} disabled={disabled} onClick={() => onAction("resume")} />
+            ) : null}
+            {job.failedChunks > 0 ? (
+              <IconButton
+                label="Retry failed"
+                icon={RotateCcw}
+                disabled={disabled}
+                onClick={() => onAction("retry_failed")}
+              />
+            ) : null}
+            {job.status !== "success" && job.status !== "canceled" ? (
+              <IconButton label="Cancel" icon={Square} disabled={disabled} onClick={() => onAction("cancel")} />
+            ) : null}
+          </div>
+        ) : null}
       </div>
       <div className="mt-4 h-2 overflow-hidden bg-hp-inset">
         <div className="h-full bg-hp-pink" style={{ width: `${progress}%` }} />

@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server";
 
+import { AuthorizationError } from "./app-auth";
 import { ConfigurationError } from "./env";
 
 export function jsonError(error: unknown, status = 500) {
+  if (error instanceof AuthorizationError) {
+    return NextResponse.json({ error: error.message }, { status: error.status });
+  }
+
   if (error instanceof ConfigurationError) {
     return NextResponse.json(
       {

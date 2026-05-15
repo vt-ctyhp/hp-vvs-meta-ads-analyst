@@ -60,13 +60,18 @@ export type SocialInboxStatus = {
   error: string | null;
 };
 
-type InboxFilter = "all" | "messages" | "comments" | "unread";
+type BrandFilter = "all" | "HP" | "VVS";
+type BrandLabel = "HP" | "VVS" | "Unassigned";
+type SourceFilter = "all" | "facebook" | "instagram";
+type ItemTypeFilter = "all" | "messages" | "comments";
+type StatusFilter = "all" | "unread" | "needs-reply";
 
 type QueueDisplayItem = {
   id: string;
   sourceId: string;
   channel: "Facebook" | "Instagram";
   platform: "facebook" | "instagram";
+  brand: BrandLabel;
   type: "message" | "comment";
   sender: string;
   preview: string;
@@ -87,6 +92,9 @@ type SyncResponse = {
   error?: string;
 };
 
+const HP_SOCIAL_IDS = new Set(["100615618793615", "17841473309777050"]);
+const VVS_SOCIAL_IDS = new Set<string>();
+
 export function SocialInboxClient({
   status,
   initialData,
@@ -96,7 +104,10 @@ export function SocialInboxClient({
   initialData: SocialInboxData;
   dataError: string | null;
 }) {
-  const [filter, setFilter] = useState<InboxFilter>("all");
+  const [brandFilter, setBrandFilter] = useState<BrandFilter>("all");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
+  const [itemTypeFilter, setItemTypeFilter] = useState<ItemTypeFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [query, setQuery] = useState("");
   const [inboxData, setInboxData] = useState(initialData);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -104,8 +115,27 @@ export function SocialInboxClient({
   const [syncStatus, setSyncStatus] = useState<string | null>(dataError);
 
   const queue = useMemo(() => buildQueue(inboxData), [inboxData]);
+  const filteredQueue = useMemo(
+    () =>
+      queue.filter((item) => {
+        if (brandFilter !== "all" && item.brand !== brandFilter) return false;
+        if (sourceFilter !== "all" && item.platform !== sourceFilter) return false;
+        if (itemTypeFilter === "messages" && item.type !== "message") return false;
+        if (itemTypeFilter === "comments" && item.type !== "comment") return false;
+        if (statusFilter === "unread" && item.status !== "Unread") return false;
+        if (statusFilter === "needs-reply" && item.status !== "Needs reply") return false;
+
+        const normalizedQuery = query.trim().toLowerCase();
+        if (!normalizedQuery) return true;
+        return [item.brand, item.channel, item.type, item.status, item.sender, item.preview]
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedQuery);
+      }),
+    [brandFilter, itemTypeFilter, query, queue, sourceFilter, statusFilter],
+  );
   const selectedItem =
-    queue.find((item) => item.id === selectedId) || queue[0] || null;
+    filteredQueue.find((item) => item.id === selectedId) || filteredQueue[0] || null;
   const selectedMessages = useMemo(
     () =>
       selectedItem?.type === "message"
@@ -123,21 +153,6 @@ export function SocialInboxClient({
     selectedItem?.type === "comment"
       ? inboxData.comments.find((comment) => comment.comment_id === selectedItem.sourceId) || null
       : null;
-  const filteredQueue = useMemo(
-    () =>
-      queue.filter((item) => {
-        if (filter === "messages" && item.type !== "message") return false;
-        if (filter === "comments" && item.type !== "comment") return false;
-        if (filter === "unread" && item.status !== "Unread") return false;
-        const normalizedQuery = query.trim().toLowerCase();
-        if (!normalizedQuery) return true;
-        return [item.channel, item.type, item.sender, item.preview]
-          .join(" ")
-          .toLowerCase()
-          .includes(normalizedQuery);
-      }),
-    [filter, query, queue],
-  );
 
   async function handleSync() {
     setIsSyncing(true);
@@ -212,25 +227,64 @@ export function SocialInboxClient({
               />
             </label>
 
-            <div className="mt-4 grid grid-cols-2 gap-2">
-              {[
-                ["all", "All"],
-                ["messages", "Messages"],
-                ["comments", "Comments"],
-                ["unread", "Unread"],
-              ].map(([value, label]) => (
+            <div className="mt-4 grid gap-3">
+              <FilterSelect
+                label="Brand"
+                value={brandFilter}
+                onChange={(value) => setBrandFilter(value as BrandFilter)}
+                options={[
+                  ["all", "All Brands"],
+                  ["HP", "HP"],
+                  ["VVS", "VVS"],
+                ]}
+              />
+              <FilterSelect
+                label="Source"
+                value={sourceFilter}
+                onChange={(value) => setSourceFilter(value as SourceFilter)}
+                options={[
+                  ["all", "Facebook + Instagram"],
+                  ["facebook", "Facebook"],
+                  ["instagram", "Instagram"],
+                ]}
+              />
+              <div className="grid grid-cols-2 gap-3">
+                <FilterSelect
+                  label="Type"
+                  value={itemTypeFilter}
+                  onChange={(value) => setItemTypeFilter(value as ItemTypeFilter)}
+                  options={[
+                    ["all", "All Items"],
+                    ["messages", "Messages"],
+                    ["comments", "Comments"],
+                  ]}
+                />
+                <FilterSelect
+                  label="Status"
+                  value={statusFilter}
+                  onChange={(value) => setStatusFilter(value as StatusFilter)}
+                  options={[
+                    ["all", "All Status"],
+                    ["unread", "Unread"],
+                    ["needs-reply", "Needs Reply"],
+                  ]}
+                />
+              </div>
+              <div className="flex items-center justify-between border-t border-hp-rule pt-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                <span>{filteredQueue.length} shown</span>
                 <button
-                  key={value}
-                  onClick={() => setFilter(value as InboxFilter)}
-                  className={`h-9 border px-3 text-[10px] uppercase tracking-[0.14em] transition-colors ${
-                    filter === value
-                      ? "border-hp-ink bg-hp-ink text-hp-foundation"
-                      : "border-hp-rule text-hp-body hover:border-hp-ink"
-                  }`}
+                  onClick={() => {
+                    setBrandFilter("all");
+                    setSourceFilter("all");
+                    setItemTypeFilter("all");
+                    setStatusFilter("all");
+                    setQuery("");
+                  }}
+                  className="text-hp-ink underline-offset-4 hover:underline"
                 >
-                  {label}
+                  Reset
                 </button>
-              ))}
+              </div>
             </div>
           </div>
 
@@ -249,10 +303,10 @@ export function SocialInboxClient({
                 <div className="mx-auto flex h-12 w-12 items-center justify-center border border-hp-rule text-hp-muted">
                   <Filter size={18} />
                 </div>
-                <h2 className="mt-4 font-title text-2xl text-hp-ink">No synced threads yet</h2>
+                <h2 className="mt-4 font-title text-2xl text-hp-ink">No matching items</h2>
                 <p className="mt-2 text-sm leading-6 text-hp-muted">
-                  Click Sync Inbox to pull recent Instagram conversations and available comments.
-                  Webhooks are still the next step for real-time delivery.
+                  Adjust the source, brand, type, status, or search filters to widen the queue.
+                  Use Sync Inbox if you need the latest Meta data.
                 </p>
               </div>
             )}
@@ -370,6 +424,16 @@ export function SocialInboxClient({
   );
 }
 
+function inferSocialBrand(
+  pageId: string | null | undefined,
+  igUserId: string | null | undefined,
+): BrandLabel {
+  const ids = [pageId, igUserId].filter(Boolean) as string[];
+  if (ids.some((id) => HP_SOCIAL_IDS.has(id))) return "HP";
+  if (ids.some((id) => VVS_SOCIAL_IDS.has(id))) return "VVS";
+  return "Unassigned";
+}
+
 function buildQueue(data: SocialInboxData): QueueDisplayItem[] {
   const threadItems = data.threads.map((thread) => {
     const channel: "Instagram" | "Facebook" =
@@ -379,6 +443,7 @@ function buildQueue(data: SocialInboxData): QueueDisplayItem[] {
       sourceId: thread.thread_id,
       channel,
       platform: thread.platform,
+      brand: inferSocialBrand(thread.page_id, thread.ig_user_id),
       type: "message" as const,
       sender: thread.participant_name || `${channel} Conversation`,
       preview: thread.snippet || `${thread.message_count} synced message(s)`,
@@ -396,6 +461,7 @@ function buildQueue(data: SocialInboxData): QueueDisplayItem[] {
       sourceId: comment.comment_id,
       channel,
       platform: comment.platform,
+      brand: inferSocialBrand(comment.page_id, comment.ig_user_id),
       type: "comment" as const,
       sender: comment.author_name || `${channel} Comment`,
       preview: comment.body || "Comment text unavailable",
@@ -421,12 +487,14 @@ function SelectedItemDetail({
 }) {
   if (item.type === "comment") {
     return (
-      <div className="min-h-[420px] border border-hp-rule p-5">
+      <div className="max-h-[560px] min-h-[420px] overflow-y-auto border border-hp-rule p-5">
         <div className="mb-4 flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
           <Camera size={15} />
-          {item.channel} Comment
+          {item.brand} · {item.channel} Comment
         </div>
-        <p className="text-lg leading-8 text-hp-ink">{comment?.body || item.preview}</p>
+        <p className="whitespace-pre-wrap break-words text-lg leading-8 text-hp-ink">
+          {comment?.body || item.preview}
+        </p>
         <div className="mt-5 grid gap-3 border-t border-hp-rule pt-4 text-sm text-hp-muted sm:grid-cols-2">
           <div>Author: {comment?.author_name || item.sender}</div>
           <div>Created: {formatDateLabel(comment?.created_time || item.timestamp)}</div>
@@ -448,7 +516,7 @@ function SelectedItemDetail({
   }
 
   return (
-    <div className="min-h-[420px] border border-dashed border-hp-rule p-5">
+    <div className="max-h-[560px] min-h-[420px] overflow-y-auto border border-dashed border-hp-rule p-5">
       {messages.length ? (
         <div className="space-y-4">
           {messages.map((message) => (
@@ -463,7 +531,9 @@ function SelectedItemDetail({
               <div className="mb-2 text-[10px] uppercase tracking-[0.14em] opacity-70">
                 {message.sender_name || message.direction} · {formatDateLabel(message.sent_at)}
               </div>
-              <p className="text-sm leading-6">{message.body || "Attachment or unsupported message"}</p>
+              <p className="whitespace-pre-wrap break-words text-sm leading-6">
+                {message.body || "Attachment or unsupported message"}
+              </p>
             </div>
           ))}
         </div>
@@ -663,6 +733,37 @@ function StatusPill({ ready, label }: { ready: boolean; label: string }) {
   );
 }
 
+function FilterSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: [string, string][];
+}) {
+  return (
+    <label className="block min-w-0">
+      <span className="mb-1.5 block text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+        {label}
+      </span>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-10 w-full border border-hp-rule bg-hp-foundation px-3 text-sm text-hp-ink outline-none transition-colors focus:border-hp-ink"
+      >
+        {options.map(([optionValue, optionLabel]) => (
+          <option key={optionValue} value={optionValue}>
+            {optionLabel}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function QueueItem({
   item,
   active,
@@ -690,9 +791,9 @@ function QueueItem({
         </span>
       </div>
       <p className="mt-2 line-clamp-2 text-sm leading-6 text-hp-body">{item.preview}</p>
-      <div className="mt-3 flex items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
         <Clock size={13} />
-        {item.status}
+        {item.brand} · {item.channel} · {item.type} · {item.status}
       </div>
     </button>
   );

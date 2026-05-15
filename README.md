@@ -51,8 +51,12 @@ vercel --prod
 - `/` executive dashboard, creative leaderboard, gallery, report controls, chat
 - `/creative-analysis` internal creative scorecard using visible Meta Ads Insights metrics, creative previews, ad relevance diagnostics where available, and an Internal Creative Diagnostic Score
 - `/analysis` ad-hoc Meta Ads analysis over stored Supabase history
-- `/admin/backfill` hidden Meta Ads historical backfill admin
+- `/admin/backfill` surfaced Meta Ads historical backfill page, admin-managed and marketing read-only
+- `/login` Supabase Auth login screen for internal users
+- `/users` user and role management for admin, marketing, and sales permissions
 - `/inbox` Facebook/Instagram inbox readiness page and human-approved reply UI shell
+- `/api/auth/me` current signed-in access profile derived from Supabase Auth and app roles
+- `/api/users` admin user list, invite, and role management API
 - `/api/sync` manual read-only Meta sync
 - `/api/meta/backfill` protected backfill job, chunk, and coverage API
 - `/api/meta/backfill/run` protected manual backfill batch runner
@@ -76,6 +80,12 @@ Manual corrections can be stored in `campaign_umbrella_overrides` without changi
 The Creative Analysis page labels its score as an Internal Creative Diagnostic Score. It is an internal weighted score built from visible Meta Ads metrics such as hook estimates, retention proxies, click intent, conversion efficiency, Meta ranking diagnostics where returned, and fatigue signals from comparison history.
 
 It is not Meta's secret algorithm, private ranking model, or an official Meta score. Meta relevance diagnostics can be unavailable depending on objective, account permissions, attribution, or delivery context, so missing rankings are treated as unavailable rather than as poor performance. Final business judgment should still consider appointment quality, close rate, AOV, and whether each creative feels premium enough for HP/VVS.
+
+## Internal Access
+
+Login uses Supabase Auth. App permissions come from `public.users` and `public.user_roles`; the `/users` page lets admins invite users, activate/deactivate access, and assign roles. Admin has full access. Marketing can access the dashboard, Creative Analysis, AI Analysis, inbox visibility, and read-only Backfill. Sales has inbox-only access.
+
+Apply the Supabase migrations before assigning the `marketing` or `sales` roles, because they are first-class `public.user_role` enum values.
 
 ## Meta Permissions
 

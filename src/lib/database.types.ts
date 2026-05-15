@@ -5636,6 +5636,8 @@ export type Database = {
       task_status: "pending" | "snoozed" | "completed" | "blocked" | "canceled"
       user_role:
         | "admin"
+        | "marketing"
+        | "sales"
         | "client_advisor"
         | "joc"
         | "diamond_order_admin"
@@ -5846,6 +5848,8 @@ export const Constants = {
       task_status: ["pending", "snoozed", "completed", "blocked", "canceled"],
       user_role: [
         "admin",
+        "marketing",
+        "sales",
         "client_advisor",
         "joc",
         "diamond_order_admin",

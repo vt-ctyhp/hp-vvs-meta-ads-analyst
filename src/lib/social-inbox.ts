@@ -119,6 +119,8 @@ export type SocialInboxComment = {
   platform: "facebook" | "instagram";
   comment_id: string;
   parent_comment_id: string | null;
+  page_id: string | null;
+  ig_user_id: string | null;
   content_id: string | null;
   content_permalink: string | null;
   author_id: string | null;
@@ -945,6 +947,8 @@ function mapComment(row: JsonRecord): SocialInboxComment {
     platform: row.platform === "facebook" ? "facebook" : "instagram",
     comment_id: String(row.comment_id),
     parent_comment_id: stringField(row.parent_comment_id),
+    page_id: stringField(row.page_id),
+    ig_user_id: stringField(row.ig_user_id),
     content_id: stringField(row.content_id),
     content_permalink: stringField(row.content_permalink),
     author_id: stringField(row.author_id),

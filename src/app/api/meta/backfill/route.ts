@@ -4,17 +4,18 @@ import {
   updateMetaAdsBackfillJob,
 } from "@/lib/meta-backfill";
 import { isAuthorizedCronRequest, jsonError } from "@/lib/http";
+import { requirePermissionFromRequest } from "@/lib/app-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 export async function GET(request: Request) {
-  if (!isAuthorizedCronRequest(request)) {
-    return Response.json({ error: "Unauthorized backfill request" }, { status: 401 });
-  }
-
   try {
+    if (!isAuthorizedCronRequest(request)) {
+      await requirePermissionFromRequest(request, "view_backfill");
+    }
+
     const url = new URL(request.url);
     return Response.json(
       await getMetaAdsBackfillState({
