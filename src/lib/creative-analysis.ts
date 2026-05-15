@@ -158,6 +158,7 @@ const REQUIRED_ENV = [
   "META_ACCESS_TOKEN",
   "META_HP_AD_ACCOUNT_ID",
 ] as const;
+const LIVE_META_TIMEOUT_MS = 3500;
 
 export function emptyCreativeAnalysisPayload(
   missingEnv = getMissingRequiredEnv(REQUIRED_ENV),
@@ -190,15 +191,20 @@ export async function fetchCreativeAnalysisData(
     const dateRange = resolveDateRange(dateRangeInput);
     const comparisonRange = resolveComparisonRange(dateRange);
 
+    const liveController = new AbortController();
+    const liveTimeout = setTimeout(() => liveController.abort(), LIVE_META_TIMEOUT_MS);
     const livePromise = fetchMetaCreativeAnalysisInsightsForRange({
       since: dateRange.start,
       until: dateRange.end,
-    }).catch((error) => ({
-      rows: [],
-      warnings: [`Live Meta Insights request failed: ${errorToMessage(error)}`],
-      unavailableFields: [],
-      adAccounts: [],
-    }));
+      signal: liveController.signal,
+    })
+      .catch((error) => ({
+        rows: [],
+        warnings: [`Live Meta Insights request failed: ${errorToMessage(error)}`],
+        unavailableFields: [],
+        adAccounts: [],
+      }))
+      .finally(() => clearTimeout(liveTimeout));
     const currentStoredPromise = fetchStoredInsightRows(supabase, dateRange);
     const previousStoredPromise = fetchStoredInsightRows(supabase, comparisonRange);
     const baseMetadataPromise = Promise.all([

@@ -31,6 +31,7 @@ type MetaPaging<T> = {
 
 type PageOptions = {
   maxPages?: number;
+  signal?: AbortSignal;
 };
 
 type MetaPermission = {
@@ -428,6 +429,7 @@ export async function fetchMetaAccountInsightTotalsForRange(input: {
 export async function fetchMetaCreativeAnalysisInsightsForRange(input: {
   since: string;
   until: string;
+  signal?: AbortSignal;
 }): Promise<MetaCreativeAnalysisInsightsResult> {
   const accounts = getConfiguredAccounts();
   const accountResults = await Promise.all(
@@ -1245,7 +1247,7 @@ async function fetchAccountInsightsTotal(
 
 async function fetchCreativeAnalysisInsights(
   metaAccountId: string,
-  range: { since: string; until: string },
+  range: { since: string; until: string; signal?: AbortSignal },
 ) {
   const coreFields = [
     "campaign_id",
@@ -1292,7 +1294,10 @@ async function fetchCreativeAnalysisInsights(
         ...buildInsightDateParams({ kind: "range", since: range.since, until: range.until }),
         fields: fields.join(","),
         limit: "100",
-      }, { maxPages: getSyncMaxPages("META_CREATIVE_ANALYSIS_MAX_INSIGHT_PAGES", 30) });
+      }, {
+        maxPages: getSyncMaxPages("META_CREATIVE_ANALYSIS_MAX_INSIGHT_PAGES", 30),
+        signal: range.signal,
+      });
 
       return {
         rows,
@@ -1436,7 +1441,7 @@ async function graphPages<T>(
   let page = 0;
 
   while (nextUrl && (!options.maxPages || page < options.maxPages)) {
-    const response = await fetch(nextUrl, { cache: "no-store" });
+    const response = await fetch(nextUrl, { cache: "no-store", signal: options.signal });
     const json = (await response.json()) as MetaPaging<T>;
 
     if (!response.ok || json.error) {
