@@ -14,8 +14,7 @@ export default function CreativeAnalysisLoading() {
               Loading Creative Analysis
             </h1>
             <p className="mt-3 text-sm leading-6 text-hp-body">
-              Pulling the latest available creative diagnostics. If live Meta data is slow, the
-              page will fall back to stored Supabase history.
+              Loading stored creative diagnostics from Supabase history.
             </p>
           </div>
         </div>

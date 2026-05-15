@@ -17,6 +17,7 @@ export default async function CreativeAnalysisPage({
     startDate: firstParam(params.start),
     endDate: firstParam(params.end),
     days: numberParam(params.days) || 30,
+    includeLive: booleanParam(params.live),
   });
 
   return <CreativeAnalysisClient initialData={dashboard} />;
@@ -29,4 +30,9 @@ function firstParam(value: string | string[] | undefined) {
 function numberParam(value: string | string[] | undefined) {
   const parsed = Number(firstParam(value));
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function booleanParam(value: string | string[] | undefined) {
+  const param = firstParam(value);
+  return param === "1" || param === "true";
 }

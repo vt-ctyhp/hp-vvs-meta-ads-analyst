@@ -124,7 +124,6 @@ export function TopNavigation() {
               <Link
                 key={item.href}
                 href={item.href}
-                prefetch={item.href === "/creative-analysis" ? false : undefined}
                 aria-current={isActive ? "page" : undefined}
                 className={`flex h-10 items-center gap-2 border px-4 text-[11px] uppercase tracking-[0.14em] transition-colors ${
                   isActive

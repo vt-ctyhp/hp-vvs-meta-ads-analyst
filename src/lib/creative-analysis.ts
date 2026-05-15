@@ -20,6 +20,7 @@ export type CreativeAnalysisDateRangeInput = {
   days?: number;
   startDate?: string | null;
   endDate?: string | null;
+  includeLive?: boolean;
 };
 
 export type CreativeAnalysisPayload = {
@@ -204,6 +205,33 @@ export function emptyCreativeAnalysisPayload(
   };
 }
 
+function emptyLiveCreativeInsights() {
+  return {
+    rows: [],
+    warnings: [],
+    unavailableFields: [],
+    adAccounts: [],
+  };
+}
+
+function fetchLiveCreativeInsights(range: { start: string; end: string }) {
+  const liveController = new AbortController();
+  const liveTimeout = setTimeout(() => liveController.abort(), LIVE_META_TIMEOUT_MS);
+
+  return fetchMetaCreativeAnalysisInsightsForRange({
+    since: range.start,
+    until: range.end,
+    signal: liveController.signal,
+  })
+    .catch((error) => ({
+      rows: [],
+      warnings: [`Live Meta Insights request failed: ${errorToMessage(error)}`],
+      unavailableFields: [],
+      adAccounts: [],
+    }))
+    .finally(() => clearTimeout(liveTimeout));
+}
+
 export async function fetchCreativeAnalysisData(
   dateRangeInput: CreativeAnalysisDateRangeInput = { days: 30 },
 ): Promise<CreativeAnalysisPayload> {
@@ -214,21 +242,10 @@ export async function fetchCreativeAnalysisData(
     const supabase = createServiceClient();
     const dateRange = resolveDateRange(dateRangeInput);
     const comparisonRange = resolveComparisonRange(dateRange);
-
-    const liveController = new AbortController();
-    const liveTimeout = setTimeout(() => liveController.abort(), LIVE_META_TIMEOUT_MS);
-    const livePromise = fetchMetaCreativeAnalysisInsightsForRange({
-      since: dateRange.start,
-      until: dateRange.end,
-      signal: liveController.signal,
-    })
-      .catch((error) => ({
-        rows: [],
-        warnings: [`Live Meta Insights request failed: ${errorToMessage(error)}`],
-        unavailableFields: [],
-        adAccounts: [],
-      }))
-      .finally(() => clearTimeout(liveTimeout));
+    const includeLive = dateRangeInput.includeLive === true;
+    const livePromise = includeLive
+      ? fetchLiveCreativeInsights(dateRange)
+      : Promise.resolve(emptyLiveCreativeInsights());
     const currentStoredPromise = fetchStoredInsightRows(supabase, dateRange);
     const previousStoredPromise = fetchStoredInsightRows(supabase, comparisonRange);
     const baseMetadataPromise = Promise.all([
@@ -281,9 +298,9 @@ export async function fetchCreativeAnalysisData(
     const dataSource = live.rows.length ? "meta_live" : currentStoredRows.length ? "stored_fallback" : "none";
     const warnings = [
       ...live.warnings,
-      ...(live.rows.length
-        ? []
-        : ["Showing stored Supabase insight history because live Meta Insights returned no ad rows."]),
+      ...(includeLive && !live.rows.length && currentStoredRows.length
+        ? ["Showing stored Supabase insight history because live Meta Insights returned no ad rows."]
+        : []),
     ];
 
     return {
