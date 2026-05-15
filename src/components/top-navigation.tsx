@@ -35,6 +35,13 @@ const NAV_ITEMS = [
   permission: AppPermission;
 }>;
 
+const DEFAULT_NAV_PERMISSIONS = new Set<AppPermission>([
+  "view_dashboard",
+  "view_creative_analysis",
+  "view_ai_analysis",
+  "view_inbox",
+]);
+
 type AccessProfile = {
   authenticated: boolean;
   email: string | null;
@@ -90,9 +97,11 @@ export function TopNavigation() {
     window.location.assign("/login");
   }
 
-  const visibleNavItems = profile?.authenticated
-    ? NAV_ITEMS.filter((item) => profile.permissions.includes(item.permission))
-    : [];
+  const visibleNavItems = NAV_ITEMS.filter((item) =>
+    profile?.authenticated
+      ? profile.permissions.includes(item.permission)
+      : DEFAULT_NAV_PERMISSIONS.has(item.permission),
+  );
 
   return (
     <nav className="border-b border-hp-rule bg-hp-card/90 text-hp-body">
