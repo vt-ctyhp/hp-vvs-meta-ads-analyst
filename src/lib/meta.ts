@@ -390,6 +390,9 @@ export async function syncMetaAdsAccountRange(input: {
   return syncAccount(input.account, brandId, {
     insights: { kind: "range", since: input.since, until: input.until },
     refreshPreviews: false,
+    refreshAdCatalog: false,
+    refreshRankingDiagnostics: false,
+    includeCreativeDiagnostics: false,
     allowFinalizedInsightUpdates: true,
   });
 }
@@ -574,6 +577,9 @@ async function syncAccount(
   options: {
     insights?: InsightDateRange;
     refreshPreviews?: boolean;
+    refreshAdCatalog?: boolean;
+    refreshRankingDiagnostics?: boolean;
+    includeCreativeDiagnostics?: boolean;
     allowFinalizedInsightUpdates?: boolean;
   } = {},
 ) {
@@ -581,6 +587,9 @@ async function syncAccount(
   const metaAccountId = `act_${accountId}`;
   const now = new Date().toISOString();
   const refreshPreviews = options.refreshPreviews ?? true;
+  const refreshAdCatalog = options.refreshAdCatalog ?? true;
+  const refreshRankingDiagnostics = options.refreshRankingDiagnostics ?? true;
+  const includeCreativeDiagnostics = options.includeCreativeDiagnostics ?? true;
 
   const accountProfile = await graphFetch<JsonRecord>(metaAccountId, {
     fields: "id,name,currency,timezone_name,account_status,business_name",
@@ -711,11 +720,13 @@ async function syncAccount(
   );
   const adSetByMetaId = new Map(adSetRows.map((row) => [String(row.ad_set_id), row]));
 
-  const ads = await graphPages<JsonRecord>(`${metaAccountId}/ads`, {
-    fields:
-      "id,name,campaign_id,adset_id,status,effective_status,created_time,updated_time,creative{id,name,title,body,thumbnail_url,image_url,image_hash,object_type,object_story_id,effective_object_story_id,object_story_spec,asset_feed_spec,call_to_action_type,video_id}",
-    limit: "50",
-  }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_PAGES", 20) });
+  const ads = refreshAdCatalog
+    ? await graphPages<JsonRecord>(`${metaAccountId}/ads`, {
+        fields:
+          "id,name,campaign_id,adset_id,status,effective_status,created_time,updated_time,creative{id,name,title,body,thumbnail_url,image_url,image_hash,object_type,object_story_id,effective_object_story_id,object_story_spec,asset_feed_spec,call_to_action_type,video_id}",
+        limit: "50",
+      }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_PAGES", 100) })
+    : [];
 
   const previewByAdId = new Map<string, { previewHtml: string | null; previewUrl: string | null }>();
   if (refreshPreviews) {
@@ -845,8 +856,10 @@ async function syncAccount(
 
   const insightRange = options.insights || getSyncInsightDateRange();
   const [insights, rankingByAdId] = await Promise.all([
-    fetchInsights(metaAccountId, insightRange),
-    fetchInsightRankingDiagnostics(metaAccountId, insightRange),
+    fetchInsights(metaAccountId, insightRange, { includeCreativeDiagnostics }),
+    refreshRankingDiagnostics
+      ? fetchInsightRankingDiagnostics(metaAccountId, insightRange)
+      : Promise.resolve(new Map<string, InsightRankingDiagnostics>()),
   ]);
   const allowFinalizedUpdates = options.allowFinalizedInsightUpdates === true;
   const finalizedCutoff = allowFinalizedUpdates ? null : finalizedInsightCutoffDate();
@@ -873,11 +886,12 @@ async function syncAccount(
     : validInsightRows;
   const skippedFinalizedRows = validInsightRows.length - refreshableInsightRows.length;
   const { rows: dedupedInsightRows, duplicateCount } = dedupeInsightRows(refreshableInsightRows);
-  const affectedRange = dateRangeForRows(dedupedInsightRows);
+  const fetchedRange = dateRangeForRows(dedupedInsightRows);
+  const affectedRange = replacementRangeForInsightSync(insightRange, finalizedCutoff, fetchedRange);
   const before = await insightAggregateSnapshot(metaAccountId, affectedRange);
   const beforeBuckets = await insightBucketSnapshots(metaAccountId, affectedRange);
 
-  await upsertMany("meta_daily_insights", dedupedInsightRows, "meta_account_id,ad_id,date_start");
+  await replaceStoredInsightRows(metaAccountId, affectedRange, dedupedInsightRows);
 
   const after = await insightAggregateSnapshot(metaAccountId, affectedRange);
   const afterBuckets = await insightBucketSnapshots(metaAccountId, affectedRange);
@@ -1061,6 +1075,42 @@ function dateRangeForRows(inputRows: JsonRecord[]) {
     },
     { start: null, end: null },
   );
+}
+
+function replacementRangeForInsightSync(
+  insightRange: InsightDateRange,
+  finalizedCutoff: string | null,
+  fallbackRange: { start: string | null; end: string | null },
+) {
+  if (insightRange.kind !== "range") return fallbackRange;
+
+  const start = finalizedCutoff && insightRange.since < finalizedCutoff
+    ? finalizedCutoff
+    : insightRange.since;
+  const end = insightRange.until;
+  if (!start || !end || start > end) return fallbackRange;
+  return { start, end };
+}
+
+async function replaceStoredInsightRows(
+  metaAccountId: string,
+  range: { start: string | null; end: string | null },
+  rowsToInsert: JsonRecord[],
+) {
+  if (!range.start || !range.end) return;
+
+  const supabase = createServiceClient();
+  const { error } = await supabase
+    .from("meta_daily_insights")
+    .delete()
+    .eq("meta_account_id", metaAccountId)
+    .gte("date_start", range.start)
+    .lte("date_start", range.end);
+
+  if (error) throw error;
+  if (!rowsToInsert.length) return;
+
+  await upsertMany("meta_daily_insights", rowsToInsert, "meta_account_id,ad_id,date_start");
 }
 
 async function insightAggregateSnapshot(
@@ -1272,8 +1322,12 @@ function formatMoneyForAudit(value: number) {
   }).format(value);
 }
 
-async function fetchInsights(metaAccountId: string, range?: InsightDateRange) {
-  const fullFields = [
+async function fetchInsights(
+  metaAccountId: string,
+  range?: InsightDateRange,
+  options: { includeCreativeDiagnostics?: boolean } = {},
+) {
+  const coreFields = [
     "campaign_id",
     "campaign_name",
     "objective",
@@ -1298,6 +1352,8 @@ async function fetchInsights(metaAccountId: string, range?: InsightDateRange) {
     "actions",
     "action_values",
     "cost_per_action_type",
+  ];
+  const creativeDiagnosticFields = [
     "video_play_actions",
     "video_30_sec_watched_actions",
     "video_avg_time_watched_actions",
@@ -1307,6 +1363,10 @@ async function fetchInsights(metaAccountId: string, range?: InsightDateRange) {
     "video_p95_watched_actions",
     "video_p100_watched_actions",
     "video_thruplay_watched_actions",
+  ];
+  const fields = [
+    ...coreFields,
+    ...(options.includeCreativeDiagnostics === false ? [] : creativeDiagnosticFields),
   ].join(",");
 
   try {
@@ -1314,9 +1374,9 @@ async function fetchInsights(metaAccountId: string, range?: InsightDateRange) {
       level: "ad",
       time_increment: "1",
       ...buildInsightDateParams(range || { kind: "preset", datePreset: getSyncDatePreset() }),
-      fields: fullFields,
+      fields,
       limit: "100",
-    }, { maxPages: getSyncMaxPages("META_SYNC_MAX_INSIGHT_PAGES", 30) });
+    }, { maxPages: getSyncMaxPages("META_SYNC_MAX_INSIGHT_PAGES", 100) });
   } catch (error) {
     const minimalFields = [
       "campaign_id",
@@ -1345,7 +1405,7 @@ async function fetchInsights(metaAccountId: string, range?: InsightDateRange) {
         ...buildInsightDateParams(range || { kind: "preset", datePreset: getSyncDatePreset() }),
         fields: minimalFields,
         limit: "100",
-      }, { maxPages: getSyncMaxPages("META_SYNC_MAX_INSIGHT_PAGES", 30) });
+      }, { maxPages: getSyncMaxPages("META_SYNC_MAX_INSIGHT_PAGES", 100) });
     }
     throw error;
   }
@@ -1628,6 +1688,12 @@ async function graphPages<T>(
     data.push(...(json.data || []));
     nextUrl = json.paging?.next;
     page += 1;
+  }
+
+  if (nextUrl && options.maxPages && page >= options.maxPages) {
+    throw new MetaGraphError(
+      `Meta Graph API pagination limit reached for ${path}; increase the page limit or reduce the requested date range.`,
+    );
   }
 
   return data;

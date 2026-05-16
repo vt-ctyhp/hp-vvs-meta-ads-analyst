@@ -338,21 +338,27 @@ export async function resyncMetaAdsMonth(input: { month?: string | null }) {
     audit: { accounts: [], warnings: [], allowFinalizedUpdates: true },
   };
   const errors: string[] = [];
+  const repairChunks = weeklyDateChunks(range.start, range.end);
 
   for (const account of accounts) {
-    try {
-      const result = await syncMetaAdsAccountRange({
-        account,
-        since: range.start,
-        until: range.end,
-      });
-      const audit = recordField((result as { audit?: unknown }).audit);
-      const warnings = Array.isArray(audit.warnings) ? audit.warnings.map(String) : [];
+    let syncedAccount = false;
 
-      metrics.accounts += 1;
-      metrics.insightRows += result.insightRows;
-      metrics.audit.accounts.push(audit);
-      metrics.audit.warnings.push(...warnings);
+    try {
+      for (const chunk of repairChunks) {
+        const result = await syncMetaAdsAccountRange({
+          account,
+          since: chunk.start,
+          until: chunk.end,
+        });
+        const audit = recordField((result as { audit?: unknown }).audit);
+        const warnings = Array.isArray(audit.warnings) ? audit.warnings.map(String) : [];
+
+        syncedAccount = true;
+        metrics.insightRows += result.insightRows;
+        metrics.audit.accounts.push({ ...audit, repairChunk: chunk });
+        metrics.audit.warnings.push(...warnings);
+      }
+      if (syncedAccount) metrics.accounts += 1;
     } catch (error) {
       errors.push(`${account.brandCode}: ${errorToMessage(error)}`);
     }
@@ -379,6 +385,34 @@ export async function resyncMetaAdsMonth(input: { month?: string | null }) {
     errors,
     syncRunId,
   };
+}
+
+function weeklyDateChunks(start: string, end: string): DateChunk[] {
+  const startDate = parseDate(start);
+  const endDate = parseDate(end);
+  if (!startDate || !endDate) return [{ start, end }];
+
+  const chunks: DateChunk[] = [];
+  for (let cursor = startDate; cursor <= endDate;) {
+    const chunkStart = new Date(cursor);
+    const chunkEnd = new Date(cursor);
+    chunkEnd.setUTCDate(chunkEnd.getUTCDate() + 6);
+    if (chunkEnd > endDate) chunkEnd.setTime(endDate.getTime());
+    chunks.push({ start: formatDate(chunkStart), end: formatDate(chunkEnd) });
+    cursor = new Date(chunkEnd);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  return chunks;
+}
+
+function parseDate(value: string) {
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isNaN(date.getTime()) || formatDate(date) !== value ? null : date;
+}
+
+function formatDate(date: Date) {
+  return date.toISOString().slice(0, 10);
 }
 
 async function refreshBackfillJobRollup(jobId: string) {

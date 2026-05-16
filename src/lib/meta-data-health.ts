@@ -21,6 +21,7 @@ type SupabaseSelectClient = {
     select: (columns: string) => SupabaseSelectChain;
   };
 };
+type FetchOrder = { column: string; ascending?: boolean };
 
 type MetricTotals = {
   rows: number;
@@ -36,6 +37,8 @@ type MonthlyDiagnostic = MetricTotals & {
   month: string;
   monthStart: string;
   monthEnd: string;
+  firstDate: string | null;
+  lastDate: string | null;
   lockStatus: "locked" | "settling" | "active";
   isLocked: boolean;
   previousSpend: number | null;
@@ -60,15 +63,24 @@ type SpendAlert = {
 export async function getMetaDataHealth(input: { compareMonth?: string | null } = {}) {
   const cutoff = finalizedInsightCutoffDate();
   const [accounts, insightRows, syncRuns] = await Promise.all([
-    fetchAll("meta_ad_accounts", "meta_account_id,name,last_synced_at,updated_at"),
+    fetchAll("meta_ad_accounts", "meta_account_id,name,last_synced_at,updated_at", [
+      { column: "meta_account_id" },
+    ]),
     fetchAll(
       "meta_daily_insights",
-      "meta_account_id,ad_id,date_start,spend,impressions,clicks,leads,bookings,conversions,campaign_umbrella,updated_at",
+      "id,meta_account_id,ad_id,date_start,spend,impressions,clicks,leads,bookings,conversions,campaign_umbrella,updated_at",
+      [
+        { column: "date_start" },
+        { column: "meta_account_id" },
+        { column: "ad_id" },
+        { column: "id" },
+      ],
     ),
     fetchRecentSyncRuns(),
   ]);
   const duplicateSummary = summarizeDuplicateKeys(insightRows);
   const monthlyTotals = summarizeMonthlyTotals(insightRows, cutoff);
+  const incompleteMonths = summarizeIncompleteMonths(monthlyTotals);
   const monthlyUmbrella = summarizeMonthlyUmbrella(insightRows);
   const spendAlerts = summarizeSpendAlerts(monthlyUmbrella, cutoff);
   const recentAuditWarnings = syncRuns.flatMap((run) => syncRunAuditWarnings(run)).slice(0, 12);
@@ -100,11 +112,15 @@ export async function getMetaDataHealth(input: { compareMonth?: string | null } 
     lastSync: mapLastSync(syncRuns[0]),
     monthlyTotals: monthlyTotals.slice(-36),
     lockedMonths: monthlyTotals.filter((month) => month.isLocked).slice(-24),
+    missingMonths: monthlyTotals.filter((month) => month.rows === 0).map((month) => month.month),
+    incompleteMonths,
     monthlyUmbrella: monthlyUmbrella.slice(-120),
     spendAlerts,
     warnings: buildHealthWarnings({
       duplicateKeyCount: duplicateSummary.duplicateKeyCount,
       nullKeyRows: duplicateSummary.nullKeyRows,
+      missingMonths: monthlyTotals.filter((month) => month.rows === 0).map((month) => month.month),
+      incompleteMonths,
       spendAlerts,
       recentAuditWarnings,
     }),
@@ -116,6 +132,7 @@ export async function getMetaDataHealth(input: { compareMonth?: string | null } 
       duplicateRowsOk: duplicateSummary.duplicateKeyCount === 0,
       nullKeysOk: duplicateSummary.nullKeyRows === 0,
       hasInsightRows: insightRows.length > 0,
+      monthlyCoverageOk: incompleteMonths.length === 0,
       spendJumpsOk: spendAlerts.length === 0,
       recentSyncWarningsOk: recentAuditWarnings.length === 0,
     },
@@ -143,16 +160,17 @@ async function fetchRecentSyncRuns() {
   }));
 }
 
-async function fetchAll(table: string, columns: string) {
+async function fetchAll(table: string, columns: string, orderBy: FetchOrder[] = []) {
   const supabase = createServiceClient() as unknown as SupabaseSelectClient;
   const output: JsonRecord[] = [];
   const pageSize = 1000;
 
   for (let from = 0; ; from += pageSize) {
-    const response = await supabase
-      .from(table)
-      .select(columns)
-      .range(from, from + pageSize - 1);
+    let query = supabase.from(table).select(columns);
+    orderBy.forEach((order) => {
+      query = query.order(order.column, { ascending: order.ascending ?? true });
+    });
+    const response = await query.range(from, from + pageSize - 1);
 
     if (response.error) throw response.error;
 
@@ -215,6 +233,8 @@ function summarizeMonthlyTotals(insightRows: JsonRecord[], cutoff: string) {
       month,
       monthStart: range.start,
       monthEnd: range.end,
+      firstDate: null,
+      lastDate: null,
       lockStatus: lockStatusForMonth(month, cutoff),
       isLocked: lockStatusForMonth(month, cutoff) === "locked",
       previousSpend: null,
@@ -222,11 +242,13 @@ function summarizeMonthlyTotals(insightRows: JsonRecord[], cutoff: string) {
       spendDeltaPct: null,
       ...emptyMetricTotals(),
     };
+    current.firstDate = !current.firstDate || date < current.firstDate ? date : current.firstDate;
+    current.lastDate = !current.lastDate || date > current.lastDate ? date : current.lastDate;
     addInsightRowToTotals(current, row);
     byMonth.set(month, current);
   });
 
-  const sorted = Array.from(byMonth.values()).sort((a, b) => a.month.localeCompare(b.month));
+  const sorted = fillMonthlyGaps(Array.from(byMonth.values()), cutoff);
   return sorted.map((month, index) => {
     const previous = index > 0 ? sorted[index - 1] : null;
     const spendDelta = roundCurrency(month.spend - (previous?.spend || 0));
@@ -237,6 +259,69 @@ function summarizeMonthlyTotals(insightRows: JsonRecord[], cutoff: string) {
       spendDeltaPct: previous && previous.spend > 0 ? spendDelta / previous.spend : null,
     };
   });
+}
+
+function fillMonthlyGaps(months: MonthlyDiagnostic[], cutoff: string) {
+  const sorted = months.sort((a, b) => a.month.localeCompare(b.month));
+  if (!sorted.length) return sorted;
+
+  const byMonth = new Map(sorted.map((month) => [month.month, month]));
+  const output: MonthlyDiagnostic[] = [];
+  let cursor = sorted[0].month;
+  const end = sorted[sorted.length - 1].month;
+
+  while (cursor <= end) {
+    output.push(byMonth.get(cursor) || emptyMonthlyDiagnostic(cursor, cutoff));
+    cursor = nextMonth(cursor);
+  }
+
+  return output;
+}
+
+function emptyMonthlyDiagnostic(month: string, cutoff: string): MonthlyDiagnostic {
+  const range = monthDateRange(month);
+  const lockStatus = lockStatusForMonth(month, cutoff);
+
+  return {
+    month,
+    monthStart: range?.start || `${month}-01`,
+    monthEnd: range?.end || `${month}-01`,
+    firstDate: null,
+    lastDate: null,
+    lockStatus,
+    isLocked: lockStatus === "locked",
+    previousSpend: null,
+    spendDelta: 0,
+    spendDeltaPct: null,
+    ...emptyMetricTotals(),
+  };
+}
+
+function nextMonth(month: string) {
+  const [yearPart, monthPart] = month.split("-").map(Number);
+  const next =
+    monthPart === 12
+      ? { year: yearPart + 1, month: 1 }
+      : { year: yearPart, month: monthPart + 1 };
+
+  return `${next.year}-${String(next.month).padStart(2, "0")}`;
+}
+
+function summarizeIncompleteMonths(monthlyTotals: MonthlyDiagnostic[]) {
+  return monthlyTotals
+    .filter((month) => {
+      if (month.lockStatus === "active") return false;
+      if (month.rows === 0) return true;
+      return month.firstDate !== month.monthStart || month.lastDate !== month.monthEnd;
+    })
+    .map((month) => ({
+      month: month.month,
+      rows: month.rows,
+      firstDate: month.firstDate,
+      lastDate: month.lastDate,
+      expectedStart: month.monthStart,
+      expectedEnd: month.monthEnd,
+    }));
 }
 
 function summarizeMonthlyUmbrella(insightRows: JsonRecord[]) {
@@ -373,6 +458,15 @@ function summarizeAccountTotalsForRange(insightRows: JsonRecord[], range: { star
 function buildHealthWarnings(input: {
   duplicateKeyCount: number;
   nullKeyRows: number;
+  missingMonths: string[];
+  incompleteMonths: Array<{
+    month: string;
+    rows: number;
+    firstDate: string | null;
+    lastDate: string | null;
+    expectedStart: string;
+    expectedEnd: string;
+  }>;
   spendAlerts: SpendAlert[];
   recentAuditWarnings: string[];
 }) {
@@ -382,6 +476,17 @@ function buildHealthWarnings(input: {
   }
   if (input.nullKeyRows) {
     warnings.push(`${input.nullKeyRows} insight row(s) are missing account, ad, or date keys.`);
+  }
+  if (input.missingMonths.length) {
+    warnings.push(`Missing stored Meta rows for month(s): ${input.missingMonths.join(", ")}.`);
+  }
+  const partialMonths = input.incompleteMonths.filter((month) => month.rows > 0);
+  if (partialMonths.length) {
+    warnings.push(
+      `Partial stored Meta month(s): ${partialMonths
+        .map((month) => `${month.month} (${month.firstDate || "-"} to ${month.lastDate || "-"})`)
+        .join(", ")}.`,
+    );
   }
   input.spendAlerts.slice(0, 6).forEach((alert) => {
     warnings.push(

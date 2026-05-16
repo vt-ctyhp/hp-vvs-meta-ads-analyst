@@ -99,6 +99,7 @@ type DataHealth = {
     duplicateRowsOk: boolean;
     nullKeysOk: boolean;
     hasInsightRows: boolean;
+    monthlyCoverageOk: boolean;
     spendJumpsOk: boolean;
     recentSyncWarningsOk: boolean;
   };
@@ -119,6 +120,15 @@ type DataHealth = {
   } | null;
   monthlyTotals: MonthlyDiagnostic[];
   lockedMonths: MonthlyDiagnostic[];
+  missingMonths: string[];
+  incompleteMonths: Array<{
+    month: string;
+    rows: number;
+    firstDate: string | null;
+    lastDate: string | null;
+    expectedStart: string;
+    expectedEnd: string;
+  }>;
   monthlyUmbrella: Array<{
     month: string;
     campaignUmbrella: string;
@@ -795,7 +805,7 @@ function DataHealthPanel({
   const recentWarnings = (health?.warnings || []).slice(0, 8);
   const recentUmbrellaRows = (health?.monthlyUmbrella || []).slice(-12).reverse();
   const recentMonthlyRows = (health?.monthlyTotals || []).slice(-12).reverse();
-  const lockedRows = (health?.lockedMonths || []).slice(-8).reverse();
+  const lockedRows = (health?.lockedMonths || []).slice().reverse();
   const maxRecentSpend = Math.max(...recentMonthlyRows.map((row) => row.spend), 1);
   const checks = health
     ? [
@@ -813,6 +823,11 @@ function DataHealthPanel({
           label: "Stored insight history",
           ok: health.checks.hasInsightRows,
           value: health.insights.totalRows.toLocaleString(),
+        },
+        {
+          label: "Missing or partial months",
+          ok: health.checks.monthlyCoverageOk,
+          value: health.incompleteMonths.length.toLocaleString(),
         },
         {
           label: "Unusual spend jumps",
@@ -861,7 +876,7 @@ function DataHealthPanel({
             />
           </div>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-5">
+          <div className="mt-4 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
             {checks.map((check) => (
               <div
                 key={check.label}
