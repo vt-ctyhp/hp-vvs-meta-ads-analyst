@@ -4,13 +4,10 @@
 
 import {
   AlertTriangle,
-  BarChart3,
   CalendarRange,
   ExternalLink,
   GalleryHorizontalEnd,
-  Info,
   Search,
-  SlidersHorizontal,
   X,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -49,6 +46,8 @@ type SelectedActionMetric = {
   detail?: string;
 };
 
+type DeliveryFilter = "active" | "inactive" | "all";
+
 const MONEY_FORMATTER = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -66,6 +65,8 @@ const NUMBER_FORMATTER = new Intl.NumberFormat("en-US", {
 export function CreativeAnalysisClient({ initialData }: Props) {
   const data = initialData;
   const [brand, setBrand] = useState("all");
+  const [delivery, setDelivery] = useState<DeliveryFilter>("all");
+  const [umbrella, setUmbrella] = useState("all");
   const [campaign, setCampaign] = useState("all");
   const [adSet, setAdSet] = useState("all");
   const [status, setStatus] = useState("all");
@@ -75,6 +76,7 @@ export function CreativeAnalysisClient({ initialData }: Props) {
   const [endDate, setEndDate] = useState(data.sourceTransparency.timeRange.end || "");
   const [isApplyingRange, setIsApplyingRange] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [showAllRows, setShowAllRows] = useState(false);
   const [notesByCreative, setNotesByCreative] = useState<Record<string, string>>({});
   const [liveVideoByCreative, setLiveVideoByCreative] = useState<
     Record<string, LiveVideoMetricsState>
@@ -99,7 +101,23 @@ export function CreativeAnalysisClient({ initialData }: Props) {
     [brand, data.rows],
   );
   const campaignOptions = useMemo(
-    () => ["all", ...Array.from(new Set(filteredByBrand.map((row) => row.campaignName))).sort()],
+    () => [
+      "all",
+      ...Array.from(
+        new Set(
+          filteredByBrand
+            .filter((row) => umbrella === "all" || (row.campaignUmbrella || "Unassigned") === umbrella)
+            .map((row) => row.campaignName),
+        ),
+      ).sort(),
+    ],
+    [filteredByBrand, umbrella],
+  );
+  const umbrellaOptions = useMemo(
+    () => [
+      "all",
+      ...Array.from(new Set(filteredByBrand.map((row) => row.campaignUmbrella || "Unassigned"))).sort(),
+    ],
     [filteredByBrand],
   );
   const adSetOptions = useMemo(
@@ -108,12 +126,13 @@ export function CreativeAnalysisClient({ initialData }: Props) {
       ...Array.from(
         new Set(
           filteredByBrand
+            .filter((row) => umbrella === "all" || (row.campaignUmbrella || "Unassigned") === umbrella)
             .filter((row) => campaign === "all" || row.campaignName === campaign)
             .map((row) => row.adSetName),
         ),
       ).sort(),
     ],
-    [campaign, filteredByBrand],
+    [campaign, filteredByBrand, umbrella],
   );
 
   const filteredRows = useMemo(() => {
@@ -121,6 +140,8 @@ export function CreativeAnalysisClient({ initialData }: Props) {
     const minimumSpend = Number(minSpend);
     return data.rows
       .filter((row) => brand === "all" || row.brandCode === brand)
+      .filter((row) => delivery === "all" || adDeliveryState(row) === delivery)
+      .filter((row) => umbrella === "all" || (row.campaignUmbrella || "Unassigned") === umbrella)
       .filter((row) => campaign === "all" || row.campaignName === campaign)
       .filter((row) => adSet === "all" || row.adSetName === adSet)
       .filter((row) => status === "all" || row.status === status)
@@ -140,9 +161,10 @@ export function CreativeAnalysisClient({ initialData }: Props) {
           .includes(normalizedQuery);
       })
       .sort(compareCreativeRank);
-  }, [adSet, brand, campaign, data.rows, minSpend, query, status]);
+  }, [adSet, brand, campaign, data.rows, delivery, minSpend, query, status, umbrella]);
 
   const summary = useMemo(() => buildSummary(filteredRows), [filteredRows]);
+  const visibleRows = showAllRows ? filteredRows : filteredRows.slice(0, 12);
   const selected = useMemo(
     () => data.rows.find((row) => row.id === selectedId) || null,
     [data.rows, selectedId],
@@ -262,123 +284,150 @@ export function CreativeAnalysisClient({ initialData }: Props) {
     );
   }
 
+  if (selected) {
+    return (
+      <CreativeDetailPage
+        row={selected}
+        liveVideoState={selectedVideoState}
+        note={notesByCreative[selected.id] || ""}
+        onNoteChange={(note) =>
+          setNotesByCreative((notes) => ({ ...notes, [selected.id]: note }))
+        }
+        onClose={() => setSelectedId(null)}
+      />
+    );
+  }
+
   return (
-    <main className="min-h-screen bg-hp-foundation px-4 py-6 text-hp-body md:px-8">
-      <header className="mx-auto flex max-w-7xl flex-col gap-5 border-b border-hp-rule pb-6 md:flex-row md:items-end md:justify-between">
+    <main className="min-h-screen bg-hp-foundation px-4 py-7 text-hp-body md:px-8">
+      <header className="mx-auto grid max-w-7xl gap-8 border-b border-hp-rule pb-10 lg:grid-cols-[1fr_360px] lg:items-center">
         <div>
           <span className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-            HP/VVS Meta Ads
+            HP/VVS Meta Ads · {dateRangeLabel(data.sourceTransparency.timeRange)}
           </span>
           <h1 className="mt-2 font-title text-4xl leading-tight text-hp-ink md:text-5xl">
             Creative Analysis
           </h1>
-          <p className="mt-3 max-w-3xl text-sm leading-6 text-hp-body">
-            Internal Creative Diagnostic Score is based on visible Meta Ads metrics and our
-            internal weighting. It does not represent Meta&apos;s private algorithm or official
-            ranking.
+          <p className="mt-3 max-w-2xl text-sm italic leading-6 text-hp-body">
+            Internal diagnostic scoring across active and paused creatives. Combines visible Meta
+            metrics with Hung Phat weightings, not Meta&apos;s official ranking.
           </p>
         </div>
-        <div className="border border-hp-rule bg-hp-card px-4 py-3 text-sm text-hp-body">
-          <div className="flex items-start gap-2">
-            <Info size={16} className="mt-0.5 text-hp-muted" />
-            <p className="max-w-sm leading-5">
-              HP/VVS are high-ticket luxury jewelry brands. Lower CTR can still be valuable when
-              appointment quality, close rate, AOV, and brand fit are stronger.
-            </p>
-          </div>
+        <div className="border border-hp-rule bg-hp-card p-5 text-sm text-hp-body">
+          <p className="text-[10px] uppercase tracking-[0.18em] text-hp-muted">
+            Reading these scores
+          </p>
+          <p className="mt-2 leading-5">
+            HP/VVS sells high-ticket luxury jewelry. Lower CTRs can be normal when appointment
+            quality, close rate, AOV, and brand fit are strong.
+          </p>
         </div>
       </header>
 
-      <section className="mx-auto mt-6 max-w-7xl border border-hp-rule bg-hp-card p-4">
-        <div className="mb-4 flex items-center gap-2 text-hp-ink">
-          <SlidersHorizontal size={18} />
-          <span className="text-[11px] uppercase tracking-[0.14em]">Filters</span>
+      <section className="mx-auto mt-8 max-w-7xl border border-hp-rule bg-hp-card px-5 py-5">
+        <div className="grid gap-6 border-b border-hp-rule pb-5 lg:grid-cols-[1fr_1fr_1.3fr]">
+          <div>
+            <FilterEyebrow>Showing</FilterEyebrow>
+            <SegmentedControl
+              value={delivery}
+              onChange={(value) => setDelivery(value as DeliveryFilter)}
+              options={[
+                { value: "active", label: "Active only" },
+                { value: "inactive", label: "Paused" },
+                { value: "all", label: "All" },
+              ]}
+            />
+          </div>
+          <div>
+            <FilterEyebrow>Creative status</FilterEyebrow>
+            <select
+              value={status}
+              onChange={(event) => setStatus(event.target.value)}
+              className="h-10 w-full border border-hp-rule bg-transparent px-3 text-sm outline-none focus:border-hp-pink"
+            >
+              {["all", ...CREATIVE_STATUS_OPTIONS].map((option) => (
+                <option key={option} value={option}>
+                  {option === "all" ? "All statuses" : option}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <FilterEyebrow>Time</FilterEyebrow>
+            <div className="flex flex-wrap items-center gap-2">
+              {[7, 14, 30, 90].map((days) => (
+                <button
+                  key={days}
+                  onClick={() => applyQuickRange(days)}
+                  disabled={isApplyingRange}
+                  className={`h-10 border px-4 text-sm transition-colors ${
+                    data.sourceTransparency.timeRange.days === days
+                      ? "border-hp-ink bg-hp-ink text-hp-foundation"
+                      : "border-hp-rule text-hp-body hover:border-hp-ink"
+                  }`}
+                >
+                  {days}d
+                </button>
+              ))}
+              <button
+                onClick={applyCustomRange}
+                disabled={isApplyingRange || !startDate || !endDate}
+                className="h-10 border border-hp-rule px-4 text-sm text-hp-body transition-colors hover:border-hp-ink hover:bg-hp-inset"
+              >
+                Custom
+              </button>
+              <span className="ml-auto text-sm italic text-hp-muted">
+                {dateRangeLabel(data.sourceTransparency.timeRange)}
+              </span>
+            </div>
+          </div>
         </div>
-        <div className="grid gap-4 lg:grid-cols-[1fr_1fr_1fr_1fr_150px]">
-          <FilterSelect label="Brand/account" value={brand} onChange={setBrand} options={brandOptions} />
+        <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_1fr_1fr_1fr_0.75fr_1fr]">
+          <FilterSelect label="Brand / account" value={brand} onChange={setBrand} options={brandOptions} />
+          <FilterSelect label="Campaign umbrella" value={umbrella} onChange={setUmbrella} options={umbrellaOptions} />
           <FilterSelect label="Campaign" value={campaign} onChange={setCampaign} options={campaignOptions} />
           <FilterSelect label="Ad set" value={adSet} onChange={setAdSet} options={adSetOptions} />
-          <FilterSelect
-            label="Creative status"
-            value={status}
-            onChange={setStatus}
-            options={["all", ...CREATIVE_STATUS_OPTIONS]}
-          />
           <label className="block">
-            <span className="mb-2 block text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-              Min spend
-            </span>
+            <FilterEyebrow>Min spend</FilterEyebrow>
             <input
               value={minSpend}
               onChange={(event) => setMinSpend(event.target.value)}
               inputMode="decimal"
               placeholder="0"
-              className="h-10 w-full border border-hp-rule bg-hp-inset px-3 text-sm outline-none focus:border-hp-pink"
+              className="h-10 w-full border-0 border-b border-hp-rule bg-transparent px-0.5 text-sm outline-none focus:border-b-2 focus:border-hp-pink"
             />
           </label>
-        </div>
-        <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_340px]">
-          <div className="flex flex-wrap items-end gap-3">
-            <div>
-              <span className="mb-2 block text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-                Date range
-              </span>
-              <div className="flex flex-wrap gap-2">
-                {[7, 14, 30].map((days) => (
-                  <button
-                    key={days}
-                    onClick={() => applyQuickRange(days)}
-                    disabled={isApplyingRange}
-                    className="h-10 border border-hp-rule px-4 text-[11px] uppercase tracking-[0.14em] text-hp-body transition-colors hover:border-hp-ink hover:bg-hp-inset"
-                  >
-                    Last {days}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <label>
-              <span className="mb-2 block text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-                Start
-              </span>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(event) => setStartDate(event.target.value)}
-                className="h-10 border border-hp-rule bg-hp-inset px-3 text-sm outline-none focus:border-hp-pink"
-              />
-            </label>
-            <label>
-              <span className="mb-2 block text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-                End
-              </span>
-              <input
-                type="date"
-                value={endDate}
-                onChange={(event) => setEndDate(event.target.value)}
-                className="h-10 border border-hp-rule bg-hp-inset px-3 text-sm outline-none focus:border-hp-pink"
-              />
-            </label>
-            <button
-              onClick={applyCustomRange}
-              disabled={isApplyingRange || !startDate || !endDate}
-              className="h-10 bg-hp-ink px-5 text-[11px] uppercase tracking-[0.14em] text-hp-foundation transition-colors hover:bg-hp-pink"
-            >
-              Apply
-            </button>
-          </div>
           <label className="block">
-            <span className="mb-2 block text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-              Search
-            </span>
-            <div className="flex h-10 items-center gap-2 border border-hp-rule bg-hp-inset px-3">
-              <Search size={15} className="text-hp-muted" />
+            <FilterEyebrow>Search</FilterEyebrow>
+            <div className="flex h-10 items-center gap-2 border-0 border-b border-hp-rule">
+              <Search size={14} className="text-hp-muted" />
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Ad, campaign, creative"
+                placeholder="Ad or campaign"
                 className="min-w-0 flex-1 bg-transparent text-sm outline-none"
               />
             </div>
+          </label>
+        </div>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:w-[560px] lg:grid-cols-2">
+          <label>
+            <FilterEyebrow>Custom start</FilterEyebrow>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(event) => setStartDate(event.target.value)}
+              className="h-10 w-full border-0 border-b border-hp-rule bg-transparent px-0.5 text-sm outline-none focus:border-b-2 focus:border-hp-pink"
+            />
+          </label>
+          <label>
+            <FilterEyebrow>Custom end</FilterEyebrow>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(event) => setEndDate(event.target.value)}
+              className="h-10 w-full border-0 border-b border-hp-rule bg-transparent px-0.5 text-sm outline-none focus:border-b-2 focus:border-hp-pink"
+            />
           </label>
         </div>
         {isApplyingRange ? (
@@ -406,55 +455,74 @@ export function CreativeAnalysisClient({ initialData }: Props) {
         </section>
       ) : null}
 
-      <section className="mx-auto mt-6 grid max-w-7xl gap-4 sm:grid-cols-2 xl:grid-cols-7">
-        <SummaryCard label="Total spend" value={formatMoney(summary.totalSpend, true)} />
-        <SummaryCard label="KPI results" value={formatNumber(summary.totalResults)} />
-        <SummaryCard label="Average CPA" value={formatMoney(summary.averageCpa)} />
-        <SummaryCard label="Best CPA" value={summary.bestByCpa?.adName || "n/a"} detail={formatMoney(summary.bestByCpa?.costPerResult ?? null)} />
-        <SummaryCard label="Best hook" value={summary.bestByHook?.adName || "n/a"} detail={formatRate(summary.bestByHook?.hookRate ?? null)} />
-        <SummaryCard label="Fatigue count" value={formatNumber(summary.fatigueCount)} />
-        <SummaryCard label="Scale candidates" value={formatNumber(summary.scaleCandidates)} />
+      <section className="mx-auto mt-6 grid max-w-7xl gap-4 lg:grid-cols-[1.6fr_1fr_1fr]">
+        <div className="border border-hp-rule bg-hp-card p-6">
+          <p className="text-[10px] uppercase tracking-[0.18em] text-hp-muted">
+            At a glance · {formatNumber(filteredRows.length)} creatives
+          </p>
+          <h2 className="mt-2 font-title text-2xl text-hp-ink">Period summary</h2>
+          <div className="mt-4 grid gap-4 border-t border-hp-rule pt-4 sm:grid-cols-5">
+            <SummaryStat label="Total spend" value={formatMoney(summary.totalSpend, true)} />
+            <SummaryStat
+              label="KPI results"
+              value={formatNumber(summary.totalResults)}
+              detail={summary.kpiDetail}
+            />
+            <SummaryStat label="Average CPA" value={formatMoney(summary.averageCpa)} detail="filtered blend" />
+            <SummaryStat
+              label="Scale candidates"
+              value={formatNumber(summary.scaleCandidates)}
+              detail={`of ${formatNumber(filteredRows.length)}`}
+            />
+            <SummaryStat label="Fatigue watch" value={formatNumber(summary.fatigueCount)} />
+          </div>
+        </div>
+        <FeatureCard
+          eyebrow="Best CPA"
+          value={formatMoney(summary.bestByCpa?.costPerResult ?? null)}
+          title={summary.bestByCpa?.adName || "n/a"}
+          detail={summary.bestByCpa ? kpiResultDetail(summary.bestByCpa) : undefined}
+          badge={summary.bestByCpa?.status}
+        />
+        <FeatureCard
+          eyebrow="Best hook"
+          value={formatRate(summary.bestByHook?.hookRate ?? null)}
+          title={summary.bestByHook?.adName || "n/a"}
+          detail={summary.bestByHook ? `${formatMoney(summary.bestByHook.spend)} spend` : undefined}
+          badge={summary.bestByHook?.status}
+        />
       </section>
 
-      <section className="mx-auto mt-6 max-w-7xl border border-hp-rule bg-hp-card">
-        <div className="flex flex-col gap-3 border-b border-hp-rule p-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-2 text-hp-ink">
-            <BarChart3 size={18} />
-            <span className="text-[11px] uppercase tracking-[0.14em]">Creative scorecard</span>
+      <section className="mx-auto mt-8 max-w-7xl">
+        <div className="flex flex-col gap-2 border-b border-hp-rule pb-4 md:flex-row md:items-end md:justify-between">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.18em] text-hp-muted">
+              Creative scorecard
+            </p>
+            <h2 className="mt-1 font-title text-3xl leading-tight text-hp-ink">
+              Ranked by internal diagnostic score
+            </h2>
           </div>
-          <p className="text-sm text-hp-muted">
-            {formatNumber(filteredRows.length)} creatives, {data.sourceTransparency.timeRange.start} to{" "}
-            {data.sourceTransparency.timeRange.end}
+          <p className="text-sm italic text-hp-muted">
+            {formatNumber(filteredRows.length)} creatives · {dateRangeLabel(data.sourceTransparency.timeRange)}
           </p>
         </div>
 
         {filteredRows.length ? (
-          <div className="overflow-x-auto scrollbar-thin">
-            <table className="w-full min-w-[1820px] border-collapse">
+          <div className="mt-6 overflow-x-auto scrollbar-thin">
+            <table className="w-full min-w-[1180px] border-collapse">
               <thead>
                 <tr className="bg-hp-inset">
                   {[
                     "Rank",
-                    "Creative preview",
-                    "Ad name",
-                    "Ad active",
-                    "Campaign",
-                    "Ad set",
+                    "Creative",
+                    "Internal score",
+                    "KPI results",
                     "Spend",
-                    "Impressions",
-                    "Frequency",
+                    "CPA",
                     "Hook rate",
                     "Hold rate",
-                    "CTR",
-                    "KPI",
-                    "Results",
-                    "Cost/KPI",
-                    "Quality",
-                    "Engagement",
-                    "Conversion",
-                    "Internal score",
                     "Status",
-                    "Recommendation",
                   ].map((column) => (
                     <th
                       key={column}
@@ -466,66 +534,72 @@ export function CreativeAnalysisClient({ initialData }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {filteredRows.map((row, index) => (
+                {visibleRows.map((row, index) => (
                   <tr
                     key={row.id}
-                    className="border-b border-hp-rule bg-hp-card transition-colors hover:bg-hp-inset"
+                    className="border-b border-hp-rule transition-colors hover:bg-hp-card"
                   >
-                    <td className="px-4 py-3 text-sm tabular-nums text-hp-ink">
+                    <td className="px-4 py-4 text-lg italic tabular-nums text-hp-muted">
                       #{index + 1}
                     </td>
-                    <td className="px-4 py-3">
-                      <button
-                        onClick={() => setSelectedId(row.id)}
-                        className="block text-left focus:outline-none focus:ring-1 focus:ring-hp-pink"
-                        aria-label={`Open ${row.adName}`}
-                      >
-                        <PreviewThumb row={row} />
-                      </button>
-                    </td>
-                    <td className="max-w-[260px] px-4 py-3">
-                      <button
-                        onClick={() => setSelectedId(row.id)}
-                        className="text-left text-sm leading-5 text-hp-ink underline-offset-4 hover:underline focus:outline-none focus:ring-1 focus:ring-hp-pink"
-                      >
-                        {row.adName}
-                      </button>
-                      <div className="mt-1 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-                        {row.brandCode}
+                    <td className="px-4 py-4">
+                      <div className="flex items-center gap-4">
+                        <button
+                          onClick={() => setSelectedId(row.id)}
+                          className="shrink-0 text-left focus:outline-none focus:ring-1 focus:ring-hp-pink"
+                          aria-label={`Open ${row.adName}`}
+                        >
+                          <PreviewThumb row={row} />
+                        </button>
+                        <div className="min-w-0">
+                          <button
+                            onClick={() => setSelectedId(row.id)}
+                            className="block max-w-[280px] truncate text-left text-lg leading-6 text-hp-ink underline-offset-4 hover:underline focus:outline-none focus:ring-1 focus:ring-hp-pink md:max-w-[320px]"
+                          >
+                            {row.adName}
+                          </button>
+                          <p className="mt-1 max-w-[280px] truncate text-sm italic text-hp-muted md:max-w-[320px]">
+                            {row.brandCode} · {adDeliveryLabel(row)} · {row.campaignUmbrella || row.adSetName}
+                          </p>
+                        </div>
                       </div>
                     </td>
-                    <td className="px-4 py-3">
-                      <AdDeliveryBadge row={row} />
-                    </td>
-                    <TableCell>{row.campaignName}</TableCell>
-                    <TableCell>{row.adSetName}</TableCell>
-                    <TableMetric>{formatMoney(row.spend, true)}</TableMetric>
-                    <TableMetric>{formatNumber(row.impressions)}</TableMetric>
-                    <TableMetric>{row.frequency.toFixed(2)}x</TableMetric>
-                    <TableMetric>{formatRate(row.hookRate)}</TableMetric>
-                    <TableMetric>{formatRate(row.holdRate)}</TableMetric>
-                    <TableMetric>{formatPercentNumber(row.ctr)}</TableMetric>
-                    <TableCell>
-                      <KpiLabel row={row} />
-                    </TableCell>
-                    <TableMetric>{formatNumber(row.resultCount)}</TableMetric>
-                    <TableMetric>{formatMoney(row.costPerResult)}</TableMetric>
-                    <TableCell>{rankingLabel(row.qualityRanking)}</TableCell>
-                    <TableCell>{rankingLabel(row.engagementRateRanking)}</TableCell>
-                    <TableCell>{rankingLabel(row.conversionRateRanking)}</TableCell>
                     <td className="px-4 py-3">
                       <ScoreMeter score={row.internalScore} />
                     </td>
                     <td className="px-4 py-3">
-                      <StatusBadge status={row.status} />
+                      <KpiResultCell row={row} />
                     </td>
-                    <td className="max-w-[280px] px-4 py-3 text-sm leading-5 text-hp-body">
-                      {row.recommendation}
+                    <TableMetric>{formatMoney(row.spend, true)}</TableMetric>
+                    <TableMetric>{formatMoney(row.costPerResult)}</TableMetric>
+                    <TableMetric>{formatRate(row.hookRate)}</TableMetric>
+                    <TableMetric>{formatRate(row.holdRate)}</TableMetric>
+                    <td className="px-4 py-3">
+                      <StatusBadge status={row.status} />
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            {filteredRows.length > visibleRows.length ? (
+              <div className="flex justify-end border-t border-hp-rule py-4 text-sm italic text-hp-muted">
+                <button
+                  onClick={() => setShowAllRows(true)}
+                  className="underline-offset-4 transition-colors hover:text-hp-ink hover:underline"
+                >
+                  Showing {formatNumber(visibleRows.length)} of {formatNumber(filteredRows.length)} · view all →
+                </button>
+              </div>
+            ) : filteredRows.length > 12 ? (
+              <div className="flex justify-end border-t border-hp-rule py-4 text-sm italic text-hp-muted">
+                <button
+                  onClick={() => setShowAllRows(false)}
+                  className="underline-offset-4 transition-colors hover:text-hp-ink hover:underline"
+                >
+                  Showing all {formatNumber(filteredRows.length)} · collapse
+                </button>
+              </div>
+            ) : null}
           </div>
         ) : (
           <div className="p-8">
@@ -551,17 +625,6 @@ export function CreativeAnalysisClient({ initialData }: Props) {
         </p>
       </section>
 
-      {selected ? (
-        <CreativeDetailDrawer
-          row={selected}
-          liveVideoState={selectedVideoState}
-          note={notesByCreative[selected.id] || ""}
-          onNoteChange={(note) =>
-            setNotesByCreative((notes) => ({ ...notes, [selected.id]: note }))
-          }
-          onClose={() => setSelectedId(null)}
-        />
-      ) : null}
     </main>
   );
 }
@@ -615,13 +678,11 @@ function FilterSelect({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-        {label}
-      </span>
+      <FilterEyebrow>{label}</FilterEyebrow>
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="h-10 w-full border border-hp-rule bg-hp-inset px-3 text-sm outline-none focus:border-hp-pink"
+        className="h-10 w-full border-0 border-b border-hp-rule bg-transparent px-0.5 text-sm outline-none focus:border-b-2 focus:border-hp-pink"
       >
         {options.map((option) => (
           <option key={option} value={option}>
@@ -633,7 +694,43 @@ function FilterSelect({
   );
 }
 
-function SummaryCard({
+function FilterEyebrow({ children }: { children: ReactNode }) {
+  return (
+    <span className="mb-2 block text-[10px] uppercase tracking-[0.18em] text-hp-muted">
+      {children}
+    </span>
+  );
+}
+
+function SegmentedControl({
+  value,
+  onChange,
+  options,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<{ value: string; label: string }>;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {options.map((option) => (
+        <button
+          key={option.value}
+          onClick={() => onChange(option.value)}
+          className={`h-10 border px-4 text-sm transition-colors ${
+            value === option.value
+              ? "border-hp-ink bg-hp-ink text-hp-foundation"
+              : "border-hp-rule text-hp-body hover:border-hp-ink"
+          }`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function SummaryStat({
   label,
   value,
   detail,
@@ -643,33 +740,61 @@ function SummaryCard({
   detail?: string;
 }) {
   return (
-    <div className="min-h-[112px] border border-hp-rule bg-hp-card p-4">
+    <div>
       <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{label}</p>
-      <p className="mt-3 line-clamp-2 font-title text-2xl leading-tight text-hp-ink">{value}</p>
-      {detail ? <p className="mt-2 text-sm text-hp-muted">{detail}</p> : null}
+      <p className="mt-1 font-title text-2xl leading-tight text-hp-ink">{value}</p>
+      {detail ? <p className="mt-0.5 text-xs italic leading-4 text-hp-muted">{detail}</p> : null}
     </div>
   );
 }
 
-function TableCell({ children }: { children: ReactNode }) {
-  return <td className="max-w-[240px] break-words px-4 py-3 text-sm leading-5 text-hp-body">{children}</td>;
+function FeatureCard({
+  eyebrow,
+  value,
+  title,
+  detail,
+  badge,
+}: {
+  eyebrow: string;
+  value: string;
+  title: string;
+  detail?: string;
+  badge?: CreativeAnalysisRow["status"];
+}) {
+  return (
+    <div className="border border-hp-rule bg-hp-card p-6">
+      <p className="text-[10px] uppercase tracking-[0.18em] text-hp-muted">{eyebrow}</p>
+      <p className="mt-1 font-title text-3xl leading-none text-hp-ink">{value}</p>
+      <p className="mt-3 line-clamp-1 text-sm text-hp-ink">{title}</p>
+      {detail ? <p className="mt-1 line-clamp-1 text-xs italic text-hp-muted">{detail}</p> : null}
+      {badge ? (
+        <div className="mt-3">
+          <StatusBadge status={badge} compact />
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function TableMetric({ children }: { children: ReactNode }) {
   return <td className="px-4 py-3 text-sm tabular-nums text-hp-ink">{children}</td>;
 }
 
-function KpiLabel({ row }: { row: CreativeAnalysisRow }) {
+function KpiResultCell({ row }: { row: CreativeAnalysisRow }) {
   return (
     <div>
-      <p className="whitespace-nowrap text-sm text-hp-ink">{row.resultKpiLabel}</p>
+      <p className="text-right text-sm tabular-nums text-hp-ink">{formatNumber(row.resultCount)}</p>
+      <p className="mt-0.5 max-w-[170px] truncate text-right text-xs italic text-hp-muted">
+        {row.resultKpiLabel}
+      </p>
       {row.resultActionType ? (
-        <p className="mt-1 max-w-[160px] truncate text-[11px] text-hp-muted" title={row.resultActionType}>
+        <p
+          className="mt-0.5 max-w-[170px] truncate text-right text-[10px] text-hp-muted"
+          title={row.resultActionType}
+        >
           {friendlyActionType(row.resultActionType)}
         </p>
-      ) : (
-        <p className="mt-1 text-[11px] text-hp-muted">No action</p>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -680,7 +805,7 @@ function PreviewThumb({ row }: { row: CreativeAnalysisRow }) {
 
   if (!src || failed) {
     return (
-      <div className="flex h-16 w-16 items-center justify-center border border-hp-rule bg-hp-inset text-hp-muted">
+      <div className="flex h-14 w-14 items-center justify-center border border-hp-rule bg-hp-inset text-hp-muted">
         <GalleryHorizontalEnd size={20} />
       </div>
     );
@@ -690,7 +815,7 @@ function PreviewThumb({ row }: { row: CreativeAnalysisRow }) {
     <img
       src={src}
       alt=""
-      className="h-16 w-16 border border-hp-rule object-cover"
+      className="h-14 w-14 border border-hp-rule object-cover"
       onError={() => setFailed(true)}
     />
   );
@@ -698,57 +823,93 @@ function PreviewThumb({ row }: { row: CreativeAnalysisRow }) {
 
 function ScoreMeter({ score }: { score: number }) {
   return (
-    <div className="w-24">
-      <div className="flex items-center justify-between text-sm tabular-nums text-hp-ink">
-        <span>{score}</span>
+    <div className="w-52">
+      <div className="flex items-baseline gap-1 text-hp-ink">
+        <span className="font-title text-3xl leading-none tabular-nums">{score}</span>
         <span className="text-hp-muted">/100</span>
       </div>
       <div className="mt-2 h-1.5 bg-hp-inset">
-        <div className="h-full bg-hp-ink" style={{ width: `${Math.max(0, Math.min(100, score))}%` }} />
+        <div
+          className={`h-full ${scoreBandClass(score)}`}
+          style={{ width: `${Math.max(0, Math.min(100, score))}%` }}
+        />
       </div>
     </div>
   );
 }
 
-function StatusBadge({ status }: { status: CreativeAnalysisRow["status"] }) {
+function StatusBadge({
+  status,
+  compact = false,
+}: {
+  status: CreativeAnalysisRow["status"];
+  compact?: boolean;
+}) {
   const className =
     status === "Scale Candidate"
-      ? "border-signal-positive text-signal-positive"
+      ? "border-signal-positive bg-signal-positive text-hp-foundation"
       : status === "Fatigue Watch" || status === "Clickbait Risk"
-        ? "border-signal-warning text-signal-warning"
+        ? "border-signal-warning bg-signal-warning text-hp-foundation"
         : status === "Needs Hook Improvement" || status === "Needs Retention Improvement"
-          ? "border-hp-muted text-hp-body"
-          : "border-hp-rule text-hp-muted";
+          ? "border-hp-muted bg-hp-muted text-hp-foundation"
+          : "border-signal-warning bg-signal-warning text-hp-foundation";
 
   return (
-    <span className={`inline-flex whitespace-nowrap border px-2 py-1 text-[11px] ${className}`}>
+    <span
+      className={`inline-flex whitespace-nowrap border px-3 py-1 text-[11px] ${
+        compact ? "text-[10px]" : ""
+      } ${className}`}
+    >
       {status}
     </span>
   );
 }
 
-function AdDeliveryBadge({ row }: { row: CreativeAnalysisRow }) {
+function DeliveryBadge({ row }: { row: CreativeAnalysisRow }) {
   const state = adDeliveryState(row);
   const className =
     state === "active"
-      ? "border-signal-positive text-signal-positive"
+      ? "bg-signal-positive text-hp-foundation"
       : state === "inactive"
-        ? "border-signal-warning text-signal-warning"
-        : "border-hp-rule text-hp-muted";
+        ? "bg-hp-inset text-hp-ink"
+        : "bg-hp-inset text-hp-muted";
 
+  return <span className={`px-5 py-3 text-lg font-semibold ${className}`}>{adDeliveryLabel(row)}</span>;
+}
+
+function IdentifierLine({ label, value }: { label: string; value: string }) {
   return (
-    <div>
-      <span className={`inline-flex whitespace-nowrap border px-2 py-1 text-[11px] ${className}`}>
-        {state === "active" ? "Active" : state === "inactive" ? "Inactive" : "Unknown"}
-      </span>
-      <p className="mt-1 max-w-[150px] truncate text-[11px] text-hp-muted">
-        {metaStatusLabel(row.adEffectiveStatus || row.adConfiguredStatus)}
-      </p>
+    <div className="grid gap-2 sm:grid-cols-[150px_1fr] sm:items-baseline">
+      <p className="text-lg text-hp-muted">{label}</p>
+      <p className="min-w-0 break-words text-right text-xl text-hp-ink">{value}</p>
     </div>
   );
 }
 
-function CreativeDetailDrawer({
+function RawMetricGroup({
+  title,
+  metrics,
+}: {
+  title: string;
+  metrics: Array<[string, string, string?]>;
+}) {
+  return (
+    <div>
+      <p className="text-[11px] uppercase tracking-[0.18em] text-hp-muted">{title}</p>
+      <div className="mt-5 space-y-6">
+        {metrics.map(([label, value, detail]) => (
+          <div key={label}>
+            <p className="text-lg text-hp-muted">{label}</p>
+            <p className="mt-0.5 font-title text-3xl leading-none text-hp-ink tabular-nums">{value}</p>
+            {detail ? <p className="mt-1 text-xs italic leading-4 text-hp-muted">{detail}</p> : null}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CreativeDetailPage({
   row,
   liveVideoState,
   note,
@@ -801,91 +962,112 @@ function CreativeDetailDrawer({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-hp-ink/30">
-      <aside className="ml-auto flex h-full w-full max-w-3xl flex-col overflow-y-auto border-l border-hp-rule bg-hp-foundation">
-        <div className="sticky top-0 z-10 flex items-start justify-between border-b border-hp-rule bg-hp-card p-5">
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-              Creative detail
-            </p>
-            <h2 className="mt-2 font-title text-3xl leading-tight text-hp-ink">{row.adName}</h2>
-            <p className="mt-2 text-sm text-hp-muted">
-              {row.campaignName} / {row.adSetName}
-            </p>
-            <div className="mt-3">
-              <AdDeliveryBadge row={row} />
-            </div>
+    <main className="min-h-screen bg-hp-foundation px-4 py-7 text-hp-body md:px-8">
+      <section className="mx-auto max-w-7xl">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="text-xl italic text-hp-muted">
+            <button onClick={onClose} className="underline-offset-4 hover:text-hp-ink hover:underline">
+              Creative Analysis
+            </button>{" "}
+            <span className="mx-3">›</span>
+            <span className="font-semibold text-hp-ink">{row.adName}</span>
           </div>
           <button
             onClick={onClose}
-            className="border border-hp-rule p-2 text-hp-body transition-colors hover:bg-hp-inset"
-            aria-label="Close creative detail"
+            className="inline-flex items-center gap-3 self-start text-xl italic text-hp-muted underline-offset-4 transition-colors hover:text-hp-ink hover:underline md:self-auto"
           >
+            ← Back to scorecard
             <X size={18} />
           </button>
         </div>
 
-        <div className="grid gap-6 p-5 lg:grid-cols-[240px_1fr]">
+        <div className="mt-10 grid gap-6 lg:grid-cols-[1fr_auto] lg:items-end">
           <div>
-            <LargePreview row={row} />
-            <div className="mt-4 space-y-2 text-sm text-hp-body">
-              <p>
-                <span className="text-hp-muted">Ad ID:</span> {row.adId}
-              </p>
-              <p>
-                <span className="text-hp-muted">Creative ID:</span> {row.creativeId || "n/a"}
-              </p>
-              <p>
-                <span className="text-hp-muted">Post/story ID:</span>{" "}
-                {row.effectiveObjectStoryId || row.objectStoryId || "n/a"}
-              </p>
-              <p>
-                <span className="text-hp-muted">Configured status:</span>{" "}
-                {metaStatusLabel(row.adConfiguredStatus)}
-              </p>
-              <p>
-                <span className="text-hp-muted">Effective status:</span>{" "}
-                {metaStatusLabel(row.adEffectiveStatus)}
-              </p>
-              <p>
-                <span className="text-hp-muted">Status synced:</span>{" "}
-                {formatDateTime(row.adStatusSyncedAt)}
-              </p>
-              {row.previewUrl ? (
-                <a
-                  href={row.previewUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-2 border border-hp-rule px-3 py-2 text-[11px] uppercase tracking-[0.14em] text-hp-ink transition-colors hover:bg-hp-inset"
-                >
-                  <ExternalLink size={14} />
-                  Preview link
-                </a>
-              ) : null}
+            <p className="text-[11px] uppercase tracking-[0.18em] text-hp-muted">
+              Creative detail · {formatDateTime(row.adStatusSyncedAt)}
+            </p>
+            <h1 className="mt-4 max-w-5xl font-title text-5xl leading-none text-hp-ink md:text-7xl">
+              {row.adName}
+            </h1>
+            <p className="mt-5 max-w-5xl text-xl italic leading-8 text-hp-body">
+              {row.adSetName} — {row.campaignName}
+            </p>
+            <div className="mt-5 flex flex-wrap items-center gap-3">
+              <DeliveryBadge row={row} />
+              <StatusBadge status={row.status} />
+              <span className="text-lg italic text-hp-muted">
+                Last sync · {formatDateTime(row.adStatusSyncedAt)}
+              </span>
             </div>
           </div>
+          {row.previewUrl ? (
+            <a
+              href={row.previewUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex h-12 items-center gap-2 border border-hp-ink px-6 text-lg font-semibold text-hp-ink transition-colors hover:bg-hp-ink hover:text-hp-foundation"
+            >
+              Preview ad
+              <ExternalLink size={16} />
+            </a>
+          ) : null}
+        </div>
 
-          <div className="space-y-6">
-            <section className="border border-hp-rule bg-hp-card p-4">
-              <p className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-                Diagnosis
-              </p>
-              <div className="mt-3 flex flex-wrap items-center gap-3">
-                <ScoreMeter score={row.internalScore} />
-                <StatusBadge status={row.status} />
+        <div className="mt-10 grid gap-8 lg:grid-cols-[400px_1fr] xl:grid-cols-[480px_1fr]">
+          <div className="space-y-8">
+            <LargePreview row={row} />
+            <section className="border border-hp-rule bg-hp-card p-6">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-hp-muted">Identifiers</p>
+              <div className="mt-5 space-y-4 border-t border-hp-rule pt-5">
+                <IdentifierLine label="Ad ID" value={row.adId} />
+                <IdentifierLine label="Creative ID" value={row.creativeId || "n/a"} />
+                <IdentifierLine
+                  label="Post / story ID"
+                  value={row.effectiveObjectStoryId || row.objectStoryId || "n/a"}
+                />
+                <IdentifierLine label="Configured status" value={metaStatusLabel(row.adConfiguredStatus)} />
+                <IdentifierLine label="Effective status" value={metaStatusLabel(row.adEffectiveStatus)} />
+                <IdentifierLine label="Campaign umbrella" value={row.campaignUmbrella || "n/a"} />
               </div>
-              <p className="mt-4 text-sm leading-6 text-hp-body">{row.diagnosis}</p>
-              <p className="mt-2 text-sm leading-6 text-hp-body">{row.nextAction}</p>
+            </section>
+          </div>
+
+          <div className="space-y-8">
+            <section className="border border-hp-rule bg-hp-card p-8">
+              <div className="grid gap-6 md:grid-cols-[1fr_170px]">
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-hp-muted">Diagnosis</p>
+                  <p className="mt-5 font-title text-3xl leading-tight text-hp-ink">
+                    {row.diagnosis}
+                  </p>
+                </div>
+                <div className="text-center">
+                  <p className="font-title text-7xl leading-none text-hp-ink tabular-nums">
+                    {row.internalScore}
+                  </p>
+                  <p className="text-xl text-hp-muted">/ 100</p>
+                  <p className="mt-3 text-lg font-semibold text-signal-warning">{row.status}</p>
+                </div>
+              </div>
+              <div className="mt-8 border-t border-hp-rule pt-6">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-hp-muted">
+                  Recommendation
+                </p>
+                <p className="mt-3 text-2xl leading-8 text-hp-body">{row.nextAction}</p>
+              </div>
             </section>
 
-            <section className="border border-hp-rule bg-hp-card p-4">
-              <p className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+            <section className="border border-hp-rule bg-hp-card p-8">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-hp-muted">
                 Score breakdown
               </p>
-              <div className="mt-4 space-y-3">
+              <h2 className="mt-4 border-b border-hp-rule pb-6 font-title text-4xl leading-tight text-hp-ink">
+                What&apos;s driving the {row.internalScore}
+              </h2>
+              <div className="mt-6 space-y-6">
                 {[
                   ["Hook strength", row.scoreBreakdown.hookStrength],
-                  ["Hold/retention", row.scoreBreakdown.holdRetention],
+                  ["Hold / retention", row.scoreBreakdown.holdRetention],
                   ["Click intent", row.scoreBreakdown.clickIntent],
                   ["Conversion efficiency", row.scoreBreakdown.conversionEfficiency],
                   ["Meta ranking diagnostics", row.scoreBreakdown.metaRankingDiagnostics],
@@ -896,77 +1078,68 @@ function CreativeDetailDrawer({
               </div>
             </section>
 
-            <section className="border border-hp-rule bg-hp-card p-4">
+            <section className="border border-hp-rule bg-hp-card p-8">
               <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-                  Raw metrics
+                <p className="text-[11px] uppercase tracking-[0.18em] text-hp-muted">
+                  Raw metrics · source: Meta Ads
                 </p>
                 {liveVideoState?.status === "loading" ? (
                   <p className="text-xs text-hp-muted">Checking live Meta video diagnostics...</p>
                 ) : null}
               </div>
-              <div className="mt-4 grid gap-x-5 gap-y-3 sm:grid-cols-2">
-                <MetricLine label="Spend" value={formatMoney(row.spend)} />
-                <MetricLine label="Impressions" value={formatNumber(row.impressions)} />
-                <MetricLine label="Reach" value={formatNumber(row.reach)} />
-                <MetricLine label="Frequency" value={`${row.frequency.toFixed(2)}x`} />
-                <MetricLine label="CPM" value={formatMoney(row.cpm)} />
-                <MetricLine label="CPC" value={formatMoney(row.cpc)} />
-                <MetricLine label="Hook rate" value={formatRate(row.hookRate)} detail={row.hookRateSource} />
-                <MetricLine label="Hold rate" value={formatRate(row.holdRate)} detail={row.holdRateSource} />
-                <MetricLine label="Completion rate" value={formatRate(row.completionRate)} />
-                <MetricLine label="CTR" value={formatPercentNumber(row.ctr)} />
-                <MetricLine label="Inline link clicks" value={formatNumber(row.inlineLinkClicks)} />
-                <MetricLine
-                  label="Primary KPI"
-                  value={row.resultKpiLabel}
-                  detail={row.resultActionType || "No matching action returned"}
+              <h2 className="mt-4 border-b border-hp-rule pb-6 font-title text-4xl leading-tight text-hp-ink">
+                Grouped by purpose
+              </h2>
+              <div className="mt-8 grid gap-8 lg:grid-cols-3">
+                <RawMetricGroup
+                  title="Reach & cost"
+                  metrics={[
+                    ["Spend", formatMoney(row.spend)],
+                    ["Impressions", formatNumber(row.impressions)],
+                    ["Reach", formatNumber(row.reach)],
+                    ["Frequency", `${row.frequency.toFixed(2)}x`],
+                    ["CPM", formatMoney(row.cpm)],
+                    ["CPC", formatMoney(row.cpc)],
+                  ]}
                 />
-                <MetricLine label="KPI results" value={formatNumber(row.resultCount)} />
-                <MetricLine label={row.resultLabel} value={formatMoney(row.costPerResult)} />
-                <MetricLine
-                  label="Video plays"
-                  value={formatActionMetric(videoMetrics.plays.value)}
-                  detail={videoMetrics.plays.detail}
+                <RawMetricGroup
+                  title="Engagement"
+                  metrics={[
+                    ["Hook rate", formatRate(row.hookRate), row.hookRateSource],
+                    ["Hold rate", formatRate(row.holdRate), row.holdRateSource],
+                    ["Completion rate", formatRate(row.completionRate)],
+                    ["CTR", formatPercentNumber(row.ctr)],
+                    ["Inline link clicks", formatNumber(row.inlineLinkClicks)],
+                  ]}
                 />
-                <MetricLine
-                  label="Video 25%"
-                  value={formatActionMetric(videoMetrics.p25.value)}
-                  detail={videoMetrics.p25.detail}
+                <RawMetricGroup
+                  title="Conversion & video"
+                  metrics={[
+                    ["KPI results", formatNumber(row.resultCount), kpiResultDetail(row)],
+                    [row.resultLabel, formatMoney(row.costPerResult)],
+                    ["Video plays", formatActionMetric(videoMetrics.plays.value), videoMetrics.plays.detail],
+                    [
+                      "Video 25 / 50",
+                      `${formatActionMetric(videoMetrics.p25.value)} / ${formatActionMetric(videoMetrics.p50.value)}`,
+                    ],
+                    [
+                      "Video 75 / 95",
+                      `${formatActionMetric(videoMetrics.p75.value)} / ${formatActionMetric(videoMetrics.p95.value)}`,
+                    ],
+                    [
+                      "Video 100 / ThruPlays",
+                      `${formatActionMetric(videoMetrics.p100.value)} / ${formatActionMetric(videoMetrics.thruplay.value)}`,
+                    ],
+                    ["Quality ranking", rankingLabel(row.qualityRanking)],
+                    ["Engagement ranking", rankingLabel(row.engagementRateRanking)],
+                    ["Conversion ranking", rankingLabel(row.conversionRateRanking)],
+                  ]}
                 />
-                <MetricLine
-                  label="Video 50%"
-                  value={formatActionMetric(videoMetrics.p50.value)}
-                  detail={videoMetrics.p50.detail}
-                />
-                <MetricLine
-                  label="Video 75%"
-                  value={formatActionMetric(videoMetrics.p75.value)}
-                  detail={videoMetrics.p75.detail}
-                />
-                <MetricLine
-                  label="Video 95%"
-                  value={formatActionMetric(videoMetrics.p95.value)}
-                  detail={videoMetrics.p95.detail}
-                />
-                <MetricLine
-                  label="Video 100%"
-                  value={formatActionMetric(videoMetrics.p100.value)}
-                  detail={videoMetrics.p100.detail}
-                />
-                <MetricLine
-                  label="ThruPlays"
-                  value={formatActionMetric(videoMetrics.thruplay.value)}
-                  detail={videoMetrics.thruplay.detail}
-                />
-                <MetricLine label="Quality ranking" value={rankingLabel(row.qualityRanking)} />
-                <MetricLine label="Engagement ranking" value={rankingLabel(row.engagementRateRanking)} />
-                <MetricLine label="Conversion ranking" value={rankingLabel(row.conversionRateRanking)} />
               </div>
             </section>
 
-            <section className="border border-hp-rule bg-hp-card p-4">
-              <p className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+            <section className="border border-hp-rule bg-hp-card p-6">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-hp-muted">
                 Internal notes
               </p>
               <textarea
@@ -974,13 +1147,13 @@ function CreativeDetailDrawer({
                 onChange={(event) => onNoteChange(event.target.value)}
                 rows={5}
                 placeholder="Add team notes on lead quality, brand fit, close rate, or next creative test."
-                className="mt-3 w-full resize-none border border-hp-rule bg-hp-inset p-3 text-sm leading-6 outline-none focus:border-hp-pink"
+                className="mt-4 w-full resize-none border-0 border-b border-hp-rule bg-transparent p-0 pb-3 text-lg leading-7 outline-none focus:border-b-2 focus:border-hp-pink"
               />
             </section>
           </div>
         </div>
-      </aside>
-    </div>
+      </section>
+    </main>
   );
 }
 
@@ -1008,32 +1181,17 @@ function LargePreview({ row }: { row: CreativeAnalysisRow }) {
 
 function BreakdownRow({ label, value }: { label: string; value: number }) {
   return (
-    <div>
-      <div className="flex items-center justify-between text-sm">
-        <span className="text-hp-body">{label}</span>
-        <span className="tabular-nums text-hp-ink">{Math.round(value)}</span>
+    <div className="grid gap-3 md:grid-cols-[260px_1fr_48px] md:items-center">
+      <div>
+        <p className="text-2xl leading-tight text-hp-ink">{label}</p>
       </div>
-      <div className="mt-1 h-1.5 bg-hp-inset">
-        <div className="h-full bg-hp-ink" style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
+      <div className="h-2 bg-hp-inset">
+        <div
+          className={`h-full ${scoreBandClass(value)}`}
+          style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
+        />
       </div>
-    </div>
-  );
-}
-
-function MetricLine({
-  label,
-  value,
-  detail,
-}: {
-  label: string;
-  value: string;
-  detail?: string;
-}) {
-  return (
-    <div className="border-b border-hp-rule pb-2">
-      <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{label}</p>
-      <p className="mt-1 text-sm tabular-nums text-hp-ink">{value}</p>
-      {detail ? <p className="mt-1 text-xs text-hp-muted">{detail}</p> : null}
+      <p className="text-right text-xl tabular-nums text-hp-ink">{Math.round(value)}</p>
     </div>
   );
 }
@@ -1051,12 +1209,20 @@ function buildSummary(rows: CreativeAnalysisRow[]) {
   return {
     totalSpend,
     totalResults,
+    kpiDetail: kpiSummaryDetail(rows),
     averageCpa: totalResults > 0 ? totalSpend / totalResults : null,
     bestByCpa,
     bestByHook,
     fatigueCount: rows.filter((row) => row.status === "Fatigue Watch").length,
     scaleCandidates: rows.filter((row) => row.status === "Scale Candidate").length,
   };
+}
+
+function kpiSummaryDetail(rows: CreativeAnalysisRow[]) {
+  const labels = Array.from(new Set(rows.map((row) => row.resultKpiLabel).filter(Boolean)));
+  if (!labels.length) return "No KPI label returned";
+  if (labels.length <= 2) return labels.join(" + ");
+  return `${labels.slice(0, 2).join(" + ")} + ${labels.length - 2} more`;
 }
 
 function formatMoney(value: number | null, compact = false) {
@@ -1086,6 +1252,23 @@ function rankingLabel(value: string | null) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function dateRangeLabel(range: { start: string | null; end: string | null; days?: number }) {
+  if (range.start && range.end) return `${formatDate(range.start)} – ${formatDate(range.end)}`;
+  if (range.days) return `Last ${range.days} days`;
+  return "Selected range";
+}
+
+function formatDate(value: string) {
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(date);
+}
+
 function adDeliveryState(row: CreativeAnalysisRow) {
   const effective = row.adEffectiveStatus?.toUpperCase();
   const configured = row.adConfiguredStatus?.toUpperCase();
@@ -1093,6 +1276,25 @@ function adDeliveryState(row: CreativeAnalysisRow) {
   if (effective) return effective === "ACTIVE" ? "active" : "inactive";
   if (configured) return configured === "ACTIVE" ? "active" : "inactive";
   return "unknown";
+}
+
+function adDeliveryLabel(row: CreativeAnalysisRow) {
+  const state = adDeliveryState(row);
+  if (state === "active") return "Active";
+  if (state === "inactive") return metaStatusLabel(row.adEffectiveStatus || row.adConfiguredStatus);
+  return "Unknown";
+}
+
+function scoreBandClass(score: number) {
+  if (score >= 70) return "bg-signal-positive";
+  if (score >= 50) return "bg-signal-warning";
+  return "bg-signal-danger";
+}
+
+function kpiResultDetail(row: CreativeAnalysisRow) {
+  return row.resultActionType
+    ? `${row.resultKpiLabel} · ${row.resultActionType}`
+    : row.resultKpiLabel;
 }
 
 function metaStatusLabel(value: string | null) {
