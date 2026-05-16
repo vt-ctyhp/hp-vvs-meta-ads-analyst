@@ -319,7 +319,7 @@ export async function fetchDashboardData(
       supabase.from("meta_ads").select("id", { count: "exact", head: true }),
       supabase.from("meta_creatives").select("id", { count: "exact", head: true }),
     ]);
-    const aggregatePromise = runSequential([
+    const aggregateTasks = [
       () =>
         aggregateMetaInsights({
           start: dateRange.start,
@@ -392,7 +392,8 @@ export async function fetchDashboardData(
           sortDirection: "asc",
           limit: dateRange.days + 5,
         }),
-    ]);
+    ];
+    const aggregatePromise = Promise.all(aggregateTasks.map((task) => task()));
 
     const [
       [
@@ -910,14 +911,6 @@ export function formatMetric(value: number | null, kind: "money" | "number" | "p
 
 function rows<T>(data: unknown): T[] {
   return Array.isArray(data) ? (data as T[]) : [];
-}
-
-async function runSequential<T>(tasks: Array<() => Promise<T>>) {
-  const results: T[] = [];
-  for (const task of tasks) {
-    results.push(await task());
-  }
-  return results;
 }
 
 function resolveDashboardDateRange(input: number | DashboardDateRangeInput) {

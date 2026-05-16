@@ -219,6 +219,12 @@ function todayString() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function recentCoverageStartString() {
+  const date = new Date();
+  date.setMonth(date.getMonth() - 11, 1);
+  return date.toISOString().slice(0, 10);
+}
+
 async function readOnlyRequest<T>(path: string, accessToken: string): Promise<T> {
   const response = await fetch(path, {
     headers: { authorization: `Bearer ${accessToken}` },
@@ -257,7 +263,7 @@ export function MetaBackfillClient({
   const [dataHealth, setDataHealth] = useState<DataHealth | null>(initialDataHealth);
   const [compareMonth, setCompareMonth] = useState(todayString().slice(0, 7));
   const [loading, setLoading] = useState(false);
-  const [readOnlyLoaded, setReadOnlyLoaded] = useState(Boolean(initialState || initialDataHealth));
+  const [readOnlyLoaded, setReadOnlyLoaded] = useState(Boolean(initialState));
   const [status, setStatus] = useState(
     initialError ? `Could not load read-only admin data: ${initialError}` : "",
   );
@@ -321,18 +327,21 @@ export function MetaBackfillClient({
       setStatus("");
       try {
         const query = new URLSearchParams();
-        if (startDate) query.set("start", startDate);
+        query.set("start", recentCoverageStartString());
         if (endDate) query.set("end", endDate);
 
-        const [nextState, nextHealth] = await Promise.all([
-          readOnlyRequest<BackfillState>(`/api/meta/backfill?${query.toString()}`, access.accessToken),
-          readOnlyRequest<DataHealth>("/api/meta/data-health", access.accessToken),
-        ]);
+        const nextState = await readOnlyRequest<BackfillState>(
+          `/api/meta/backfill?${query.toString()}`,
+          access.accessToken,
+        );
 
         setState(nextState);
-        setDataHealth(nextHealth);
         setReadOnlyLoaded(true);
-        setStatus(canManageBackfill ? "Backfill data loaded." : "Read-only backfill data loaded.");
+        setStatus(
+          canManageBackfill
+            ? "Recent backfill state loaded. Run Data Health when deeper diagnostics are needed."
+            : "Recent read-only backfill state loaded.",
+        );
       } catch (error) {
         setStatus(error instanceof Error ? error.message : String(error));
       } finally {
@@ -390,7 +399,11 @@ export function MetaBackfillClient({
       const query = new URLSearchParams();
       if (options.compare && compareMonth) query.set("compareMonth", compareMonth);
       const queryString = query.toString();
-      const payload = await request(`/api/meta/data-health${queryString ? `?${queryString}` : ""}`);
+      const path = `/api/meta/data-health${queryString ? `?${queryString}` : ""}`;
+      const payload =
+        options.compare || !access.accessToken
+          ? await request(path)
+          : await readOnlyRequest<DataHealth>(path, access.accessToken);
       setDataHealth(payload);
       setStatus(options.compare ? `Compared ${compareMonth} against Meta.` : "Data health refreshed.");
     } catch (error) {
@@ -497,7 +510,7 @@ export function MetaBackfillClient({
               <Button onClick={() => loadState()} disabled={loading || !operatorReady} icon={RefreshCcw}>
                 Refresh
               </Button>
-              <Button onClick={() => loadDataHealth()} disabled={loading || !operatorReady} icon={Shield}>
+              <Button onClick={() => loadDataHealth()} disabled={loading || access.status !== "ready"} icon={Shield}>
                 Data Health
               </Button>
               <Button onClick={runBatch} disabled={loading || !operatorReady} icon={Play} intent="primary">
@@ -536,8 +549,8 @@ export function MetaBackfillClient({
             ) : (
               <div className="mt-4 space-y-3 text-sm leading-6 text-hp-body">
                 <p>
-                  Read-only coverage, jobs, and data-health checks load automatically below.
-                  Sync actions and overrides are admin-only.
+                  Recent read-only coverage and jobs load automatically below. Deeper data-health
+                  checks can be loaded on demand. Sync actions and overrides are admin-only.
                 </p>
                 {access.status === "signed-out" ? (
                   <Link
@@ -591,8 +604,9 @@ export function MetaBackfillClient({
           <DataHealthPanel
             health={dataHealth}
             compareMonth={compareMonth}
-            disabled={loading || !canManageBackfill}
+            disabled={loading || access.status !== "ready"}
             operatorReady={operatorReady}
+            onLoadHealth={() => loadDataHealth()}
             onCompareMonth={() => loadDataHealth({ compare: true })}
             onCompareMonthChange={setCompareMonth}
             onResyncMonth={resyncMonth}
@@ -790,6 +804,7 @@ function DataHealthPanel({
   compareMonth,
   disabled,
   operatorReady,
+  onLoadHealth,
   onCompareMonth,
   onCompareMonthChange,
   onResyncMonth,
@@ -798,6 +813,7 @@ function DataHealthPanel({
   compareMonth: string;
   disabled: boolean;
   operatorReady: boolean;
+  onLoadHealth: () => void;
   onCompareMonth: () => void;
   onCompareMonthChange: (month: string) => void;
   onResyncMonth: (month: string) => void;
@@ -1077,7 +1093,14 @@ function DataHealthPanel({
           </div>
         </>
       ) : (
-        <EmptyState text="Click Data Health to check duplicate keys, sync policy, locked months, spend jumps, and monthly totals." />
+        <div>
+          <EmptyState text="Load Data Health to check duplicate keys, sync policy, locked months, spend jumps, and monthly totals." />
+          <div className="mt-3">
+            <Button onClick={onLoadHealth} disabled={disabled} icon={Shield}>
+              Load Data Health
+            </Button>
+          </div>
+        </div>
       )}
     </section>
   );
