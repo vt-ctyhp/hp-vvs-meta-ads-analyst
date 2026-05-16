@@ -13,6 +13,7 @@ Required:
 | `META_ACCESS_TOKEN` | Server only | Meta token used by ads sync and planned social inbox. Must have `ads_read`; social inbox readiness also expects Page/Instagram messaging and comment permissions. Must not have `ads_management`. |
 | `META_HP_AD_ACCOUNT_ID` | Server only | HP ad account id, with or without `act_`. |
 | `CRON_SECRET` | Server only | Used to authorize `/api/cron/sync`. |
+| `WEBSITE_EVENT_SHARED_SECRET` | Server only | Shared secret used by the booking API to send confirmed website conversions into `/api/website/conversions`. |
 
 Optional:
 
@@ -33,5 +34,8 @@ Optional:
 | `META_SOCIAL_SYNC_MEDIA_LIMIT` | `20` | Max recent Instagram media items scanned for comments. |
 | `META_SOCIAL_SYNC_FEED_LIMIT` | `15` | Max recent Facebook Page feed items scanned for comments when Meta permits the feed read. |
 | `META_WEBHOOK_VERIFY_TOKEN` | unset | Secret verify token used by Meta to validate `/api/meta/webhook`. Required before enabling Meta webhooks. |
+| `WEBSITE_EVENT_ALLOWED_ORIGINS` | HP production and Shopify domains | Comma-separated exact origins that can send browser website funnel events. |
+| `WEBSITE_EVENT_ALLOWED_ORIGIN_WILDCARDS` | `*.shopifypreview.com` | Comma-separated wildcard host patterns for Shopify draft theme preview domains. |
+| `WEBSITE_EVENT_IP_HASH_SALT` | internal fallback | Optional salt for hashing request IPs before storage. |
 
 Do not commit `.env`, `.env.local`, or downloaded key material.

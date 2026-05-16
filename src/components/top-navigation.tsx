@@ -9,6 +9,7 @@ import {
   Gauge,
   Inbox,
   LogIn,
+  MousePointerClick,
   Users,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -25,6 +26,12 @@ const NAV_ITEMS = [
     permission: "view_creative_analysis",
   },
   { href: "/analysis", label: "AI Analysis", icon: Brain, permission: "view_ai_analysis" },
+  {
+    href: "/website-funnel",
+    label: "Website Funnel",
+    icon: MousePointerClick,
+    permission: "view_dashboard",
+  },
   { href: "/inbox", label: "Inbox", icon: Inbox, permission: "view_inbox" },
   { href: "/admin/backfill", label: "Backfill", icon: Database, permission: "view_backfill" },
   { href: "/users", label: "Users", icon: Users, permission: "view_users" },

@@ -50,6 +50,7 @@ vercel --prod
 
 - `/` executive dashboard, creative leaderboard, gallery, report controls, chat
 - `/creative-analysis` internal creative scorecard using visible Meta Ads Insights metrics, creative previews, ad relevance diagnostics where available, and an Internal Creative Diagnostic Score
+- `/website-funnel` first-party Shopify website and booking funnel events, kept separate from Meta Ads API reporting for discrepancy checks
 - `/analysis` ad-hoc Meta Ads analysis over stored Supabase history
 - `/admin/backfill` surfaced Meta Ads historical backfill page, admin-managed and marketing read-only
 - `/login` Supabase Auth login screen for internal users
@@ -64,6 +65,8 @@ vercel --prod
 - `/api/social-inbox/sync` manual Facebook/Instagram inbox/comment sync
 - `/api/social-inbox/suggest-reply` server-side OpenAI draft generator for human-approved inbox replies
 - `/api/meta/webhook` Meta webhook callback for future Facebook/Instagram message/comment events
+- `/api/website/events` browser website funnel event ingestion from Shopify pages
+- `/api/website/conversions` server-side confirmed booking conversion ingestion from the booking API
 - `/api/cron/sync` Vercel Cron sync, protected by `CRON_SECRET`
 - `/api/cron/meta-backfill` Vercel Cron historical chunk runner, protected by `CRON_SECRET`
 - `/api/reports` AI executive report generation
