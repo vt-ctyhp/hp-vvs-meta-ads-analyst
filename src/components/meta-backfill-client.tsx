@@ -466,35 +466,6 @@ export function MetaBackfillClient({
     }
   }
 
-  if (access.status === "loading") {
-    return (
-      <BackfillAccessState
-        title="Checking access"
-        body="Loading your internal permissions."
-      />
-    );
-  }
-
-  if (access.status === "signed-out") {
-    return (
-      <BackfillAccessState
-        title="Sign in required"
-        body="Backfill access requires an approved internal account."
-        actionHref="/login?next=/admin/backfill"
-        actionLabel="Sign in"
-      />
-    );
-  }
-
-  if (access.status === "denied") {
-    return (
-      <BackfillAccessState
-        title="Access restricted"
-        body="This page is available to admin users and marketing users with read-only backfill access."
-      />
-    );
-  }
-
   return (
     <main className="min-h-screen bg-hp-foundation px-4 py-6 text-hp-body md:px-8">
       <header className="mx-auto flex max-w-7xl flex-col gap-5 border-b border-hp-rule pb-6 md:flex-row md:items-end md:justify-between">
@@ -505,6 +476,10 @@ export function MetaBackfillClient({
           <h1 className="mt-2 font-title text-4xl leading-tight text-hp-ink md:text-5xl">
             Historical Backfill
           </h1>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-hp-muted">
+            Monitor Supabase Meta Ads history, data-health checks, finalized month
+            locks, and controlled backfill or re-sync operations.
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {canManageBackfill ? (
@@ -549,10 +524,20 @@ export function MetaBackfillClient({
                 </p>
               </>
             ) : (
-              <p className="mt-4 text-sm leading-6 text-hp-body">
-                Marketing can inspect coverage, jobs, and data health here. Sync actions and
-                overrides are admin-only.
-              </p>
+              <div className="mt-4 space-y-3 text-sm leading-6 text-hp-body">
+                <p>
+                  Read-only coverage, jobs, and data-health checks load automatically below.
+                  Sync actions and overrides are admin-only.
+                </p>
+                {access.status === "signed-out" ? (
+                  <Link
+                    href="/login?next=/admin/backfill"
+                    className="inline-flex border border-hp-rule px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-hp-body transition-colors hover:border-hp-ink hover:bg-hp-inset"
+                  >
+                    Sign in for operator access
+                  </Link>
+                ) : null}
+              </div>
             )}
           </section>
 
@@ -711,38 +696,6 @@ export function MetaBackfillClient({
             </div>
           </section>
         </section>
-      </section>
-    </main>
-  );
-}
-
-function BackfillAccessState({
-  title,
-  body,
-  actionHref,
-  actionLabel,
-}: {
-  title: string;
-  body: string;
-  actionHref?: string;
-  actionLabel?: string;
-}) {
-  return (
-    <main className="min-h-screen bg-hp-foundation px-4 py-8 text-hp-body md:px-8">
-      <section className="mx-auto max-w-3xl border border-hp-rule bg-hp-card p-6">
-        <span className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-          HP/VVS Meta Ads
-        </span>
-        <h1 className="mt-3 font-title text-4xl leading-tight text-hp-ink">{title}</h1>
-        <p className="mt-4 text-sm leading-6 text-hp-body">{body}</p>
-        {actionHref && actionLabel ? (
-          <Link
-            href={actionHref}
-            className="mt-6 inline-flex bg-hp-ink px-5 py-3 text-[11px] uppercase tracking-[0.14em] text-hp-foundation transition-colors hover:bg-hp-pink"
-          >
-            {actionLabel}
-          </Link>
-        ) : null}
       </section>
     </main>
   );

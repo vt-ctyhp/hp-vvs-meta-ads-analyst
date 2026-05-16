@@ -40,6 +40,7 @@ const DEFAULT_NAV_PERMISSIONS = new Set<AppPermission>([
   "view_creative_analysis",
   "view_ai_analysis",
   "view_inbox",
+  "view_backfill",
 ]);
 
 type AccessProfile = {
@@ -98,7 +99,9 @@ export function TopNavigation() {
   }
 
   const visibleNavItems = NAV_ITEMS.filter((item) =>
-    profile?.authenticated
+    item.href === "/admin/backfill"
+      ? true
+      : profile?.authenticated
       ? profile.permissions.includes(item.permission)
       : DEFAULT_NAV_PERMISSIONS.has(item.permission),
   );
