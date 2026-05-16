@@ -107,7 +107,7 @@ export function TopNavigation() {
   );
 
   return (
-    <nav className="border-b border-hp-rule bg-hp-card/90 text-hp-body">
+    <nav className="relative z-50 border-b border-hp-rule bg-hp-card/90 text-hp-body">
       <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between md:px-8">
         <Link href="/" className="min-w-0">
           <div className="text-[10px] uppercase tracking-[0.18em] text-hp-muted">
