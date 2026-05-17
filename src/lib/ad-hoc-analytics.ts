@@ -106,6 +106,7 @@ export type AnalysisFilterField = (typeof FILTER_FIELDS)[number];
 export type AnalysisGrain = "summary" | "daily" | "weekly" | "monthly";
 export type AnalysisWidgetType = (typeof WIDGET_TYPES)[number];
 export type AnalysisTableLayoutType = (typeof TABLE_LAYOUT_TYPES)[number];
+export type AnalysisValidationStatus = "ready" | "needs_clarification" | "unsupported";
 
 export type AnalysisFilter = {
   field: AnalysisFilterField;
@@ -120,6 +121,7 @@ export type AnalysisSpec = {
     start?: string;
     end?: string;
     days?: number;
+    includeToday?: boolean;
   };
   grain: AnalysisGrain;
   dimensions: AnalysisDimension[];
@@ -150,14 +152,33 @@ export type AnalysisTableColumn = {
   type: "text" | "money" | "number" | "percent";
 };
 
+export type AnalysisAnalystDebug = {
+  validationStatus: AnalysisValidationStatus;
+  dataSource: "meta_ads";
+  sourceTable: "meta_daily_insights";
+  sourceFunction: "aggregate_meta_daily_insights" | null;
+  resolvedDateRange: { start: string; end: string; days: number } | null;
+  latestSyncedInsightDate: string | null;
+  filters: AnalysisFilter[];
+  metrics: AnalysisMetric[];
+  dimensions: AnalysisDimension[];
+  assumptions: string[];
+  warnings: string[];
+  unsupportedReasons: string[];
+  recordCounts: Record<string, number>;
+  repairedSpec: boolean;
+};
+
 export type AnalysisResult = {
-  status: "ready" | "needs_narrowing";
+  status: AnalysisValidationStatus;
+  validationStatus: AnalysisValidationStatus;
   dashboardId: string | null;
   prompt: string;
   mode: AnalysisMode;
   title: string;
   answer: string;
   spec: AnalysisSpec;
+  resolvedSpec: AnalysisSpec;
   table: {
     columns: AnalysisTableColumn[];
     rows: Array<Record<string, string | number | null>>;
@@ -168,7 +189,16 @@ export type AnalysisResult = {
     timeRange: { start: string; end: string; days: number };
     adAccountsAnalyzed: string[];
     recordCounts: Record<string, number>;
+    dataSource?: "meta_ads";
+    sourceTable?: "meta_daily_insights";
+    sourceFunction?: "aggregate_meta_daily_insights" | null;
+    latestSyncedInsightDate?: string | null;
+    filters?: AnalysisFilter[];
   };
+  analystDebug: AnalysisAnalystDebug;
+  warnings: string[];
+  unsupportedReasons: string[];
+  clarificationQuestions: string[];
   modelUsed: {
     plan: string;
     analysis: string | null;
@@ -220,6 +250,75 @@ type PromptIntent = {
   stripCashForGoldFilter?: boolean;
 };
 
+type ValidationResult = {
+  status: AnalysisValidationStatus;
+  warnings: string[];
+  unsupportedReasons: string[];
+  clarificationQuestions: string[];
+  assumptions: string[];
+};
+
+type UnsupportedSourceRouter = {
+  router: "website" | "social_inbox" | "crm";
+  pattern: RegExp;
+  reason: string;
+};
+
+const CAMPAIGN_GLOSSARY: Array<{
+  label: string;
+  value: string;
+  pattern: RegExp;
+}> = [
+  {
+    label: "cash for gold",
+    value: "Cash for Gold US",
+    pattern: /\bcash\s+for\s+gold\b/i,
+  },
+  {
+    label: "book appointments",
+    value: "Book Appts US",
+    pattern: /\bbook(?:ed|ing)?\s+(?:appointments?|appts?)\b|\bbook\s+appts?\s+us\b|\bbook\s+appointments?\s+us\b/i,
+  },
+];
+
+const UNSUPPORTED_SOURCE_ROUTERS: UnsupportedSourceRouter[] = [
+  {
+    router: "website",
+    pattern:
+      /\b(website\s+visitors?|site\s+visitors?|landing\s+pages?|page\s+views?|sessions?|traffic|utm|checkout|add\s+to\s+cart|funnel)\b/i,
+    reason:
+      "website_events routing is not wired into this Meta Ads ad-hoc analyst yet.",
+  },
+  {
+    router: "social_inbox",
+    pattern:
+      /\b(social\s+inbox|inbox\s+response|response\s+time|employee|staff|agent|dm\s+response|comment\s+response|customer\s+messages?)\b/i,
+    reason:
+      "social_inbox routing is not wired into this Meta Ads ad-hoc analyst yet.",
+  },
+  {
+    router: "crm",
+    pattern:
+      /\b(crm|customers?|orders?|sales|revenue|invoice|deposit|closed\s+deals?|employees?)\b/i,
+    reason:
+      "crm routing is not wired into this Meta Ads ad-hoc analyst yet.",
+  },
+];
+
+export const META_ADS_DATA_CATALOG = {
+  source: "meta_ads",
+  sourceTable: "meta_daily_insights",
+  sourceFunction: "aggregate_meta_daily_insights",
+  metrics: ANALYSIS_METRICS,
+  dimensions: ANALYSIS_DIMENSIONS,
+  filters: FILTER_FIELDS,
+  dateSemantics:
+    "Relative last/past N day ranges end at the latest complete synced meta_daily_insights.date_start unless the prompt explicitly says including today.",
+  sortableByRpc: Array.from(RPC_SORT_FIELDS),
+  campaignGlossary: CAMPAIGN_GLOSSARY.map(({ label, value }) => ({ label, value, field: "campaign_umbrella" })),
+  unsupportedRouters: UNSUPPORTED_SOURCE_ROUTERS.map(({ router, reason }) => ({ router, reason })),
+} as const;
+
 const metricSchema = z.enum(ANALYSIS_METRICS);
 const dimensionSchema = z.enum(ANALYSIS_DIMENSIONS);
 const filterFieldSchema = z.enum(FILTER_FIELDS);
@@ -241,6 +340,7 @@ const analysisSpecSchema = z.object({
       start: z.string().optional(),
       end: z.string().optional(),
       days: z.number().int().positive().max(MAX_DAYS).optional(),
+      includeToday: z.boolean().optional(),
     })
     .catch({ preset: "last_30_days" }),
   grain: z.enum(["summary", "daily", "weekly", "monthly"]).catch("weekly"),
@@ -307,10 +407,27 @@ export async function fetchSavedAnalysisDashboards(limit = 12): Promise<SavedAna
 export async function runSavedAdHocAnalysis(dashboardId: string): Promise<AnalysisResult> {
   const dashboard = await fetchAnalysisDashboardRecord(dashboardId);
   const spec = normalizeSpec(dashboard.spec, dashboard.prompt);
+  const repairedSpec = specWasRepaired(dashboard.spec, dashboard.prompt, spec);
   const mode: AnalysisMode = dashboard.mode === "deep" ? "deep" : "fast";
   const planModel = dashboard.model_plan || getOpenAIAnalysisModel("fast");
   const analysisModel = dashboard.model_analysis;
-  const aggregated = await aggregateSpec(spec);
+  const validation = validateAnalysisSpec(dashboard.prompt, spec, { repairedSpec });
+
+  if (validation.status !== "ready") {
+    return nonExecutableResult({
+      prompt: dashboard.prompt,
+      mode,
+      spec,
+      dashboardId: dashboard.id,
+      planModel,
+      analysisModel,
+      tokenEstimate: emptyTokenEstimate(),
+      validation,
+      repairedSpec,
+    });
+  }
+
+  const aggregated = await aggregateSpec(spec, validation, repairedSpec);
 
   return {
     ...baseResult({
@@ -322,8 +439,12 @@ export async function runSavedAdHocAnalysis(dashboardId: string): Promise<Analys
       planModel,
       analysisModel,
       tokenEstimate: emptyTokenEstimate(),
+      validation,
+      repairedSpec,
     }),
-    answer: "Loaded saved dashboard spec and refreshed the data directly from Supabase.",
+    answer: repairedSpec
+      ? "Loaded saved dashboard spec, repaired it from the original prompt, and refreshed the data directly from Supabase."
+      : "Loaded saved dashboard spec and refreshed the data directly from Supabase.",
   };
 }
 
@@ -380,26 +501,45 @@ export async function createAdHocAnalysis(input: {
   }
 
   const planModel = getOpenAIAnalysisModel("fast");
+  const preflightSpec = normalizeSpec(fallbackSpec(prompt), prompt);
+  const preflightValidation = validateAnalysisSpec(prompt, preflightSpec);
+  if (preflightValidation.status === "unsupported") {
+    return nonExecutableResult({
+      prompt,
+      mode: input.mode,
+      spec: preflightSpec,
+      dashboardId: null,
+      planModel,
+      analysisModel: null,
+      tokenEstimate: withEstimatedCost(emptyTokenEstimate(), planModel, null),
+      validation: preflightValidation,
+      repairedSpec: false,
+    });
+  }
+
   const { spec, usage: planUsage } = await createSpecWithAI(prompt, planModel);
-  const aggregated = await aggregateSpec(spec);
   const baseTokenEstimate = {
     ...emptyTokenEstimate(),
     planInputTokens: planUsage.input,
     planOutputTokens: planUsage.output,
   };
+  const validation = validateAnalysisSpec(prompt, spec);
 
-  if (aggregated.needsNarrowing) {
-    return baseResult({
+  if (validation.status !== "ready") {
+    return nonExecutableResult({
       prompt,
       mode: input.mode,
       spec,
-      aggregated,
       dashboardId: null,
       planModel,
       analysisModel: null,
       tokenEstimate: withEstimatedCost(baseTokenEstimate, planModel, null),
+      validation,
+      repairedSpec: false,
     });
   }
+
+  const aggregated = await aggregateSpec(spec, validation, false);
 
   const analysis =
     input.mode === "deep"
@@ -423,6 +563,8 @@ export async function createAdHocAnalysis(input: {
       planModel,
       analysis?.model || null,
     ),
+    validation,
+    repairedSpec: false,
   });
 
   const result = {
@@ -456,32 +598,50 @@ export async function editAdHocAnalysis(input: {
   const basePrompt = dashboard?.prompt || input.currentPrompt?.trim() || "Ad-hoc Meta Ads analysis";
   const currentSpec = normalizeSpec(dashboard?.spec || input.currentSpec, basePrompt);
   const planModel = getOpenAIAnalysisModel("fast");
+  const prompt = mergePrompts(basePrompt, editPrompt);
+  const preflightValidation = validateAnalysisSpec(prompt, currentSpec);
+  if (preflightValidation.status === "unsupported") {
+    return nonExecutableResult({
+      prompt,
+      mode: input.mode,
+      spec: currentSpec,
+      dashboardId: dashboard?.id || null,
+      planModel,
+      analysisModel: null,
+      tokenEstimate: withEstimatedCost(emptyTokenEstimate(), planModel, null),
+      validation: preflightValidation,
+      repairedSpec: false,
+    });
+  }
+
   const { spec, usage: planUsage } = await editSpecWithAI({
     currentSpec,
     currentPrompt: basePrompt,
     editPrompt,
     model: planModel,
   });
-  const prompt = mergePrompts(basePrompt, editPrompt);
-  const aggregated = await aggregateSpec(spec);
   const baseTokenEstimate = {
     ...emptyTokenEstimate(),
     planInputTokens: planUsage.input,
     planOutputTokens: planUsage.output,
   };
+  const validation = validateAnalysisSpec(prompt, spec);
 
-  if (aggregated.needsNarrowing) {
-    return baseResult({
+  if (validation.status !== "ready") {
+    return nonExecutableResult({
       prompt,
       mode: input.mode,
       spec,
-      aggregated,
       dashboardId: dashboard?.id || null,
       planModel,
       analysisModel: null,
       tokenEstimate: withEstimatedCost(baseTokenEstimate, planModel, null),
+      validation,
+      repairedSpec: false,
     });
   }
+
+  const aggregated = await aggregateSpec(spec, validation, false);
 
   const analysis =
     input.mode === "deep"
@@ -505,6 +665,8 @@ export async function editAdHocAnalysis(input: {
       planModel,
       analysis?.model || null,
     ),
+    validation,
+    repairedSpec: false,
   });
 
   const result = {
@@ -546,6 +708,8 @@ async function createSpecWithAI(prompt: string, model: string) {
           },
           rules: [
             "Map campaign umbrella, internal campaign umbrella, or umbrella to the campaign_umbrella dimension. Do not use a search filter for that.",
+            "Use exact campaign_umbrella filters for known campaign concepts: cash for gold => Cash for Gold US, book appointments => Book Appts US.",
+            "If the user asks for website, social inbox, CRM, employee, landing page, or response-time data, keep the closest spec minimal; validation will mark the request unsupported. Do not substitute Meta spend/click/lead tables.",
             "For month by month, monthly, or by month, use grain monthly and include the month dimension.",
             "For since/from/starting a specific date, use preset custom with start as YYYY-MM-DD and omit end unless the user gives one.",
             "For ad spend or spend-only requests, include spend first; if no other metric is requested, use only spend.",
@@ -614,6 +778,8 @@ async function editSpecWithAI(input: {
             "If the user says rearrange, update the widgets array order.",
             "If the user asks to compare by campaign, ad set, ad, creative, brand, or umbrella, adjust dimensions accordingly.",
             "Map campaign umbrella, internal campaign umbrella, or umbrella to campaign_umbrella, not to a search filter.",
+            "Use exact campaign_umbrella filters for known campaign concepts: cash for gold => Cash for Gold US, book appointments => Book Appts US.",
+            "If the user asks for website, social inbox, CRM, employee, landing page, or response-time data, keep the closest spec minimal; validation will mark the request unsupported. Do not substitute Meta spend/click/lead tables.",
             "For month by month, monthly, or by month, use grain monthly and include the month dimension.",
             "For since/from/starting a specific date, use preset custom with start as YYYY-MM-DD and omit end unless the user gives one.",
             "For ad spend or spend-only requests, include spend first; if no other metric is requested, use only spend.",
@@ -689,8 +855,17 @@ async function generateDeepAnalysis(
   };
 }
 
-async function aggregateSpec(spec: AnalysisSpec) {
-  const range = resolveDateRange(spec.dateRange);
+async function aggregateSpec(
+  spec: AnalysisSpec,
+  validation: ValidationResult = readyValidation(),
+  repairedSpec = false,
+) {
+  const latestSyncedInsightDate = await fetchLatestSyncedInsightDate();
+  const range = resolveDateRange(spec.dateRange, latestSyncedInsightDate);
+  const dateWarnings = latestSyncedInsightDate
+    ? freshnessWarnings(spec.dateRange, latestSyncedInsightDate, range)
+    : ["Could not confirm latest synced Meta insight date; date range fell back to server date."];
+  const warnings = [...validation.warnings, ...dateWarnings];
   const countMetrics = spec.metrics.filter(isCountMetric);
   const needsClientSideSort = spec.sort?.field ? !RPC_SORT_FIELDS.has(spec.sort.field) : false;
   const aggregateLimit =
@@ -775,8 +950,9 @@ async function aggregateSpec(spec: AnalysisSpec) {
       sourceRows: row.source_rows,
     };
   });
-  const rowsForTableSorted = sortResultRows(rowsForTable, spec).slice(0, spec.limit);
-  const table = buildResultTable(spec, rowsForTable, rowsForTableSorted);
+  const rowsForTableWithDates = completeDateRows(rowsForTable, spec, range);
+  const rowsForTableSorted = sortResultRows(rowsForTableWithDates, spec).slice(0, spec.limit);
+  const table = buildResultTable(spec, rowsForTableWithDates, rowsForTableSorted);
   const totalCountRowsLookup = new Map(totalCountRowsByMetric.map((entry) => [entry.metric, entry.rows]));
   const totals = {
     ...aggregateMetrics(totalRows[0]),
@@ -798,15 +974,130 @@ async function aggregateSpec(spec: AnalysisSpec) {
       grouped_rows: aggregateRows.length,
       returned_rows: table.rows.length,
     },
+    dataSource: "meta_ads" as const,
+    sourceTable: "meta_daily_insights" as const,
+    sourceFunction: "aggregate_meta_daily_insights" as const,
+    latestSyncedInsightDate,
+    filters: spec.filters,
   };
+  const analystDebug = buildAnalystDebug({
+    validation,
+    spec,
+    range,
+    latestSyncedInsightDate,
+    sourceFunction: "aggregate_meta_daily_insights",
+    recordCounts: sourceTransparency.recordCounts,
+    repairedSpec,
+    warnings,
+  });
 
   return {
-    needsNarrowing: false,
-    narrowingMessage: "",
+    validationStatus: validation.status,
+    warnings,
+    unsupportedReasons: validation.unsupportedReasons,
+    clarificationQuestions: validation.clarificationQuestions,
     table,
     totals,
     sourceTransparency,
+    analystDebug,
   };
+}
+
+async function fetchLatestSyncedInsightDate() {
+  const supabase = createServiceClient();
+  const response = await supabase
+    .from("meta_daily_insights")
+    .select("date_start")
+    .order("date_start", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (response.error) throw response.error;
+  const value = (response.data as { date_start?: unknown } | null)?.date_start;
+  return typeof value === "string" && isDateString(value) ? value : null;
+}
+
+function readyValidation(): ValidationResult {
+  return {
+    status: "ready",
+    warnings: [],
+    unsupportedReasons: [],
+    clarificationQuestions: [],
+    assumptions: [],
+  };
+}
+
+function buildAnalystDebug(input: {
+  validation: ValidationResult;
+  spec: AnalysisSpec;
+  range: { start: string; end: string; days: number } | null;
+  latestSyncedInsightDate: string | null;
+  sourceFunction: "aggregate_meta_daily_insights" | null;
+  recordCounts: Record<string, number>;
+  repairedSpec: boolean;
+  warnings?: string[];
+}): AnalysisAnalystDebug {
+  return {
+    validationStatus: input.validation.status,
+    dataSource: "meta_ads",
+    sourceTable: "meta_daily_insights",
+    sourceFunction: input.sourceFunction,
+    resolvedDateRange: input.range,
+    latestSyncedInsightDate: input.latestSyncedInsightDate,
+    filters: input.spec.filters,
+    metrics: input.spec.metrics,
+    dimensions: input.spec.dimensions,
+    assumptions: input.validation.assumptions,
+    warnings: input.warnings || input.validation.warnings,
+    unsupportedReasons: input.validation.unsupportedReasons,
+    recordCounts: input.recordCounts,
+    repairedSpec: input.repairedSpec,
+  };
+}
+
+function freshnessWarnings(
+  dateRange: AnalysisSpec["dateRange"],
+  latestSyncedInsightDate: string,
+  range: { start: string; end: string; days: number },
+) {
+  const warnings: string[] = [];
+  const today = format(new Date(), "yyyy-MM-dd");
+
+  if (!dateRange.includeToday && range.end === latestSyncedInsightDate) {
+    warnings.push(
+      `Date range ended at latest complete synced Meta insight date (${latestSyncedInsightDate}).`,
+    );
+  }
+
+  if (dateRange.includeToday && range.end === today && latestSyncedInsightDate < today) {
+    warnings.push(
+      `Prompt asked to include today, but latest synced Meta insight date is ${latestSyncedInsightDate}; today may be partial or missing.`,
+    );
+  }
+
+  return warnings;
+}
+
+function completeDateRows(
+  rowsForTable: Array<Record<string, string | number | null>>,
+  spec: AnalysisSpec,
+  range: { start: string; end: string; days: number },
+) {
+  if (spec.tableLayout?.type === "pivot" || spec.dimensions.length !== 1 || spec.dimensions[0] !== "date") {
+    return rowsForTable;
+  }
+
+  const byDate = new Map(rowsForTable.map((row) => [String(row.date), row]));
+  return datesInRange(range.start, range.end).map((date) => {
+    const existing = byDate.get(date);
+    if (existing) return existing;
+
+    return {
+      date,
+      ...Object.fromEntries(spec.metrics.map((metric) => [metric, metric === "cpl" ? null : 0])),
+      sourceRows: 0,
+    };
+  });
 }
 
 function normalizeSpec(value: unknown, prompt: string): AnalysisSpec {
@@ -853,6 +1144,120 @@ function normalizeSpec(value: unknown, prompt: string): AnalysisSpec {
 
 export function normalizeAnalysisSpecForPrompt(value: unknown, prompt: string): AnalysisSpec {
   return normalizeSpec(value, prompt);
+}
+
+export function buildAnalysisPlanForPrompt(value: unknown, prompt: string) {
+  const spec = normalizeSpec(value, prompt);
+  const validation = validateAnalysisSpec(prompt, spec);
+  return {
+    spec,
+    validationStatus: validation.status,
+    warnings: validation.warnings,
+    unsupportedReasons: validation.unsupportedReasons,
+    clarificationQuestions: validation.clarificationQuestions,
+    assumptions: validation.assumptions,
+  };
+}
+
+function validateAnalysisSpec(
+  prompt: string,
+  spec: AnalysisSpec,
+  options: { repairedSpec?: boolean } = {},
+): ValidationResult {
+  const lower = prompt.toLowerCase();
+  const warnings: string[] = [];
+  const unsupportedReasons: string[] = [];
+  const clarificationQuestions: string[] = [];
+  const assumptions: string[] = [];
+
+  for (const source of UNSUPPORTED_SOURCE_ROUTERS) {
+    if (source.pattern.test(prompt)) {
+      unsupportedReasons.push(`${source.reason} Matched requested source router: ${source.router}.`);
+    }
+  }
+
+  const unsupportedMetricNames = unsupportedMetricMentions(lower);
+  unsupportedMetricNames.forEach((metric) => {
+    unsupportedReasons.push(`Metric "${metric}" is not available in the Meta Ads catalog.`);
+  });
+
+  const unsupportedDimensionNames = unsupportedDimensionMentions(lower);
+  unsupportedDimensionNames.forEach((dimension) => {
+    unsupportedReasons.push(`Dimension "${dimension}" is not available in the Meta Ads catalog.`);
+  });
+
+  const asksForNamedUmbrella =
+    /\b(?:for|inside|within|under|in)\b[^.?!\n]{0,80}\b(?:campaign[-\s]?umbrella|umbrella|campaign)\b/i.test(prompt) ||
+    /\b(?:campaign[-\s]?umbrella|umbrella)\b[^.?!\n]{0,80}\b(?:called|named)\b/i.test(prompt);
+  const hasUmbrellaFilter = spec.filters.some((filter) => filter.field === "campaign_umbrella");
+  const mentionsKnownUmbrella = CAMPAIGN_GLOSSARY.some((entry) => entry.pattern.test(prompt));
+  if (asksForNamedUmbrella && !hasUmbrellaFilter && !mentionsKnownUmbrella) {
+    clarificationQuestions.push("Which campaign umbrella should I filter to?");
+  }
+
+  if (options.repairedSpec) {
+    warnings.push("Saved spec was re-normalized from its original prompt before querying.");
+  }
+
+  if (spec.dateRange.includeToday) {
+    assumptions.push("Prompt explicitly allowed including today; result may include partial synced data.");
+  } else if (isRelativeDateRange(spec.dateRange)) {
+    assumptions.push("Relative date range will end at the latest complete synced Meta insight date.");
+  }
+
+  if (spec.filters.some((filter) => filter.field === "campaign_umbrella")) {
+    assumptions.push("Campaign glossary resolved named campaign concept to an exact campaign_umbrella filter.");
+  }
+
+  const status: AnalysisValidationStatus = unsupportedReasons.length
+    ? "unsupported"
+    : clarificationQuestions.length
+      ? "needs_clarification"
+      : "ready";
+
+  return {
+    status,
+    warnings,
+    unsupportedReasons,
+    clarificationQuestions,
+    assumptions,
+  };
+}
+
+function unsupportedMetricMentions(lower: string) {
+  const mentions: string[] = [];
+  const candidates: Array<[string, RegExp]> = [
+    ["landing page views", /\blanding\s+page\s+views?\b/],
+    ["website visitors", /\bwebsite\s+visitors?\b|\bsite\s+visitors?\b|\bvisitors?\b/],
+    ["response time", /\bresponse\s+time\b/],
+    ["revenue", /\brevenue\b|\bsales\b|\border\s+value\b/],
+    ["employee performance", /\bemployee\b|\bstaff\b|\bagent\b/],
+  ];
+
+  candidates.forEach(([label, pattern]) => {
+    if (pattern.test(lower) && !mentions.includes(label)) mentions.push(label);
+  });
+  return mentions;
+}
+
+function unsupportedDimensionMentions(lower: string) {
+  const mentions: string[] = [];
+  const candidates: Array<[string, RegExp]> = [
+    ["landing page", /\blanding\s+pages?\b/],
+    ["employee", /\bemployees?\b|\bstaff\b|\bagents?\b/],
+    ["customer", /\bcustomers?\b/],
+  ];
+
+  candidates.forEach(([label, pattern]) => {
+    if (pattern.test(lower) && !mentions.includes(label)) mentions.push(label);
+  });
+  return mentions;
+}
+
+function specWasRepaired(rawSpec: unknown, prompt: string, normalizedSpec: AnalysisSpec) {
+  const parsed = analysisSpecSchema.safeParse(rawSpec);
+  if (!parsed.success) return true;
+  return JSON.stringify(parsed.data) !== JSON.stringify(normalizedSpec);
 }
 
 function normalizeTableLayout(
@@ -941,9 +1346,13 @@ function fallbackSpec(prompt: string): AnalysisSpec {
   };
 }
 
-function resolveDateRange(dateRange: AnalysisSpec["dateRange"]) {
+function resolveDateRange(dateRange: AnalysisSpec["dateRange"], latestSyncedInsightDate?: string | null) {
   const today = new Date();
-  let end = isDateString(dateRange.end) ? parseISO(dateRange.end) : today;
+  const fallbackEnd =
+    !dateRange.includeToday && latestSyncedInsightDate && isDateString(latestSyncedInsightDate)
+      ? parseISO(latestSyncedInsightDate)
+      : today;
+  let end = isDateString(dateRange.end) ? parseISO(dateRange.end) : fallbackEnd;
   const presetDays: Record<string, number> = {
     last_7_days: 7,
     last_14_days: 14,
@@ -966,6 +1375,17 @@ function resolveDateRange(dateRange: AnalysisSpec["dateRange"]) {
     end: format(end, "yyyy-MM-dd"),
     days: actualDays,
   };
+}
+
+function datesInRange(start: string, end: string) {
+  const dates: string[] = [];
+  let current = parseISO(start);
+  const final = parseISO(end);
+  while (current <= final && dates.length < MAX_DAYS) {
+    dates.push(format(current, "yyyy-MM-dd"));
+    current = subDays(current, -1);
+  }
+  return dates;
 }
 
 function buildColumns(spec: AnalysisSpec): AnalysisTableColumn[] {
@@ -1243,25 +1663,116 @@ function baseResult(input: {
   planModel: string;
   analysisModel: string | null;
   tokenEstimate: AnalysisResult["tokenEstimate"];
+  validation: ValidationResult;
+  repairedSpec: boolean;
 }): AnalysisResult {
   return {
-    status: input.aggregated.needsNarrowing ? "needs_narrowing" : "ready",
+    status: input.validation.status,
+    validationStatus: input.validation.status,
     dashboardId: input.dashboardId,
     prompt: input.prompt,
     mode: input.mode,
     title: input.spec.title,
-    answer: input.aggregated.needsNarrowing ? input.aggregated.narrowingMessage : "",
+    answer: "",
     spec: input.spec,
+    resolvedSpec: input.spec,
     table: input.aggregated.table,
     totals: input.aggregated.totals,
     widgets: input.spec.widgets,
     sourceTransparency: input.aggregated.sourceTransparency,
+    analystDebug: input.aggregated.analystDebug,
+    warnings: input.aggregated.warnings,
+    unsupportedReasons: input.aggregated.unsupportedReasons,
+    clarificationQuestions: input.aggregated.clarificationQuestions,
     modelUsed: {
       plan: input.planModel,
       analysis: input.analysisModel,
     },
     tokenEstimate: input.tokenEstimate,
   };
+}
+
+function nonExecutableResult(input: {
+  prompt: string;
+  mode: AnalysisMode;
+  spec: AnalysisSpec;
+  dashboardId: string | null;
+  planModel: string;
+  analysisModel: string | null;
+  tokenEstimate: AnalysisResult["tokenEstimate"];
+  validation: ValidationResult;
+  repairedSpec: boolean;
+}): AnalysisResult {
+  const range = resolveDateRange(input.spec.dateRange, null);
+  const recordCounts = {
+    meta_daily_insights: 0,
+    matched_insights: 0,
+    grouped_rows: 0,
+    returned_rows: 0,
+  };
+  const sourceTransparency: AnalysisResult["sourceTransparency"] = {
+    timeRange: range,
+    adAccountsAnalyzed: [],
+    recordCounts,
+    dataSource: "meta_ads",
+    sourceTable: "meta_daily_insights",
+    sourceFunction: null,
+    latestSyncedInsightDate: null,
+    filters: input.spec.filters,
+  };
+  const analystDebug = buildAnalystDebug({
+    validation: input.validation,
+    spec: input.spec,
+    range,
+    latestSyncedInsightDate: null,
+    sourceFunction: null,
+    recordCounts,
+    repairedSpec: input.repairedSpec,
+    warnings: input.validation.warnings,
+  });
+
+  return {
+    status: input.validation.status,
+    validationStatus: input.validation.status,
+    dashboardId: input.dashboardId,
+    prompt: input.prompt,
+    mode: input.mode,
+    title: input.spec.title,
+    answer: buildValidationAnswer(input.validation),
+    spec: input.spec,
+    resolvedSpec: input.spec,
+    table: {
+      columns: [],
+      rows: [],
+    },
+    totals: aggregateMetrics(undefined),
+    widgets: [],
+    sourceTransparency,
+    analystDebug,
+    warnings: input.validation.warnings,
+    unsupportedReasons: input.validation.unsupportedReasons,
+    clarificationQuestions: input.validation.clarificationQuestions,
+    modelUsed: {
+      plan: input.planModel,
+      analysis: input.analysisModel,
+    },
+    tokenEstimate: input.tokenEstimate,
+  };
+}
+
+function buildValidationAnswer(validation: ValidationResult) {
+  if (validation.status === "unsupported") {
+    return [
+      "I cannot generate this table from the current Meta Ads ad-hoc source.",
+      ...validation.unsupportedReasons,
+    ].join(" ");
+  }
+
+  if (validation.status === "needs_clarification") {
+    return validation.clarificationQuestions.join(" ");
+  }
+
+  return "";
 }
 
 async function persistAnalysis(
@@ -1406,7 +1917,12 @@ function inferPromptIntent(prompt: string): PromptIntent {
   const dimensions = inferDimensionsFromPrompt(latestLower, metrics) || inferDimensionsFromPrompt(lower, metrics);
   const dateRange = inferDateRangeFromPrompt(prompt);
   const grain = inferGrainFromPrompt(latestPrompt) || inferGrainFromPrompt(prompt);
+  const glossaryFilters = campaignGlossaryFilters(prompt);
   const searchTerm = inferSearchTerm(prompt);
+  const filters = [
+    ...glossaryFilters,
+    ...(searchTerm ? [{ field: "search" as const, operator: "contains" as const, value: searchTerm }] : []),
+  ];
   const tableOnly =
     /\btable\b|\btable format\b|\btabular\b/i.test(promptForMode) &&
     !/\bchart\b|\bgraph\b|\bline\b|\bbar\b/i.test(promptForMode);
@@ -1434,14 +1950,9 @@ function inferPromptIntent(prompt: string): PromptIntent {
     grain,
     dimensions,
     metrics,
-    filters: searchTerm ? [{ field: "search", operator: "contains", value: searchTerm }] : undefined,
-    sort: firstDimension
-      ? {
-          field: firstDimension,
-          direction: "asc",
-        }
-      : undefined,
-    limit: dimensions?.includes("campaign_umbrella") ? MAX_TABLE_ROWS : undefined,
+    filters: filters.length ? filters : undefined,
+    sort: inferSortFromPrompt(promptForModeLower, firstDimension, metrics),
+    limit: inferLimitFromPrompt(promptForModeLower, dimensions),
     tableOnly,
     tableTitle:
       tableOnly && isMonthlyUmbrella && wantsBudget
@@ -1459,13 +1970,13 @@ function inferPromptIntent(prompt: string): PromptIntent {
           : isMonthlyUmbrella && metrics?.length === 1 && metrics[0] === "spend"
             ? "Ad spend by campaign umbrella by month"
             : undefined,
-    stripCashForGoldFilter: !lower.includes("cash for gold"),
+    stripCashForGoldFilter: !glossaryFilters.length,
   };
 }
 
 function applyPromptIntent(spec: AnalysisSpec, intent: PromptIntent): AnalysisSpec {
   const filteredSpecFilters = intent.stripCashForGoldFilter
-    ? spec.filters.filter((filter) => !filter.value.toLowerCase().includes("cash for gold"))
+    ? spec.filters.filter((filter) => !isGlossaryFilter(filter))
     : spec.filters;
 
   return {
@@ -1484,7 +1995,10 @@ function applyPromptIntent(spec: AnalysisSpec, intent: PromptIntent): AnalysisSp
 }
 
 function mergeFilters(baseFilters: AnalysisFilter[], intendedFilters: AnalysisFilter[]) {
-  const merged = [...baseFilters];
+  const intendedHasGlossaryFilter = intendedFilters.some(
+    (filter) => filter.field === "campaign_umbrella" && isGlossaryFilter(filter),
+  );
+  const merged = intendedHasGlossaryFilter ? baseFilters.filter((filter) => !isGlossaryFilter(filter)) : [...baseFilters];
   intendedFilters.forEach((filter) => {
     const value = filter.value.trim();
     if (!value) return;
@@ -1497,6 +2011,46 @@ function mergeFilters(baseFilters: AnalysisFilter[], intendedFilters: AnalysisFi
     if (!exists) merged.push({ ...filter, value });
   });
   return merged;
+}
+
+function campaignGlossaryFilters(prompt: string): AnalysisFilter[] {
+  return CAMPAIGN_GLOSSARY.filter((entry) => entry.pattern.test(prompt)).map((entry) => ({
+    field: "campaign_umbrella" as const,
+    operator: "equals" as const,
+    value: entry.value,
+  }));
+}
+
+function isGlossaryFilter(filter: AnalysisFilter) {
+  const value = filter.value.trim().toLowerCase();
+  return CAMPAIGN_GLOSSARY.some(
+    (entry) => value === entry.label.toLowerCase() || value === entry.value.toLowerCase(),
+  );
+}
+
+function inferSortFromPrompt(
+  lower: string,
+  firstDimension?: AnalysisDimension,
+  metrics?: AnalysisMetric[],
+): AnalysisSpec["sort"] | undefined {
+  const requestedTop = /\b(top|highest|best|leaderboard|rank(?:ed)?)\b/.test(lower);
+  if (requestedTop && metrics?.length) {
+    const metric =
+      metrics.find((candidate) => metricPromptPatterns[candidate]?.test(lower)) ||
+      metrics.find((candidate) => candidate !== "impressions") ||
+      metrics[0];
+    return { field: metric, direction: "desc" };
+  }
+
+  if (firstDimension) return { field: firstDimension, direction: "asc" };
+  return undefined;
+}
+
+function inferLimitFromPrompt(lower: string, dimensions?: AnalysisDimension[]) {
+  const explicit = lower.match(/\btop\s+(\d{1,3})\b/);
+  if (explicit) return Math.min(Math.max(Number(explicit[1]), 1), MAX_TABLE_ROWS);
+  if (/\b(top|highest|best|leaderboard|rank(?:ed)?)\b/.test(lower)) return 10;
+  return dimensions?.includes("campaign_umbrella") ? MAX_TABLE_ROWS : undefined;
 }
 
 function inferDimensionsFromPrompt(
@@ -1763,8 +2317,12 @@ function hasEntityBreakdownCue(lower: string, dimension: AnalysisDimension) {
   if (!pattern) return false;
 
   return (
+    new RegExp(`\\b(top|highest|best|rank(?:ed)?|leaderboard)\\b[^.?!\\n]{0,60}\\b${pattern}\\b`).test(lower) ||
     new RegExp(`\\b(by|per|each|list|show|compare|breakdown|break down)\\b[^.?!\\n]{0,60}\\b${pattern}\\b`).test(lower) ||
     new RegExp(`\\bgroup(?:ed)?\\s+by\\b[^.?!\\n]{0,60}\\b${pattern}\\b`).test(lower) ||
+    new RegExp(
+      `\\b${pattern}\\b\\s+by\\s+\\b(spend|cost|messages?|messaging|clicks?|leads?|bookings?|appointments?|conversions?|ctr|cpc|cpl|cpm)\\b`,
+    ).test(lower) ||
     new RegExp(`\\b${pattern}\\b\\s+by\\s+\\b${pattern}\\b`).test(lower)
   );
 }
@@ -1776,6 +2334,9 @@ function isTimeDimension(value: unknown): value is AnalysisDimension {
 function inferDateRangeFromPrompt(prompt: string): AnalysisSpec["dateRange"] | undefined {
   const lower = prompt.toLowerCase();
   const explicitDates = extractDates(prompt);
+  const includeToday = /\bincluding\s+today\b|\binclude\s+today\b|\bthrough\s+today\b|\bup\s+to\s+today\b/.test(
+    lower,
+  );
   if (explicitDates.length >= 2 && /\bthrough\b|\bto\b|\buntil\b|\bbetween\b|\band\b/.test(lower)) {
     return { preset: "custom", start: explicitDates[0], end: explicitDates[1] };
   }
@@ -1789,17 +2350,17 @@ function inferDateRangeFromPrompt(prompt: string): AnalysisSpec["dateRange"] | u
     return { preset: "custom", start: `${new Date().getFullYear()}-01-01` };
   }
 
-  return inferRelativeDateRange(lower);
+  return inferRelativeDateRange(lower, includeToday);
 }
 
-function inferRelativeDateRange(lower: string): AnalysisSpec["dateRange"] | undefined {
+function inferRelativeDateRange(lower: string, includeToday = false): AnalysisSpec["dateRange"] | undefined {
   const explicit = lower.match(
     /\b(?:last|past|previous|prior|recent|trailing)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|ninety)\s+(days?|weeks?|months?)\b/,
   );
   if (explicit) {
     const count = numberWordValue(explicit[1]);
     if (!count) return undefined;
-    return rollingDateRange(count, explicit[2]);
+    return rollingDateRange(count, explicit[2], includeToday);
   }
 
   const implicit = lower.match(/\b(?:last|past|previous|prior|recent|trailing)\s+(day|week|month|quarter)\b/);
@@ -1811,10 +2372,10 @@ function inferRelativeDateRange(lower: string): AnalysisSpec["dateRange"] | unde
     month: 30,
     quarter: 90,
   };
-  return rollingDateRange(daysByUnit[implicit[1]], "days");
+  return rollingDateRange(daysByUnit[implicit[1]], "days", includeToday);
 }
 
-function rollingDateRange(count: number, unit: string): AnalysisSpec["dateRange"] {
+function rollingDateRange(count: number, unit: string, includeToday = false): AnalysisSpec["dateRange"] {
   const normalizedUnit = unit.toLowerCase();
   const days =
     normalizedUnit.startsWith("week") ? count * 7 : normalizedUnit.startsWith("month") ? count * 30 : count;
@@ -1829,7 +2390,12 @@ function rollingDateRange(count: number, unit: string): AnalysisSpec["dateRange"
     90: "last_90_days",
   };
   const preset = presetByDays[boundedDays];
-  return preset ? { preset } : { days: boundedDays };
+  const range = preset ? { preset } : { days: boundedDays };
+  return includeToday ? { ...range, includeToday } : range;
+}
+
+function isRelativeDateRange(dateRange: AnalysisSpec["dateRange"]) {
+  return Boolean(dateRange.days || (dateRange.preset && dateRange.preset !== "custom"));
 }
 
 function numberWordValue(value: string) {
@@ -1880,6 +2446,15 @@ function extractDates(prompt: string) {
     /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,)?\s+(20\d{2})\b/gi;
   for (const match of prompt.matchAll(monthPattern)) {
     const date = formatDateParts(Number(match[3]), monthNumber(match[1]), Number(match[2]));
+    if (date) matches.push({ index: match.index || 0, date });
+  }
+
+  const monthYearPattern =
+    /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(20\d{2})\b/gi;
+  for (const match of prompt.matchAll(monthYearPattern)) {
+    const previous = prompt.slice(Math.max(0, (match.index || 0) - 4), match.index || 0);
+    if (/\d{1,2}(?:st|nd|rd|th)?(?:,)?\s*$/i.test(previous)) continue;
+    const date = formatDateParts(Number(match[2]), monthNumber(match[1]), 1);
     if (date) matches.push({ index: match.index || 0, date });
   }
 
@@ -1966,8 +2541,7 @@ function titleFromPrompt(prompt: string) {
 }
 
 function inferSearchTerm(prompt: string) {
-  const lower = prompt.toLowerCase();
-  if (lower.includes("cash for gold")) return "cash for gold";
+  if (CAMPAIGN_GLOSSARY.some((entry) => entry.pattern.test(prompt))) return "";
   return "";
 }
 

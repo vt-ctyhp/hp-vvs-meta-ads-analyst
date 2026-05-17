@@ -1,11 +1,14 @@
 "use client";
 
 import {
+  AlertTriangle,
   BarChart3,
   Brain,
+  Bug,
   Check,
   Gauge,
   History,
+  Info,
   Loader2,
   Pencil,
   Save,
@@ -476,7 +479,7 @@ function AnalysisOutput({ result }: { result: AnalysisResult }) {
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
             <span className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-              {result.status === "ready" ? "Generated Dashboard" : "Needs Narrowing"}
+              {validationLabel(result.validationStatus)}
             </span>
             <h2 className="mt-2 font-title text-[34px] leading-tight text-hp-ink">
               {result.title}
@@ -493,10 +496,14 @@ function AnalysisOutput({ result }: { result: AnalysisResult }) {
         {result.persistenceWarning ? (
           <p className="mt-3 text-sm text-signal-warning">{result.persistenceWarning}</p>
         ) : null}
+        <MessageList tone="warning" messages={result.warnings} />
+        <MessageList tone="danger" messages={result.unsupportedReasons} />
+        <MessageList tone="info" messages={result.clarificationQuestions} />
         <MetaStrip result={result} />
+        <AnalystDebugPanel result={result} />
       </section>
 
-      {result.status === "ready" ? (
+      {result.validationStatus === "ready" ? (
         <div className="space-y-6">
           {result.widgets.map((widget, index) => (
             <WidgetRenderer
@@ -511,9 +518,46 @@ function AnalysisOutput({ result }: { result: AnalysisResult }) {
   );
 }
 
+function validationLabel(status: AnalysisResult["validationStatus"]) {
+  if (status === "unsupported") return "Unsupported Request";
+  if (status === "needs_clarification") return "Needs Clarification";
+  return "Generated Dashboard";
+}
+
+function MessageList({
+  tone,
+  messages,
+}: {
+  tone: "warning" | "danger" | "info";
+  messages?: string[];
+}) {
+  const uniqueMessages = Array.from(new Set(messages || [])).filter(Boolean);
+  if (!uniqueMessages.length) return null;
+
+  const className =
+    tone === "danger"
+      ? "text-signal-danger"
+      : tone === "warning"
+        ? "text-signal-warning"
+        : "text-hp-muted";
+  const Icon = tone === "danger" ? AlertTriangle : Info;
+
+  return (
+    <div className={`mt-3 space-y-1 text-sm ${className}`}>
+      {uniqueMessages.map((message) => (
+        <div key={message} className="flex gap-2">
+          <Icon size={14} className="mt-1 shrink-0" />
+          <span>{message}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function MetaStrip({ result }: { result: AnalysisResult }) {
   return (
-    <div className="mt-6 grid gap-3 border-t border-hp-rule pt-4 text-xs md:grid-cols-4">
+    <div className="mt-6 grid gap-3 border-t border-hp-rule pt-4 text-xs md:grid-cols-5">
+      <MiniFact label="Validation" value={result.validationStatus.replace("_", " ")} />
       <MiniFact label="Plan Model" value={result.modelUsed.plan} />
       <MiniFact label="Analysis Model" value={result.modelUsed.analysis || "none"} />
       <MiniFact label="Est. Cost" value={`$${result.tokenEstimate.estimatedCostUsd.toFixed(5)}`} />
@@ -521,6 +565,51 @@ function MetaStrip({ result }: { result: AnalysisResult }) {
         label="Source Rows"
         value={formatNumber(result.sourceTransparency.recordCounts.matched_insights || 0)}
       />
+    </div>
+  );
+}
+
+function AnalystDebugPanel({ result }: { result: AnalysisResult }) {
+  const debug = result.analystDebug;
+  const range = debug.resolvedDateRange;
+  const filters = debug.filters.length
+    ? debug.filters.map((filter) => `${labelFor(filter.field)} ${filter.operator} ${filter.value}`).join("; ")
+    : "none";
+
+  return (
+    <div className="mt-4 border border-hp-rule bg-hp-inset p-4 text-xs">
+      <div className="mb-3 flex items-center gap-2 text-hp-ink">
+        <Bug size={15} />
+        <span className="text-[10px] uppercase tracking-[0.14em]">Analyst Debug</span>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <DebugFact label="Source" value={`${debug.sourceTable}${debug.sourceFunction ? ` via ${debug.sourceFunction}` : ""}`} />
+        <DebugFact
+          label="Date Range"
+          value={range ? `${range.start} to ${range.end} (${formatNumber(range.days)} days)` : "not resolved"}
+        />
+        <DebugFact label="Latest Sync" value={debug.latestSyncedInsightDate || "unknown"} />
+        <DebugFact label="Filters" value={filters} />
+        <DebugFact label="Metrics" value={debug.metrics.map(labelFor).join(", ")} />
+        <DebugFact label="Dimensions" value={debug.dimensions.map(labelFor).join(", ")} />
+        <DebugFact label="Source Rows" value={formatNumber(debug.recordCounts.matched_insights || 0)} />
+        <DebugFact label="Grouped Rows" value={formatNumber(debug.recordCounts.grouped_rows || 0)} />
+        <DebugFact label="Spec Repaired" value={debug.repairedSpec ? "yes" : "no"} />
+      </div>
+      {debug.assumptions.length ? (
+        <div className="mt-3 border-t border-hp-rule pt-3 text-hp-muted">
+          {debug.assumptions.join(" ")}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function DebugFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{label}</div>
+      <div className="mt-1 break-words text-hp-ink">{value || "none"}</div>
     </div>
   );
 }
