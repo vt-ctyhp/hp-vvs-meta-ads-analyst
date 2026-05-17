@@ -132,3 +132,106 @@ describe("ad-hoc analytics prompt normalization", () => {
     assert.ok(plan.unsupportedReasons.some((reason) => reason.includes("social_inbox")));
   });
 });
+
+describe("ad-hoc analytics table and chart capability matrix", () => {
+  it("builds a line chart for daily spend and messages", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "make a line chart of spend and messages by day for cash for gold last 14 days",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.dateRange, { preset: "last_14_days" });
+    assert.deepEqual(plan.spec.dimensions, ["date"]);
+    assert.deepEqual(plan.spec.metrics, ["spend", "messaging_contacts"]);
+    assert.equal(plan.spec.widgets[0]?.type, "line");
+    assert.deepEqual(plan.spec.widgets[0]?.metrics, ["spend", "messaging_contacts"]);
+  });
+
+  it("builds a bar chart for non-time campaign umbrella comparisons", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "bar chart of leads and cost per lead by campaign umbrella last 30 days",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.dimensions, ["campaign_umbrella"]);
+    assert.deepEqual(plan.spec.metrics, ["leads", "cpl"]);
+    assert.equal(plan.spec.widgets[0]?.type, "bar");
+    assert.equal(plan.spec.widgets[0]?.x, "campaign_umbrella");
+  });
+
+  it("builds a pivot table for monthly umbrella spend", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "pivot spend by campaign umbrella by month since January 2026",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.dimensions, ["month", "campaign_umbrella"]);
+    assert.deepEqual(plan.spec.tableLayout, {
+      type: "pivot",
+      rowDimension: "campaign_umbrella",
+      columnDimension: "month",
+      metric: "spend",
+    });
+    assert.equal(plan.spec.widgets[0]?.type, "table");
+  });
+
+  it("builds a lowest-CPL leaderboard by ad set", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "show the 10 lowest cost per lead ad sets for the last 30 days",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.dimensions, ["ad_set"]);
+    assert.deepEqual(plan.spec.metrics, ["cpl"]);
+    assert.deepEqual(plan.spec.sort, { field: "cpl", direction: "asc" });
+    assert.equal(plan.spec.limit, 10);
+  });
+
+  it("keeps total-only prompts as metric cards without tables", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "give me only total spend and messages for cash for gold last 7 days",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.metrics, ["spend", "messaging_contacts"]);
+    assert.deepEqual(plan.spec.dimensions, ["brand"]);
+    assert.deepEqual(plan.spec.widgets, [
+      {
+        type: "metric",
+        title: "Totals",
+        metrics: ["spend", "messaging_contacts"],
+      },
+    ]);
+  });
+
+  it("defaults non-time comparisons to a bar chart when charts are inferred", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "compare spend, impressions, clicks, ctr, cpc by campaign last 30 days",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.dimensions, ["campaign"]);
+    assert.equal(plan.spec.widgets[2]?.type, "bar");
+    assert.equal(plan.spec.widgets[2]?.x, "campaign");
+  });
+
+  it("returns both table and chart when the prompt asks for both", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "show spend and results by campaign umbrella for the past four weeks by week as a table and line chart",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(
+      plan.spec.widgets.map((widget) => widget.type),
+      ["table", "line"],
+    );
+    assert.deepEqual(plan.spec.metrics, ["spend", "primary_results"]);
+  });
+});

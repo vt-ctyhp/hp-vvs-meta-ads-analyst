@@ -1126,7 +1126,7 @@ function normalizeSpec(value: unknown, prompt: string): AnalysisSpec {
             metrics: [normalizedTableLayout.metric || metrics[0]],
           },
         ]
-      : normalizeWidgets(base.widgets, dimensions, metrics, base.grain);
+      : normalizeWidgets(base.widgets, dimensions, metrics);
 
   return {
     title: base.title,
@@ -1301,20 +1301,22 @@ function normalizeWidgets(
   widgets: AnalysisSpec["widgets"],
   dimensions: AnalysisDimension[],
   metrics: AnalysisMetric[],
-  grain: AnalysisGrain,
 ) {
   const normalized = widgets
     .filter((widget) => WIDGET_TYPES.includes(widget.type))
     .map((widget) => ({
       type: widget.type,
       title: widget.title || labelForWidget(widget.type),
-      x: widget.x && dimensions.includes(widget.x) ? widget.x : dimensions[0],
+      ...(widget.type === "metric"
+        ? {}
+        : { x: widget.x && dimensions.includes(widget.x) ? widget.x : dimensions[0] }),
       metrics: uniqueAllowed(widget.metrics, metrics, metrics).slice(0, 4),
     }));
 
   if (normalized.length) return normalized;
 
-  const timeWidget = grain === "daily" || grain === "weekly" || grain === "monthly";
+  const primaryDimension = dimensions[0];
+  const timeWidget = Boolean(primaryDimension && isTimeDimension(primaryDimension));
   return [
     { type: "metric" as const, title: "Totals", metrics: metrics.slice(0, 4) },
     { type: "table" as const, title: "Comparison table", x: dimensions[0], metrics },
@@ -1926,33 +1928,44 @@ function inferPromptIntent(prompt: string): PromptIntent {
   const tableOnly =
     /\btable\b|\btable format\b|\btabular\b/i.test(promptForMode) &&
     !/\bchart\b|\bgraph\b|\bline\b|\bbar\b/i.test(promptForMode);
-  const firstDimension = dimensions?.[0];
+  const summaryOnly = wantsSummaryOnly(promptForModeLower);
+  const intendedDimensions: AnalysisDimension[] | undefined = summaryOnly ? ["brand"] : dimensions;
+  const intendedMetrics = summaryOnly && !metrics ? DEFAULT_METRICS.slice(0, 4) : metrics;
+  const firstDimension = intendedDimensions?.[0];
   const wantsBudget = metrics?.includes("monthly_budget") || /\bbudgets?\b/.test(lower);
-  const isMonthlyUmbrella = dimensions?.includes("campaign_umbrella") && dimensions.includes("month");
-  const tableLayout = inferTableLayoutFromPrompt(promptForModeLower, dimensions, metrics);
-  const widgets = inferWidgetsFromPrompt({
-    lower: promptForModeLower,
-    dimensions,
-    metrics,
-    tableOnly: tableOnly || tableLayout?.type === "pivot",
-    tableTitle:
-      tableLayout?.type === "pivot"
-        ? "Pivot table"
-        : tableOnly && isMonthlyUmbrella && wantsBudget
-        ? "Monthly spend and budget by campaign umbrella"
-        : tableOnly && isMonthlyUmbrella
-          ? "Monthly spend by campaign umbrella"
-          : undefined,
-  });
+  const isMonthlyUmbrella = intendedDimensions?.includes("campaign_umbrella") && intendedDimensions.includes("month");
+  const tableLayout = summaryOnly ? undefined : inferTableLayoutFromPrompt(promptForModeLower, intendedDimensions, intendedMetrics);
+  const widgets = summaryOnly
+    ? [
+        {
+          type: "metric" as const,
+          title: "Totals",
+          metrics: (intendedMetrics || DEFAULT_METRICS).slice(0, 4),
+        },
+      ]
+    : inferWidgetsFromPrompt({
+        lower: promptForModeLower,
+        dimensions: intendedDimensions,
+        metrics: intendedMetrics,
+        tableOnly: tableOnly || tableLayout?.type === "pivot",
+        tableTitle:
+          tableLayout?.type === "pivot"
+            ? "Pivot table"
+            : tableOnly && isMonthlyUmbrella && wantsBudget
+              ? "Monthly spend and budget by campaign umbrella"
+              : tableOnly && isMonthlyUmbrella
+                ? "Monthly spend by campaign umbrella"
+                : undefined,
+      });
 
   return {
     dateRange,
-    grain,
-    dimensions,
-    metrics,
+    grain: summaryOnly ? "summary" : grain,
+    dimensions: intendedDimensions,
+    metrics: intendedMetrics,
     filters: filters.length ? filters : undefined,
-    sort: inferSortFromPrompt(promptForModeLower, firstDimension, metrics),
-    limit: inferLimitFromPrompt(promptForModeLower, dimensions),
+    sort: summaryOnly ? undefined : inferSortFromPrompt(promptForModeLower, firstDimension, intendedMetrics),
+    limit: inferLimitFromPrompt(promptForModeLower, intendedDimensions),
     tableOnly,
     tableTitle:
       tableOnly && isMonthlyUmbrella && wantsBudget
@@ -2033,13 +2046,16 @@ function inferSortFromPrompt(
   firstDimension?: AnalysisDimension,
   metrics?: AnalysisMetric[],
 ): AnalysisSpec["sort"] | undefined {
-  const requestedTop = /\b(top|highest|best|leaderboard|rank(?:ed)?)\b/.test(lower);
-  if (requestedTop && metrics?.length) {
+  const requestedRanking = /\b(top|highest|best|leaderboard|rank(?:ed)?|lowest|cheapest|least expensive|most efficient)\b/.test(lower);
+  if (requestedRanking && metrics?.length) {
     const metric =
       metrics.find((candidate) => metricPromptPatterns[candidate]?.test(lower)) ||
       metrics.find((candidate) => candidate !== "impressions") ||
       metrics[0];
-    return { field: metric, direction: "desc" };
+    const wantsLowCost =
+      /\b(lowest|cheapest|least expensive|most efficient)\b/.test(lower) ||
+      (/\bbest\b/.test(lower) && isCostMetric(metric));
+    return { field: metric, direction: wantsLowCost ? "asc" : "desc" };
   }
 
   if (firstDimension) return { field: firstDimension, direction: "asc" };
@@ -2047,10 +2063,26 @@ function inferSortFromPrompt(
 }
 
 function inferLimitFromPrompt(lower: string, dimensions?: AnalysisDimension[]) {
-  const explicit = lower.match(/\btop\s+(\d{1,3})\b/);
+  const explicit =
+    lower.match(/\btop\s+(\d{1,3})\b/) ||
+    lower.match(/\b(\d{1,3})\s+(?:top|highest|best|lowest|cheapest|least expensive|most efficient|ranked)\b/);
   if (explicit) return Math.min(Math.max(Number(explicit[1]), 1), MAX_TABLE_ROWS);
   if (/\b(top|highest|best|leaderboard|rank(?:ed)?)\b/.test(lower)) return 10;
   return dimensions?.includes("campaign_umbrella") ? MAX_TABLE_ROWS : undefined;
+}
+
+function wantsSummaryOnly(lower: string) {
+  const asksOnlyTotal =
+    /\bonly\s+(?:show\s+|give\s+me\s+)?totals?\b/.test(lower) ||
+    /\b(?:just|only)\s+(?:the\s+)?(?:total|summary)\b/.test(lower);
+  if (!asksOnlyTotal) return false;
+  return !/\b(by|per|each|broken out|breakdown|break down|group(?:ed)? by|table|chart|graph|trend|line|bar|pivot)\b/.test(
+    lower,
+  );
+}
+
+function isCostMetric(metric: AnalysisMetric) {
+  return metric === "cpc" || metric === "cpl" || metric === "cpm";
 }
 
 function inferDimensionsFromPrompt(
@@ -2085,56 +2117,57 @@ function inferDimensionsFromPrompt(
 
 function inferMetricsFromPrompt(lower: string): AnalysisMetric[] | undefined {
   const requested: AnalysisMetric[] = [];
+  const metricText = lower.replace(/\bcost\s+per\s+leads?\b/g, "cpl");
   const add = (metric: AnalysisMetric) => {
     if (!requested.includes(metric)) requested.push(metric);
   };
 
-  if (/\bad spend\b|\bspend\b|\bspent\b|\bcost\b/.test(lower)) add("spend");
-  if (/\bmonthly budgets?\b|\bbudgets?\b/.test(lower)) add("monthly_budget");
-  if (/\b(count|number of|how many)\b[^.?!\n]*\bcampaigns?\b/.test(lower) && !/\bcampaign[-\s]?umbrellas?\b/.test(lower)) {
+  if (/\bad spend\b|\bspend\b|\bspent\b|\bcost\b/.test(metricText)) add("spend");
+  if (/\bmonthly budgets?\b|\bbudgets?\b/.test(metricText)) add("monthly_budget");
+  if (/\b(count|number of|how many)\b[^.?!\n]*\bcampaigns?\b/.test(metricText) && !/\bcampaign[-\s]?umbrellas?\b/.test(metricText)) {
     add("campaign_count");
   }
-  if (/\b(count|number of|how many)\b[^.?!\n]*\bad sets?\b/.test(lower)) add("ad_set_count");
-  if (/\b(count|number of|how many)\b[^.?!\n]*\b(?:ad\s+)?creatives?\b/.test(lower)) add("creative_count");
+  if (/\b(count|number of|how many)\b[^.?!\n]*\bad sets?\b/.test(metricText)) add("ad_set_count");
+  if (/\b(count|number of|how many)\b[^.?!\n]*\b(?:ad\s+)?creatives?\b/.test(metricText)) add("creative_count");
   if (
-    /\b(count|number of|how many)\b[^.?!\n]*\bads\b/.test(lower) &&
-    !/\b(count|number of|how many)\b[^.?!\n]*\b(?:ad\s+)?creatives?\b/.test(lower)
+    /\b(count|number of|how many)\b[^.?!\n]*\bads\b/.test(metricText) &&
+    !/\b(count|number of|how many)\b[^.?!\n]*\b(?:ad\s+)?creatives?\b/.test(metricText)
   ) {
     add("ad_count");
   }
-  if (/\bimpressions?\b/.test(lower)) add("impressions");
-  if (/\breach\b/.test(lower)) add("reach");
-  if (/\bclicks?\b/.test(lower)) add("clicks");
-  if (/\bleads?\b/.test(lower)) add("leads");
-  if (/\bbookings?\b|\bappointments?\b/.test(lower)) add("bookings");
-  if (/\bconversions?\b/.test(lower)) add("conversions");
-  if (/\bwebsite\s+(bookings?|appointments?|conversions?)\b/.test(lower)) add("website_bookings");
-  if (/\bsecondary\s+results?\b/.test(lower)) add("secondary_results");
+  if (/\bimpressions?\b/.test(metricText)) add("impressions");
+  if (/\breach\b/.test(metricText)) add("reach");
+  if (/\bclicks?\b/.test(metricText)) add("clicks");
+  if (/\bleads?\b/.test(metricText)) add("leads");
+  if (/\bbookings?\b|\bappointments?\b/.test(metricText)) add("bookings");
+  if (/\bconversions?\b/.test(metricText)) add("conversions");
+  if (/\bwebsite\s+(bookings?|appointments?|conversions?)\b/.test(metricText)) add("website_bookings");
+  if (/\bsecondary\s+results?\b/.test(metricText)) add("secondary_results");
   if (
-    /\bprimary\s+results?\b/.test(lower) ||
-    (/\bresults?\b/.test(lower) && !/\bsecondary\s+results?\b/.test(lower))
+    /\bprimary\s+results?\b/.test(metricText) ||
+    (/\bresults?\b/.test(metricText) && !/\bsecondary\s+results?\b/.test(metricText))
   ) {
     add("primary_results");
   }
   if (
     /\bnew\b[^.?!\n]{0,40}\b(messages?|messaging contacts?|messenger conversations?|conversations?|replies?)\b/.test(
-      lower,
+      metricText,
     ) ||
-    /\bfirst\s+replies?\b/.test(lower)
+    /\bfirst\s+replies?\b/.test(metricText)
   ) {
     add("new_messaging_contacts");
   } else if (
     /\b(messages?|messaging contacts?|messenger conversations?|messenger|conversations?|replies?)\b/.test(
-      lower,
+      metricText,
     )
   ) {
     add("messaging_contacts");
   }
-  if (/\bctr\b/.test(lower)) add("ctr");
-  if (/\bcpm\b/.test(lower)) add("cpm");
-  if (/\bcpc\b/.test(lower)) add("cpc");
-  if (/\bcpl\b/.test(lower)) add("cpl");
-  if (/\bfrequency\b/.test(lower)) add("frequency");
+  if (/\bctr\b/.test(metricText)) add("ctr");
+  if (/\bcpm\b/.test(metricText)) add("cpm");
+  if (/\bcpc\b/.test(metricText)) add("cpc");
+  if (/\bcpl\b/.test(metricText)) add("cpl");
+  if (/\bfrequency\b/.test(metricText)) add("frequency");
 
   return requested.length ? requested : undefined;
 }
@@ -2289,7 +2322,7 @@ const metricPromptPatterns: Partial<Record<AnalysisMetric, RegExp>> = {
   ctr: /\bctr\b/,
   cpm: /\bcpm\b/,
   cpc: /\bcpc\b/,
-  cpl: /\bcpl\b/,
+  cpl: /\bcpl\b|\bcost\s+per\s+leads?\b/,
   frequency: /\bfrequency\b/,
 };
 
