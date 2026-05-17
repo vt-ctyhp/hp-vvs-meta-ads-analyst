@@ -2,15 +2,15 @@ import OpenAI from "openai";
 import { format, parseISO, subDays } from "date-fns";
 import { z } from "zod";
 
-import type { Json } from "./database.types";
+import type { Json } from "./database.types.ts";
 import {
   type AnalysisMode,
   ConfigurationError,
   getMissingRequiredEnv,
   getOpenAIAnalysisModel,
-} from "./env";
-import { aggregateMetaInsights, type MetaInsightAggregateRow } from "./meta-insight-aggregates";
-import { createServiceClient } from "./supabase";
+} from "./env.ts";
+import { aggregateMetaInsights, type MetaInsightAggregateRow } from "./meta-insight-aggregates.ts";
+import { createServiceClient } from "./supabase.ts";
 
 const ANALYSIS_METRICS = [
   "spend",
@@ -25,6 +25,11 @@ const ANALYSIS_METRICS = [
   "leads",
   "bookings",
   "conversions",
+  "website_bookings",
+  "messaging_contacts",
+  "new_messaging_contacts",
+  "primary_results",
+  "secondary_results",
   "ctr",
   "cpm",
   "cpc",
@@ -68,6 +73,29 @@ const DATE_PRESETS = [
 const WIDGET_TYPES = ["metric", "table", "line", "bar"] as const;
 const TABLE_LAYOUT_TYPES = ["flat", "pivot"] as const;
 const DEFAULT_METRICS: AnalysisMetric[] = ["spend", "impressions", "clicks", "ctr", "cpc", "leads", "cpl"];
+const RPC_SORT_FIELDS = new Set<string>([
+  "date",
+  "week",
+  "month",
+  "brand",
+  "campaign_umbrella",
+  "campaign",
+  "ad_set",
+  "ad",
+  "creative",
+  "spend",
+  "monthly_budget",
+  "impressions",
+  "clicks",
+  "leads",
+  "bookings",
+  "conversions",
+  "ctr",
+  "cpm",
+  "cpc",
+  "cpl",
+  "frequency",
+]);
 const MAX_DAYS = 10000;
 const MAX_TABLE_ROWS = 100;
 const MAX_ANALYSIS_ROWS = 18;
@@ -181,6 +209,7 @@ type PromptIntent = {
   grain?: AnalysisGrain;
   dimensions?: AnalysisDimension[];
   metrics?: AnalysisMetric[];
+  filters?: AnalysisFilter[];
   sort?: AnalysisSpec["sort"];
   limit?: number;
   tableOnly?: boolean;
@@ -522,6 +551,8 @@ async function createSpecWithAI(prompt: string, model: string) {
             "For ad spend or spend-only requests, include spend first; if no other metric is requested, use only spend.",
             "For monthly budget or budget requests, use the monthly_budget metric. Do not substitute CTR, CPC, CPL, impressions, clicks, or leads for budget.",
             "If the user asks to add budget to a spend table, use metrics ['spend','monthly_budget'] unless they explicitly request more metrics.",
+            "For messages, messaging, Messenger conversations, replies, or number of messages from ads, use the messaging_contacts metric. Use new_messaging_contacts only when the user explicitly asks for new messages, first replies, or new messaging contacts.",
+            "For campaign result metrics, use primary_results or secondary_results only when the user asks for primary or secondary results.",
             "For count/how many/number of campaigns, ad sets, ads, or creatives, use campaign_count, ad_set_count, ad_count, or creative_count. Do not list entity IDs unless the user asks to list or group by each entity.",
             "If the user asks to group by specific fields, replace dimensions with those fields instead of preserving unrelated existing dimensions.",
             "Use search filters only for free-text ad concepts, product names, or campaign/ad text explicitly named by the user.",
@@ -588,6 +619,8 @@ async function editSpecWithAI(input: {
             "For ad spend or spend-only requests, include spend first; if no other metric is requested, use only spend.",
             "For monthly budget or budget requests, use the monthly_budget metric. Do not substitute CTR, CPC, CPL, impressions, clicks, or leads for budget.",
             "If the user asks to add budget to a spend table, use metrics ['spend','monthly_budget'] unless they explicitly request more metrics.",
+            "For messages, messaging, Messenger conversations, replies, or number of messages from ads, use the messaging_contacts metric. Use new_messaging_contacts only when the user explicitly asks for new messages, first replies, or new messaging contacts.",
+            "For campaign result metrics, use primary_results or secondary_results only when the user asks for primary or secondary results.",
             "For count/how many/number of campaigns, ad sets, ads, or creatives, use campaign_count, ad_set_count, ad_count, or creative_count. Do not list entity IDs unless the user asks to list or group by each entity.",
             "If the user asks to group by specific fields, replace dimensions with those fields instead of preserving unrelated existing dimensions.",
             "If the user says just count, only count, or no need to list IDs, remove the entity dimension and use the matching count metric.",
@@ -659,8 +692,9 @@ async function generateDeepAnalysis(
 async function aggregateSpec(spec: AnalysisSpec) {
   const range = resolveDateRange(spec.dateRange);
   const countMetrics = spec.metrics.filter(isCountMetric);
+  const needsClientSideSort = spec.sort?.field ? !RPC_SORT_FIELDS.has(spec.sort.field) : false;
   const aggregateLimit =
-    spec.tableLayout?.type === "pivot" || (spec.sort?.field && isCountMetric(spec.sort.field))
+    spec.tableLayout?.type === "pivot" || needsClientSideSort
       ? 10000
       : spec.limit;
 
@@ -815,6 +849,10 @@ function normalizeSpec(value: unknown, prompt: string): AnalysisSpec {
     tableLayout: normalizedTableLayout,
     widgets,
   };
+}
+
+export function normalizeAnalysisSpecForPrompt(value: unknown, prompt: string): AnalysisSpec {
+  return normalizeSpec(value, prompt);
 }
 
 function normalizeTableLayout(
@@ -1052,6 +1090,11 @@ function aggregateMetrics(row: MetaInsightAggregateRow | undefined): Record<Anal
       leads: 0,
       bookings: 0,
       conversions: 0,
+      website_bookings: 0,
+      messaging_contacts: 0,
+      new_messaging_contacts: 0,
+      primary_results: 0,
+      secondary_results: 0,
       ctr: 0,
       cpm: 0,
       cpc: 0,
@@ -1073,6 +1116,11 @@ function aggregateMetrics(row: MetaInsightAggregateRow | undefined): Record<Anal
     leads: row.leads,
     bookings: row.bookings,
     conversions: row.conversions,
+    website_bookings: row.website_bookings,
+    messaging_contacts: row.messaging_contacts,
+    new_messaging_contacts: row.new_messaging_contacts,
+    primary_results: row.primary_results,
+    secondary_results: row.secondary_results,
     ctr: row.ctr,
     cpm: row.cpm,
     cpc: row.cpc,
@@ -1358,6 +1406,7 @@ function inferPromptIntent(prompt: string): PromptIntent {
   const dimensions = inferDimensionsFromPrompt(latestLower, metrics) || inferDimensionsFromPrompt(lower, metrics);
   const dateRange = inferDateRangeFromPrompt(prompt);
   const grain = inferGrainFromPrompt(latestPrompt) || inferGrainFromPrompt(prompt);
+  const searchTerm = inferSearchTerm(prompt);
   const tableOnly =
     /\btable\b|\btable format\b|\btabular\b/i.test(promptForMode) &&
     !/\bchart\b|\bgraph\b|\bline\b|\bbar\b/i.test(promptForMode);
@@ -1385,6 +1434,7 @@ function inferPromptIntent(prompt: string): PromptIntent {
     grain,
     dimensions,
     metrics,
+    filters: searchTerm ? [{ field: "search", operator: "contains", value: searchTerm }] : undefined,
     sort: firstDimension
       ? {
           field: firstDimension,
@@ -1414,21 +1464,39 @@ function inferPromptIntent(prompt: string): PromptIntent {
 }
 
 function applyPromptIntent(spec: AnalysisSpec, intent: PromptIntent): AnalysisSpec {
+  const filteredSpecFilters = intent.stripCashForGoldFilter
+    ? spec.filters.filter((filter) => !filter.value.toLowerCase().includes("cash for gold"))
+    : spec.filters;
+
   return {
     ...spec,
     title: intent.title || spec.title,
     dateRange: intent.dateRange || spec.dateRange,
     grain: intent.grain || spec.grain,
     dimensions: intent.dimensions || spec.dimensions,
-    filters: intent.stripCashForGoldFilter
-      ? spec.filters.filter((filter) => !filter.value.toLowerCase().includes("cash for gold"))
-      : spec.filters,
+    filters: mergeFilters(filteredSpecFilters, intent.filters || []),
     metrics: intent.metrics || spec.metrics,
     sort: intent.sort || spec.sort,
     limit: intent.limit || spec.limit,
     tableLayout: intent.tableLayout || spec.tableLayout,
     widgets: intent.widgets || spec.widgets,
   };
+}
+
+function mergeFilters(baseFilters: AnalysisFilter[], intendedFilters: AnalysisFilter[]) {
+  const merged = [...baseFilters];
+  intendedFilters.forEach((filter) => {
+    const value = filter.value.trim();
+    if (!value) return;
+    const exists = merged.some(
+      (candidate) =>
+        candidate.field === filter.field &&
+        candidate.operator === filter.operator &&
+        candidate.value.trim().toLowerCase() === value.toLowerCase(),
+    );
+    if (!exists) merged.push({ ...filter, value });
+  });
+  return merged;
 }
 
 function inferDimensionsFromPrompt(
@@ -1486,6 +1554,23 @@ function inferMetricsFromPrompt(lower: string): AnalysisMetric[] | undefined {
   if (/\bleads?\b/.test(lower)) add("leads");
   if (/\bbookings?\b|\bappointments?\b/.test(lower)) add("bookings");
   if (/\bconversions?\b/.test(lower)) add("conversions");
+  if (/\bwebsite\s+(bookings?|appointments?|conversions?)\b/.test(lower)) add("website_bookings");
+  if (/\bprimary\s+results?\b/.test(lower)) add("primary_results");
+  if (/\bsecondary\s+results?\b/.test(lower)) add("secondary_results");
+  if (
+    /\bnew\b[^.?!\n]{0,40}\b(messages?|messaging contacts?|messenger conversations?|conversations?|replies?)\b/.test(
+      lower,
+    ) ||
+    /\bfirst\s+replies?\b/.test(lower)
+  ) {
+    add("new_messaging_contacts");
+  } else if (
+    /\b(messages?|messaging contacts?|messenger conversations?|messenger|conversations?|replies?)\b/.test(
+      lower,
+    )
+  ) {
+    add("messaging_contacts");
+  }
   if (/\bctr\b/.test(lower)) add("ctr");
   if (/\bcpm\b/.test(lower)) add("cpm");
   if (/\bcpc\b/.test(lower)) add("cpc");
@@ -1636,6 +1721,12 @@ const metricPromptPatterns: Partial<Record<AnalysisMetric, RegExp>> = {
   leads: /\bleads?\b/,
   bookings: /\bbookings?\b|\bappointments?\b/,
   conversions: /\bconversions?\b/,
+  website_bookings: /\bwebsite\s+(bookings?|appointments?|conversions?)\b/,
+  messaging_contacts: /\b(messages?|messaging contacts?|messenger conversations?|messenger|conversations?|replies?)\b/,
+  new_messaging_contacts:
+    /\bnew\b[^.?!\n]{0,40}\b(messages?|messaging contacts?|messenger conversations?|conversations?|replies?)\b|\bfirst\s+replies?\b/,
+  primary_results: /\bprimary\s+results?\b/,
+  secondary_results: /\bsecondary\s+results?\b/,
   ctr: /\bctr\b/,
   cpm: /\bcpm\b/,
   cpc: /\bcpc\b/,
@@ -1698,7 +1789,78 @@ function inferDateRangeFromPrompt(prompt: string): AnalysisSpec["dateRange"] | u
     return { preset: "custom", start: `${new Date().getFullYear()}-01-01` };
   }
 
-  return undefined;
+  return inferRelativeDateRange(lower);
+}
+
+function inferRelativeDateRange(lower: string): AnalysisSpec["dateRange"] | undefined {
+  const explicit = lower.match(
+    /\b(?:last|past|previous|prior|recent|trailing)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|ninety)\s+(days?|weeks?|months?)\b/,
+  );
+  if (explicit) {
+    const count = numberWordValue(explicit[1]);
+    if (!count) return undefined;
+    return rollingDateRange(count, explicit[2]);
+  }
+
+  const implicit = lower.match(/\b(?:last|past|previous|prior|recent|trailing)\s+(day|week|month|quarter)\b/);
+  if (!implicit) return undefined;
+
+  const daysByUnit: Record<string, number> = {
+    day: 1,
+    week: 7,
+    month: 30,
+    quarter: 90,
+  };
+  return rollingDateRange(daysByUnit[implicit[1]], "days");
+}
+
+function rollingDateRange(count: number, unit: string): AnalysisSpec["dateRange"] {
+  const normalizedUnit = unit.toLowerCase();
+  const days =
+    normalizedUnit.startsWith("week") ? count * 7 : normalizedUnit.startsWith("month") ? count * 30 : count;
+  const boundedDays = Math.min(Math.max(days, 1), MAX_DAYS);
+  const presetByDays: Partial<Record<number, (typeof DATE_PRESETS)[number]>> = {
+    7: "last_7_days",
+    14: "last_14_days",
+    28: "last_4_weeks",
+    30: "last_30_days",
+    56: "last_8_weeks",
+    84: "last_12_weeks",
+    90: "last_90_days",
+  };
+  const preset = presetByDays[boundedDays];
+  return preset ? { preset } : { days: boundedDays };
+}
+
+function numberWordValue(value: string) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) return numeric;
+
+  const numbers: Record<string, number> = {
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+    nine: 9,
+    ten: 10,
+    eleven: 11,
+    twelve: 12,
+    thirteen: 13,
+    fourteen: 14,
+    fifteen: 15,
+    sixteen: 16,
+    seventeen: 17,
+    eighteen: 18,
+    nineteen: 19,
+    twenty: 20,
+    thirty: 30,
+    ninety: 90,
+  };
+  return numbers[value] || 0;
 }
 
 function extractDates(prompt: string) {
@@ -1832,10 +1994,15 @@ function labelFor(value: string) {
     frequency: "Frequency",
     impressions: "Impressions",
     leads: "Leads",
+    messaging_contacts: "Messages",
     month: "Month",
     monthly_budget: "Monthly Budget",
+    new_messaging_contacts: "New Messages",
+    primary_results: "Primary Results",
     reach: "Reach",
+    secondary_results: "Secondary Results",
     spend: "Spend",
+    website_bookings: "Website Bookings",
     week: "Week",
   };
   return labels[value] || value;

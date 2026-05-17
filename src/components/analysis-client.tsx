@@ -728,9 +728,14 @@ function labelFor(value: string) {
     frequency: "Frequency",
     impressions: "Impressions",
     leads: "Leads",
+    messaging_contacts: "Messages",
     monthly_budget: "Monthly Budget",
+    new_messaging_contacts: "New Messages",
+    primary_results: "Primary Results",
     reach: "Reach",
+    secondary_results: "Secondary Results",
     spend: "Spend",
+    website_bookings: "Website Bookings",
   };
   return labels[value] || value;
 }

@@ -1,7 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-import { ConfigurationError } from "./env";
-import type { Database } from "./database.types";
+import { ConfigurationError } from "./env.ts";
+import type { Database } from "./database.types.ts";
 
 let browserClient: SupabaseClient<Database> | null = null;
 

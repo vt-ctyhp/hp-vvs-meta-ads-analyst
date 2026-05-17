@@ -1,4 +1,4 @@
-import { createServiceClient } from "./supabase";
+import { createServiceClient } from "./supabase.ts";
 
 export type MetaInsightDimension =
   | "date"
