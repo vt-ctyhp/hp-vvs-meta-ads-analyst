@@ -239,6 +239,7 @@ type PromptIntent = {
   grain?: AnalysisGrain;
   dimensions?: AnalysisDimension[];
   metrics?: AnalysisMetric[];
+  requiredMetrics?: AnalysisMetric[];
   filters?: AnalysisFilter[];
   sort?: AnalysisSpec["sort"];
   limit?: number;
@@ -1104,7 +1105,12 @@ function normalizeSpec(value: unknown, prompt: string): AnalysisSpec {
   const parsed = analysisSpecSchema.safeParse(value);
   const intent = inferPromptIntent(prompt);
   const base = applyPromptIntent(parsed.success ? parsed.data : fallbackSpec(prompt), intent);
-  const metrics = uniqueAllowed(base.metrics, ANALYSIS_METRICS, DEFAULT_METRICS);
+  const requiredMetrics = uniqueAllowed(intent.requiredMetrics || [], ANALYSIS_METRICS, []);
+  const metrics = includeRequiredMetrics(
+    uniqueAllowed(base.metrics, ANALYSIS_METRICS, DEFAULT_METRICS),
+    requiredMetrics,
+    8,
+  );
   const tableLayout = normalizeTableLayout(base.tableLayout, base.dimensions, metrics);
   const dimensions = normalizeDimensions(
     tableLayout?.type === "pivot" && tableLayout.rowDimension && tableLayout.columnDimension
@@ -1126,7 +1132,7 @@ function normalizeSpec(value: unknown, prompt: string): AnalysisSpec {
             metrics: [normalizedTableLayout.metric || metrics[0]],
           },
         ]
-      : normalizeWidgets(base.widgets, dimensions, metrics);
+      : normalizeWidgets(base.widgets, dimensions, metrics, requiredMetrics);
 
   return {
     title: base.title,
@@ -1301,6 +1307,7 @@ function normalizeWidgets(
   widgets: AnalysisSpec["widgets"],
   dimensions: AnalysisDimension[],
   metrics: AnalysisMetric[],
+  requiredMetrics: AnalysisMetric[] = [],
 ) {
   const normalized = widgets
     .filter((widget) => WIDGET_TYPES.includes(widget.type))
@@ -1310,7 +1317,11 @@ function normalizeWidgets(
       ...(widget.type === "metric"
         ? {}
         : { x: widget.x && dimensions.includes(widget.x) ? widget.x : dimensions[0] }),
-      metrics: uniqueAllowed(widget.metrics, metrics, metrics).slice(0, 4),
+      metrics: includeRequiredMetrics(
+        uniqueAllowed(widget.metrics, metrics, metrics),
+        requiredMetrics,
+        widget.type === "table" ? 6 : 4,
+      ),
     }));
 
   if (normalized.length) return normalized;
@@ -1915,7 +1926,12 @@ function inferPromptIntent(prompt: string): PromptIntent {
   const promptForMode = hasFollowUp ? latestPrompt : prompt;
   const promptForModeLower = promptForMode.toLowerCase();
   const latestMetrics = inferMetricsFromPrompt(latestLower);
-  const metrics = latestMetrics || inferMetricsFromPrompt(lower);
+  const allMentionedMetrics = inferMetricsFromPrompt(lower);
+  const additiveFollowUp = hasFollowUp && latestMetrics && shouldAddFollowUpMetrics(latestLower);
+  const metrics = additiveFollowUp
+    ? mergeMetricLists(allMentionedMetrics || [], latestMetrics)
+    : latestMetrics || allMentionedMetrics;
+  const requiredMetrics = metrics;
   const dimensions = inferDimensionsFromPrompt(latestLower, metrics) || inferDimensionsFromPrompt(lower, metrics);
   const dateRange = inferDateRangeFromPrompt(prompt);
   const grain = inferGrainFromPrompt(latestPrompt) || inferGrainFromPrompt(prompt);
@@ -1963,6 +1979,7 @@ function inferPromptIntent(prompt: string): PromptIntent {
     grain: summaryOnly ? "summary" : grain,
     dimensions: intendedDimensions,
     metrics: intendedMetrics,
+    requiredMetrics,
     filters: filters.length ? filters : undefined,
     sort: summaryOnly ? undefined : inferSortFromPrompt(promptForModeLower, firstDimension, intendedMetrics),
     limit: inferLimitFromPrompt(promptForModeLower, intendedDimensions),
@@ -2005,6 +2022,38 @@ function applyPromptIntent(spec: AnalysisSpec, intent: PromptIntent): AnalysisSp
     tableLayout: intent.tableLayout || spec.tableLayout,
     widgets: intent.widgets || spec.widgets,
   };
+}
+
+function shouldAddFollowUpMetrics(lower: string) {
+  return /^\s*and\b|\b(add|include|bring in|add in|also|with|plus|alongside|keep|preserve|too)\b|\bas well\b/.test(
+    lower,
+  );
+}
+
+function mergeMetricLists(base: AnalysisMetric[], additions: AnalysisMetric[]) {
+  return includeRequiredMetrics(base, additions, 8);
+}
+
+function includeRequiredMetrics(
+  metrics: AnalysisMetric[],
+  requiredMetrics: AnalysisMetric[],
+  maxMetrics: number,
+) {
+  const allowedRequired = uniqueAllowed(requiredMetrics, ANALYSIS_METRICS, []).filter((metric) =>
+    metrics.includes(metric) || ANALYSIS_METRICS.includes(metric),
+  );
+  const merged = [...metrics];
+  allowedRequired.forEach((metric) => {
+    if (!merged.includes(metric)) merged.push(metric);
+  });
+
+  if (merged.length <= maxMetrics) return merged;
+
+  const requiredSet = new Set(allowedRequired);
+  const required = merged.filter((metric) => requiredSet.has(metric));
+  const optional = merged.filter((metric) => !requiredSet.has(metric));
+  const optionalSlots = Math.max(maxMetrics - required.length, 0);
+  return [...optional.slice(0, optionalSlots), ...required].slice(0, maxMetrics);
 }
 
 function mergeFilters(baseFilters: AnalysisFilter[], intendedFilters: AnalysisFilter[]) {
@@ -2142,12 +2191,14 @@ function inferMetricsFromPrompt(lower: string): AnalysisMetric[] | undefined {
   if (/\bbookings?\b|\bappointments?\b/.test(metricText)) add("bookings");
   if (/\bconversions?\b/.test(metricText)) add("conversions");
   if (/\bwebsite\s+(bookings?|appointments?|conversions?)\b/.test(metricText)) add("website_bookings");
-  if (/\bsecondary\s+(results?|kpis?)\b/.test(metricText)) add("secondary_results");
+  if (/\bsecondary\s+(results?|kpi'?s?|key\s+performance\s+indicators?)\b/.test(metricText)) add("secondary_results");
   if (
     /\bprimary\s+results?\b/.test(metricText) ||
-    /\bprimary\s+kpis?\b/.test(metricText) ||
+    /\bprimary\s+(?:kpi'?s?|key\s+performance\s+indicators?)\b/.test(metricText) ||
+    /\bmain\s+(?:kpi'?s?|key\s+performance\s+indicators?)\b/.test(metricText) ||
     (/\bresults?\b/.test(metricText) && !/\bsecondary\s+results?\b/.test(metricText)) ||
-    (/\bkpis?\b/.test(metricText) && !/\bsecondary\s+kpis?\b/.test(metricText))
+    (/\bkpi'?s?\b|\bkey\s+performance\s+indicators?\b/.test(metricText) &&
+      !/\bsecondary\s+(?:kpi'?s?|key\s+performance\s+indicators?)\b/.test(metricText))
   ) {
     add("primary_results");
   }
@@ -2319,8 +2370,9 @@ const metricPromptPatterns: Partial<Record<AnalysisMetric, RegExp>> = {
   messaging_contacts: /\b(messages?|messaging contacts?|messenger conversations?|messenger|conversations?|replies?)\b/,
   new_messaging_contacts:
     /\bnew\b[^.?!\n]{0,40}\b(messages?|messaging contacts?|messenger conversations?|conversations?|replies?)\b|\bfirst\s+replies?\b/,
-  primary_results: /\b(?:primary\s+)?results?\b|\b(?:primary\s+)?kpis?\b/,
-  secondary_results: /\bsecondary\s+(results?|kpis?)\b/,
+  primary_results:
+    /\b(?:primary\s+)?results?\b|\b(?:primary\s+)?kpi'?s?\b|\b(?:primary\s+)?key\s+performance\s+indicators?\b|\bmain\s+(kpi'?s?|key\s+performance\s+indicators?)\b/,
+  secondary_results: /\bsecondary\s+(results?|kpi'?s?|key\s+performance\s+indicators?)\b/,
   ctr: /\bctr\b/,
   cpm: /\bcpm\b/,
   cpc: /\bcpc\b/,

@@ -141,6 +141,90 @@ describe("ad-hoc analytics prompt normalization", () => {
     });
   });
 
+  it("repairs generated widgets that omit a requested primary KPI", () => {
+    const spec = normalizeAnalysisSpecForPrompt(
+      {
+        title: "Ad-hoc analysis",
+        dateRange: { preset: "last_4_weeks" },
+        grain: "summary",
+        dimensions: ["campaign_umbrella"],
+        filters: [],
+        metrics: ["spend"],
+        sort: { field: "spend", direction: "desc" },
+        limit: 50,
+        widgets: [
+          { type: "metric", title: "Spend", metrics: ["spend"] },
+          { type: "table", title: "Comparison table", x: "campaign_umbrella", metrics: ["spend"] },
+          { type: "bar", title: "Comparison", x: "campaign_umbrella", metrics: ["spend"] },
+        ],
+      },
+      "ad spend and primary KPI by campaign umbrella for the last 4 weeks.",
+    );
+
+    assert.deepEqual(spec.metrics, ["spend", "primary_results"]);
+    assert.deepEqual(
+      spec.widgets.map((widget) => widget.metrics),
+      [
+        ["spend", "primary_results"],
+        ["spend", "primary_results"],
+        ["spend", "primary_results"],
+      ],
+    );
+  });
+
+  it("adds primary KPI in follow-up edits without dropping existing spend", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {
+        title: "Spend by campaign umbrella",
+        dateRange: { preset: "last_4_weeks" },
+        grain: "summary",
+        dimensions: ["campaign_umbrella"],
+        filters: [],
+        metrics: ["spend"],
+        sort: { field: "spend", direction: "desc" },
+        limit: 50,
+        widgets: [{ type: "table", title: "Comparison table", x: "campaign_umbrella", metrics: ["spend"] }],
+      },
+      "ad spend by campaign umbrella for the last 4 weeks.\n\nFollow-up: add primary KPI to the table.",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.metrics, ["spend", "primary_results"]);
+    assert.deepEqual(plan.spec.widgets[0]?.metrics, ["spend", "primary_results"]);
+  });
+
+  it("treats short additive KPI follow-ups as adding to existing metrics", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {
+        title: "Spend by campaign umbrella",
+        dateRange: { preset: "last_4_weeks" },
+        grain: "summary",
+        dimensions: ["campaign_umbrella"],
+        filters: [],
+        metrics: ["spend"],
+        sort: { field: "spend", direction: "desc" },
+        limit: 50,
+        widgets: [{ type: "bar", title: "Comparison", x: "campaign_umbrella", metrics: ["spend"] }],
+      },
+      "ad spend by campaign umbrella for the last 4 weeks.\n\nFollow-up: And primary KPI too.",
+    );
+
+    assert.deepEqual(plan.spec.metrics, ["spend", "primary_results"]);
+    assert.deepEqual(plan.spec.widgets[0]?.metrics, ["spend", "primary_results"]);
+  });
+
+  it("maps key performance indicator wording to primary results", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "bar chart of spend and primary key performance indicator by campaign umbrella last 30 days",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.metrics, ["spend", "primary_results"]);
+    assert.equal(plan.spec.widgets[0]?.type, "bar");
+    assert.deepEqual(plan.spec.widgets[0]?.metrics, ["spend", "primary_results"]);
+  });
+
   it("marks website visitor requests unsupported instead of falling back to Meta defaults", () => {
     const plan = buildAnalysisPlanForPrompt({}, "website visitors by landing page");
 
