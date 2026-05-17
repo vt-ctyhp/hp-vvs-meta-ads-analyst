@@ -716,7 +716,7 @@ async function createSpecWithAI(prompt: string, model: string) {
             "For monthly budget or budget requests, use the monthly_budget metric. Do not substitute CTR, CPC, CPL, impressions, clicks, or leads for budget.",
             "If the user asks to add budget to a spend table, use metrics ['spend','monthly_budget'] unless they explicitly request more metrics.",
             "For messages, messaging, Messenger conversations, replies, or number of messages from ads, use the messaging_contacts metric. Use new_messaging_contacts only when the user explicitly asks for new messages, first replies, or new messaging contacts.",
-            "For campaign result metrics, use primary_results or secondary_results only when the user asks for primary or secondary results.",
+            "For campaign result metrics, use primary_results for results, number of results, or primary results. Use secondary_results only when the user explicitly asks for secondary results.",
             "For count/how many/number of campaigns, ad sets, ads, or creatives, use campaign_count, ad_set_count, ad_count, or creative_count. Do not list entity IDs unless the user asks to list or group by each entity.",
             "If the user asks to group by specific fields, replace dimensions with those fields instead of preserving unrelated existing dimensions.",
             "Use search filters only for free-text ad concepts, product names, or campaign/ad text explicitly named by the user.",
@@ -786,7 +786,7 @@ async function editSpecWithAI(input: {
             "For monthly budget or budget requests, use the monthly_budget metric. Do not substitute CTR, CPC, CPL, impressions, clicks, or leads for budget.",
             "If the user asks to add budget to a spend table, use metrics ['spend','monthly_budget'] unless they explicitly request more metrics.",
             "For messages, messaging, Messenger conversations, replies, or number of messages from ads, use the messaging_contacts metric. Use new_messaging_contacts only when the user explicitly asks for new messages, first replies, or new messaging contacts.",
-            "For campaign result metrics, use primary_results or secondary_results only when the user asks for primary or secondary results.",
+            "For campaign result metrics, use primary_results for results, number of results, or primary results. Use secondary_results only when the user explicitly asks for secondary results.",
             "For count/how many/number of campaigns, ad sets, ads, or creatives, use campaign_count, ad_set_count, ad_count, or creative_count. Do not list entity IDs unless the user asks to list or group by each entity.",
             "If the user asks to group by specific fields, replace dimensions with those fields instead of preserving unrelated existing dimensions.",
             "If the user says just count, only count, or no need to list IDs, remove the entity dimension and use the matching count metric.",
@@ -2109,8 +2109,13 @@ function inferMetricsFromPrompt(lower: string): AnalysisMetric[] | undefined {
   if (/\bbookings?\b|\bappointments?\b/.test(lower)) add("bookings");
   if (/\bconversions?\b/.test(lower)) add("conversions");
   if (/\bwebsite\s+(bookings?|appointments?|conversions?)\b/.test(lower)) add("website_bookings");
-  if (/\bprimary\s+results?\b/.test(lower)) add("primary_results");
   if (/\bsecondary\s+results?\b/.test(lower)) add("secondary_results");
+  if (
+    /\bprimary\s+results?\b/.test(lower) ||
+    (/\bresults?\b/.test(lower) && !/\bsecondary\s+results?\b/.test(lower))
+  ) {
+    add("primary_results");
+  }
   if (
     /\bnew\b[^.?!\n]{0,40}\b(messages?|messaging contacts?|messenger conversations?|conversations?|replies?)\b/.test(
       lower,
@@ -2279,7 +2284,7 @@ const metricPromptPatterns: Partial<Record<AnalysisMetric, RegExp>> = {
   messaging_contacts: /\b(messages?|messaging contacts?|messenger conversations?|messenger|conversations?|replies?)\b/,
   new_messaging_contacts:
     /\bnew\b[^.?!\n]{0,40}\b(messages?|messaging contacts?|messenger conversations?|conversations?|replies?)\b|\bfirst\s+replies?\b/,
-  primary_results: /\bprimary\s+results?\b/,
+  primary_results: /\b(?:primary\s+)?results?\b/,
   secondary_results: /\bsecondary\s+results?\b/,
   ctr: /\bctr\b/,
   cpm: /\bcpm\b/,

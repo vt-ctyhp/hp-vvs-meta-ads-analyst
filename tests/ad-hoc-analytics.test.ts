@@ -100,6 +100,24 @@ describe("ad-hoc analytics prompt normalization", () => {
     ]);
   });
 
+  it("normalizes unqualified results to primary results for weekly umbrella tables", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Give me spend by campaign umbrella for the past four weeks, by week, and add in the number of results for each week as well. Also broken out by campaign umbrella.",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.dateRange, { preset: "last_4_weeks" });
+    assert.deepEqual(plan.spec.dimensions, ["week", "campaign_umbrella"]);
+    assert.deepEqual(plan.spec.metrics, ["spend", "primary_results"]);
+    assert.deepEqual(plan.spec.widgets[1], {
+      type: "table",
+      title: "Comparison table",
+      x: "week",
+      metrics: ["spend", "primary_results"],
+    });
+  });
+
   it("marks website visitor requests unsupported instead of falling back to Meta defaults", () => {
     const plan = buildAnalysisPlanForPrompt({}, "website visitors by landing page");
 
