@@ -118,6 +118,29 @@ describe("ad-hoc analytics prompt normalization", () => {
     });
   });
 
+  it("normalizes primary KPI requests to primary results", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "ad spend and primary kpi by campaign umbrella for the last 4 weeks.",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.dateRange, { preset: "last_4_weeks" });
+    assert.deepEqual(plan.spec.dimensions, ["campaign_umbrella"]);
+    assert.deepEqual(plan.spec.metrics, ["spend", "primary_results"]);
+    assert.deepEqual(plan.spec.widgets[0], {
+      type: "metric",
+      title: "Totals",
+      metrics: ["spend", "primary_results"],
+    });
+    assert.deepEqual(plan.spec.widgets[1], {
+      type: "table",
+      title: "Comparison table",
+      x: "campaign_umbrella",
+      metrics: ["spend", "primary_results"],
+    });
+  });
+
   it("marks website visitor requests unsupported instead of falling back to Meta defaults", () => {
     const plan = buildAnalysisPlanForPrompt({}, "website visitors by landing page");
 

@@ -716,7 +716,7 @@ async function createSpecWithAI(prompt: string, model: string) {
             "For monthly budget or budget requests, use the monthly_budget metric. Do not substitute CTR, CPC, CPL, impressions, clicks, or leads for budget.",
             "If the user asks to add budget to a spend table, use metrics ['spend','monthly_budget'] unless they explicitly request more metrics.",
             "For messages, messaging, Messenger conversations, replies, or number of messages from ads, use the messaging_contacts metric. Use new_messaging_contacts only when the user explicitly asks for new messages, first replies, or new messaging contacts.",
-            "For campaign result metrics, use primary_results for results, number of results, or primary results. Use secondary_results only when the user explicitly asks for secondary results.",
+            "For campaign result metrics, use primary_results for results, number of results, primary results, primary KPI, or KPI. Use secondary_results only when the user explicitly asks for secondary results or secondary KPI.",
             "For count/how many/number of campaigns, ad sets, ads, or creatives, use campaign_count, ad_set_count, ad_count, or creative_count. Do not list entity IDs unless the user asks to list or group by each entity.",
             "If the user asks to group by specific fields, replace dimensions with those fields instead of preserving unrelated existing dimensions.",
             "Use search filters only for free-text ad concepts, product names, or campaign/ad text explicitly named by the user.",
@@ -786,7 +786,7 @@ async function editSpecWithAI(input: {
             "For monthly budget or budget requests, use the monthly_budget metric. Do not substitute CTR, CPC, CPL, impressions, clicks, or leads for budget.",
             "If the user asks to add budget to a spend table, use metrics ['spend','monthly_budget'] unless they explicitly request more metrics.",
             "For messages, messaging, Messenger conversations, replies, or number of messages from ads, use the messaging_contacts metric. Use new_messaging_contacts only when the user explicitly asks for new messages, first replies, or new messaging contacts.",
-            "For campaign result metrics, use primary_results for results, number of results, or primary results. Use secondary_results only when the user explicitly asks for secondary results.",
+            "For campaign result metrics, use primary_results for results, number of results, primary results, primary KPI, or KPI. Use secondary_results only when the user explicitly asks for secondary results or secondary KPI.",
             "For count/how many/number of campaigns, ad sets, ads, or creatives, use campaign_count, ad_set_count, ad_count, or creative_count. Do not list entity IDs unless the user asks to list or group by each entity.",
             "If the user asks to group by specific fields, replace dimensions with those fields instead of preserving unrelated existing dimensions.",
             "If the user says just count, only count, or no need to list IDs, remove the entity dimension and use the matching count metric.",
@@ -2142,10 +2142,12 @@ function inferMetricsFromPrompt(lower: string): AnalysisMetric[] | undefined {
   if (/\bbookings?\b|\bappointments?\b/.test(metricText)) add("bookings");
   if (/\bconversions?\b/.test(metricText)) add("conversions");
   if (/\bwebsite\s+(bookings?|appointments?|conversions?)\b/.test(metricText)) add("website_bookings");
-  if (/\bsecondary\s+results?\b/.test(metricText)) add("secondary_results");
+  if (/\bsecondary\s+(results?|kpis?)\b/.test(metricText)) add("secondary_results");
   if (
     /\bprimary\s+results?\b/.test(metricText) ||
-    (/\bresults?\b/.test(metricText) && !/\bsecondary\s+results?\b/.test(metricText))
+    /\bprimary\s+kpis?\b/.test(metricText) ||
+    (/\bresults?\b/.test(metricText) && !/\bsecondary\s+results?\b/.test(metricText)) ||
+    (/\bkpis?\b/.test(metricText) && !/\bsecondary\s+kpis?\b/.test(metricText))
   ) {
     add("primary_results");
   }
@@ -2317,8 +2319,8 @@ const metricPromptPatterns: Partial<Record<AnalysisMetric, RegExp>> = {
   messaging_contacts: /\b(messages?|messaging contacts?|messenger conversations?|messenger|conversations?|replies?)\b/,
   new_messaging_contacts:
     /\bnew\b[^.?!\n]{0,40}\b(messages?|messaging contacts?|messenger conversations?|conversations?|replies?)\b|\bfirst\s+replies?\b/,
-  primary_results: /\b(?:primary\s+)?results?\b/,
-  secondary_results: /\bsecondary\s+results?\b/,
+  primary_results: /\b(?:primary\s+)?results?\b|\b(?:primary\s+)?kpis?\b/,
+  secondary_results: /\bsecondary\s+(results?|kpis?)\b/,
   ctr: /\bctr\b/,
   cpm: /\bcpm\b/,
   cpc: /\bcpc\b/,
