@@ -18,7 +18,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -720,6 +720,9 @@ function TableWidget({
   title: string;
   table: AnalysisResult["table"];
 }) {
+  const groupedTable = buildGroupedTable(table);
+  const visibleColumns = groupedTable?.childColumns || table.columns;
+
   return (
     <section className="border border-hp-rule bg-hp-card p-6">
       <SectionTitle icon={<Table2 size={18} />} title={title} />
@@ -727,7 +730,7 @@ function TableWidget({
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr className="bg-hp-inset text-left text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-              {table.columns.map((column) => (
+              {visibleColumns.map((column) => (
                 <th
                   key={column.key}
                   className={`border-b border-hp-rule px-3 py-3 ${
@@ -740,25 +743,65 @@ function TableWidget({
             </tr>
           </thead>
           <tbody>
-            {table.rows.map((row, index) => (
-              <tr key={index} className="border-b border-hp-rule last:border-b-0">
-                {table.columns.map((column) => (
-                  <td
-                    key={column.key}
-                    className={`px-3 py-3 ${
-                      column.type === "text"
-                        ? "max-w-[360px] text-hp-ink"
-                        : "text-right tabular-nums"
-                    }`}
-                  >
-                    {formatCell(row[column.key], column)}
-                  </td>
+            {groupedTable
+              ? groupedTable.groups.map((group) => (
+                  <Fragment key={group.key}>
+                    <tr className="border-y border-hp-rule bg-hp-inset">
+                      <td
+                        colSpan={groupedTable.groupHeaderSpan}
+                        className="px-3 py-3 text-hp-ink"
+                      >
+                        <span className="mr-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                          {groupedTable.groupColumn.label}
+                        </span>
+                        <span>{group.label}</span>
+                        <span className="ml-3 text-xs text-hp-muted">
+                          {group.rows.length} {group.rows.length === 1 ? "row" : "rows"}
+                        </span>
+                      </td>
+                      {groupedTable.subtotalColumn ? (
+                        <td className="px-3 py-3 text-right tabular-nums text-hp-ink">
+                          {formatCell(group.subtotal, groupedTable.subtotalColumn)}
+                        </td>
+                      ) : null}
+                    </tr>
+                    {group.rows.map((row, index) => (
+                      <tr key={`${group.key}-${index}`} className="border-b border-hp-rule last:border-b-0">
+                        {visibleColumns.map((column) => (
+                          <td
+                            key={column.key}
+                            className={`px-3 py-3 ${
+                              column.type === "text"
+                                ? "max-w-[420px] pl-6 text-hp-ink"
+                                : "text-right tabular-nums"
+                            }`}
+                          >
+                            {formatCell(row[column.key], column)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </Fragment>
+                ))
+              : table.rows.map((row, index) => (
+                  <tr key={index} className="border-b border-hp-rule last:border-b-0">
+                    {visibleColumns.map((column) => (
+                      <td
+                        key={column.key}
+                        className={`px-3 py-3 ${
+                          column.type === "text"
+                            ? "max-w-[360px] text-hp-ink"
+                            : "text-right tabular-nums"
+                        }`}
+                      >
+                        {formatCell(row[column.key], column)}
+                      </td>
+                    ))}
+                  </tr>
                 ))}
-              </tr>
-            ))}
             {!table.rows.length ? (
               <tr>
-                <td colSpan={table.columns.length || 1} className="px-3 py-8 text-center text-sm text-hp-muted">
+                <td colSpan={visibleColumns.length || 1} className="px-3 py-8 text-center text-sm text-hp-muted">
                   No matching rows.
                 </td>
               </tr>
@@ -768,6 +811,61 @@ function TableWidget({
       </div>
     </section>
   );
+}
+
+type GroupedTable = {
+  groupColumn: AnalysisTableColumn;
+  childColumns: AnalysisTableColumn[];
+  subtotalColumn: AnalysisTableColumn | null;
+  groupHeaderSpan: number;
+  groups: Array<{
+    key: string;
+    label: string;
+    subtotal: number;
+    rows: AnalysisResult["table"]["rows"];
+  }>;
+};
+
+function buildGroupedTable(table: AnalysisResult["table"]): GroupedTable | null {
+  const groupColumn = table.columns[0];
+  if (!groupColumn || groupColumn.type !== "text" || table.columns.length < 3 || table.rows.length < 3) {
+    return null;
+  }
+
+  const groups: GroupedTable["groups"] = [];
+  for (const row of table.rows) {
+    const label = String(formatCell(row[groupColumn.key], groupColumn));
+    const lastGroup = groups[groups.length - 1];
+    if (lastGroup?.label === label) {
+      lastGroup.rows.push(row);
+    } else {
+      groups.push({
+        key: `${groupColumn.key}-${groups.length}-${label}`,
+        label,
+        subtotal: 0,
+        rows: [row],
+      });
+    }
+  }
+
+  if (groups.length < 2 || !groups.some((group) => group.rows.length > 1)) return null;
+
+  const childColumns = table.columns.slice(1);
+  const subtotalColumn = [...childColumns].reverse().find((column) => column.type !== "text") || null;
+  const groupedWithSubtotals = groups.map((group) => ({
+    ...group,
+    subtotal: subtotalColumn
+      ? group.rows.reduce((sum, row) => sum + Number(row[subtotalColumn.key] || 0), 0)
+      : 0,
+  }));
+
+  return {
+    groupColumn,
+    childColumns,
+    subtotalColumn,
+    groupHeaderSpan: Math.max(1, childColumns.length - (subtotalColumn ? 1 : 0)),
+    groups: groupedWithSubtotals,
+  };
 }
 
 function SectionTitle({ icon, title }: { icon: React.ReactNode; title: string }) {
