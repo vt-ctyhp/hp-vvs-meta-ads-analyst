@@ -1,5 +1,6 @@
 import { CreativeAnalysisClient } from "@/components/creative-analysis-client";
 import { fetchCreativeAnalysisData } from "@/lib/creative-analysis";
+import { requirePagePermission } from "@/lib/server-route-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,6 +14,7 @@ export default async function CreativeAnalysisPage({
   searchParams?: SearchParams;
 }) {
   const params = searchParams ? await searchParams : {};
+  await requirePagePermission("view_creative_analysis", "/creative-analysis");
   const dashboard = await fetchCreativeAnalysisData({
     startDate: firstParam(params.start),
     endDate: firstParam(params.end),

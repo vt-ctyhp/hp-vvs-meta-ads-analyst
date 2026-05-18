@@ -1,4 +1,5 @@
 import { answerExecutiveChat } from "@/lib/ai";
+import { requirePermissionFromRequest } from "@/lib/app-auth";
 import { jsonError } from "@/lib/http";
 
 export const runtime = "nodejs";
@@ -7,6 +8,7 @@ export const maxDuration = 120;
 
 export async function POST(request: Request) {
   try {
+    await requirePermissionFromRequest(request, "view_dashboard");
     const body = (await request.json()) as {
       sessionId?: string | null;
       message?: string;

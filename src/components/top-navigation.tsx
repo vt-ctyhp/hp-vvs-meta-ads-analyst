@@ -8,48 +8,25 @@ import {
   Database,
   Gauge,
   Inbox,
-  LogIn,
   MousePointerClick,
   Users,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { APP_NAV_ROUTES } from "@/lib/app-routes";
 import { type AppPermission } from "@/lib/access-control";
 import { AUTH } from "@/lib/glossary";
 import { createBrowserClient } from "@/lib/supabase";
 
-const NAV_ITEMS = [
-  { href: "/", label: "Dashboard", icon: BarChart3, permission: "view_dashboard" },
-  {
-    href: "/creative-analysis",
-    label: "Creative Analysis",
-    icon: Gauge,
-    permission: "view_creative_analysis",
-  },
-  { href: "/analysis", label: "AI Analysis", icon: Brain, permission: "view_ai_analysis" },
-  {
-    href: "/website-funnel",
-    label: "Website Funnel",
-    icon: MousePointerClick,
-    permission: "view_dashboard",
-  },
-  { href: "/inbox", label: "Inbox", icon: Inbox, permission: "view_inbox" },
-  { href: "/admin/backfill", label: "Backfill", icon: Database, permission: "view_backfill" },
-  { href: "/users", label: "Users", icon: Users, permission: "view_users" },
-] satisfies Array<{
-  href: string;
-  label: string;
-  icon: typeof BarChart3;
-  permission: AppPermission;
-}>;
-
-const DEFAULT_NAV_PERMISSIONS = new Set<AppPermission>([
-  "view_dashboard",
-  "view_creative_analysis",
-  "view_ai_analysis",
-  "view_inbox",
-  "view_backfill",
-]);
+const NAV_ICONS: Record<string, typeof BarChart3> = {
+  "/": BarChart3,
+  "/creative-analysis": Gauge,
+  "/analysis": Brain,
+  "/website-funnel": MousePointerClick,
+  "/inbox": Inbox,
+  "/admin/backfill": Database,
+  "/users": Users,
+};
 
 type AccessProfile = {
   authenticated: boolean;
@@ -61,28 +38,25 @@ type AccessProfile = {
 export function TopNavigation() {
   const pathname = usePathname();
   const [profile, setProfile] = useState<AccessProfile | null>(null);
+  const isPublicAuthPath = pathname === "/login" || pathname === "/no-access";
 
   useEffect(() => {
     let mounted = true;
+
+    if (isPublicAuthPath) {
+      return () => {
+        mounted = false;
+      };
+    }
+
     const supabase = createBrowserClient();
 
     async function loadProfile() {
       const { data } = await supabase.auth.getSession();
       const token = data.session?.access_token;
-      if (!token) {
-        if (mounted) {
-          setProfile({
-            authenticated: false,
-            email: null,
-            fullName: null,
-            permissions: [],
-          });
-        }
-        return;
-      }
 
       const response = await fetch("/api/auth/me", {
-        headers: { authorization: `Bearer ${token}` },
+        headers: token ? { authorization: `Bearer ${token}` } : undefined,
       });
       const payload = await response.json().catch(() => null);
       if (mounted && payload) setProfile(payload);
@@ -97,21 +71,22 @@ export function TopNavigation() {
       mounted = false;
       subscription.data.subscription.unsubscribe();
     };
-  }, []);
+  }, [isPublicAuthPath]);
 
   async function signOut() {
     const supabase = createBrowserClient();
+    await fetch("/api/auth/session", { method: "DELETE" }).catch(() => null);
     await supabase.auth.signOut();
     setProfile({ authenticated: false, email: null, fullName: null, permissions: [] });
     window.location.assign("/login");
   }
 
-  const visibleNavItems = NAV_ITEMS.filter((item) =>
-    item.href === "/admin/backfill"
-      ? true
-      : profile?.authenticated
-      ? profile.permissions.includes(item.permission)
-      : DEFAULT_NAV_PERMISSIONS.has(item.permission),
+  if (isPublicAuthPath || !profile?.authenticated) {
+    return null;
+  }
+
+  const visibleNavItems = APP_NAV_ROUTES.filter((item) =>
+    profile.permissions.includes(item.permission),
   );
 
   return (
@@ -128,7 +103,7 @@ export function TopNavigation() {
 
         <div className="flex flex-wrap items-center gap-2">
           {visibleNavItems.map((item) => {
-            const Icon = item.icon;
+            const Icon = NAV_ICONS[item.href];
             const isActive =
               item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
             return (
@@ -147,26 +122,12 @@ export function TopNavigation() {
               </Link>
             );
           })}
-          {profile?.authenticated ? (
-            <button
-              onClick={signOut}
-              className="flex h-10 items-center px-2 text-sm text-hp-muted underline-offset-4 transition-colors hover:text-hp-ink hover:underline"
-            >
-              {AUTH.signOut}
-            </button>
-          ) : (
-            <Link
-              href={`/login?next=${encodeURIComponent(pathname || "/")}`}
-              className={`flex h-10 items-center gap-2 border px-4 text-[11px] uppercase tracking-[0.14em] transition-colors ${
-                pathname.startsWith("/login")
-                  ? "border-hp-ink bg-hp-ink text-hp-foundation"
-                  : "border-hp-rule text-hp-body hover:border-hp-ink hover:bg-hp-inset"
-              }`}
-            >
-              <LogIn size={15} />
-              {AUTH.signIn}
-            </Link>
-          )}
+          <button
+            onClick={signOut}
+            className="flex h-10 items-center px-2 text-sm text-hp-muted underline-offset-4 transition-colors hover:text-hp-ink hover:underline"
+          >
+            {AUTH.signOut}
+          </button>
         </div>
       </div>
     </nav>

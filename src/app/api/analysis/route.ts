@@ -6,6 +6,7 @@ import {
   renameSavedAnalysisDashboard,
   runSavedAdHocAnalysis,
 } from "@/lib/ad-hoc-analytics";
+import { requirePermissionFromRequest } from "@/lib/app-auth";
 import type { AnalysisMode } from "@/lib/env";
 import { jsonError } from "@/lib/http";
 
@@ -15,6 +16,7 @@ export const maxDuration = 120;
 
 export async function GET(request: Request) {
   try {
+    await requirePermissionFromRequest(request, "view_ai_analysis");
     const url = new URL(request.url);
     const dashboardId = url.searchParams.get("dashboardId");
 
@@ -30,6 +32,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    await requirePermissionFromRequest(request, "view_ai_analysis");
     const body = (await request.json()) as {
       action?: "create" | "edit";
       prompt?: string;
@@ -69,6 +72,7 @@ export async function POST(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
+    await requirePermissionFromRequest(request, "view_ai_analysis");
     const body = (await request.json()) as {
       dashboardId?: string;
       title?: string;
@@ -95,6 +99,7 @@ export async function PATCH(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
+    await requirePermissionFromRequest(request, "view_ai_analysis");
     const url = new URL(request.url);
     const dashboardId = url.searchParams.get("dashboardId");
     if (!dashboardId) {

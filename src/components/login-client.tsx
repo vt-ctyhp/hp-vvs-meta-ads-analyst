@@ -1,32 +1,74 @@
 "use client";
 
 import { Eye, EyeOff, LockKeyhole, LogIn } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { type FormEvent, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import type { Session } from "@supabase/supabase-js";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 
 import { AUTH } from "@/lib/glossary";
 import { createBrowserClient } from "@/lib/supabase";
 
 export function LoginClient() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const nextPath = searchParams.get("next");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
 
+  const establishAppSession = useCallback(
+    async function establishAppSession(session: Session | null) {
+      if (!session?.access_token) return;
+
+      setLoading(true);
+      setStatus("");
+
+      const response = await fetch("/api/auth/session", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          accessToken: session.access_token,
+          expiresAt: session.expires_at,
+          expiresIn: session.expires_in,
+          next: nextPath,
+        }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        destination?: string;
+        error?: string;
+      };
+
+      if (!response.ok || !payload.destination) {
+        await createBrowserClient().auth.signOut();
+        throw new Error(payload.error || "Your account does not have access to this app.");
+      }
+
+      router.replace(payload.destination);
+      router.refresh();
+    },
+    [nextPath, router],
+  );
+
   useEffect(() => {
     let mounted = true;
     const supabase = createBrowserClient();
 
     supabase.auth.getSession().then(({ data }) => {
-      if (mounted && data.session) router.replace("/");
+      if (mounted && data.session) {
+        void establishAppSession(data.session).catch((error) => {
+          if (!mounted) return;
+          setStatus(error instanceof Error ? error.message : String(error));
+          setLoading(false);
+        });
+      }
     });
 
     return () => {
       mounted = false;
     };
-  }, [router]);
+  }, [establishAppSession]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -35,16 +77,20 @@ export function LoginClient() {
 
     try {
       const supabase = createBrowserClient();
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password,
       });
 
       if (error) throw error;
-      router.push("/");
-      router.refresh();
+      await establishAppSession(data.session);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : "";
+      setStatus(
+        message.includes("does not have access")
+          ? message
+          : "Sign in failed. Check your email and password, then try again.",
+      );
     } finally {
       setLoading(false);
     }
@@ -65,7 +111,7 @@ export function LoginClient() {
         <form onSubmit={submit} className="border border-hp-rule bg-hp-card p-6">
           <div className="mb-6 flex items-center gap-2 text-hp-ink">
             <LockKeyhole size={18} />
-            <span className="text-[11px] uppercase tracking-[0.14em]">Login</span>
+            <span className="text-[11px] uppercase tracking-[0.14em]">{AUTH.signIn}</span>
           </div>
 
           <label className="mb-5 block">

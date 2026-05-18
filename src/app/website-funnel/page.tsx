@@ -1,4 +1,5 @@
 import { WebsiteFunnelClient } from "@/components/website-funnel-client";
+import { requirePagePermission } from "@/lib/server-route-auth";
 import { fetchWebsiteFunnelData } from "@/lib/website-analytics";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +12,7 @@ export default async function WebsiteFunnelPage({
   searchParams?: SearchParams;
 }) {
   const params = searchParams ? await searchParams : {};
+  await requirePagePermission("view_dashboard", "/website-funnel");
   const data = await fetchWebsiteFunnelData({
     startDate: firstParam(params.start),
     endDate: firstParam(params.end),

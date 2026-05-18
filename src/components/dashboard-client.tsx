@@ -35,6 +35,7 @@ import {
   YAxis,
 } from "recharts";
 
+import type { AppPermission } from "@/lib/access-control";
 import type { ActionBucket, ActionItem, DashboardPayload, PerformanceRow } from "@/lib/analytics";
 import { TERMS } from "@/lib/glossary";
 
@@ -44,6 +45,7 @@ type CreativeBucket = "winners" | "losers" | "all";
 
 type Props = {
   initialData: DashboardPayload;
+  permissions: AppPermission[];
 };
 
 type ChatMessage = {
@@ -72,7 +74,7 @@ const MONEY_FORMATTER_WHOLE = new Intl.NumberFormat("en-US", {
 });
 const NUMBER_FORMATTER = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
-export function DashboardClient({ initialData }: Props) {
+export function DashboardClient({ initialData, permissions }: Props) {
   const data = initialData;
   const [brand, setBrand] = useState("all");
   const [umbrella, setUmbrella] = useState("all");
@@ -94,6 +96,7 @@ export function DashboardClient({ initialData }: Props) {
   const [isChatting, setIsChatting] = useState(false);
   const [hidePdfFinancials, setHidePdfFinancials] = useState(false);
   const deferredQuery = useDeferredValue(query);
+  const canRunMetaSync = permissions.includes("run_meta_sync");
   const normalizedQuery = useMemo(
     () => deferredQuery.trim().toLowerCase(),
     [deferredQuery],
@@ -711,6 +714,7 @@ export function DashboardClient({ initialData }: Props) {
 
         <aside className="min-w-0 space-y-6">
           <ActionPanel
+            canRunMetaSync={canRunMetaSync}
             isSyncing={isSyncing}
             isReporting={isReporting}
             reportStatus={reportStatus}
@@ -1867,12 +1871,14 @@ const ActionBucketBlock = memo(function ActionBucketBlock({
 });
 
 const ActionPanel = memo(function ActionPanel({
+  canRunMetaSync,
   isSyncing,
   isReporting,
   reportStatus,
   onSync,
   onReport,
 }: {
+  canRunMetaSync: boolean;
   isSyncing: boolean;
   isReporting: boolean;
   reportStatus: string;
@@ -1881,15 +1887,17 @@ const ActionPanel = memo(function ActionPanel({
 }) {
   return (
     <section className="border border-hp-rule bg-hp-card p-4">
-      <div className="grid grid-cols-2 gap-3">
-        <button
-          onClick={onSync}
-          disabled={isSyncing}
-          className="flex items-center justify-center gap-2 rounded-sm bg-hp-ink px-4 py-3 text-xs uppercase tracking-[0.14em] text-hp-foundation transition-colors hover:bg-hp-pink"
-        >
-          <RefreshCw size={15} className={isSyncing ? "animate-spin" : ""} />
-          Sync
-        </button>
+      <div className={`grid gap-3 ${canRunMetaSync ? "grid-cols-2" : "grid-cols-1"}`}>
+        {canRunMetaSync ? (
+          <button
+            onClick={onSync}
+            disabled={isSyncing}
+            className="flex items-center justify-center gap-2 rounded-sm bg-hp-ink px-4 py-3 text-xs uppercase tracking-[0.14em] text-hp-foundation transition-colors hover:bg-hp-pink"
+          >
+            <RefreshCw size={15} className={isSyncing ? "animate-spin" : ""} />
+            Sync
+          </button>
+        ) : null}
         <button
           onClick={onReport}
           disabled={isReporting}
