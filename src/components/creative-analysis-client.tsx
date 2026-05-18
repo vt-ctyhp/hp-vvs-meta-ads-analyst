@@ -8,7 +8,6 @@ import {
   ExternalLink,
   GalleryHorizontalEnd,
   Search,
-  X,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -877,38 +876,6 @@ function DeliveryBadge({ row }: { row: CreativeAnalysisRow }) {
   return <span className={`px-5 py-3 text-lg font-semibold ${className}`}>{adDeliveryLabel(row)}</span>;
 }
 
-function IdentifierLine({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid gap-2 sm:grid-cols-[150px_1fr] sm:items-baseline">
-      <p className="text-lg text-hp-muted">{label}</p>
-      <p className="min-w-0 break-words text-right text-xl text-hp-ink">{value}</p>
-    </div>
-  );
-}
-
-function RawMetricGroup({
-  title,
-  metrics,
-}: {
-  title: string;
-  metrics: Array<[string, string, string?]>;
-}) {
-  return (
-    <div>
-      <p className="text-[11px] uppercase tracking-[0.18em] text-hp-muted">{title}</p>
-      <div className="mt-5 space-y-6">
-        {metrics.map(([label, value, detail]) => (
-          <div key={label}>
-            <p className="text-lg text-hp-muted">{label}</p>
-            <p className="mt-0.5 font-title text-3xl leading-none text-hp-ink tabular-nums">{value}</p>
-            {detail ? <p className="mt-1 text-xs italic leading-4 text-hp-muted">{detail}</p> : null}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function CreativeDetailPage({
   row,
   liveVideoState,
@@ -922,23 +889,354 @@ function CreativeDetailPage({
   onNoteChange: (note: string) => void;
   onClose: () => void;
 }) {
+  const adsManagerUrl = row.adId
+    ? `https://business.facebook.com/adsmanager/manage/ads/edit?selected_ad_ids=${encodeURIComponent(row.adId)}`
+    : null;
+  const previous = row.previousSnapshot;
+  const fatigueOn = row.fatigueSignal.available && row.fatigueSignal.level !== "low";
+
+  return (
+    <main className="min-h-screen bg-hp-foundation px-4 py-8 text-hp-body md:px-8">
+      <section className="mx-auto max-w-6xl">
+        {/* Header — back link + title + deep link */}
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-hp-muted transition-colors duration-150 hover:text-hp-ink"
+          >
+            ← Back to scorecard
+          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {row.previewUrl ? (
+              <a
+                href={row.previewUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-10 items-center gap-2 border border-hp-rule px-4 text-[11px] uppercase tracking-[0.14em] text-hp-body transition-colors duration-150 hover:border-hp-ink hover:text-hp-ink"
+              >
+                Preview ad <ExternalLink size={14} />
+              </a>
+            ) : null}
+            {adsManagerUrl ? (
+              <a
+                href={adsManagerUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-10 items-center gap-2 bg-hp-ink px-4 text-[11px] uppercase tracking-[0.14em] text-hp-foundation transition-colors duration-150 hover:bg-hp-pink"
+              >
+                Open in Meta Ads Manager <ExternalLink size={14} />
+              </a>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="mt-6">
+          <p className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">Creative</p>
+          <h1 className="mt-2 max-w-5xl font-title text-4xl leading-tight text-hp-ink md:text-5xl">
+            {row.adName}
+          </h1>
+          <p className="mt-3 max-w-5xl text-base leading-7 text-hp-muted">
+            <span className="text-hp-body">{row.adSetName}</span>
+            <span className="px-2 text-hp-rule">·</span>
+            <span className="text-hp-body">{row.campaignName}</span>
+            {row.campaignUmbrella ? (
+              <span className="ml-3 inline-block border border-hp-rule px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                {row.campaignUmbrella}
+              </span>
+            ) : null}
+          </p>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <DeliveryBadge row={row} />
+            <span className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+              Synced {formatDateTime(row.adStatusSyncedAt)}
+            </span>
+          </div>
+        </div>
+
+        {/* Verdict — what's happening + what to do */}
+        <section className="mt-8 border border-hp-rule bg-hp-card p-6 md:p-8">
+          <div className="flex items-start gap-4">
+            <StatusBadge status={row.status} />
+            <span className="ml-auto text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+              Verdict
+            </span>
+          </div>
+          <p className="mt-5 font-title text-2xl leading-snug text-hp-ink md:text-3xl">
+            {row.diagnosis}
+          </p>
+          <div className="mt-6 border-t border-hp-rule pt-5">
+            <p className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">Suggested next step</p>
+            <p className="mt-2 text-base leading-7 text-hp-body md:text-lg">{row.nextAction}</p>
+          </div>
+        </section>
+
+        {/* Key numbers — the five metrics decisions live or die by */}
+        <section className="mt-6 border border-hp-rule bg-hp-card p-6 md:p-8">
+          <div className="flex items-baseline justify-between">
+            <p className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">Key Numbers</p>
+            {previous ? (
+              <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                Δ vs prior period
+              </p>
+            ) : null}
+          </div>
+          <div className="mt-5 grid gap-5 md:grid-cols-3 lg:grid-cols-5">
+            <KeyMetric
+              label="Spend"
+              value={formatMoney(row.spend)}
+              helper="Total dollars Meta charged for this ad in the selected period."
+              current={row.spend}
+              previous={previous?.spend}
+              showDelta={Boolean(previous)}
+            />
+            <KeyMetric
+              label={row.resultKpiLabel || "Results"}
+              value={formatNumber(row.resultCount)}
+              helper={`How many ${(row.resultKpiLabel || "results").toLowerCase()} this ad drove. The thing we actually care about.`}
+              current={row.resultCount}
+              previous={previous?.resultCount}
+              showDelta={Boolean(previous)}
+            />
+            <KeyMetric
+              label="Cost per Result"
+              value={formatMoney(row.costPerResult)}
+              helper="How much we paid for each result. Lower is better."
+              current={row.costPerResult}
+              previous={previous?.costPerResult}
+              lowerIsBetter
+              showDelta={Boolean(previous)}
+            />
+            <KeyMetric
+              label="Click-through Rate"
+              value={formatPercentNumber(row.ctr)}
+              helper="Of the people who saw the ad, the share who clicked. Higher = the hook is landing."
+              current={row.ctr}
+              previous={previous?.ctr}
+              showDelta={Boolean(previous)}
+            />
+            <KeyMetric
+              label="Frequency"
+              value={`${row.frequency.toFixed(2)}x`}
+              helper="Average times the same person saw this ad. Above 3–4x often signals ad fatigue."
+              current={row.frequency}
+              previous={previous?.frequency}
+              lowerIsBetter
+              showDelta={Boolean(previous)}
+            />
+          </div>
+        </section>
+
+        {/* Fatigue — only when there's something to look at */}
+        {fatigueOn ? (
+          <section className="mt-6 border border-hp-rule bg-hp-card p-6 md:p-8">
+            <div className="flex items-baseline justify-between">
+              <p className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">Fatigue Check</p>
+              <span
+                className="text-[11px] uppercase tracking-[0.14em]"
+                style={{ color: row.fatigueSignal.level === "high" ? "#8D2E2E" : "#8B5B19" }}
+              >
+                {row.fatigueSignal.level === "high" ? "High risk" : "Watch closely"}
+              </span>
+            </div>
+            <p className="mt-3 text-sm text-hp-muted">
+              Fatigue means the audience has seen this ad enough that performance is slipping. Common
+              fixes: rotate to a fresh variant, widen the audience, or lower the budget.
+            </p>
+            <ul className="mt-4 space-y-2">
+              {row.fatigueSignal.reasons.map((reason) => (
+                <li key={reason} className="flex gap-2 text-sm text-hp-body">
+                  <span aria-hidden className="text-hp-muted">•</span>
+                  <span>{reason}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+
+        {/* Preview + Score breakdown */}
+        <section className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
+          <div className="space-y-6">
+            <div className="border border-hp-rule bg-hp-card p-4">
+              <LargePreview row={row} />
+              {row.creativeBody ? (
+                <div className="mt-4 border-t border-hp-rule pt-4">
+                  <p className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">Body Copy</p>
+                  <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-hp-body [overflow-wrap:anywhere]">
+                    {row.creativeBody}
+                  </p>
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="border border-hp-rule bg-hp-card p-6 md:p-8">
+            <div className="flex items-baseline justify-between">
+              <p className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">Why This Score</p>
+              <span className="font-body text-sm text-hp-muted tabular-nums">
+                <span className="text-hp-ink">{row.internalScore}</span>
+                <span className="text-hp-muted">/100</span>
+              </span>
+            </div>
+            <p className="mt-2 text-sm text-hp-muted">
+              An internal heuristic — not Meta&rsquo;s number. Each row below is one piece of how
+              the ad is performing relative to the rest of the account.
+            </p>
+            <div className="mt-6 space-y-5">
+              <ScoreLine
+                label="Hook strength"
+                helper="How well the opening grabs attention (first few seconds for video, the visual for static)."
+                value={row.scoreBreakdown.hookStrength}
+              />
+              <ScoreLine
+                label="Hold / retention"
+                helper="Once a viewer starts, how many stay through the message."
+                value={row.scoreBreakdown.holdRetention}
+              />
+              <ScoreLine
+                label="Click intent"
+                helper="How often viewers click after engaging — a proxy for clarity of the call to action."
+                value={row.scoreBreakdown.clickIntent}
+              />
+              <ScoreLine
+                label="Conversion efficiency"
+                helper="Cost per result vs the rest of the account. The single most important factor."
+                value={row.scoreBreakdown.conversionEfficiency}
+              />
+              <ScoreLine
+                label="Meta’s ranking signal"
+                helper="Meta’s own quality / engagement / conversion ranking, where available."
+                value={row.scoreBreakdown.metaRankingDiagnostics}
+              />
+              <ScoreLine
+                label="Fatigue resistance"
+                helper="Lower frequency, stable CTR — i.e., the ad isn’t wearing out."
+                value={row.scoreBreakdown.fatigueRisk}
+              />
+            </div>
+          </div>
+        </section>
+
+        {/* Notes */}
+        <section className="mt-6 border border-hp-rule bg-hp-card p-6">
+          <p className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">Team Notes</p>
+          <textarea
+            value={note}
+            onChange={(event) => onNoteChange(event.target.value)}
+            rows={4}
+            placeholder="Add notes on lead quality, brand fit, close rate, or the next creative test."
+            className="mt-3 w-full resize-none border-0 border-b border-hp-rule bg-transparent p-0 pb-2 text-sm leading-6 outline-none focus:border-b-2 focus:border-hp-pink"
+          />
+        </section>
+
+        {/* Advanced details — collapsed by default */}
+        <AdvancedDetails row={row} liveVideoState={liveVideoState} />
+      </section>
+    </main>
+  );
+}
+
+function KeyMetric({
+  label,
+  value,
+  helper,
+  current,
+  previous,
+  lowerIsBetter,
+  showDelta,
+}: {
+  label: string;
+  value: string;
+  helper: string;
+  current?: number | null;
+  previous?: number | null;
+  lowerIsBetter?: boolean;
+  showDelta: boolean;
+}) {
+  return (
+    <div>
+      <p className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">{label}</p>
+      <div className="mt-2 flex items-baseline gap-3">
+        <p className="font-title text-3xl leading-tight tabular-nums text-hp-ink">{value}</p>
+        {showDelta ? (
+          <SimpleDelta current={current} previous={previous} lowerIsBetter={lowerIsBetter} />
+        ) : null}
+      </div>
+      <p className="mt-2 text-xs leading-5 text-hp-muted">{helper}</p>
+    </div>
+  );
+}
+
+function SimpleDelta({
+  current,
+  previous,
+  lowerIsBetter,
+}: {
+  current?: number | null;
+  previous?: number | null;
+  lowerIsBetter?: boolean;
+}) {
+  if (current == null || previous == null || previous === 0) {
+    return <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">— no prior</span>;
+  }
+  const change = ((current - previous) / Math.abs(previous)) * 100;
+  const rounded = Math.round(change * 10) / 10;
+  if (!Number.isFinite(rounded)) {
+    return <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">— no prior</span>;
+  }
+  const isFlat = rounded === 0;
+  const isUp = rounded > 0;
+  const isGood = isFlat ? false : lowerIsBetter ? !isUp : isUp;
+  const color = isFlat ? undefined : { color: isGood ? "#245D4D" : "#8D2E2E" };
+  const arrow = isFlat ? "→" : isUp ? "▲" : "▼";
+  return (
+    <span
+      className="inline-flex items-baseline gap-1 font-body text-xs tabular-nums"
+      style={color}
+    >
+      <span aria-hidden className="text-[10px]">{arrow}</span>
+      <span>{Math.abs(rounded).toFixed(1)}%</span>
+    </span>
+  );
+}
+
+function ScoreLine({
+  label,
+  helper,
+  value,
+}: {
+  label: string;
+  helper: string;
+  value: number;
+}) {
+  const safe = Math.max(0, Math.min(100, value));
+  return (
+    <div className="grid gap-2 md:grid-cols-[1fr_180px_48px] md:items-center md:gap-4">
+      <div>
+        <p className="text-sm text-hp-ink">{label}</p>
+        <p className="mt-1 text-xs leading-5 text-hp-muted">{helper}</p>
+      </div>
+      <div className="h-1.5 bg-hp-inset">
+        <div
+          className={`h-full ${scoreBandClass(value)}`}
+          style={{ width: `${safe}%` }}
+        />
+      </div>
+      <p className="text-right text-sm tabular-nums text-hp-ink">{Math.round(value)}</p>
+    </div>
+  );
+}
+
+function AdvancedDetails({
+  row,
+  liveVideoState,
+}: {
+  row: CreativeAnalysisRow;
+  liveVideoState: LiveVideoMetricsState | undefined;
+}) {
+  const [open, setOpen] = useState(false);
   const liveVideoMetrics = liveVideoState?.status === "ready" ? liveVideoState.metrics : null;
   const videoMetrics = {
-    plays: selectVideoActionMetric(
-      liveVideoState,
-      liveVideoMetrics?.videoPlayActions,
-      row.rawMetrics.videoPlayActions,
-    ),
-    p25: selectVideoActionMetric(
-      liveVideoState,
-      liveVideoMetrics?.videoP25WatchedActions,
-      row.rawMetrics.videoP25WatchedActions,
-    ),
-    p50: selectVideoActionMetric(
-      liveVideoState,
-      liveVideoMetrics?.videoP50WatchedActions,
-      row.rawMetrics.videoP50WatchedActions,
-    ),
     p75: selectVideoActionMetric(
       liveVideoState,
       liveVideoMetrics?.videoP75WatchedActions,
@@ -962,198 +1260,115 @@ function CreativeDetailPage({
   };
 
   return (
-    <main className="min-h-screen bg-hp-foundation px-4 py-7 text-hp-body md:px-8">
-      <section className="mx-auto max-w-7xl">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="text-xl italic text-hp-muted">
-            <button onClick={onClose} className="underline-offset-4 hover:text-hp-ink hover:underline">
-              Creative Analysis
-            </button>{" "}
-            <span className="mx-3">›</span>
-            <span className="font-semibold text-hp-ink">{row.adName}</span>
-          </div>
-          <button
-            onClick={onClose}
-            className="inline-flex items-center gap-3 self-start text-xl italic text-hp-muted underline-offset-4 transition-colors hover:text-hp-ink hover:underline md:self-auto"
-          >
-            ← Back to scorecard
-            <X size={18} />
-          </button>
-        </div>
-
-        <div className="mt-10 grid gap-6 lg:grid-cols-[1fr_auto] lg:items-end">
+    <section className="mt-6 border border-hp-rule bg-hp-card">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center justify-between gap-3 px-6 py-4 text-left transition-colors duration-150 hover:bg-hp-inset"
+      >
+        <span className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+          Advanced Details
+        </span>
+        <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+          {open ? "Hide" : "Show"} · IDs, video depth, Meta rankings
+        </span>
+      </button>
+      {open ? (
+        <div className="grid gap-8 border-t border-hp-rule p-6 md:grid-cols-3">
           <div>
-            <p className="text-[11px] uppercase tracking-[0.18em] text-hp-muted">
-              Creative detail · {formatDateTime(row.adStatusSyncedAt)}
+            <p className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">Identifiers</p>
+            <p className="mt-2 text-xs text-hp-muted">
+              Use these to find the exact ad in Meta Ads Manager, or to copy/paste into a report.
             </p>
-            <h1 className="mt-4 max-w-5xl font-title text-5xl leading-none text-hp-ink md:text-7xl">
-              {row.adName}
-            </h1>
-            <p className="mt-5 max-w-5xl text-xl italic leading-8 text-hp-body">
-              {row.adSetName} — {row.campaignName}
-            </p>
-            <div className="mt-5 flex flex-wrap items-center gap-3">
-              <DeliveryBadge row={row} />
-              <StatusBadge status={row.status} />
-              <span className="text-lg italic text-hp-muted">
-                Last sync · {formatDateTime(row.adStatusSyncedAt)}
-              </span>
+            <div className="mt-4 space-y-3 text-sm">
+              <DetailIdRow label="Ad ID" value={row.adId} />
+              <DetailIdRow label="Creative ID" value={row.creativeId} />
+              <DetailIdRow
+                label="Post / story ID"
+                value={row.effectiveObjectStoryId || row.objectStoryId}
+              />
+              <DetailIdRow label="Account" value={row.metaAccountId} />
+              <DetailIdRow label="Configured status" value={metaStatusLabel(row.adConfiguredStatus)} />
+              <DetailIdRow label="Effective status" value={metaStatusLabel(row.adEffectiveStatus)} />
             </div>
           </div>
-          {row.previewUrl ? (
-            <a
-              href={row.previewUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex h-12 items-center gap-2 border border-hp-ink px-6 text-lg font-semibold text-hp-ink transition-colors hover:bg-hp-ink hover:text-hp-foundation"
-            >
-              Preview ad
-              <ExternalLink size={16} />
-            </a>
-          ) : null}
-        </div>
-
-        <div className="mt-10 grid gap-8 lg:grid-cols-[400px_1fr] xl:grid-cols-[480px_1fr]">
-          <div className="space-y-8">
-            <LargePreview row={row} />
-            <section className="border border-hp-rule bg-hp-card p-6">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-hp-muted">Identifiers</p>
-              <div className="mt-5 space-y-4 border-t border-hp-rule pt-5">
-                <IdentifierLine label="Ad ID" value={row.adId} />
-                <IdentifierLine label="Creative ID" value={row.creativeId || "n/a"} />
-                <IdentifierLine
-                  label="Post / story ID"
-                  value={row.effectiveObjectStoryId || row.objectStoryId || "n/a"}
-                />
-                <IdentifierLine label="Configured status" value={metaStatusLabel(row.adConfiguredStatus)} />
-                <IdentifierLine label="Effective status" value={metaStatusLabel(row.adEffectiveStatus)} />
-                <IdentifierLine label="Campaign umbrella" value={row.campaignUmbrella || "n/a"} />
-              </div>
-            </section>
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">Meta’s Rankings</p>
+            <p className="mt-2 text-xs text-hp-muted">
+              Meta’s own quality / engagement / conversion rankings vs other ads in your account.
+              “Above average” is good; “below average” means Meta thinks the ad is underperforming
+              versus your peers.
+            </p>
+            <dl className="mt-4 space-y-3 text-sm">
+              <DetailKvRow label="Quality" value={rankingLabel(row.qualityRanking)} />
+              <DetailKvRow label="Engagement" value={rankingLabel(row.engagementRateRanking)} />
+              <DetailKvRow label="Conversion" value={rankingLabel(row.conversionRateRanking)} />
+              <DetailKvRow label="Reach" value={formatNumber(row.reach)} />
+              <DetailKvRow label="Impressions" value={formatNumber(row.impressions)} />
+              <DetailKvRow label="CPM" value={formatMoney(row.cpm)} />
+              <DetailKvRow label="CPC" value={formatMoney(row.cpc)} />
+              <DetailKvRow label="Inline link clicks" value={formatNumber(row.inlineLinkClicks)} />
+            </dl>
           </div>
-
-          <div className="space-y-8">
-            <section className="border border-hp-rule bg-hp-card p-8">
-              <div className="grid gap-6 md:grid-cols-[1fr_170px]">
-                <div>
-                  <p className="text-[11px] uppercase tracking-[0.18em] text-hp-muted">Diagnosis</p>
-                  <p className="mt-5 font-title text-3xl leading-tight text-hp-ink">
-                    {row.diagnosis}
-                  </p>
-                </div>
-                <div className="text-center">
-                  <p className="font-title text-7xl leading-none text-hp-ink tabular-nums">
-                    {row.internalScore}
-                  </p>
-                  <p className="text-xl text-hp-muted">/ 100</p>
-                  <p className="mt-3 text-lg font-semibold text-signal-warning">{row.status}</p>
-                </div>
-              </div>
-              <div className="mt-8 border-t border-hp-rule pt-6">
-                <p className="text-[11px] uppercase tracking-[0.18em] text-hp-muted">
-                  Recommendation
-                </p>
-                <p className="mt-3 text-2xl leading-8 text-hp-body">{row.nextAction}</p>
-              </div>
-            </section>
-
-            <section className="border border-hp-rule bg-hp-card p-8">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-hp-muted">
-                Score breakdown
-              </p>
-              <h2 className="mt-4 border-b border-hp-rule pb-6 font-title text-4xl leading-tight text-hp-ink">
-                What&apos;s driving the {row.internalScore}
-              </h2>
-              <div className="mt-6 space-y-6">
-                {[
-                  ["Hook strength", row.scoreBreakdown.hookStrength],
-                  ["Hold / retention", row.scoreBreakdown.holdRetention],
-                  ["Click intent", row.scoreBreakdown.clickIntent],
-                  ["Conversion efficiency", row.scoreBreakdown.conversionEfficiency],
-                  ["Meta ranking diagnostics", row.scoreBreakdown.metaRankingDiagnostics],
-                  ["Fatigue risk", row.scoreBreakdown.fatigueRisk],
-                ].map(([label, value]) => (
-                  <BreakdownRow key={label as string} label={label as string} value={value as number} />
-                ))}
-              </div>
-            </section>
-
-            <section className="border border-hp-rule bg-hp-card p-8">
-              <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-[11px] uppercase tracking-[0.18em] text-hp-muted">
-                  Raw metrics · source: Meta Ads
-                </p>
-                {liveVideoState?.status === "loading" ? (
-                  <p className="text-xs text-hp-muted">Checking live Meta video diagnostics...</p>
-                ) : null}
-              </div>
-              <h2 className="mt-4 border-b border-hp-rule pb-6 font-title text-4xl leading-tight text-hp-ink">
-                Grouped by purpose
-              </h2>
-              <div className="mt-8 grid gap-8 lg:grid-cols-3">
-                <RawMetricGroup
-                  title="Reach & cost"
-                  metrics={[
-                    ["Spend", formatMoney(row.spend)],
-                    ["Impressions", formatNumber(row.impressions)],
-                    ["Reach", formatNumber(row.reach)],
-                    ["Frequency", `${row.frequency.toFixed(2)}x`],
-                    ["CPM", formatMoney(row.cpm)],
-                    ["CPC", formatMoney(row.cpc)],
-                  ]}
-                />
-                <RawMetricGroup
-                  title="Engagement"
-                  metrics={[
-                    ["Hook rate", formatRate(row.hookRate), row.hookRateSource],
-                    ["Hold rate", formatRate(row.holdRate), row.holdRateSource],
-                    ["Completion rate", formatRate(row.completionRate)],
-                    ["CTR", formatPercentNumber(row.ctr)],
-                    ["Inline link clicks", formatNumber(row.inlineLinkClicks)],
-                  ]}
-                />
-                <RawMetricGroup
-                  title="Conversion & video"
-                  metrics={[
-                    ["KPI results", formatNumber(row.resultCount), kpiResultDetail(row)],
-                    [row.resultLabel, formatMoney(row.costPerResult)],
-                    ["Video plays", formatActionMetric(videoMetrics.plays.value), videoMetrics.plays.detail],
-                    [
-                      "Video 25 / 50",
-                      `${formatActionMetric(videoMetrics.p25.value)} / ${formatActionMetric(videoMetrics.p50.value)}`,
-                    ],
-                    [
-                      "Video 75 / 95",
-                      `${formatActionMetric(videoMetrics.p75.value)} / ${formatActionMetric(videoMetrics.p95.value)}`,
-                    ],
-                    [
-                      "Video 100 / ThruPlays",
-                      `${formatActionMetric(videoMetrics.p100.value)} / ${formatActionMetric(videoMetrics.thruplay.value)}`,
-                    ],
-                    ["Quality ranking", rankingLabel(row.qualityRanking)],
-                    ["Engagement ranking", rankingLabel(row.engagementRateRanking)],
-                    ["Conversion ranking", rankingLabel(row.conversionRateRanking)],
-                  ]}
-                />
-              </div>
-            </section>
-
-            <section className="border border-hp-rule bg-hp-card p-6">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-hp-muted">
-                Internal notes
-              </p>
-              <textarea
-                value={note}
-                onChange={(event) => onNoteChange(event.target.value)}
-                rows={5}
-                placeholder="Add team notes on lead quality, brand fit, close rate, or next creative test."
-                className="mt-4 w-full resize-none border-0 border-b border-hp-rule bg-transparent p-0 pb-3 text-lg leading-7 outline-none focus:border-b-2 focus:border-hp-pink"
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">Video Depth</p>
+            <p className="mt-2 text-xs text-hp-muted">
+              Of people who started the video, how many watched the bulk of it. The 75%+ and ThruPlay
+              numbers are the most useful — they tell you the message actually landed.
+              {liveVideoState?.status === "loading" ? " (Fetching live data…)" : null}
+            </p>
+            <dl className="mt-4 space-y-3 text-sm">
+              <DetailKvRow label="Watched 75%" value={formatActionMetric(videoMetrics.p75.value)} />
+              <DetailKvRow label="Watched 95%" value={formatActionMetric(videoMetrics.p95.value)} />
+              <DetailKvRow label="Watched 100%" value={formatActionMetric(videoMetrics.p100.value)} />
+              <DetailKvRow label="ThruPlays" value={formatActionMetric(videoMetrics.thruplay.value)} />
+              <DetailKvRow
+                label="Hook rate"
+                value={formatRate(row.hookRate)}
+                helper={row.hookRateSource}
               />
-            </section>
+              <DetailKvRow
+                label="Hold rate"
+                value={formatRate(row.holdRate)}
+                helper={row.holdRateSource}
+              />
+              <DetailKvRow label="Completion rate" value={formatRate(row.completionRate)} />
+            </dl>
           </div>
         </div>
-      </section>
-    </main>
+      ) : null}
+    </section>
+  );
+}
+
+function DetailIdRow({ label, value }: { label: string; value: string | null | undefined }) {
+  return (
+    <div className="grid grid-cols-[110px_1fr] items-baseline gap-3">
+      <dt className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{label}</dt>
+      <dd className="min-w-0 font-mono text-xs leading-5 text-hp-ink [overflow-wrap:anywhere]">
+        {value || "—"}
+      </dd>
+    </div>
+  );
+}
+
+function DetailKvRow({
+  label,
+  value,
+  helper,
+}: {
+  label: string;
+  value: string;
+  helper?: string;
+}) {
+  return (
+    <div className="grid grid-cols-[110px_1fr] items-baseline gap-3">
+      <dt className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{label}</dt>
+      <dd className="min-w-0 text-sm tabular-nums text-hp-ink">
+        <div>{value}</div>
+        {helper ? <div className="mt-0.5 text-[11px] italic text-hp-muted">{helper}</div> : null}
+      </dd>
+    </div>
   );
 }
 
@@ -1179,22 +1394,6 @@ function LargePreview({ row }: { row: CreativeAnalysisRow }) {
   );
 }
 
-function BreakdownRow({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="grid gap-3 md:grid-cols-[260px_1fr_48px] md:items-center">
-      <div>
-        <p className="text-2xl leading-tight text-hp-ink">{label}</p>
-      </div>
-      <div className="h-2 bg-hp-inset">
-        <div
-          className={`h-full ${scoreBandClass(value)}`}
-          style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
-        />
-      </div>
-      <p className="text-right text-xl tabular-nums text-hp-ink">{Math.round(value)}</p>
-    </div>
-  );
-}
 
 function buildSummary(rows: CreativeAnalysisRow[]) {
   const totalSpend = rows.reduce((sum, row) => sum + row.spend, 0);

@@ -93,6 +93,17 @@ export type CreativeScoreBreakdown = {
   total: number;
 };
 
+export type CreativePreviousSnapshot = {
+  spend: number;
+  impressions: number;
+  ctr: number;
+  frequency: number;
+  costPerResult: number | null;
+  resultCount: number;
+  hookRate: number | null;
+  holdRate: number | null;
+};
+
 export type CreativeDiagnostic = CreativeMetricDiagnostics & {
   id: string;
   internalScore: number;
@@ -103,6 +114,7 @@ export type CreativeDiagnostic = CreativeMetricDiagnostics & {
   nextAction: string;
   fatigueSignal: CreativeFatigueSignal;
   rankingDiagnosticsAvailable: boolean;
+  previousSnapshot: CreativePreviousSnapshot | null;
 };
 
 type BaseDiagnostics = CreativeMetricDiagnostics & {
@@ -276,6 +288,18 @@ function scoreCreative(row: BaseDiagnostics, benchmarks: Benchmarks): CreativeDi
     nextAction: nextActionForStatus(status),
     fatigueSignal,
     rankingDiagnosticsAvailable: rankingDiagnostics.length > 0,
+    previousSnapshot: row.input.previous
+      ? {
+          spend: row.input.previous.spend,
+          impressions: row.input.previous.impressions,
+          ctr: row.input.previous.ctr,
+          frequency: row.input.previous.frequency,
+          costPerResult: row.previousMetrics?.costPerResult ?? null,
+          resultCount: row.previousMetrics?.resultCount ?? 0,
+          hookRate: row.previousMetrics?.hookRate ?? null,
+          holdRate: row.previousMetrics?.holdRate ?? null,
+        }
+      : null,
   };
 }
 
