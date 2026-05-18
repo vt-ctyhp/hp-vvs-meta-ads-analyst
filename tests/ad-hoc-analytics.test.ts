@@ -225,6 +225,59 @@ describe("ad-hoc analytics prompt normalization", () => {
     assert.deepEqual(plan.spec.widgets[0]?.metrics, ["spend", "primary_results"]);
   });
 
+  it("preserves the campaign umbrella when a follow-up reorganizes the data into a weekly pivot", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "ad spend and primary kpi by campaign umbrella for the last 4 weeks.\n\nFollow-up: reorganize in pivot table with data organized by week for the past 8 weeks",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.dateRange, { preset: "last_8_weeks" });
+    assert.deepEqual(plan.spec.dimensions, ["week", "campaign_umbrella"]);
+    assert.deepEqual(plan.spec.metrics, ["spend", "primary_results"]);
+    assert.deepEqual(plan.spec.tableLayout, {
+      type: "pivot",
+      rowDimension: "campaign_umbrella",
+      columnDimension: "week",
+      metric: "spend",
+    });
+    assert.deepEqual(plan.spec.widgets, [
+      {
+        type: "table",
+        title: "Pivot table",
+        x: "week",
+        metrics: ["spend", "primary_results"],
+      },
+    ]);
+  });
+
+  it("repairs weak saved specs when a follow-up requests a weekly pivot on a single newline", () => {
+    const spec = normalizeAnalysisSpecForPrompt(
+      {
+        title: "Ad-hoc analysis",
+        dateRange: { preset: "last_4_weeks" },
+        grain: "weekly",
+        dimensions: ["week"],
+        filters: [],
+        metrics: ["spend", "primary_results"],
+        sort: { field: "week", direction: "asc" },
+        limit: 50,
+        widgets: [{ type: "table", title: "Comparison table", x: "week", metrics: ["spend", "primary_results"] }],
+      },
+      "ad spend and primary kpi by campaign umbrella for the last 4 weeks.\nFollow-up: reorganize in pivot table with data organized by week for the past 8 weeks",
+    );
+
+    assert.deepEqual(spec.dateRange, { preset: "last_8_weeks" });
+    assert.deepEqual(spec.dimensions, ["week", "campaign_umbrella"]);
+    assert.deepEqual(spec.tableLayout, {
+      type: "pivot",
+      rowDimension: "campaign_umbrella",
+      columnDimension: "week",
+      metric: "spend",
+    });
+    assert.deepEqual(spec.widgets[0]?.metrics, ["spend", "primary_results"]);
+  });
+
   it("marks website visitor requests unsupported instead of falling back to Meta defaults", () => {
     const plan = buildAnalysisPlanForPrompt({}, "website visitors by landing page");
 

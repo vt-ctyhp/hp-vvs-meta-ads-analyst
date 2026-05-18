@@ -1443,23 +1443,32 @@ function buildPivotTable(
   const rowDimension = layout.rowDimension;
   const columnDimension = layout.columnDimension;
   const metric = layout.metric;
+  const pivotMetrics =
+    spec.metrics.length > 1 ? [metric, ...spec.metrics.filter((candidate) => candidate !== metric)] : [metric];
 
   const rowLabels = new Set<string>();
   const columnLabels = new Set<string>();
-  const valuesByRow = new Map<string, Map<string, number>>();
-  const rowTotals = new Map<string, number>();
+  const valuesByRow = new Map<string, Map<string, Map<AnalysisMetric, number>>>();
+  const rowTotals = new Map<string, Map<AnalysisMetric, number>>();
 
   rows.forEach((row) => {
     const rowLabel = String(row[rowDimension] || "n/a");
     const columnLabel = String(row[columnDimension] || "n/a");
-    const value = Number(row[metric] || 0);
     rowLabels.add(rowLabel);
     columnLabels.add(columnLabel);
 
-    const rowValues = valuesByRow.get(rowLabel) || new Map<string, number>();
-    rowValues.set(columnLabel, round((rowValues.get(columnLabel) || 0) + value));
+    const rowValues = valuesByRow.get(rowLabel) || new Map<string, Map<AnalysisMetric, number>>();
+    const columnValues = rowValues.get(columnLabel) || new Map<AnalysisMetric, number>();
+    pivotMetrics.forEach((pivotMetric) => {
+      const value = Number(row[pivotMetric] || 0);
+      columnValues.set(pivotMetric, round((columnValues.get(pivotMetric) || 0) + value));
+
+      const totals = rowTotals.get(rowLabel) || new Map<AnalysisMetric, number>();
+      totals.set(pivotMetric, round((totals.get(pivotMetric) || 0) + value));
+      rowTotals.set(rowLabel, totals);
+    });
+    rowValues.set(columnLabel, columnValues);
     valuesByRow.set(rowLabel, rowValues);
-    rowTotals.set(rowLabel, round((rowTotals.get(rowLabel) || 0) + value));
   });
 
   const sortedColumns = Array.from(columnLabels).sort((a, b) =>
@@ -1469,31 +1478,44 @@ function buildPivotTable(
     .sort((a, b) => comparePivotLabels(a, b, rowDimension))
     .slice(0, spec.limit);
   const metricTypeForCells = metricType(metric);
+  const pivotMetricColumns = sortedColumns.flatMap((label, columnIndex) =>
+    pivotMetrics.map((pivotMetric) => ({
+      key: pivotKey(columnIndex, pivotMetric, pivotMetrics.length),
+      label: pivotMetrics.length === 1 ? label : `${label} ${labelFor(pivotMetric)}`,
+      type: metricType(pivotMetric),
+    })),
+  );
   const pivotColumns: AnalysisTableColumn[] = [
     {
       key: rowDimension,
       label: labelFor(rowDimension),
       type: "text",
     },
-    ...sortedColumns.map((label, index) => ({
-      key: `pivot_${index}`,
-      label,
-      type: metricTypeForCells,
+    ...pivotMetricColumns,
+    ...pivotMetrics.map((pivotMetric, index) => ({
+      key: index === 0 ? "pivot_total" : `pivot_total_${pivotMetric}`,
+      label: `Total ${labelFor(pivotMetric)}`,
+      type: index === 0 ? metricTypeForCells : metricType(pivotMetric),
     })),
-    {
-      key: "pivot_total",
-      label: `Total ${labelFor(metric)}`,
-      type: metricTypeForCells,
-    },
   ];
   const pivotRows = sortedRows.map((rowLabel) => {
-    const rowValues = valuesByRow.get(rowLabel) || new Map<string, number>();
+    const rowValues = valuesByRow.get(rowLabel) || new Map<string, Map<AnalysisMetric, number>>();
+    const totals = rowTotals.get(rowLabel) || new Map<AnalysisMetric, number>();
     return {
       [rowDimension]: rowLabel,
       ...Object.fromEntries(
-        sortedColumns.map((columnLabel, index) => [`pivot_${index}`, rowValues.get(columnLabel) || 0]),
+        sortedColumns.flatMap((columnLabel, columnIndex) => {
+          const columnValues = rowValues.get(columnLabel) || new Map<AnalysisMetric, number>();
+          return pivotMetrics.map((pivotMetric) => [
+            pivotKey(columnIndex, pivotMetric, pivotMetrics.length),
+            columnValues.get(pivotMetric) || 0,
+          ]);
+        }),
       ),
-      pivot_total: rowTotals.get(rowLabel) || 0,
+      pivot_total: totals.get(metric) || 0,
+      ...Object.fromEntries(
+        pivotMetrics.slice(1).map((pivotMetric) => [`pivot_total_${pivotMetric}`, totals.get(pivotMetric) || 0]),
+      ),
     };
   });
 
@@ -1501,6 +1523,10 @@ function buildPivotTable(
     columns: pivotColumns,
     rows: pivotRows,
   };
+}
+
+function pivotKey(columnIndex: number, metric: AnalysisMetric, metricCount: number) {
+  return metricCount === 1 ? `pivot_${columnIndex}` : `pivot_${columnIndex}_${metric}`;
 }
 
 function comparePivotLabels(a: string, b: string, dimension: AnalysisDimension) {
@@ -1932,8 +1958,13 @@ function inferPromptIntent(prompt: string): PromptIntent {
     ? mergeMetricLists(allMentionedMetrics || [], latestMetrics)
     : latestMetrics || allMentionedMetrics;
   const requiredMetrics = metrics;
-  const dimensions = inferDimensionsFromPrompt(latestLower, metrics) || inferDimensionsFromPrompt(lower, metrics);
-  const dateRange = inferDateRangeFromPrompt(prompt);
+  const latestDimensions = inferDimensionsFromPrompt(latestLower, metrics);
+  const allMentionedDimensions = inferDimensionsFromPrompt(lower, metrics);
+  const dimensions =
+    hasFollowUp && shouldMergeFollowUpDimensions(latestLower, latestDimensions, allMentionedDimensions)
+      ? mergeDimensionsForFollowUp(allMentionedDimensions || [], latestDimensions || [])
+      : latestDimensions || allMentionedDimensions;
+  const dateRange = (hasFollowUp && inferDateRangeFromPrompt(latestPrompt)) || inferDateRangeFromPrompt(prompt);
   const grain = inferGrainFromPrompt(latestPrompt) || inferGrainFromPrompt(prompt);
   const glossaryFilters = campaignGlossaryFilters(prompt);
   const searchTerm = inferSearchTerm(prompt);
@@ -2234,9 +2265,37 @@ function inferGrainFromPrompt(prompt: string): AnalysisGrain | undefined {
 
 function promptSegments(prompt: string) {
   return prompt
-    .split(/\n\nFollow-up:\s*/i)
+    .split(/(?:^|\n+)\s*Follow-up:\s*/i)
     .map((segment) => segment.trim())
     .filter(Boolean);
+}
+
+function shouldMergeFollowUpDimensions(
+  latestLower: string,
+  latestDimensions?: AnalysisDimension[],
+  allMentionedDimensions?: AnalysisDimension[],
+) {
+  if (!latestDimensions?.length || !allMentionedDimensions?.length) return false;
+  const asksForPivot =
+    /\b(pivot|cross[-\s]?tab|crosstab|matrix|intersection|intersections|first column|first row)\b/.test(
+      latestLower,
+    );
+  const asksToReorganize =
+    /\b(reorganize|organize|organized|group(?:ed)? by|break(?:down| out)|table)\b/.test(latestLower);
+  const latestOnlyTime = latestDimensions.every(isTimeDimension);
+  const hasPriorNonTimeDimension = allMentionedDimensions.some((dimension) => !isTimeDimension(dimension));
+
+  return hasPriorNonTimeDimension && ((asksForPivot && latestDimensions.length < 2) || (asksToReorganize && latestOnlyTime));
+}
+
+function mergeDimensionsForFollowUp(
+  allMentionedDimensions: AnalysisDimension[],
+  latestDimensions: AnalysisDimension[],
+) {
+  return uniqueDimensions([
+    ...latestDimensions,
+    ...allMentionedDimensions.filter((dimension) => !latestDimensions.includes(dimension)),
+  ]);
 }
 
 function inferWidgetsFromPrompt(input: {
