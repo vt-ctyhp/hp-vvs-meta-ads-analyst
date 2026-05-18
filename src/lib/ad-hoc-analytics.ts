@@ -71,7 +71,7 @@ const DATE_PRESETS = [
 ] as const;
 
 const WIDGET_TYPES = ["metric", "table", "line", "bar"] as const;
-const TABLE_LAYOUT_TYPES = ["flat", "pivot"] as const;
+const TABLE_LAYOUT_TYPES = ["flat", "pivot", "metric_rows_pivot"] as const;
 const DEFAULT_METRICS: AnalysisMetric[] = ["spend", "impressions", "clicks", "ctr", "cpc", "leads", "cpl"];
 const RPC_SORT_FIELDS = new Set<string>([
   "date",
@@ -278,7 +278,8 @@ const CAMPAIGN_GLOSSARY: Array<{
   {
     label: "book appointments",
     value: "Book Appts US",
-    pattern: /\bbook(?:ed|ing)?\s+(?:appointments?|appts?)\b|\bbook\s+appts?\s+us\b|\bbook\s+appointments?\s+us\b/i,
+    pattern:
+      /\bbook\s+appts?\s+us\b|\bbook\s+appointments?\s+us\b|\bbook\s+(?:appointments?|appts?)\s+(?:campaign|umbrella)\b|\b(?:campaign|umbrella)\s+book\s+(?:appointments?|appts?)\b/i,
   },
 ];
 
@@ -724,6 +725,8 @@ async function createSpecWithAI(prompt: string, model: string) {
             "For table-format requests, return a table widget first and add charts only when the user asks for charts.",
             "For pivot, crosstab, matrix, first-row/first-column, or intersection-table requests, set tableLayout.type to pivot with rowDimension, columnDimension, and metric.",
             "For pivot tables with one time dimension and one non-time dimension, use the non-time dimension as rowDimension and the time dimension as columnDimension unless the user says otherwise.",
+            "If the user wants metrics as sub-rows under each row group, for example campaign umbrella then Spend then Primary KPI with weeks as columns, set tableLayout.type to metric_rows_pivot.",
+            "Do not add multiple campaign_umbrella equals filters when campaign names are examples of desired row labels. Keep campaign_umbrella as a dimension unless the user explicitly asks to filter to one named umbrella.",
             "For chart/graph requests, include a line widget for time-series groupings and a bar widget for non-time groupings.",
             "Keep limits at or below 50 unless the user asks for a leaderboard.",
           ],
@@ -793,6 +796,8 @@ async function editSpecWithAI(input: {
             "If the user says just count, only count, or no need to list IDs, remove the entity dimension and use the matching count metric.",
             "For pivot, crosstab, matrix, first-row/first-column, or intersection-table requests, set tableLayout.type to pivot with rowDimension, columnDimension, and metric.",
             "For pivot tables with one time dimension and one non-time dimension, use the non-time dimension as rowDimension and the time dimension as columnDimension unless the user says otherwise.",
+            "If the user wants metrics as sub-rows under each row group, for example campaign umbrella then Spend then Primary KPI with weeks as columns, set tableLayout.type to metric_rows_pivot.",
+            "Do not add multiple campaign_umbrella equals filters when campaign names are examples of desired row labels. Keep campaign_umbrella as a dimension unless the user explicitly asks to filter to one named umbrella.",
             "For chart/graph requests, include a line widget for time-series groupings and a bar widget for non-time groupings.",
             "Keep limits at or below 50 unless the user asks for a leaderboard.",
           ],
@@ -870,7 +875,7 @@ async function aggregateSpec(
   const countMetrics = spec.metrics.filter(isCountMetric);
   const needsClientSideSort = spec.sort?.field ? !RPC_SORT_FIELDS.has(spec.sort.field) : false;
   const aggregateLimit =
-    spec.tableLayout?.type === "pivot" || needsClientSideSort
+    isPivotTableLayoutType(spec.tableLayout?.type) || needsClientSideSort
       ? 10000
       : spec.limit;
 
@@ -1084,7 +1089,7 @@ function completeDateRows(
   spec: AnalysisSpec,
   range: { start: string; end: string; days: number },
 ) {
-  if (spec.tableLayout?.type === "pivot" || spec.dimensions.length !== 1 || spec.dimensions[0] !== "date") {
+  if (isPivotTableLayoutType(spec.tableLayout?.type) || spec.dimensions.length !== 1 || spec.dimensions[0] !== "date") {
     return rowsForTable;
   }
 
@@ -1113,23 +1118,26 @@ function normalizeSpec(value: unknown, prompt: string): AnalysisSpec {
   );
   const tableLayout = normalizeTableLayout(base.tableLayout, base.dimensions, metrics);
   const dimensions = normalizeDimensions(
-    tableLayout?.type === "pivot" && tableLayout.rowDimension && tableLayout.columnDimension
+    isPivotTableLayoutType(tableLayout?.type) && tableLayout.rowDimension && tableLayout.columnDimension
       ? uniqueDimensions([...base.dimensions, tableLayout.rowDimension, tableLayout.columnDimension])
       : base.dimensions,
     base.grain,
   );
   const normalizedTableLayout = normalizeTableLayout(tableLayout, dimensions, metrics);
-  const filters = base.filters
+  const filters = repairConflictingEqualsFilters(base.filters)
     .map((filter) => ({ ...filter, value: filter.value.trim() }))
     .filter((filter) => filter.value);
   const widgets =
-    normalizedTableLayout?.type === "pivot" && !base.widgets.length
+    isPivotTableLayoutType(normalizedTableLayout?.type) && !base.widgets.length
       ? [
           {
             type: "table" as const,
             title: "Pivot table",
             x: normalizedTableLayout.rowDimension,
-            metrics: [normalizedTableLayout.metric || metrics[0]],
+            metrics:
+              normalizedTableLayout.type === "metric_rows_pivot"
+                ? metrics
+                : [normalizedTableLayout.metric || metrics[0]],
           },
         ]
       : normalizeWidgets(base.widgets, dimensions, metrics, requiredMetrics);
@@ -1271,7 +1279,9 @@ function normalizeTableLayout(
   dimensions: AnalysisDimension[],
   metrics: AnalysisMetric[],
 ): AnalysisSpec["tableLayout"] | undefined {
-  if (tableLayout?.type !== "pivot") return tableLayout?.type === "flat" ? { type: "flat" } : undefined;
+  if (!tableLayout) return undefined;
+  if (tableLayout.type === "flat") return { type: "flat" };
+  if (!isPivotTableLayoutType(tableLayout.type)) return undefined;
 
   const rowDimension =
     tableLayout.rowDimension && dimensions.includes(tableLayout.rowDimension)
@@ -1290,11 +1300,15 @@ function normalizeTableLayout(
   if (!rowDimension || !columnDimension || !metric || rowDimension === columnDimension) return undefined;
 
   return {
-    type: "pivot",
+    type: tableLayout.type,
     rowDimension,
     columnDimension,
     metric,
   };
+}
+
+function isPivotTableLayoutType(type: AnalysisTableLayoutType | undefined) {
+  return type === "pivot" || type === "metric_rows_pivot";
 }
 
 function normalizeDimensions(dimensions: AnalysisDimension[], grain: AnalysisGrain) {
@@ -1421,7 +1435,7 @@ function buildResultTable(
   allRows: Array<Record<string, string | number | null>>,
   flatRows: Array<Record<string, string | number | null>>,
 ): AnalysisResult["table"] {
-  if (spec.tableLayout?.type !== "pivot") {
+  if (!isPivotTableLayoutType(spec.tableLayout?.type)) {
     return {
       columns: buildColumns(spec),
       rows: flatRows,
@@ -1477,6 +1491,45 @@ function buildPivotTable(
   const sortedRows = Array.from(rowLabels)
     .sort((a, b) => comparePivotLabels(a, b, rowDimension))
     .slice(0, spec.limit);
+
+  if (layout.type === "metric_rows_pivot") {
+    const pivotColumns: AnalysisTableColumn[] = [
+      {
+        key: rowDimension,
+        label: labelFor(rowDimension),
+        type: "text",
+      },
+      {
+        key: "pivot_metric",
+        label: "Metric",
+        type: "text",
+      },
+      ...sortedColumns.map((label, columnIndex) => ({
+        key: `pivot_${columnIndex}`,
+        label,
+        type: "text" as const,
+      })),
+    ];
+    const pivotRows = sortedRows.flatMap((rowLabel) => {
+      const rowValues = valuesByRow.get(rowLabel) || new Map<string, Map<AnalysisMetric, number>>();
+      return pivotMetrics.map((pivotMetric) => ({
+        [rowDimension]: rowLabel,
+        pivot_metric: labelFor(pivotMetric),
+        ...Object.fromEntries(
+          sortedColumns.map((columnLabel, columnIndex) => {
+            const columnValues = rowValues.get(columnLabel) || new Map<AnalysisMetric, number>();
+            return [`pivot_${columnIndex}`, formatMetricForAnswer(columnValues.get(pivotMetric) || 0, pivotMetric)];
+          }),
+        ),
+      }));
+    });
+
+    return {
+      columns: pivotColumns,
+      rows: pivotRows,
+    };
+  }
+
   const metricTypeForCells = metricType(metric);
   const pivotMetricColumns = sortedColumns.flatMap((label, columnIndex) =>
     pivotMetrics.map((pivotMetric) => ({
@@ -1918,9 +1971,13 @@ function buildDeterministicAnswer(
   const cpl = aggregated.totals.cpl;
   const includesLeadMetrics = spec.metrics.some((metric) => metric === "leads" || metric === "cpl");
   const firstMetric = spec.metrics.find((metric) => metric !== "impressions") || "spend";
-  const scoreField = spec.tableLayout?.type === "pivot" ? "pivot_total" : firstMetric;
+  const scoreField = spec.tableLayout?.type === "metric_rows_pivot"
+    ? null
+    : spec.tableLayout?.type === "pivot"
+      ? "pivot_total"
+      : firstMetric;
   const descriptionDimensions =
-    spec.tableLayout?.type === "pivot" && spec.tableLayout.rowDimension
+    isPivotTableLayoutType(spec.tableLayout?.type) && spec.tableLayout.rowDimension
       ? [spec.tableLayout.rowDimension]
       : spec.dimensions;
   const primarySummary = spec.metrics.includes("spend")
@@ -1928,11 +1985,13 @@ function buildDeterministicAnswer(
       ? `Total spend was ${formatMoney(spend)}, with ${formatNumber(leads)} leads${cpl === null ? "" : ` at ${formatMoney(cpl)} CPL`}.`
       : `Total spend was ${formatMoney(spend)}.`
     : `Total ${labelFor(firstMetric).toLowerCase()} ${isCountMetric(firstMetric) ? "were" : "was"} ${formatMetricForAnswer(aggregated.totals[firstMetric], firstMetric)}.`;
-  const bestRow = [...aggregated.table.rows].sort((a, b) => {
-    const aValue = Number(a[scoreField] || 0);
-    const bValue = Number(b[scoreField] || 0);
-    return bValue - aValue;
-  })[0];
+  const bestRow = scoreField
+    ? [...aggregated.table.rows].sort((a, b) => {
+        const aValue = Number(a[scoreField] || 0);
+        const bValue = Number(b[scoreField] || 0);
+        return bValue - aValue;
+      })[0]
+    : null;
 
   return [
     `${spec.title} returned ${aggregated.table.rows.length} grouped rows from ${aggregated.sourceTransparency.recordCounts.matched_insights} matching daily records.`,
@@ -1981,7 +2040,10 @@ function inferPromptIntent(prompt: string): PromptIntent {
   const firstDimension = intendedDimensions?.[0];
   const wantsBudget = metrics?.includes("monthly_budget") || /\bbudgets?\b/.test(lower);
   const isMonthlyUmbrella = intendedDimensions?.includes("campaign_umbrella") && intendedDimensions.includes("month");
-  const tableLayout = summaryOnly ? undefined : inferTableLayoutFromPrompt(promptForModeLower, intendedDimensions, intendedMetrics);
+  const tableLayout = summaryOnly
+    ? undefined
+    : inferTableLayoutFromPrompt(promptForModeLower, intendedDimensions, intendedMetrics) ||
+      (hasFollowUp ? inferTableLayoutFromPrompt(lower, intendedDimensions, intendedMetrics) : undefined);
   const widgets = summaryOnly
     ? [
         {
@@ -1994,9 +2056,9 @@ function inferPromptIntent(prompt: string): PromptIntent {
         lower: promptForModeLower,
         dimensions: intendedDimensions,
         metrics: intendedMetrics,
-        tableOnly: tableOnly || tableLayout?.type === "pivot",
+        tableOnly: tableOnly || isPivotTableLayoutType(tableLayout?.type),
         tableTitle:
-          tableLayout?.type === "pivot"
+          isPivotTableLayoutType(tableLayout?.type)
             ? "Pivot table"
             : tableOnly && isMonthlyUmbrella && wantsBudget
               ? "Monthly spend and budget by campaign umbrella"
@@ -2024,7 +2086,7 @@ function inferPromptIntent(prompt: string): PromptIntent {
     tableLayout,
     widgets,
     title:
-      tableLayout?.type === "pivot"
+      isPivotTableLayoutType(tableLayout?.type)
         ? "Pivot table"
         : isMonthlyUmbrella && wantsBudget
           ? "Monthly spend and budget by campaign umbrella"
@@ -2107,11 +2169,32 @@ function mergeFilters(baseFilters: AnalysisFilter[], intendedFilters: AnalysisFi
 }
 
 function campaignGlossaryFilters(prompt: string): AnalysisFilter[] {
-  return CAMPAIGN_GLOSSARY.filter((entry) => entry.pattern.test(prompt)).map((entry) => ({
+  const matches = CAMPAIGN_GLOSSARY.filter((entry) => entry.pattern.test(prompt));
+  if (matches.length !== 1) return [];
+
+  return matches.map((entry) => ({
     field: "campaign_umbrella" as const,
     operator: "equals" as const,
     value: entry.value,
   }));
+}
+
+function repairConflictingEqualsFilters(filters: AnalysisFilter[]) {
+  const equalsValuesByField = new Map<AnalysisFilterField, Set<string>>();
+  filters.forEach((filter) => {
+    if (filter.operator !== "equals") return;
+    const values = equalsValuesByField.get(filter.field) || new Set<string>();
+    values.add(filter.value.trim().toLowerCase());
+    equalsValuesByField.set(filter.field, values);
+  });
+  const conflictingFields = new Set(
+    Array.from(equalsValuesByField.entries())
+      .filter(([, values]) => values.size > 1)
+      .map(([field]) => field),
+  );
+
+  if (!conflictingFields.size) return filters;
+  return filters.filter((filter) => filter.operator !== "equals" || !conflictingFields.has(filter.field));
 }
 
 function isGlossaryFilter(filter: AnalysisFilter) {
@@ -2170,15 +2253,15 @@ function inferDimensionsFromPrompt(
   metrics?: AnalysisMetric[],
 ): AnalysisDimension[] | undefined {
   const wantsMonth =
-    /\bmonths?\s+by\s+months?\b|\bby months?\b|month-by-month|\bmonthly\b(?!\s+budgets?\b)|\b(?:group(?:ed)?|organize(?:d)?|break(?:down| out))\s+by\s+months?\b|\bmonths?\s+(?:is|are|as)\s+(?:rows?|columns?|headers?)\b|\b(?:rows?|columns?|headers?)\s+(?:is|are|as)?\s*months?\b/.test(
+    /\bmonths?\s+by\s+months?\b|\bby months?\b|month-by-month|\bmonth\s+over\s+month\b|\bmonthly\b(?!\s+budgets?\b)|\b(?:group(?:ed)?|organize(?:d)?|break(?:down| out))\s+by\s+months?\b|\bmonths?\s+(?:is|are|as)\s+(?:rows?|columns?|headers?)\b|\b(?:header\s+row|rows?|columns?|headers?)\b[^.?!\n]{0,40}\bmonths?\b/.test(
       lower,
     );
   const wantsWeek =
-    /\bweeks?\s+by\s+weeks?\b|\bby weeks?\b|week-by-week|\bweekly\b|\b(?:group(?:ed)?|organize(?:d)?|break(?:down| out))\s+by\s+weeks?\b|\bweeks?\s+(?:is|are|as)\s+(?:rows?|columns?|headers?)\b|\b(?:rows?|columns?|headers?)\s+(?:is|are|as)?\s*weeks?\b/.test(
+    /\bweeks?\s+by\s+weeks?\b|\bby weeks?\b|week-by-week|\bweek\s+over\s+week\b|\bweekly\b|\b(?:group(?:ed)?|organize(?:d)?|break(?:down| out))\s+by\s+weeks?\b|\bweeks?\s+(?:is|are|as)\s+(?:rows?|columns?|headers?)\b|\b(?:header\s+row|rows?|columns?|headers?)\b[^.?!\n]{0,40}\bweeks?\b/.test(
       lower,
     );
   const wantsDay =
-    /\bdays?\s+by\s+days?\b|\bdaily\b|\bby days?\b|day-by-day|\b(?:group(?:ed)?|organize(?:d)?|break(?:down| out))\s+by\s+days?\b|\bdays?\s+(?:is|are|as)\s+(?:rows?|columns?|headers?)\b|\b(?:rows?|columns?|headers?)\s+(?:is|are|as)?\s*days?\b/.test(
+    /\bdays?\s+by\s+days?\b|\bdaily\b|\bby days?\b|day-by-day|\bday\s+over\s+day\b|\b(?:group(?:ed)?|organize(?:d)?|break(?:down| out))\s+by\s+days?\b|\bdays?\s+(?:is|are|as)\s+(?:rows?|columns?|headers?)\b|\b(?:header\s+row|rows?|columns?|headers?)\b[^.?!\n]{0,40}\bdays?\b/.test(
       lower,
     );
   const wantsUmbrella =
@@ -2292,12 +2375,20 @@ function shouldMergeFollowUpDimensions(
     /\b(pivot|cross[-\s]?tab|crosstab|matrix|intersection|intersections|first column|first row)\b/.test(
       latestLower,
     );
+  const asksForMetricRows = /\bmetrics?\b[^.?!\n]{0,50}\brows?\b|\b(?:spend|primary\s+(?:kpi|results?))\b[^.?!\n]{0,120}\bweek\s+over\s+week\b|\bcampaign[-\s]?umbrella\b[^.?!\n]{0,80}\bthen\b[^.?!\n]{0,120}\b(?:spend|primary\s+(?:kpi|results?))\b/.test(
+    latestLower,
+  );
   const asksToReorganize =
     /\b(reorganize|organize|organized|group(?:ed)? by|break(?:down| out)|table)\b/.test(latestLower);
   const latestOnlyTime = latestDimensions.every(isTimeDimension);
   const hasPriorNonTimeDimension = allMentionedDimensions.some((dimension) => !isTimeDimension(dimension));
 
-  return hasPriorNonTimeDimension && ((asksForPivot && latestDimensions.length < 2) || (asksToReorganize && latestOnlyTime));
+  return (
+    hasPriorNonTimeDimension &&
+    ((asksForPivot && latestDimensions.length < 2) ||
+      (asksToReorganize && latestOnlyTime) ||
+      (asksForMetricRows && latestDimensions.some(isTimeDimension)))
+  );
 }
 
 function mergeDimensionsForFollowUp(
@@ -2350,16 +2441,20 @@ function inferTableLayoutFromPrompt(
   dimensions?: AnalysisDimension[],
   metrics?: AnalysisMetric[],
 ): AnalysisSpec["tableLayout"] | undefined {
-  if (
-    !/\b(pivot|cross[-\s]?tab|crosstab|matrix|intersection|intersections|first column|first row)\b/.test(
-      lower,
-    )
-  ) {
-    return undefined;
-  }
-
   const availableDimensions = dimensions || [];
   if (availableDimensions.length < 2) return undefined;
+
+  const metricRowsPivot = wantsMetricRowsPivot(lower, availableDimensions, metrics || []);
+  const asksForPivot =
+    /\b(pivot|cross[-\s]?tab|crosstab|matrix|intersection|intersections|first column|first row)\b/.test(
+      lower,
+    );
+  const asksForColumnarTimeLayout =
+    /\bweek\s+over\s+week\b|\bmonth\s+over\s+month\b|\bday\s+over\s+day\b|\bheader\s+row\b[^.?!\n]{0,50}\b(?:weeks?|months?|days?)\b|\b(?:weeks?|months?|days?)\b[^.?!\n]{0,50}\b(?:columns?|headers?)\b/.test(
+      lower,
+    );
+
+  if (!asksForPivot && !metricRowsPivot && !asksForColumnarTimeLayout) return undefined;
 
   const explicitRowDimension =
     dimensionForExplicitPositionCue(lower, "row", availableDimensions) ||
@@ -2383,11 +2478,33 @@ function inferTableLayoutFromPrompt(
   if (!rowDimension || !columnDimension || !metric) return undefined;
 
   return {
-    type: "pivot",
+    type: metricRowsPivot ? "metric_rows_pivot" : "pivot",
     rowDimension,
     columnDimension,
     metric,
   };
+}
+
+function wantsMetricRowsPivot(
+  lower: string,
+  dimensions: AnalysisDimension[],
+  metrics: AnalysisMetric[],
+) {
+  if (metrics.length < 2) return false;
+  if (!dimensions.some(isTimeDimension) || !dimensions.some((dimension) => !isTimeDimension(dimension))) return false;
+
+  return (
+    /\bmetrics?\b[^.?!\n]{0,60}\b(?:rows?|sub[-\s]?rows?|under|beneath|stacked)\b/.test(lower) ||
+    /\b(?:spend|primary\s+(?:kpi'?s?|results?))\b[^.?!\n]{0,80}\b(?:rows?|sub[-\s]?rows?|under|beneath|stacked)\b/.test(
+      lower,
+    ) ||
+    /\bcampaign[-\s]?umbrella\b[^.?!\n]{0,80}\bthen\b[^.?!\n]{0,140}\b(?:spend|primary\s+(?:kpi'?s?|results?))\b/.test(
+      lower,
+    ) ||
+    /\b(?:so\s+that\s+i\s+can\s+)?(?:easily\s+)?see\b[^.?!\n]{0,120}\b(?:spend|primary\s+(?:kpi'?s?|results?))\b[^.?!\n]{0,120}\bweek\s+over\s+week\b/.test(
+      lower,
+    )
+  );
 }
 
 function dimensionNearLayoutCue(
@@ -2397,8 +2514,8 @@ function dimensionNearLayoutCue(
 ) {
   const cuePattern =
     cue === "row"
-      ? "\\b(rows?|left|first\\s+column|row\\s+headers?)\\b"
-      : "\\b(columns?|across|top|first\\s+row|column\\s+headers?)\\b";
+      ? "\\b(rows|left|first\\s+column|row\\s+headers?)\\b"
+      : "\\b(columns?|across|top|first\\s+row|header\\s+row|column\\s+headers?)\\b";
   const match = lower.match(new RegExp(cuePattern));
   if (!match) return undefined;
   const start = Math.max((match.index || 0) - 80, 0);
@@ -2413,8 +2530,8 @@ function dimensionForExplicitPositionCue(
 ) {
   const positionPattern =
     cue === "row"
-      ? "\\b(rows?|left|first\\s+column|row\\s+headers?)\\b"
-      : "\\b(columns?|across|top|first\\s+row|column\\s+headers?)\\b";
+      ? "\\b(rows|left|first\\s+column|row\\s+headers?)\\b"
+      : "\\b(columns?|across|top|first\\s+row|header\\s+row|column\\s+headers?)\\b";
   const dimensionThenHeader =
     cue === "row" ? "\\b(?:headers?|row\\s+headers?)\\b" : "\\b(?:column\\s+headers?)\\b";
   const connector = "(?:is|are|as|in|on|to\\s+be|should\\s+be|=)?";

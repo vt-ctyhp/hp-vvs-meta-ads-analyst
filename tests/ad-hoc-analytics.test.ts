@@ -294,6 +294,72 @@ describe("ad-hoc analytics prompt normalization", () => {
     });
   });
 
+  it("supports metric subrows under each campaign umbrella with weeks as columns", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      [
+        "ad spend and primary kpi by campaign umbrella for the last 4 weeks.",
+        "Follow-up: reorganize in pivot table with data organized by week for the past 8 weeks",
+        "Follow-up: switch pivot so umbrella campaign is header and column is weeks",
+        "Follow-up: it should be campaign umbrella then spend then primary KPI. so that i can easily see spend week over week and KPI week over week. So it should be like: Book Appts US Spend Primary KPI Cash for Gold Spend Primary KPI header row is still weeks",
+      ].join("\n\n"),
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.dateRange, { preset: "last_8_weeks" });
+    assert.deepEqual(plan.spec.dimensions, ["week", "campaign_umbrella"]);
+    assert.deepEqual(plan.spec.filters, []);
+    assert.deepEqual(plan.spec.metrics, ["spend", "primary_results"]);
+    assert.deepEqual(plan.spec.tableLayout, {
+      type: "metric_rows_pivot",
+      rowDimension: "campaign_umbrella",
+      columnDimension: "week",
+      metric: "spend",
+    });
+    assert.deepEqual(plan.spec.widgets, [
+      {
+        type: "table",
+        title: "Pivot table",
+        x: "week",
+        metrics: ["spend", "primary_results"],
+      },
+    ]);
+  });
+
+  it("does not turn multiple campaign examples into impossible AND filters", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Show campaign umbrella rows like Book Appts US and Cash for Gold with spend and primary KPI by week.",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.filters, []);
+    assert.deepEqual(plan.spec.dimensions, ["week", "campaign_umbrella"]);
+    assert.deepEqual(plan.spec.metrics, ["spend", "primary_results"]);
+  });
+
+  it("repairs generated specs with contradictory exact filters on the same field", () => {
+    const spec = normalizeAnalysisSpecForPrompt(
+      {
+        title: "Ad-hoc analysis",
+        dateRange: { preset: "last_4_weeks" },
+        grain: "weekly",
+        dimensions: ["week", "campaign_umbrella"],
+        filters: [
+          { field: "campaign_umbrella", operator: "equals", value: "Cash for Gold US" },
+          { field: "campaign_umbrella", operator: "equals", value: "Book Appts US" },
+        ],
+        metrics: ["spend", "primary_results"],
+        sort: { field: "week", direction: "asc" },
+        limit: 50,
+        widgets: [{ type: "table", title: "Comparison table", x: "week", metrics: ["spend", "primary_results"] }],
+      },
+      "Show campaign umbrella rows like Book Appts US and Cash for Gold with spend and primary KPI by week.",
+    );
+
+    assert.deepEqual(spec.filters, []);
+  });
+
   it("supports switching pivot orientation with rows and columns wording", () => {
     const plan = buildAnalysisPlanForPrompt(
       {},
