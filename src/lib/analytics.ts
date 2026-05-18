@@ -54,6 +54,12 @@ export type PerformanceRow = MetricSummary & {
   body?: string | null;
   riskLevel?: "low" | "medium" | "high";
   riskReason?: string;
+  adId?: string | null;
+  adName?: string | null;
+  adSetId?: string | null;
+  adSetName?: string | null;
+  campaignId?: string | null;
+  campaignName?: string | null;
 };
 
 export type DailyTrendRow = {
@@ -691,6 +697,12 @@ export async function fetchDashboardData(
           body: creative?.body,
           riskLevel: risk.level,
           riskReason: risk.reason,
+          adId: ad?.ad_id || null,
+          adName: ad?.name || null,
+          adSetId: adSet?.ad_set_id || ad?.ad_set_id || null,
+          adSetName: adSet?.name || null,
+          campaignId: campaign?.campaign_id || ad?.campaign_id || null,
+          campaignName: campaign?.name || null,
           ...metrics,
         };
       })

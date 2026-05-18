@@ -81,6 +81,7 @@ export function DashboardClient({ initialData }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [sortKey, setSortKey] = useState<SortKey>("spend");
   const [compareEnabled, setCompareEnabled] = useState(true);
+  const [drawerCreativeId, setDrawerCreativeId] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isReporting, setIsReporting] = useState(false);
   const [reportStatus, setReportStatus] = useState("");
@@ -100,6 +101,15 @@ export function DashboardClient({ initialData }: Props) {
     setEndDate(data.sourceTransparency.timeRange.end || "");
     setIsApplyingRange(false);
   }, [data.sourceTransparency.timeRange.end, data.sourceTransparency.timeRange.start]);
+
+  useEffect(() => {
+    if (!drawerCreativeId) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setDrawerCreativeId(null);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [drawerCreativeId]);
 
   const brands = useMemo(
     () => ["all", ...Array.from(new Set(data.byBrand.map((row) => row.brandCode)))],
@@ -126,6 +136,21 @@ export function DashboardClient({ initialData }: Props) {
   const filteredCreatives = useMemo(() => {
     return filterAndSortRows(data.creatives, brand, umbrella, normalizedQuery, sortKey);
   }, [brand, data.creatives, normalizedQuery, sortKey, umbrella]);
+
+  const creativeById = useMemo(() => {
+    const map = new Map<string, PerformanceRow>();
+    for (const creative of data.creatives) {
+      map.set(creative.id, creative);
+    }
+    return map;
+  }, [data.creatives]);
+
+  const drawerCreative = drawerCreativeId ? creativeById.get(drawerCreativeId) || null : null;
+
+  const openCreativeDrawer = useCallback((creativeId: string) => {
+    setDrawerCreativeId(creativeId);
+  }, []);
+  const closeCreativeDrawer = useCallback(() => setDrawerCreativeId(null), []);
 
   const visibleCampaigns = useMemo(() => filteredCampaigns.slice(0, 10), [filteredCampaigns]);
   const visibleAdSets = useMemo(() => filteredAdSets.slice(0, 10), [filteredAdSets]);
@@ -571,9 +596,15 @@ export function DashboardClient({ initialData }: Props) {
                 </div>
               }
             />
-            {viewMode === "table" && <CreativeTable rows={visibleCreativeTableRows} />}
-            {viewMode === "cards" && <CreativeCards rows={visibleCreativeCardRows} />}
-            {viewMode === "gallery" && <CreativeGallery rows={visibleCreativeGalleryRows} />}
+            {viewMode === "table" && (
+              <CreativeTable rows={visibleCreativeTableRows} onSelect={openCreativeDrawer} />
+            )}
+            {viewMode === "cards" && (
+              <CreativeCards rows={visibleCreativeCardRows} onSelect={openCreativeDrawer} />
+            )}
+            {viewMode === "gallery" && (
+              <CreativeGallery rows={visibleCreativeGalleryRows} onSelect={openCreativeDrawer} />
+            )}
           </div>
         </div>
 
@@ -588,8 +619,11 @@ export function DashboardClient({ initialData }: Props) {
 
           <ActionQueue
             items={data.actionQueue}
-            onSelectUmbrella={setUmbrella}
-            onSearchEntity={setQuery}
+            onSelect={(item) => {
+              if (item.entityType === "creative") {
+                openCreativeDrawer(item.entityId);
+              }
+            }}
           />
 
           <ChatPanel
@@ -603,6 +637,8 @@ export function DashboardClient({ initialData }: Props) {
           <SourcePanel data={data} />
         </aside>
       </section>
+
+      <CreativeDrawer creative={drawerCreative} onClose={closeCreativeDrawer} />
     </main>
   );
 }
@@ -1166,7 +1202,13 @@ const PerformanceSection = memo(function PerformanceSection({ title, rows }: { t
   );
 });
 
-const CreativeTable = memo(function CreativeTable({ rows }: { rows: PerformanceRow[] }) {
+const CreativeTable = memo(function CreativeTable({
+  rows,
+  onSelect,
+}: {
+  rows: PerformanceRow[];
+  onSelect: (id: string) => void;
+}) {
   return (
     <div className="w-full overflow-x-auto">
       <table className="w-full min-w-[840px] table-fixed border-collapse text-sm">
@@ -1198,7 +1240,11 @@ const CreativeTable = memo(function CreativeTable({ rows }: { rows: PerformanceR
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.id} className="border-b border-hp-rule align-top last:border-b-0">
+            <tr
+              key={row.id}
+              className="cursor-pointer border-b border-hp-rule align-top transition-colors duration-150 last:border-b-0 hover:bg-hp-inset"
+              onClick={() => onSelect(row.id)}
+            >
               <td className="px-3 py-4">
                 <div className="max-w-full text-hp-ink [overflow-wrap:anywhere]">{row.name}</div>
                 {row.body ? (
@@ -1239,11 +1285,21 @@ const CreativeTable = memo(function CreativeTable({ rows }: { rows: PerformanceR
   );
 });
 
-const CreativeCards = memo(function CreativeCards({ rows }: { rows: PerformanceRow[] }) {
+const CreativeCards = memo(function CreativeCards({
+  rows,
+  onSelect,
+}: {
+  rows: PerformanceRow[];
+  onSelect: (id: string) => void;
+}) {
   return (
     <div className="grid gap-4 md:grid-cols-2">
       {rows.map((row) => (
-        <article key={row.id} className="border border-hp-rule bg-hp-card p-4">
+        <article
+          key={row.id}
+          className="cursor-pointer border border-hp-rule bg-hp-card p-4 transition-colors duration-150 hover:bg-hp-inset"
+          onClick={() => onSelect(row.id)}
+        >
           <div className="grid grid-cols-[112px_1fr] gap-4">
             <CreativePreview creative={row} />
             <div>
@@ -1273,11 +1329,21 @@ const CreativeCards = memo(function CreativeCards({ rows }: { rows: PerformanceR
   );
 });
 
-const CreativeGallery = memo(function CreativeGallery({ rows }: { rows: PerformanceRow[] }) {
+const CreativeGallery = memo(function CreativeGallery({
+  rows,
+  onSelect,
+}: {
+  rows: PerformanceRow[];
+  onSelect: (id: string) => void;
+}) {
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {rows.map((row) => (
-        <article key={row.id} className="border border-hp-rule bg-hp-card">
+        <article
+          key={row.id}
+          className="cursor-pointer border border-hp-rule bg-hp-card transition-colors duration-150 hover:bg-hp-inset"
+          onClick={() => onSelect(row.id)}
+        >
           <CreativePreview creative={row} gallery />
           <div className="border-t border-hp-rule p-4">
             <div className="flex items-start justify-between gap-3">
@@ -1300,6 +1366,150 @@ const CreativeGallery = memo(function CreativeGallery({ rows }: { rows: Performa
           </div>
         </article>
       ))}
+    </div>
+  );
+});
+
+const CreativeDrawer = memo(function CreativeDrawer({
+  creative,
+  onClose,
+}: {
+  creative: PerformanceRow | null;
+  onClose: () => void;
+}) {
+  if (!creative) return null;
+  const adsManagerUrl = creative.adId
+    ? `https://business.facebook.com/adsmanager/manage/ads/edit?selected_ad_ids=${encodeURIComponent(creative.adId)}`
+    : null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      <button
+        type="button"
+        aria-label="Close drawer"
+        onClick={onClose}
+        className="flex-1 bg-hp-ink/40 transition-opacity duration-150"
+      />
+      <aside
+        role="dialog"
+        aria-modal="true"
+        className="flex h-full w-full max-w-[480px] flex-col border-l border-hp-rule bg-hp-card shadow-[-8px_0_24px_rgba(42,39,37,0.08)]"
+      >
+        <header className="flex items-start justify-between gap-3 border-b border-hp-rule px-6 py-5">
+          <div className="min-w-0">
+            <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+              Creative
+            </div>
+            <h3 className="mt-1 font-title text-2xl leading-tight text-hp-ink [overflow-wrap:anywhere]">
+              {creative.name}
+            </h3>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+              <span>{creative.brandCode}</span>
+              {creative.campaignUmbrella ? (
+                <>
+                  <span aria-hidden>·</span>
+                  <span>{creative.campaignUmbrella}</span>
+                </>
+              ) : null}
+              <RiskBadge level={creative.riskLevel} />
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="shrink-0 border border-hp-rule px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] text-hp-muted transition-colors duration-150 hover:border-hp-ink hover:text-hp-ink"
+          >
+            Close
+          </button>
+        </header>
+
+        <div className="flex-1 overflow-y-auto">
+          <div className="border-b border-hp-rule p-6">
+            <div className="grid grid-cols-[140px_1fr] gap-5">
+              <CreativePreview creative={creative} />
+              <div className="grid grid-cols-2 gap-3">
+                <MiniMetric label="Spend" value={formatMetric(creative.spend, "money")} />
+                <MiniMetric label={creative.primaryResultLabel} value={formatMetric(creative.primaryResults, "number")} />
+                <MiniMetric label="CTR" value={formatMetric(creative.ctr, "percent")} />
+                <MiniMetric label="CPC" value={formatMetric(creative.cpc, "money")} />
+                <MiniMetric label="Cost / Result" value={formatMetric(creative.costPerPrimaryResult, "money")} />
+                <MiniMetric label="Frequency" value={`${creative.frequency.toFixed(2)}x`} />
+              </div>
+            </div>
+          </div>
+
+          <section className="border-b border-hp-rule p-6">
+            <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+              Placement
+            </div>
+            <dl className="mt-3 space-y-3 text-sm">
+              <DrawerField label="Campaign" value={creative.campaignName} id={creative.campaignId} />
+              <DrawerField label="Ad Set" value={creative.adSetName} id={creative.adSetId} />
+              <DrawerField label="Ad" value={creative.adName} id={creative.adId} />
+              <DrawerField label="Creative" value={creative.name} id={creative.id} />
+            </dl>
+          </section>
+
+          {creative.body ? (
+            <section className="border-b border-hp-rule p-6">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                Body Copy
+              </div>
+              <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-hp-body [overflow-wrap:anywhere]">
+                {creative.body}
+              </p>
+            </section>
+          ) : null}
+
+          {creative.riskReason ? (
+            <section className="border-b border-hp-rule p-6">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                Diagnostic
+              </div>
+              <p className="mt-3 text-sm leading-6 text-hp-body">{creative.riskReason}</p>
+            </section>
+          ) : null}
+        </div>
+
+        <footer className="border-t border-hp-rule px-6 py-5">
+          {adsManagerUrl ? (
+            <a
+              href={adsManagerUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="block w-full bg-hp-ink px-4 py-3 text-center text-[11px] uppercase tracking-[0.14em] text-hp-foundation transition-colors duration-150 hover:bg-hp-pink"
+            >
+              Open in Meta Ads Manager
+            </a>
+          ) : (
+            <div className="text-center text-xs text-hp-muted">
+              No ad ID on record — open Ads Manager directly.
+            </div>
+          )}
+        </footer>
+      </aside>
+    </div>
+  );
+});
+
+const DrawerField = memo(function DrawerField({
+  label,
+  value,
+  id,
+}: {
+  label: string;
+  value?: string | null;
+  id?: string | null;
+}) {
+  return (
+    <div className="grid grid-cols-[100px_1fr] gap-3">
+      <dt className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{label}</dt>
+      <dd className="min-w-0 text-hp-ink [overflow-wrap:anywhere]">
+        <div className="text-sm">{value || "—"}</div>
+        {id ? (
+          <div className="mt-0.5 font-mono text-[11px] text-hp-muted">{id}</div>
+        ) : null}
+      </dd>
     </div>
   );
 });
@@ -1415,12 +1625,10 @@ const BUCKET_TEXT_TONE: Record<ActionBucket, string> = {
 
 const ActionQueue = memo(function ActionQueue({
   items,
-  onSelectUmbrella,
-  onSearchEntity,
+  onSelect,
 }: {
   items: ActionItem[];
-  onSelectUmbrella: (umbrella: string) => void;
-  onSearchEntity: (query: string) => void;
+  onSelect: (item: ActionItem) => void;
 }) {
   const grouped = useMemo(() => {
     const map: Record<ActionBucket, ActionItem[]> = { scale: [], fix: [], watch: [] };
@@ -1451,12 +1659,7 @@ const ActionQueue = memo(function ActionQueue({
               key={bucket.key}
               bucket={bucket}
               items={grouped[bucket.key]}
-              onClick={(item) => {
-                if (item.campaignUmbrella) {
-                  onSelectUmbrella(item.campaignUmbrella);
-                }
-                onSearchEntity(item.entityName);
-              }}
+              onClick={onSelect}
             />
           ))}
         </div>
