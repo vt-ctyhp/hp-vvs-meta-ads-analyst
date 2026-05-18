@@ -11,12 +11,14 @@ import {
   LogIn,
   MousePointerClick,
   Users,
+  X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { type AppPermission } from "@/lib/access-control";
+import { type AppPermission, type UserRole } from "@/lib/access-control";
 import { AUTH } from "@/lib/glossary";
 import { createBrowserClient } from "@/lib/supabase";
+import type { SystemHealthSnapshot } from "@/lib/system-health";
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: BarChart3, permission: "view_dashboard" },
@@ -51,16 +53,23 @@ const DEFAULT_NAV_PERMISSIONS = new Set<AppPermission>([
   "view_backfill",
 ]);
 
+const SYSTEM_HEALTH_POLL_MS = 90_000;
+
 type AccessProfile = {
   authenticated: boolean;
   email: string | null;
   fullName: string | null;
+  initials: string | null;
+  roles: UserRole[];
   permissions: AppPermission[];
 };
 
 export function TopNavigation() {
   const pathname = usePathname();
   const [profile, setProfile] = useState<AccessProfile | null>(null);
+  const [health, setHealth] = useState<SystemHealthSnapshot | null>(null);
+  const [openMenu, setOpenMenu] = useState<"health" | "identity" | null>(null);
+  const closeMenu = () => setOpenMenu(null);
 
   useEffect(() => {
     let mounted = true;
@@ -75,6 +84,8 @@ export function TopNavigation() {
             authenticated: false,
             email: null,
             fullName: null,
+            initials: null,
+            roles: [],
             permissions: [],
           });
         }
@@ -99,10 +110,48 @@ export function TopNavigation() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!profile?.authenticated) return;
+    let mounted = true;
+    async function load() {
+      try {
+        const response = await fetch("/api/system-health", { cache: "no-store" });
+        if (!response.ok) return;
+        const payload = (await response.json()) as SystemHealthSnapshot;
+        if (mounted) setHealth(payload);
+      } catch {
+        // Silent: shell indicator stays in last-known state.
+      }
+    }
+    void load();
+    const interval = window.setInterval(load, SYSTEM_HEALTH_POLL_MS);
+    return () => {
+      mounted = false;
+      window.clearInterval(interval);
+    };
+  }, [profile?.authenticated]);
+
+  useEffect(() => {
+    if (!openMenu) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") closeMenu();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [openMenu]);
+
   async function signOut() {
     const supabase = createBrowserClient();
     await supabase.auth.signOut();
-    setProfile({ authenticated: false, email: null, fullName: null, permissions: [] });
+    setProfile({
+      authenticated: false,
+      email: null,
+      fullName: null,
+      initials: null,
+      roles: [],
+      permissions: [],
+    });
+    setHealth(null);
     window.location.assign("/login");
   }
 
@@ -110,8 +159,8 @@ export function TopNavigation() {
     item.href === "/admin/backfill"
       ? true
       : profile?.authenticated
-      ? profile.permissions.includes(item.permission)
-      : DEFAULT_NAV_PERMISSIONS.has(item.permission),
+        ? profile.permissions.includes(item.permission)
+        : DEFAULT_NAV_PERMISSIONS.has(item.permission),
   );
 
   return (
@@ -147,13 +196,23 @@ export function TopNavigation() {
               </Link>
             );
           })}
+
           {profile?.authenticated ? (
-            <button
-              onClick={signOut}
-              className="flex h-10 items-center px-2 text-sm text-hp-muted underline-offset-4 transition-colors hover:text-hp-ink hover:underline"
-            >
-              {AUTH.signOut}
-            </button>
+            <>
+              <HealthIndicator
+                health={health}
+                open={openMenu === "health"}
+                onToggle={() => setOpenMenu(openMenu === "health" ? null : "health")}
+                onClose={closeMenu}
+              />
+              <IdentityMenu
+                profile={profile}
+                open={openMenu === "identity"}
+                onToggle={() => setOpenMenu(openMenu === "identity" ? null : "identity")}
+                onClose={closeMenu}
+                onSignOut={signOut}
+              />
+            </>
           ) : (
             <Link
               href={`/login?next=${encodeURIComponent(pathname || "/")}`}
@@ -171,4 +230,250 @@ export function TopNavigation() {
       </div>
     </nav>
   );
+}
+
+// ── Health indicator ────────────────────────────────────────────────────────
+
+function HealthIndicator({
+  health,
+  open,
+  onToggle,
+  onClose,
+}: {
+  health: SystemHealthSnapshot | null;
+  open: boolean;
+  onToggle: () => void;
+  onClose: () => void;
+}) {
+  const status = health?.status ?? "ok";
+  const ringRef = useRef<HTMLDivElement | null>(null);
+  const dotColor =
+    status === "critical"
+      ? "bg-[#8D2E2E]"
+      : status === "warning"
+        ? "bg-[#8B5B19]"
+        : "bg-[#245D4D]";
+  const tooltip =
+    status === "critical"
+      ? "System issue — needs attention"
+      : status === "warning"
+        ? "System warning"
+        : "All systems operational";
+
+  return (
+    <div ref={ringRef} className="relative">
+      <button
+        type="button"
+        onClick={onToggle}
+        title={tooltip}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        className="flex h-10 items-center gap-2 border border-hp-rule px-3 text-[11px] uppercase tracking-[0.14em] text-hp-body transition-colors duration-150 hover:border-hp-ink hover:bg-hp-inset"
+      >
+        <span aria-hidden className={`h-2 w-2 rounded-full ${dotColor}`} />
+        <span>Health</span>
+      </button>
+      {open ? <HealthPanel health={health} onClose={onClose} /> : null}
+    </div>
+  );
+}
+
+function HealthPanel({
+  health,
+  onClose,
+}: {
+  health: SystemHealthSnapshot | null;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      role="dialog"
+      aria-label="System health"
+      className="absolute right-0 top-12 z-50 w-[360px] border border-hp-rule bg-hp-card shadow-[0_8px_24px_rgba(42,39,37,0.08)]"
+    >
+      <header className="flex items-start justify-between border-b border-hp-rule px-5 py-4">
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+            System Health
+          </div>
+          <div className="mt-1 font-body text-sm text-hp-ink">
+            {health
+              ? statusHeadline(health.status)
+              : "Checking system state…"}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="text-hp-muted transition-colors hover:text-hp-ink"
+        >
+          <X size={14} />
+        </button>
+      </header>
+      <div className="max-h-[60vh] overflow-y-auto px-5 py-4">
+        {health?.latestSync.at ? (
+          <p className="text-xs text-hp-muted">
+            Last sync {formatRelative(health.latestSync.at)} ·{" "}
+            <span className="text-hp-body">{health.latestSync.status ?? "—"}</span>
+            {health.latestSync.trigger ? ` · ${health.latestSync.trigger}` : ""}
+          </p>
+        ) : (
+          <p className="text-xs text-hp-muted">No sync history yet.</p>
+        )}
+
+        {health && health.issues.length === 0 ? (
+          <p className="mt-4 text-sm text-hp-ink">
+            All tracked signals are healthy. Nothing requires attention right now.
+          </p>
+        ) : null}
+
+        {health?.issues.length ? (
+          <ul className="mt-4 space-y-3">
+            {health.issues.map((issue) => (
+              <li
+                key={`${issue.level}-${issue.title}`}
+                className="border-l-[3px] pl-3"
+                style={{
+                  borderColor: issue.level === "critical" ? "#8D2E2E" : "#8B5B19",
+                }}
+              >
+                <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                  {issue.level === "critical" ? "Critical" : "Warning"}
+                </div>
+                <div className="mt-1 text-sm font-body text-hp-ink">{issue.title}</div>
+                <div className="mt-1 text-xs leading-5 text-hp-body">{issue.detail}</div>
+                {issue.link ? (
+                  <Link
+                    href={issue.link.href}
+                    onClick={onClose}
+                    className="mt-2 inline-block text-[11px] uppercase tracking-[0.14em] text-hp-ink underline-offset-4 hover:underline"
+                  >
+                    {issue.link.label} →
+                  </Link>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function statusHeadline(status: SystemHealthSnapshot["status"]) {
+  if (status === "critical") return "Action required";
+  if (status === "warning") return "One or more warnings";
+  return "All systems operational";
+}
+
+function formatRelative(iso: string) {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const minutes = Math.round(diffMs / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+}
+
+// ── Identity menu ───────────────────────────────────────────────────────────
+
+function IdentityMenu({
+  profile,
+  open,
+  onToggle,
+  onClose,
+  onSignOut,
+}: {
+  profile: AccessProfile;
+  open: boolean;
+  onToggle: () => void;
+  onClose: () => void;
+  onSignOut: () => Promise<void>;
+}) {
+  const initials = profile.initials || deriveInitials(profile.fullName, profile.email);
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        title={profile.fullName || profile.email || "Account"}
+        className="flex h-10 items-center gap-2 border border-hp-rule px-3 text-[11px] uppercase tracking-[0.14em] text-hp-body transition-colors duration-150 hover:border-hp-ink hover:bg-hp-inset"
+      >
+        <span
+          aria-hidden
+          className="flex h-6 w-6 items-center justify-center bg-hp-ink text-[10px] uppercase tracking-[0.06em] text-hp-foundation"
+        >
+          {initials}
+        </span>
+        <span className="hidden max-w-[140px] truncate sm:inline">
+          {profile.fullName || profile.email}
+        </span>
+      </button>
+      {open ? (
+        <div
+          role="dialog"
+          aria-label="Account"
+          className="absolute right-0 top-12 z-50 w-[280px] border border-hp-rule bg-hp-card shadow-[0_8px_24px_rgba(42,39,37,0.08)]"
+        >
+          <header className="flex items-start justify-between border-b border-hp-rule px-5 py-4">
+            <div className="min-w-0">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                Signed in as
+              </div>
+              <div className="mt-1 truncate font-body text-sm text-hp-ink">
+                {profile.fullName || "—"}
+              </div>
+              <div className="truncate text-xs text-hp-muted">{profile.email || ""}</div>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className="text-hp-muted transition-colors hover:text-hp-ink"
+            >
+              <X size={14} />
+            </button>
+          </header>
+          {profile.roles.length ? (
+            <div className="border-b border-hp-rule px-5 py-3">
+              <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Roles</div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {profile.roles.map((role) => (
+                  <span
+                    key={role}
+                    className="border border-hp-rule px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-hp-body"
+                  >
+                    {role}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              void onSignOut();
+            }}
+            className="block w-full px-5 py-3 text-left text-[11px] uppercase tracking-[0.14em] text-hp-body transition-colors duration-150 hover:bg-hp-inset hover:text-hp-ink"
+          >
+            {AUTH.signOut}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function deriveInitials(fullName: string | null, email: string | null) {
+  const source = (fullName || email || "?").trim();
+  if (!source) return "?";
+  const parts = source.split(/\s+/);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }

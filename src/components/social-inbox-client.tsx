@@ -279,9 +279,7 @@ export function SocialInboxClient({
         </div>
       </header>
 
-      <section className="mx-auto mt-8 max-w-7xl">
-        <MetaReadinessPanel status={status} />
-      </section>
+      <InboxReadinessBanner status={status} />
 
       <section className="mx-auto mt-8 grid max-w-7xl min-w-0 gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
         <aside className="min-w-0 border border-hp-rule bg-hp-card">
@@ -708,6 +706,47 @@ function SyncRunPanel({ data }: { data: SocialInboxData }) {
         <p className="text-sm leading-6 text-hp-muted">No inbox sync has run yet.</p>
       )}
     </div>
+  );
+}
+
+function InboxReadinessBanner({ status }: { status: SocialInboxStatus }) {
+  const [open, setOpen] = useState(false);
+  const ready = status.readiness.socialInbox;
+  const hasError = Boolean(status.error || status.missingEnv.length);
+  const replyMissing = status.permissions?.socialReply.missing.length ?? 0;
+  const showBanner = !ready || hasError || replyMissing > 0;
+
+  if (!showBanner) return null;
+
+  const headline = !ready
+    ? "Inbox can't read Meta messages"
+    : hasError
+      ? "Inbox connection issue"
+      : `${replyMissing} permission${replyMissing === 1 ? "" : "s"} missing for replies`;
+
+  return (
+    <section className="mx-auto mt-4 max-w-7xl">
+      <div className="border-l-[3px] border-l-[#8B5B19] bg-hp-card">
+        <div className="flex items-center gap-3 px-4 py-3">
+          <span className="text-[11px] uppercase tracking-[0.14em] text-[#8B5B19]">
+            {ready && !hasError ? "Heads up" : "Action needed"}
+          </span>
+          <span className="flex-1 text-sm text-hp-ink">{headline}</span>
+          <button
+            type="button"
+            onClick={() => setOpen((value) => !value)}
+            className="text-[10px] uppercase tracking-[0.14em] text-hp-muted transition-colors duration-150 hover:text-hp-ink"
+          >
+            {open ? "Hide details" : "Show details"}
+          </button>
+        </div>
+        {open ? (
+          <div className="border-t border-hp-rule p-5">
+            <MetaReadinessPanel status={status} />
+          </div>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
