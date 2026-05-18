@@ -1426,29 +1426,31 @@ const CreativeTable = memo(function CreativeTable({
 }) {
   return (
     <div className="w-full overflow-x-auto">
-      <table className="w-full min-w-[780px] table-fixed border-collapse text-sm">
+      <table className="w-full min-w-[1040px] table-fixed border-collapse text-sm">
         <colgroup>
-          <col className="w-[30%]" />
-          <col className="w-[10%]" />
+          <col className="w-[24%]" />
+          <col className="w-[8%]" />
           <col className="w-[6%]" />
-          <col className="w-[14%]" />
-          <col className="w-[10%]" />
+          <col className="w-[12%]" />
           <col className="w-[8%]" />
-          <col className="w-[8%]" />
+          <col className="w-[7%]" />
+          <col className="w-[7%]" />
+          <col className="w-[11%]" />
           <col className="w-[10%]" />
-          <col className="w-[4%]" />
+          <col className="w-[7%]" />
         </colgroup>
         <thead>
           <tr className="bg-hp-inset text-left text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Creative</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Preview</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Brand</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">{TERMS.umbrellaShort}</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">Spend</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">CTR</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">CPC</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">{TERMS.primaryKpi}</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Risk</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-4 py-3">Creative</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-4 py-3">Preview</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-4 py-3">Brand</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-4 py-3">{TERMS.umbrellaShort}</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-4 py-3 text-right">Spend</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-4 py-3 text-right">CTR</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-4 py-3 text-right">CPC</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-4 py-3 text-right">{TERMS.primaryKpi}</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-4 py-3 text-right">Cost / Result</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-4 py-3">Risk</th>
           </tr>
         </thead>
         <tbody>
@@ -1458,30 +1460,33 @@ const CreativeTable = memo(function CreativeTable({
               className="cursor-pointer border-b border-hp-rule align-top transition-colors duration-150 last:border-b-0 hover:bg-hp-inset"
               onClick={() => onSelect(row.id)}
             >
-              <td className="px-3 py-4">
-                <div className="max-w-full text-hp-ink [overflow-wrap:anywhere]">{row.name}</div>
+              <td className="px-4 py-4">
+                <div className="max-w-full break-words text-hp-ink">{row.name}</div>
               </td>
-              <td className="px-3 py-4">
+              <td className="px-4 py-4">
                 <CreativePreview creative={row} compact />
               </td>
-              <td className="px-3 py-4">{row.brandCode}</td>
-              <td className="px-3 py-4 text-xs leading-5 text-hp-muted [overflow-wrap:anywhere]">
-                {row.campaignUmbrella}
+              <td className="px-4 py-4">{row.brandCode}</td>
+              <td className="px-4 py-4 text-xs leading-5 text-hp-muted">
+                <span className="break-words">{row.campaignUmbrella}</span>
               </td>
-              <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.spend, "money")}</td>
-              <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.ctr, "percent")}</td>
-              <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.cpc, "money")}</td>
-              <td className="px-3 py-4 text-right">
+              <td className="px-4 py-4 text-right tabular-nums">{formatMetric(row.spend, "money")}</td>
+              <td className="px-4 py-4 text-right tabular-nums">{formatMetric(row.ctr, "percent")}</td>
+              <td className="px-4 py-4 text-right tabular-nums">{formatMetric(row.cpc, "money")}</td>
+              <td className="px-4 py-4 text-right">
                 <ResultCell row={row} align="right" />
               </td>
-              <td className="px-3 py-4">
+              <td className="px-4 py-4 text-right tabular-nums">
+                {formatMetric(row.costPerPrimaryResult, "money")}
+              </td>
+              <td className="px-4 py-4">
                 <RiskBadge level={row.riskLevel} />
               </td>
             </tr>
           ))}
           {!rows.length ? (
             <tr>
-              <td colSpan={9} className="px-3 py-8 text-center text-sm text-hp-muted">
+              <td colSpan={10} className="px-4 py-8 text-center text-sm text-hp-muted">
                 No creatives match the selected filters.
               </td>
             </tr>
@@ -1783,11 +1788,11 @@ const ResultCell = memo(function ResultCell({ row, align = "left" }: { row: Perf
   return (
     <div className={align === "right" ? "text-right" : "text-left"}>
       <div className="tabular-nums text-hp-ink">{formatMetric(row.primaryResults, "number")}</div>
-      <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted [overflow-wrap:anywhere]">
+      <div className="text-[10px] leading-4 text-hp-muted break-words">
         {row.primaryResultLabel}
       </div>
       {row.secondaryResultLabel && row.secondaryResults !== null ? (
-        <div className="mt-1 text-xs tabular-nums text-hp-muted [overflow-wrap:anywhere]">
+        <div className="mt-1 text-xs tabular-nums text-hp-muted break-words">
           {formatMetric(row.secondaryResults, "number")} {row.secondaryResultLabel}
         </div>
       ) : null}
@@ -2393,7 +2398,7 @@ type CreativeTablePrintOptions = {
 };
 
 function creativeTableMarkup(rows: PerformanceRow[], options: CreativeTablePrintOptions) {
-  const columnCount = options.hideFinancials ? 8 : 10;
+  const columnCount = options.hideFinancials ? 8 : 11;
 
   return `<table>
     ${creativeTableColgroupMarkup(options.hideFinancials)}
@@ -2417,6 +2422,7 @@ function creativeTableMarkup(rows: PerformanceRow[], options: CreativeTablePrint
         ${options.hideFinancials ? "" : `<th class="num">CPC</th>`}
         <th class="num">Freq.</th>
         <th class="num">${TERMS.primaryKpi}</th>
+        ${options.hideFinancials ? "" : `<th class="num">Cost / Result</th>`}
         <th>Risk</th>
       </tr>
     </thead>
@@ -2441,15 +2447,16 @@ function creativeTableColgroupMarkup(hideFinancials: boolean) {
   }
 
   return `<colgroup>
-    <col style="width: 27%" />
+    <col style="width: 22%" />
+    <col style="width: 7%" />
+    <col style="width: 5%" />
+    <col style="width: 12%" />
     <col style="width: 7%" />
     <col style="width: 6%" />
-    <col style="width: 14%" />
-    <col style="width: 7%" />
-    <col style="width: 7%" />
     <col style="width: 7%" />
     <col style="width: 6%" />
-    <col style="width: 13%" />
+    <col style="width: 11%" />
+    <col style="width: 11%" />
     <col style="width: 6%" />
   </colgroup>`;
 }
@@ -2471,6 +2478,7 @@ function creativeTableRowMarkup(row: PerformanceRow, hideFinancials: boolean) {
       ${escapeHtml(formatMetric(row.primaryResults, "number"))}
       <div class="muted">${escapeHtml(truncateText(row.primaryResultLabel, 28))}</div>
     </td>
+    ${hideFinancials ? "" : `<td class="num">${escapeHtml(formatMetric(row.costPerPrimaryResult, "money"))}</td>`}
     <td class="${riskClassName(row.riskLevel)}">${escapeHtml(row.riskLevel || "low")}</td>
   </tr>`;
 }
