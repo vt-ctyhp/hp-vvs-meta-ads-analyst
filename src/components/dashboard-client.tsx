@@ -44,6 +44,7 @@ import { TechnicalId } from "./technical-id";
 type ViewMode = "table" | "cards" | "gallery";
 type SortKey = "spend" | "primaryResults" | "ctr" | "cpc" | "newMessagingContacts" | "frequency";
 type CreativeBucket = "winners" | "losers" | "all";
+type DeliveryFilter = "all" | "active" | "paused";
 
 type Props = {
   initialData: DashboardPayload;
@@ -88,6 +89,7 @@ export function DashboardClient({ initialData, permissions }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("spend");
   const [compareEnabled, setCompareEnabled] = useState(true);
   const [creativeBucket, setCreativeBucket] = useState<CreativeBucket>("all");
+  const [delivery, setDelivery] = useState<DeliveryFilter>("all");
   const [drawerCreativeId, setDrawerCreativeId] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isReporting, setIsReporting] = useState(false);
@@ -131,18 +133,18 @@ export function DashboardClient({ initialData, permissions }: Props) {
 
   const filteredCampaigns = useMemo(
     () =>
-      filterAndSortRows(data.campaigns, brand, umbrella, normalizedQuery, sortKey),
-    [brand, data.campaigns, normalizedQuery, sortKey, umbrella],
+      filterAndSortRows(data.campaigns, brand, umbrella, normalizedQuery, sortKey, delivery),
+    [brand, data.campaigns, delivery, normalizedQuery, sortKey, umbrella],
   );
 
   const filteredAdSets = useMemo(
     () =>
-      filterAndSortRows(data.adSets, brand, umbrella, normalizedQuery, sortKey),
-    [brand, data.adSets, normalizedQuery, sortKey, umbrella],
+      filterAndSortRows(data.adSets, brand, umbrella, normalizedQuery, sortKey, delivery),
+    [brand, data.adSets, delivery, normalizedQuery, sortKey, umbrella],
   );
 
   const filteredCreatives = useMemo(() => {
-    const base = filterAndSortRows(data.creatives, brand, umbrella, normalizedQuery, sortKey);
+    const base = filterAndSortRows(data.creatives, brand, umbrella, normalizedQuery, sortKey, delivery);
     if (creativeBucket === "all") return base;
     const benchmarkCtr = data.overview.ctr;
     const spendThreshold = Math.max(data.overview.spend * 0.01, 50);
@@ -165,13 +167,14 @@ export function DashboardClient({ initialData, permissions }: Props) {
     data.creatives,
     data.overview.ctr,
     data.overview.spend,
+    delivery,
     normalizedQuery,
     sortKey,
     umbrella,
   ]);
 
   const creativeBucketCounts = useMemo(() => {
-    const base = filterAndSortRows(data.creatives, brand, umbrella, normalizedQuery, sortKey);
+    const base = filterAndSortRows(data.creatives, brand, umbrella, normalizedQuery, sortKey, delivery);
     const benchmarkCtr = data.overview.ctr;
     const spendThreshold = Math.max(data.overview.spend * 0.01, 50);
     const winners = base.filter(
@@ -191,6 +194,7 @@ export function DashboardClient({ initialData, permissions }: Props) {
     data.creatives,
     data.overview.ctr,
     data.overview.spend,
+    delivery,
     normalizedQuery,
     sortKey,
     umbrella,
@@ -205,6 +209,16 @@ export function DashboardClient({ initialData, permissions }: Props) {
   }, [data.creatives]);
 
   const drawerCreative = drawerCreativeId ? creativeById.get(drawerCreativeId) || null : null;
+
+  const filteredActionQueue = useMemo(() => {
+    if (delivery === "all") return data.actionQueue;
+    return data.actionQueue.filter((item) => {
+      if (item.entityType !== "creative") return true;
+      const creative = creativeById.get(item.entityId);
+      if (!creative) return true;
+      return rowMatchesDelivery(creative, delivery);
+    });
+  }, [data.actionQueue, creativeById, delivery]);
 
   const openCreativeDrawer = useCallback((creativeId: string) => {
     setDrawerCreativeId(creativeId);
@@ -292,8 +306,8 @@ export function DashboardClient({ initialData, permissions }: Props) {
       }
     }
 
-    const scaleCount = data.actionQueue.filter((item) => item.bucket === "scale").length;
-    const fixCount = data.actionQueue.filter((item) => item.bucket === "fix").length;
+    const scaleCount = filteredActionQueue.filter((item) => item.bucket === "scale").length;
+    const fixCount = filteredActionQueue.filter((item) => item.bucket === "fix").length;
     if (scaleCount > 0 || fixCount > 0) {
       const parts: string[] = [];
       if (scaleCount > 0) parts.push(`${scaleCount} to scale`);
@@ -317,7 +331,7 @@ export function DashboardClient({ initialData, permissions }: Props) {
 
     return { context, highlights };
   }, [
-    data.actionQueue,
+    filteredActionQueue,
     data.byUmbrella,
     data.comparison.overview,
     data.overview,
@@ -584,6 +598,32 @@ export function DashboardClient({ initialData, permissions }: Props) {
               {brandOption === "all" ? "All Brands" : brandOption}
             </button>
           ))}
+
+          <span aria-hidden className="mx-1 hidden h-6 w-px bg-hp-rule xl:inline-block" />
+
+          <span className="pr-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+            Delivery
+          </span>
+          {(
+            [
+              { value: "all", label: "All" },
+              { value: "active", label: "Active" },
+              { value: "paused", label: "Paused" },
+            ] as const
+          ).map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => setDelivery(option.value)}
+              className={`h-9 border px-3 text-[11px] uppercase tracking-[0.14em] transition-colors duration-150 ${
+                delivery === option.value
+                  ? "border-hp-ink bg-hp-ink text-hp-foundation"
+                  : "border-hp-rule text-hp-body hover:border-hp-ink"
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
         </div>
 
         <DateRangeControls
@@ -719,7 +759,7 @@ export function DashboardClient({ initialData, permissions }: Props) {
           />
 
           <ActionQueue
-            items={data.actionQueue}
+            items={filteredActionQueue}
             onSelect={(item) => {
               if (item.entityType === "creative") {
                 openCreativeDrawer(item.entityId);
@@ -2564,9 +2604,10 @@ function filterAndSortRows(
   umbrella: string,
   normalizedQuery: string,
   sortKey: SortKey,
+  delivery: DeliveryFilter = "all",
 ) {
   return rows
-    .filter((row) => rowMatchesFilters(row, brand, umbrella, normalizedQuery))
+    .filter((row) => rowMatchesFilters(row, brand, umbrella, normalizedQuery, delivery))
     .sort((a, b) => Number(b[sortKey] || 0) - Number(a[sortKey] || 0));
 }
 
@@ -2575,9 +2616,11 @@ function rowMatchesFilters(
   brand: string,
   umbrella: string,
   normalizedQuery: string,
+  delivery: DeliveryFilter,
 ) {
   if (brand !== "all" && row.brandCode !== brand) return false;
   if (umbrella !== "all" && row.campaignUmbrella !== umbrella) return false;
+  if (!rowMatchesDelivery(row, delivery)) return false;
 
   if (!normalizedQuery) return true;
 
@@ -2591,6 +2634,12 @@ function rowMatchesFilters(
     searchValueMatches(row.status, normalizedQuery) ||
     searchValueMatches(row.effectiveStatus, normalizedQuery)
   );
+}
+
+function rowMatchesDelivery(row: PerformanceRow, delivery: DeliveryFilter) {
+  if (delivery === "all") return true;
+  const isActive = (row.effectiveStatus || "").toUpperCase() === "ACTIVE";
+  return delivery === "active" ? isActive : !isActive;
 }
 
 function searchValueMatches(value: string | null | undefined, normalizedQuery: string) {
