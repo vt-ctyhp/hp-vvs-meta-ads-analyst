@@ -37,6 +37,7 @@ import {
 
 import type { ActionBucket, ActionItem, DashboardPayload, PerformanceRow } from "@/lib/analytics";
 import { TERMS } from "@/lib/glossary";
+import { StatusSentence, type StatusHighlight } from "./status-sentence";
 
 type ViewMode = "table" | "cards" | "gallery";
 type SortKey = "spend" | "primaryResults" | "ctr" | "cpc" | "newMessagingContacts" | "frequency";
@@ -259,6 +260,66 @@ export function DashboardClient({ initialData }: Props) {
     });
   }, [data.byUmbrella, data.comparison.byUmbrella]);
 
+  const summary = useMemo(() => {
+    const range = data.sourceTransparency.timeRange;
+    const context = `Last ${range.days} days · ${data.byUmbrella.length} ${
+      data.byUmbrella.length === 1 ? TERMS.campaignUmbrella : `${TERMS.campaignUmbrella}s`
+    } tracked`;
+
+    const highlights: StatusHighlight[] = [];
+    const overview = data.overview;
+    const prior = data.comparison.overview;
+    const costNow = overview.costPerPrimaryResult;
+    const costPrior = prior.costPerPrimaryResult;
+    if (costNow != null && costPrior != null && costPrior > 0) {
+      const change = ((costNow - costPrior) / costPrior) * 100;
+      const direction = change > 0 ? "up" : "down";
+      const magnitude = Math.abs(change);
+      if (magnitude >= 3) {
+        highlights.push({
+          text: `Cost per result is ${direction} ${magnitude.toFixed(0)}% vs prior period`,
+          tone: change > 0 ? "warning" : "positive",
+        });
+      } else {
+        highlights.push({
+          text: `Cost per result is flat vs prior period`,
+          tone: "neutral",
+        });
+      }
+    }
+
+    const scaleCount = data.actionQueue.filter((item) => item.bucket === "scale").length;
+    const fixCount = data.actionQueue.filter((item) => item.bucket === "fix").length;
+    if (scaleCount > 0 || fixCount > 0) {
+      const parts: string[] = [];
+      if (scaleCount > 0) parts.push(`${scaleCount} to scale`);
+      if (fixCount > 0) parts.push(`${fixCount} to fix`);
+      highlights.push({ text: parts.join(", "), tone: fixCount > 0 ? "warning" : "positive" });
+    }
+
+    const topUmbrella = [...data.byUmbrella]
+      .filter((row) => row.spend > 0)
+      .sort((a, b) => b.primaryResults - a.primaryResults || b.spend - a.spend)[0];
+    if (topUmbrella) {
+      highlights.push({
+        text: `${topUmbrella.name} leads on ${topUmbrella.primaryResultLabel.toLowerCase()}`,
+        tone: "neutral",
+      });
+    }
+
+    if (highlights.length === 0) {
+      highlights.push({ text: "No activity in the selected range" });
+    }
+
+    return { context, highlights };
+  }, [
+    data.actionQueue,
+    data.byUmbrella,
+    data.comparison.overview,
+    data.overview,
+    data.sourceTransparency.timeRange,
+  ]);
+
   const trendRows = useMemo(() => {
     const aggregate = (
       rows: DashboardPayload["dailyTrend"],
@@ -454,7 +515,9 @@ export function DashboardClient({ initialData }: Props) {
       <section className="mx-auto mt-8 max-w-7xl">
         <DataCoverageNotice data={data} />
 
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <StatusSentence context={summary.context} highlights={summary.highlights} />
+
+        <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
           <MetricTile
             label="Spend"
             value={formatMetric(data.overview.spend, "money")}

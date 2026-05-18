@@ -22,6 +22,8 @@ import {
 
 import type { WebsiteFunnelData } from "@/lib/website-analytics";
 
+import { StatusSentence, type StatusHighlight } from "./status-sentence";
+
 type Props = {
   initialData: WebsiteFunnelData;
 };
@@ -43,6 +45,48 @@ export function WebsiteFunnelClient({ initialData }: Props) {
     () => Math.max(...data.funnel.map((row) => row.count), 1),
     [data.funnel],
   );
+
+  const funnelHighlights = useMemo<StatusHighlight[]>(() => {
+    const highlights: StatusHighlight[] = [];
+    const sessions = data.overview.sessions;
+    const schedules = data.overview.schedules;
+    if (sessions > 0) {
+      const rate = (schedules / sessions) * 100;
+      highlights.push({
+        text: `${rate.toFixed(2)}% session-to-schedule rate`,
+        tone: rate >= 1 ? "positive" : "neutral",
+      });
+    }
+    const discrepancy = data.overview.discrepancy;
+    if (Math.abs(discrepancy) > 0) {
+      const sign = discrepancy > 0 ? "+" : "";
+      highlights.push({
+        text: `${sign}${discrepancy} attribution gap vs Meta`,
+        tone: "warning",
+      });
+    }
+    let biggestDropName: string | null = null;
+    let biggestDropPercent = 0;
+    for (let i = 1; i < data.funnel.length; i += 1) {
+      const prev = data.funnel[i - 1];
+      const next = data.funnel[i];
+      if (prev.count === 0) continue;
+      const drop = ((prev.count - next.count) / prev.count) * 100;
+      if (drop > biggestDropPercent) {
+        biggestDropPercent = drop;
+        biggestDropName = `${prev.label} → ${next.label}`;
+      }
+    }
+    if (biggestDropName && biggestDropPercent >= 5) {
+      highlights.push({
+        text: `Largest drop-off: ${biggestDropName} (${biggestDropPercent.toFixed(0)}%)`,
+      });
+    }
+    if (highlights.length === 0) {
+      highlights.push({ text: "No website activity in this range" });
+    }
+    return highlights;
+  }, [data.funnel, data.overview.discrepancy, data.overview.schedules, data.overview.sessions]);
 
   const applyDateRange = useCallback(
     function applyDateRange(nextStart = startDate, nextEnd = endDate) {
@@ -72,6 +116,10 @@ export function WebsiteFunnelClient({ initialData }: Props) {
               Raw Shopify and booking behavior, kept separate from Meta Ads API data so
               attribution discrepancies are visible instead of blended away.
             </p>
+            <StatusSentence
+              context={`${formatNumber(data.overview.sessions)} sessions in window`}
+              highlights={funnelHighlights}
+            />
           </div>
 
           <div className="flex flex-wrap items-end gap-3">

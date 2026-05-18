@@ -18,6 +18,13 @@ import {
   type CreativeAnalysisRow,
 } from "@/lib/creative-analysis";
 import { formatMetaStatus, formatRanking, TERMS } from "@/lib/glossary";
+import {
+  FilterBar,
+  FilterField,
+  FilterNumberField,
+  type ActiveFilter,
+} from "./filter-bar";
+import { StatusSentence, type StatusHighlight } from "./status-sentence";
 
 type Props = {
   initialData: CreativeAnalysisPayload;
@@ -164,6 +171,65 @@ export function CreativeAnalysisClient({ initialData }: Props) {
   }, [adSet, brand, campaign, data.rows, delivery, minSpend, query, status, umbrella]);
 
   const summary = useMemo(() => buildSummary(filteredRows), [filteredRows]);
+
+  const activeFilters = useMemo<ActiveFilter[]>(() => {
+    const list: ActiveFilter[] = [];
+    if (brand !== "all") list.push({ label: `Brand: ${brand}`, onClear: () => setBrand("all") });
+    if (umbrella !== "all")
+      list.push({ label: `Umbrella: ${umbrella}`, onClear: () => setUmbrella("all") });
+    if (campaign !== "all")
+      list.push({ label: `Campaign: ${campaign}`, onClear: () => setCampaign("all") });
+    if (adSet !== "all")
+      list.push({ label: `Ad set: ${adSet}`, onClear: () => setAdSet("all") });
+    if (status !== "all")
+      list.push({ label: `Status: ${status}`, onClear: () => setStatus("all") });
+    if (minSpend.trim())
+      list.push({ label: `Min spend: $${minSpend}`, onClear: () => setMinSpend("") });
+    return list;
+  }, [brand, umbrella, campaign, adSet, status, minSpend]);
+
+  function clearAllSecondary() {
+    setBrand("all");
+    setUmbrella("all");
+    setCampaign("all");
+    setAdSet("all");
+    setStatus("all");
+    setMinSpend("");
+  }
+
+  const statusHighlights = useMemo<StatusHighlight[]>(() => {
+    if (!filteredRows.length) {
+      return [{ text: "No creatives match the current filters" }];
+    }
+    const highlights: StatusHighlight[] = [];
+    if (summary.scaleCandidates > 0) {
+      highlights.push({
+        text: `${summary.scaleCandidates} ready to scale`,
+        tone: "positive",
+      });
+    }
+    if (summary.fatigueCount > 0) {
+      highlights.push({
+        text: `${summary.fatigueCount} showing fatigue`,
+        tone: "warning",
+      });
+    }
+    const noResultSpenders = filteredRows.filter(
+      (row) => row.spend > 50 && row.resultCount === 0,
+    ).length;
+    if (noResultSpenders > 0) {
+      highlights.push({
+        text: `${noResultSpenders} spending without converting`,
+        tone: "warning",
+      });
+    }
+    if (!highlights.length) {
+      highlights.push({
+        text: `${filteredRows.length} creatives in view, no urgent signals`,
+      });
+    }
+    return highlights;
+  }, [filteredRows, summary.fatigueCount, summary.scaleCandidates]);
   const visibleRows = showAllRows ? filteredRows : filteredRows.slice(0, 12);
   const selected = useMemo(
     () => data.rows.find((row) => row.id === selectedId) || null,
@@ -312,6 +378,10 @@ export function CreativeAnalysisClient({ initialData }: Props) {
             Internal diagnostic scoring across active and paused creatives. Combines visible Meta
             metrics with Hung Phat weightings, not Meta&apos;s official ranking.
           </p>
+          <StatusSentence
+            context={`${filteredRows.length} of ${data.rows.length} creatives in view`}
+            highlights={statusHighlights}
+          />
         </div>
         <div className="border border-hp-rule bg-hp-card p-5 text-sm text-hp-body">
           <p className="text-[10px] uppercase tracking-[0.18em] text-hp-muted">
@@ -324,112 +394,137 @@ export function CreativeAnalysisClient({ initialData }: Props) {
         </div>
       </header>
 
-      <section className="mx-auto mt-8 max-w-7xl border border-hp-rule bg-hp-card px-5 py-5">
-        <div className="grid gap-6 border-b border-hp-rule pb-5 lg:grid-cols-[1fr_1fr_1.3fr]">
-          <div>
-            <FilterEyebrow>Showing</FilterEyebrow>
-            <SegmentedControl
-              value={delivery}
-              onChange={(value) => setDelivery(value as DeliveryFilter)}
-              options={[
-                { value: "active", label: "Active only" },
-                { value: "inactive", label: "Paused" },
-                { value: "all", label: "All" },
-              ]}
-            />
-          </div>
-          <div>
-            <FilterEyebrow>Creative status</FilterEyebrow>
-            <select
-              value={status}
-              onChange={(event) => setStatus(event.target.value)}
-              className="h-10 w-full border border-hp-rule bg-transparent px-3 text-sm outline-none focus:border-hp-pink"
-            >
-              {["all", ...CREATIVE_STATUS_OPTIONS].map((option) => (
-                <option key={option} value={option}>
-                  {option === "all" ? "All statuses" : option}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <FilterEyebrow>Time</FilterEyebrow>
-            <div className="flex flex-wrap items-center gap-2">
-              {[7, 14, 30, 90].map((days) => (
-                <button
-                  key={days}
-                  onClick={() => applyQuickRange(days)}
-                  disabled={isApplyingRange}
-                  className={`h-10 border px-4 text-sm transition-colors ${
-                    data.sourceTransparency.timeRange.days === days
-                      ? "border-hp-ink bg-hp-ink text-hp-foundation"
-                      : "border-hp-rule text-hp-body hover:border-hp-ink"
-                  }`}
-                >
-                  {days}d
-                </button>
-              ))}
-              <button
-                onClick={applyCustomRange}
-                disabled={isApplyingRange || !startDate || !endDate}
-                className="h-10 border border-hp-rule px-4 text-sm text-hp-body transition-colors hover:border-hp-ink hover:bg-hp-inset"
-              >
-                Custom
-              </button>
-              <span className="ml-auto text-sm italic text-hp-muted">
-                {dateRangeLabel(data.sourceTransparency.timeRange)}
-              </span>
-            </div>
-          </div>
-        </div>
-        <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_1fr_1fr_1fr_0.75fr_1fr]">
-          <FilterSelect label="Brand / account" value={brand} onChange={setBrand} options={brandOptions} />
-          <FilterSelect label="Campaign umbrella" value={umbrella} onChange={setUmbrella} options={umbrellaOptions} />
-          <FilterSelect label="Campaign" value={campaign} onChange={setCampaign} options={campaignOptions} />
-          <FilterSelect label="Ad set" value={adSet} onChange={setAdSet} options={adSetOptions} />
-          <label className="block">
-            <FilterEyebrow>Min spend</FilterEyebrow>
-            <input
-              value={minSpend}
-              onChange={(event) => setMinSpend(event.target.value)}
-              inputMode="decimal"
-              placeholder="0"
-              className="h-10 w-full border-0 border-b border-hp-rule bg-transparent px-0.5 text-sm outline-none focus:border-b-2 focus:border-hp-pink"
-            />
-          </label>
-          <label className="block">
-            <FilterEyebrow>Search</FilterEyebrow>
-            <div className="flex h-10 items-center gap-2 border-0 border-b border-hp-rule">
+      <section className="mx-auto mt-8 max-w-7xl">
+        <FilterBar
+          primary={
+            <>
+              <SegmentedControl
+                value={delivery}
+                onChange={(value) => setDelivery(value as DeliveryFilter)}
+                options={[
+                  { value: "active", label: "Active" },
+                  { value: "inactive", label: "Paused" },
+                  { value: "all", label: "All" },
+                ]}
+              />
+              <span aria-hidden className="h-6 w-px bg-hp-rule" />
+              <div className="flex flex-wrap items-center gap-1">
+                {[7, 14, 30, 90].map((days) => (
+                  <button
+                    key={days}
+                    onClick={() => applyQuickRange(days)}
+                    disabled={isApplyingRange}
+                    className={`h-9 border px-3 text-[11px] uppercase tracking-[0.14em] transition-colors duration-150 ${
+                      data.sourceTransparency.timeRange.days === days
+                        ? "border-hp-ink bg-hp-ink text-hp-foundation"
+                        : "border-hp-rule text-hp-body hover:border-hp-ink"
+                    }`}
+                  >
+                    {days}d
+                  </button>
+                ))}
+                <span className="pl-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                  {dateRangeLabel(data.sourceTransparency.timeRange)}
+                </span>
+              </div>
+            </>
+          }
+          searchSlot={
+            <label className="flex h-10 min-w-[200px] items-center gap-2 border-b border-hp-rule px-1 focus-within:border-hp-pink">
               <Search size={14} className="text-hp-muted" />
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Ad or campaign"
-                className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+                placeholder="Search creatives"
+                className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-hp-muted"
               />
+            </label>
+          }
+          secondary={
+            <div>
+              <FilterField
+                label="Brand"
+                value={brand}
+                onChange={setBrand}
+                options={brandOptions.map((option) => ({
+                  value: option,
+                  label: option === "all" ? "All brands" : option,
+                }))}
+              />
+              <FilterField
+                label="Campaign Umbrella"
+                value={umbrella}
+                onChange={setUmbrella}
+                options={umbrellaOptions.map((option) => ({
+                  value: option,
+                  label: option === "all" ? "All umbrellas" : option,
+                }))}
+              />
+              <FilterField
+                label="Campaign"
+                value={campaign}
+                onChange={setCampaign}
+                options={campaignOptions.map((option) => ({
+                  value: option,
+                  label: option === "all" ? "All campaigns" : option,
+                }))}
+              />
+              <FilterField
+                label="Ad set"
+                value={adSet}
+                onChange={setAdSet}
+                options={adSetOptions.map((option) => ({
+                  value: option,
+                  label: option === "all" ? "All ad sets" : option,
+                }))}
+              />
+              <FilterField
+                label="Creative status"
+                value={status}
+                onChange={setStatus}
+                options={["all", ...CREATIVE_STATUS_OPTIONS].map((option) => ({
+                  value: option,
+                  label: option === "all" ? "All statuses" : option,
+                }))}
+              />
+              <FilterNumberField
+                label="Minimum spend"
+                value={minSpend}
+                placeholder="0"
+                onChange={setMinSpend}
+              />
+              <div className="mt-3 border-t border-hp-rule pt-3">
+                <span className="block text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                  Custom date range
+                </span>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(event) => setStartDate(event.target.value)}
+                    className="h-10 w-full border-0 border-b border-hp-rule bg-transparent px-1 text-sm outline-none focus:border-b-2 focus:border-hp-pink"
+                  />
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(event) => setEndDate(event.target.value)}
+                    className="h-10 w-full border-0 border-b border-hp-rule bg-transparent px-1 text-sm outline-none focus:border-b-2 focus:border-hp-pink"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={applyCustomRange}
+                  disabled={isApplyingRange || !startDate || !endDate}
+                  className="mt-2 inline-flex h-9 items-center justify-center border border-hp-rule px-3 text-[11px] uppercase tracking-[0.14em] text-hp-body transition-colors duration-150 hover:border-hp-ink disabled:opacity-50"
+                >
+                  Apply range
+                </button>
+              </div>
             </div>
-          </label>
-        </div>
-        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:w-[560px] lg:grid-cols-2">
-          <label>
-            <FilterEyebrow>Custom start</FilterEyebrow>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(event) => setStartDate(event.target.value)}
-              className="h-10 w-full border-0 border-b border-hp-rule bg-transparent px-0.5 text-sm outline-none focus:border-b-2 focus:border-hp-pink"
-            />
-          </label>
-          <label>
-            <FilterEyebrow>Custom end</FilterEyebrow>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(event) => setEndDate(event.target.value)}
-              className="h-10 w-full border-0 border-b border-hp-rule bg-transparent px-0.5 text-sm outline-none focus:border-b-2 focus:border-hp-pink"
-            />
-          </label>
-        </div>
+          }
+          active={activeFilters}
+          onClearAll={clearAllSecondary}
+        />
         {isApplyingRange ? (
           <p className="mt-4 bg-hp-inset px-3 py-2 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
             Preparing creative data
@@ -663,43 +758,6 @@ function compareNullableCost(a: number | null, b: number | null) {
   if (a === null) return 1;
   if (b === null) return -1;
   return a - b;
-}
-
-function FilterSelect({
-  label,
-  value,
-  onChange,
-  options,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  options: string[];
-}) {
-  return (
-    <label className="block">
-      <FilterEyebrow>{label}</FilterEyebrow>
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="h-10 w-full border-0 border-b border-hp-rule bg-transparent px-0.5 text-sm outline-none focus:border-b-2 focus:border-hp-pink"
-      >
-        {options.map((option) => (
-          <option key={option} value={option}>
-            {option === "all" ? "All" : option}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function FilterEyebrow({ children }: { children: ReactNode }) {
-  return (
-    <span className="mb-2 block text-[10px] uppercase tracking-[0.18em] text-hp-muted">
-      {children}
-    </span>
-  );
 }
 
 function SegmentedControl({

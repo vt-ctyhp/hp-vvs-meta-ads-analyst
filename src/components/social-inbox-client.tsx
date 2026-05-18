@@ -17,6 +17,7 @@ import {
 import { useMemo, useState } from "react";
 
 import { SYNC } from "@/lib/glossary";
+import { StatusSentence, type StatusHighlight } from "./status-sentence";
 import type {
   SocialInboxComment,
   SocialInboxData,
@@ -145,6 +146,28 @@ export function SocialInboxClient({
   const [suggestionMeta, setSuggestionMeta] = useState<SuggestReplyResponse | null>(null);
 
   const queue = useMemo(() => buildQueue(inboxData), [inboxData]);
+
+  const inboxHighlights = useMemo<StatusHighlight[]>(() => {
+    if (queue.length === 0) {
+      return [{ text: "Inbox is empty for the current connection" }];
+    }
+    const unread = queue.filter((item) => item.status === "Unread").length;
+    const needsReply = queue.filter((item) => item.status === "Needs reply").length;
+    const highlights: StatusHighlight[] = [];
+    if (unread > 0) {
+      highlights.push({ text: `${unread} unread`, tone: "warning" });
+    }
+    if (needsReply > 0) {
+      highlights.push({ text: `${needsReply} needing reply`, tone: "warning" });
+    }
+    if (highlights.length === 0) {
+      highlights.push({
+        text: `${queue.length} threads, all caught up`,
+        tone: "positive",
+      });
+    }
+    return highlights;
+  }, [queue]);
   const filteredQueue = useMemo(
     () =>
       queue.filter((item) => {
@@ -272,6 +295,10 @@ export function SocialInboxClient({
           <h1 className="mt-2 font-title text-4xl leading-tight text-hp-ink md:text-5xl">
             Message & Comment Command Center
           </h1>
+          <StatusSentence
+            context={`${queue.length} ${queue.length === 1 ? "thread" : "threads"} synced`}
+            highlights={inboxHighlights}
+          />
         </div>
         <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.14em]">
           <StatusPill ready={status.readiness.socialInbox} label="Inbox Read" />
