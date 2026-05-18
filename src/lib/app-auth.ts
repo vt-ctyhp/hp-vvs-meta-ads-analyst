@@ -20,6 +20,8 @@ export type AccessProfile = {
   missingAppProfile: boolean;
 };
 
+export const AUTH_ACCESS_COOKIE = "hp_vvs_app_access";
+
 export class AuthorizationError extends Error {
   status: number;
 
@@ -35,7 +37,7 @@ type UserRoleRow = {
 };
 
 export async function getAccessProfileFromRequest(request: Request): Promise<AccessProfile> {
-  const token = bearerToken(request);
+  const token = bearerToken(request) || authCookieToken(request);
   if (!token) return anonymousProfile();
   return getAccessProfileForToken(token);
 }
@@ -48,6 +50,10 @@ export async function requirePermissionFromRequest(
 
   if (!profile.authenticated) {
     throw new AuthorizationError("Sign in is required.", 401);
+  }
+
+  if (!profile.active || profile.missingAppProfile) {
+    throw new AuthorizationError("Your account does not have access to this app.", 403);
   }
 
   if (!profile.permissions.includes(permission)) {
@@ -124,6 +130,30 @@ function bearerToken(request: Request) {
   if (!header?.startsWith("Bearer ")) return null;
   const token = header.slice("Bearer ".length).trim();
   return token || null;
+}
+
+function authCookieToken(request: Request) {
+  return cookieValue(request.headers.get("cookie"), AUTH_ACCESS_COOKIE);
+}
+
+function cookieValue(header: string | null, name: string) {
+  if (!header) return null;
+
+  for (const part of header.split(";")) {
+    const [rawKey, ...rawValue] = part.trim().split("=");
+    if (rawKey !== name) continue;
+
+    const value = rawValue.join("=").trim();
+    if (!value) return null;
+
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return value;
+    }
+  }
+
+  return null;
 }
 
 function anonymousProfile(): AccessProfile {

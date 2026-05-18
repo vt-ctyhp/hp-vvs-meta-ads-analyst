@@ -1,3 +1,4 @@
+import { requirePermissionFromRequest } from "@/lib/app-auth";
 import { jsonError } from "@/lib/http";
 import { fetchMetaAdVideoMetricsForRange } from "@/lib/meta";
 
@@ -9,6 +10,7 @@ const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export async function GET(request: Request) {
   try {
+    await requirePermissionFromRequest(request, "view_creative_analysis");
     const url = new URL(request.url);
     const metaAccountId = url.searchParams.get("metaAccountId")?.trim();
     const adId = url.searchParams.get("adId")?.trim();

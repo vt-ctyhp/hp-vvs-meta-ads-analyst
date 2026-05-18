@@ -1,3 +1,4 @@
+import { requirePermissionFromRequest } from "@/lib/app-auth";
 import { jsonError } from "@/lib/http";
 import { suggestSocialReply } from "@/lib/social-reply-suggestions";
 
@@ -7,6 +8,7 @@ export const maxDuration = 120;
 
 export async function POST(request: Request) {
   try {
+    await requirePermissionFromRequest(request, "view_inbox");
     const body = (await request.json()) as {
       platform?: "facebook" | "instagram";
       sourceType?: "message" | "comment";

@@ -1,3 +1,4 @@
+import { requirePermissionFromRequest } from "@/lib/app-auth";
 import { jsonError } from "@/lib/http";
 import { syncMetaAds } from "@/lib/meta";
 
@@ -5,8 +6,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
+    await requirePermissionFromRequest(request, "run_meta_sync");
     const result = await syncMetaAds("manual");
     return Response.json(result);
   } catch (error) {
