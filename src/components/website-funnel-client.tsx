@@ -155,8 +155,8 @@ export function WebsiteFunnelClient({ initialData }: Props) {
           </p>
         </div>
 
-        <div className="mt-8 grid gap-6 xl:grid-cols-[1fr_1.25fr]">
-          <section className="border border-hp-rule bg-white p-5">
+        <div className="mt-8 grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)]">
+          <section className="min-w-0 border border-hp-rule bg-white p-5">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-[11px] uppercase tracking-[0.16em] text-hp-muted">
@@ -195,15 +195,19 @@ export function WebsiteFunnelClient({ initialData }: Props) {
             </div>
           </section>
 
-          <section className="border border-hp-rule bg-white p-5">
+          <section className="min-w-0 border border-hp-rule bg-white p-5">
             <p className="text-[11px] uppercase tracking-[0.16em] text-hp-muted">
               Daily trend
             </p>
             <h2 className="mt-1 font-title text-2xl font-normal text-hp-ink">
               Website activity vs Meta attribution
             </h2>
-            <div className="mt-5 h-[320px]">
-              <ResponsiveContainer width="100%" height="100%">
+            <div className="mt-5 h-[320px] min-w-0">
+              <ResponsiveContainer
+                width="100%"
+                height="100%"
+                initialDimension={{ width: 1, height: 1 }}
+              >
                 <LineChart data={data.trend}>
                   <CartesianGrid stroke="#E5DFD3" vertical={false} />
                   <XAxis dataKey="date" tick={{ fontSize: 11 }} />

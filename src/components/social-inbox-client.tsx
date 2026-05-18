@@ -908,9 +908,9 @@ function QueueItem({
       }`}
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <Icon size={16} className="text-hp-muted" />
-          <span className="truncate text-sm text-hp-ink">{item.sender}</span>
+        <div className="flex min-w-0 flex-1 items-start gap-2">
+          <Icon size={16} className="mt-0.5 shrink-0 text-hp-muted" />
+          <span className="min-w-0 break-words text-sm leading-5 text-hp-ink">{item.sender}</span>
         </div>
         <span className="shrink-0 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
           {item.time}

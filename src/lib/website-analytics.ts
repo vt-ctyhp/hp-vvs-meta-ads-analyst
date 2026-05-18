@@ -2,8 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { addDays, differenceInCalendarDays, format, parseISO, subDays } from "date-fns";
 import { z } from "zod";
 
-import { BOOKING_ACTION_TYPES, actionArray, actionCount } from "./meta-kpi";
-import { createServiceClient } from "./supabase";
+import { BOOKING_ACTION_TYPES, actionArray, actionCount } from "./meta-kpi.ts";
+import { createServiceClient } from "./supabase.ts";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_ALLOWED_ORIGINS = [
@@ -16,6 +16,7 @@ const DEFAULT_ALLOWED_ORIGINS = [
 ];
 const DEFAULT_ALLOWED_WILDCARDS = ["*.shopifypreview.com"];
 const MAX_EVENTS = 15000;
+const MAX_APPOINTMENT_CONVERSIONS = 2000;
 
 const jsonObjectSchema = z.record(z.string(), z.unknown()).catch({});
 const eventTypeSchema = z.enum([
@@ -129,6 +130,21 @@ type MetaInsightRow = {
   actions: unknown;
 };
 
+export type AppointmentEventConversionRow = {
+  id: string;
+  appt_id: string;
+  booking_source: string;
+  external_booking_id: string | null;
+  visit_date_time: string | null;
+  visit_type: string | null;
+  brand: string;
+  status: string;
+  source: string | null;
+  booked_at: string | null;
+  created_at: string;
+  raw_payload: unknown;
+};
+
 type WebsiteSupabaseClient = {
   from: (table: "website_events") => {
     upsert: (
@@ -148,10 +164,15 @@ type WebsiteSupabaseClient = {
   from: (table: "meta_daily_insights") => {
     select: (columns: string) => WebsiteSelectChain<MetaInsightRow[]>;
   };
+} & {
+  from: (table: "appointment_events") => {
+    select: (columns: string) => WebsiteSelectChain<AppointmentEventConversionRow[]>;
+  };
 };
 
 type WebsiteSelectChain<T> = PromiseLike<{ data: T | null; error: Error | null }> & {
   gte: (column: string, value: unknown) => WebsiteSelectChain<T>;
+  in: (column: string, values: unknown[]) => WebsiteSelectChain<T>;
   lte: (column: string, value: unknown) => WebsiteSelectChain<T>;
   order: (column: string, options: { ascending: boolean }) => WebsiteSelectChain<T>;
   limit: (count: number) => WebsiteSelectChain<T>;
@@ -211,6 +232,20 @@ export type WebsiteFunnelData = {
     metaEventId: string | null;
     acuityAppointmentId: string | null;
   }>;
+};
+
+export type WebsiteConversionReconciliationResult = {
+  checkedAppointments: number;
+  eligibleAppointments: number;
+  insertedConversions: number;
+  skippedExistingConversions: number;
+};
+
+type ReconciledWebsiteConversionInput = WebsiteConversionInput & {
+  eventId: string;
+  eventName: "Schedule";
+  eventType: "conversion";
+  occurredAt: string;
 };
 
 export function corsHeadersForRequest(request: Request) {
@@ -276,6 +311,7 @@ export async function fetchWebsiteFunnelData(input: {
   days?: number | null;
 }): Promise<WebsiteFunnelData> {
   const range = normalizeDateRange(input);
+  const reconciliation = await reconcileAppointmentConversionsForRange(range);
   const client = createWebsiteClient();
   const startIso = `${range.start}T00:00:00.000Z`;
   const endIso = `${range.end}T23:59:59.999Z`;
@@ -336,6 +372,9 @@ export async function fetchWebsiteFunnelData(input: {
     sourceTransparency: {
       timeRange: range,
       recordCounts: {
+        appointment_events_checked: reconciliation.checkedAppointments,
+        appointment_events_eligible: reconciliation.eligibleAppointments,
+        appointment_events_reconciled: reconciliation.insertedConversions,
         meta_daily_insights: metaRows.length,
         website_events: events.length,
       },
@@ -366,6 +405,148 @@ export async function fetchWebsiteFunnelData(input: {
       metaEventId: event.meta_event_id,
       acuityAppointmentId: event.acuity_appointment_id,
     })),
+  };
+}
+
+export async function reconcileAppointmentConversionsToWebsiteEvents(input: {
+  startDate?: string | null;
+  endDate?: string | null;
+  days?: number | null;
+}): Promise<WebsiteConversionReconciliationResult> {
+  return reconcileAppointmentConversionsForRange(normalizeDateRange(input));
+}
+
+async function reconcileAppointmentConversionsForRange(range: {
+  start: string;
+  end: string;
+  days: number;
+}): Promise<WebsiteConversionReconciliationResult> {
+  const client = createWebsiteClient();
+  const startIso = `${range.start}T00:00:00.000Z`;
+  const endIso = `${range.end}T23:59:59.999Z`;
+
+  const appointmentsResult = await client
+    .from("appointment_events")
+    .select(
+      [
+        "id",
+        "appt_id",
+        "booking_source",
+        "external_booking_id",
+        "visit_date_time",
+        "visit_type",
+        "brand",
+        "status",
+        "source",
+        "booked_at",
+        "created_at",
+        "raw_payload",
+      ].join(","),
+    )
+    .gte("created_at", startIso)
+    .lte("created_at", endIso)
+    .order("created_at", { ascending: false })
+    .limit(MAX_APPOINTMENT_CONVERSIONS);
+
+  if (appointmentsResult.error) throw appointmentsResult.error;
+
+  const appointmentRows = appointmentsResult.data || [];
+  const conversions = appointmentRows
+    .map(appointmentEventToWebsiteConversionInput)
+    .filter((conversion): conversion is ReconciledWebsiteConversionInput =>
+      Boolean(conversion?.eventId),
+    );
+
+  if (!conversions.length) {
+    return {
+      checkedAppointments: appointmentRows.length,
+      eligibleAppointments: 0,
+      insertedConversions: 0,
+      skippedExistingConversions: 0,
+    };
+  }
+
+  const existingResult = await client
+    .from("website_events")
+    .select("event_id")
+    .in(
+      "event_id",
+      conversions.map((conversion) => conversion.eventId),
+    )
+    .limit(conversions.length);
+
+  if (existingResult.error) throw existingResult.error;
+
+  const existingEventIds = new Set(
+    (existingResult.data || []).map((event) => event.event_id),
+  );
+  let insertedConversions = 0;
+
+  for (const conversion of conversions) {
+    if (existingEventIds.has(conversion.eventId)) continue;
+    await recordWebsiteEvent(conversion, {
+      request: new Request("https://hp-vvs-meta-ads-analyst.internal/appointment-reconciliation"),
+      source: "booking_api",
+    });
+    insertedConversions += 1;
+  }
+
+  return {
+    checkedAppointments: appointmentRows.length,
+    eligibleAppointments: conversions.length,
+    insertedConversions,
+    skippedExistingConversions: conversions.length - insertedConversions,
+  };
+}
+
+export function appointmentEventToWebsiteConversionInput(
+  row: AppointmentEventConversionRow,
+): ReconciledWebsiteConversionInput | null {
+  const acuityAppointmentId = row.external_booking_id?.trim();
+  if (row.booking_source !== "acuity" || !acuityAppointmentId) return null;
+
+  const rawPayload = objectRecord(row.raw_payload);
+  const appointment = objectRecord(rawPayload.appointment);
+  const appointmentType = trimmedString(appointment.type) || trimmedString(row.visit_type);
+  const appointmentTypeId = primitiveValue(appointment.appointmentTypeID);
+  const calendarId = primitiveValue(appointment.calendarID);
+  const duration = primitiveValue(appointment.duration);
+  const timezone = trimmedString(appointment.timezone);
+  const visitDateTime = timestampValue(appointment.datetime) || timestampValue(row.visit_date_time);
+  const occurredAt =
+    timestampValue(appointment.datetimeCreated) ||
+    timestampValue(row.created_at) ||
+    timestampValue(row.booked_at) ||
+    new Date().toISOString();
+
+  const properties: Record<string, unknown> = {
+    appointmentEventId: row.id,
+    appointmentRecordId: row.appt_id,
+    appointmentSource: row.source,
+    appointmentStatus: row.status,
+    reconciledFromAppointmentEvent: true,
+  };
+
+  if (visitDateTime) properties.datetime = visitDateTime;
+  if (timezone) properties.timezone = timezone;
+  if (appointmentTypeId !== null) properties.appointmentTypeID = appointmentTypeId;
+  if (calendarId !== null) properties.calendarID = calendarId;
+  if (duration !== null) properties.duration = duration;
+
+  return {
+    eventId: `acuity-${acuityAppointmentId}`,
+    eventName: "Schedule",
+    eventType: "conversion",
+    occurredAt,
+    brand: websiteBrand(row.brand),
+    pageUrl: bookingPageUrl(row.brand),
+    pagePath: "/pages/book-an-appointment",
+    pageGroup: "booking",
+    properties,
+    metaEventName: "Schedule",
+    metaEventId: `acuity-${acuityAppointmentId}`,
+    acuityAppointmentId,
+    appointmentType: appointmentType ? appointmentType.slice(0, 180) : undefined,
   };
 }
 
@@ -698,6 +879,38 @@ function buildTrend(events: WebsiteEventRow[], metaRows: MetaInsightRow[], start
   }
 
   return Array.from(rows.values());
+}
+
+function objectRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function primitiveValue(value: unknown) {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "boolean") return value;
+  return null;
+}
+
+function trimmedString(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function timestampValue(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
+function websiteBrand(brand: string) {
+  return brand === "vvs" ? "VVS" : "HP";
+}
+
+function bookingPageUrl(brand: string) {
+  if (brand === "hpusa") return "https://www.hungphatusa.com/pages/book-an-appointment";
+  return undefined;
 }
 
 function numberValue(value: unknown) {

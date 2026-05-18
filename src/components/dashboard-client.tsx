@@ -353,11 +353,15 @@ export function DashboardClient({ initialData }: Props) {
         </div>
       </section>
 
-      <section className="mx-auto mt-8 grid max-w-7xl gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-        <div className="border border-hp-rule bg-hp-card p-6">
+      <section className="mx-auto mt-8 grid w-full max-w-7xl min-w-0 gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+        <div className="min-w-0 border border-hp-rule bg-hp-card p-6">
           <SectionHeader eyebrow="Trend Analysis" title="Filtered spend and response" />
-          <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className="h-72 min-w-0">
+            <ResponsiveContainer
+              width="100%"
+              height="100%"
+              initialDimension={{ width: 1, height: 1 }}
+            >
               <LineChart data={trendRows} margin={{ top: 8, right: 18, bottom: 0, left: 0 }}>
                 <CartesianGrid stroke="#D4CFC4" vertical={false} />
                 <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fill: "#8A8178", fontSize: 11 }} />
@@ -379,7 +383,7 @@ export function DashboardClient({ initialData }: Props) {
           </div>
         </div>
 
-        <div className="border border-hp-rule bg-hp-card p-6">
+        <div className="min-w-0 border border-hp-rule bg-hp-card p-6">
           <SectionHeader eyebrow="Executive Overview" title="Brand comparison" />
           <div className="space-y-3">
             {data.byBrand.map((row) => (

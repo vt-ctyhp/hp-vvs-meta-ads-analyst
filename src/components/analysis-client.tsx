@@ -735,10 +735,14 @@ function ChartWidget({
   const metrics = widget.metrics.filter((metric) => result.table.columns.some((column) => column.key === metric));
 
   return (
-    <section className="border border-hp-rule bg-hp-card p-6">
+    <section className="min-w-0 border border-hp-rule bg-hp-card p-6">
       <SectionTitle icon={<BarChart3 size={18} />} title={widget.title} />
-      <div className="h-80">
-        <ResponsiveContainer width="100%" height="100%">
+      <div className="h-80 min-w-0">
+        <ResponsiveContainer
+          width="100%"
+          height="100%"
+          initialDimension={{ width: 1, height: 1 }}
+        >
           {widget.type === "bar" ? (
             <BarChart data={result.table.rows} margin={{ top: 8, right: 18, bottom: 0, left: 0 }}>
               <CartesianGrid stroke="#D4CFC4" vertical={false} />

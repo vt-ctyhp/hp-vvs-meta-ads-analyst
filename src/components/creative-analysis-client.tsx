@@ -554,11 +554,11 @@ export function CreativeAnalysisClient({ initialData }: Props) {
                         <div className="min-w-0">
                           <button
                             onClick={() => setSelectedId(row.id)}
-                            className="block max-w-[280px] truncate text-left text-lg leading-6 text-hp-ink underline-offset-4 hover:underline focus:outline-none focus:ring-1 focus:ring-hp-pink md:max-w-[320px]"
+                            className="block max-w-[280px] break-words text-left text-lg leading-6 text-hp-ink underline-offset-4 hover:underline focus:outline-none focus:ring-1 focus:ring-hp-pink md:max-w-[320px]"
                           >
                             {row.adName}
                           </button>
-                          <p className="mt-1 max-w-[280px] truncate text-sm italic text-hp-muted md:max-w-[320px]">
+                          <p className="mt-1 max-w-[280px] break-words text-sm italic text-hp-muted md:max-w-[320px]">
                             {row.brandCode} · {adDeliveryLabel(row)} · {row.campaignUmbrella || row.adSetName}
                           </p>
                         </div>
