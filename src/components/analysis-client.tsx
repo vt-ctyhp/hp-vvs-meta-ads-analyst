@@ -39,6 +39,7 @@ import type {
   SavedAnalysisDashboard,
 } from "@/lib/ad-hoc-analytics";
 import type { AnalysisMode } from "@/lib/env";
+import { translateError } from "@/lib/glossary";
 
 type Props = {
   initialSaved: SavedAnalysisDashboard[];
@@ -112,7 +113,7 @@ export function AnalysisClient({ initialSaved }: Props) {
       setActionStatus(payload.dashboardId ? "Dashboard saved automatically." : "");
       await refreshSaved();
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      setStatus(translateError(error));
     } finally {
       setLoading(false);
     }
@@ -132,7 +133,7 @@ export function AnalysisClient({ initialSaved }: Props) {
       setMode(payload.mode || "fast");
       setEditPrompt("");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      setStatus(translateError(error));
     } finally {
       setLoading(false);
     }
@@ -167,7 +168,7 @@ export function AnalysisClient({ initialSaved }: Props) {
       setActionStatus(payload.dashboardId ? "Dashboard updated and saved." : "");
       await refreshSaved();
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      setStatus(translateError(error));
     } finally {
       setLoading(false);
     }
@@ -207,7 +208,7 @@ export function AnalysisClient({ initialSaved }: Props) {
       setTitleDraft(payload.title || nextTitle);
       setActionStatus("Dashboard renamed.");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      setStatus(translateError(error));
     } finally {
       setLoading(false);
     }
@@ -233,7 +234,7 @@ export function AnalysisClient({ initialSaved }: Props) {
       }
       setActionStatus("Dashboard deleted.");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      setStatus(translateError(error));
     } finally {
       setLoading(false);
     }

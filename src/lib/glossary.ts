@@ -156,6 +156,80 @@ export function formatLockStatus(value: LockStatus | string): string {
   }
 }
 
+// ── Error translation ──────────────────────────────────────────────────────
+/**
+ * Convert raw backend or JS error strings into clean user-facing copy.
+ * Strips SQL leaks, stack traces, and HTTP boilerplate; falls back to a
+ * friendly default when the message is too technical to surface.
+ *
+ * Use this anywhere a caught `Error` or fetch payload error would otherwise
+ * be passed straight to `setStatus(error.message)`.
+ */
+export function translateError(input: unknown, fallback = "Something went wrong"): string {
+  const raw = (() => {
+    if (!input) return "";
+    if (typeof input === "string") return input;
+    if (input instanceof Error) return input.message;
+    if (typeof input === "object" && input !== null && "message" in input) {
+      const value = (input as { message: unknown }).message;
+      return typeof value === "string" ? value : "";
+    }
+    return String(input);
+  })().trim();
+
+  if (!raw) return fallback;
+
+  // Patterns we never want to leak to users
+  const leakPatterns = [
+    /relation ".*" does not exist/i,
+    /column ".*" does not exist/i,
+    /violates unique constraint/i,
+    /violates foreign key constraint/i,
+    /violates not-null constraint/i,
+    /duplicate key value/i,
+    /permission denied for/i,
+    /syntax error at/i,
+    /pg_/i,
+    /TypeError:/i,
+    /SyntaxError:/i,
+    /ReferenceError:/i,
+    /^\s*at [^\s]/m, // looks like a stack frame
+  ];
+  if (leakPatterns.some((pattern) => pattern.test(raw))) {
+    return fallback;
+  }
+
+  // HTTP boilerplate
+  if (/^HTTP \d{3}/.test(raw)) {
+    return fallback;
+  }
+
+  // Common normalizations
+  if (/network|fetch failed|failed to fetch/i.test(raw)) {
+    return "Couldn't reach the server. Check your connection and try again.";
+  }
+  if (/unauthor/i.test(raw) || /401/.test(raw)) {
+    return `Your session expired. Please ${AUTH.signIn.toLowerCase()} again.`;
+  }
+  if (/forbidden/i.test(raw) || /403/.test(raw)) {
+    return "You don't have permission to do that.";
+  }
+  if (/not found/i.test(raw) || /404/.test(raw)) {
+    return "That item couldn't be found.";
+  }
+  if (/timeout|timed out/i.test(raw)) {
+    return "The request took too long. Try again in a moment.";
+  }
+
+  // Otherwise, sanitize: strip enclosing quotes / trailing punctuation, cap length
+  let cleaned = raw.replace(/^["'\s]+|["'\s]+$/g, "");
+  if (cleaned.length > 160) cleaned = `${cleaned.slice(0, 160)}…`;
+  if (!cleaned) return fallback;
+  // Ensure sentence shape
+  if (!/[.!?]$/.test(cleaned)) cleaned = `${cleaned}.`;
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
+
 // ── Meta ranking diagnostics ───────────────────────────────────────────────
 /** Meta's "above_average_offers" etc. → readable phrase. */
 export function formatRanking(value: string | null | undefined): string {

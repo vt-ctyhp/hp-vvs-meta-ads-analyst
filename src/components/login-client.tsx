@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import type { Session } from "@supabase/supabase-js";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 
-import { AUTH } from "@/lib/glossary";
+import { AUTH, translateError } from "@/lib/glossary";
 import { createBrowserClient } from "@/lib/supabase";
 
 export function LoginClient() {
@@ -59,7 +59,7 @@ export function LoginClient() {
       if (mounted && data.session) {
         void establishAppSession(data.session).catch((error) => {
           if (!mounted) return;
-          setStatus(error instanceof Error ? error.message : String(error));
+          setStatus(translateError(error));
           setLoading(false);
         });
       }
@@ -89,7 +89,7 @@ export function LoginClient() {
       setStatus(
         message.includes("does not have access")
           ? message
-          : "Sign in failed. Check your email and password, then try again.",
+          : translateError(error, "Sign in failed. Check your email and password, then try again."),
       );
     } finally {
       setLoading(false);

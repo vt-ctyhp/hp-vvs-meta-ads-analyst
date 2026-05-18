@@ -16,7 +16,7 @@ import type {
   ROLE_LABELS,
   UserRole,
 } from "@/lib/access-control";
-import { AUTH } from "@/lib/glossary";
+import { AUTH, translateError } from "@/lib/glossary";
 import { createBrowserClient } from "@/lib/supabase";
 
 type PermissionLabelMap = typeof APP_PERMISSIONS;
@@ -121,7 +121,7 @@ export function UsersClient() {
       setPayload(nextPayload);
       setUsers(nextPayload.users.map(toEditableUser));
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      setStatus(translateError(error));
       setPayload(null);
       setUsers([]);
     } finally {
@@ -164,7 +164,7 @@ export function UsersClient() {
       setUsers(nextPayload.users.map(toEditableUser));
       setStatus(`${user.draftFullName} updated.`);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      setStatus(translateError(error));
     } finally {
       setSavingUserId(null);
     }
@@ -202,7 +202,7 @@ export function UsersClient() {
       setInviteRoles(["marketing"]);
       setInviteStatus(`Invitation prepared for ${inviteEmail}.`);
     } catch (error) {
-      setInviteStatus(error instanceof Error ? error.message : String(error));
+      setInviteStatus(translateError(error));
     }
   }
 

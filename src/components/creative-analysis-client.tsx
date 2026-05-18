@@ -17,7 +17,7 @@ import {
   type CreativeAnalysisPayload,
   type CreativeAnalysisRow,
 } from "@/lib/creative-analysis";
-import { formatMetaStatus, formatRanking, TERMS } from "@/lib/glossary";
+import { formatMetaStatus, formatRanking, TERMS, translateError } from "@/lib/glossary";
 import {
   FilterBar,
   FilterField,
@@ -25,6 +25,7 @@ import {
   type ActiveFilter,
 } from "./filter-bar";
 import { StatusSentence, type StatusHighlight } from "./status-sentence";
+import { TechnicalId } from "./technical-id";
 
 type Props = {
   initialData: CreativeAnalysisPayload;
@@ -294,7 +295,7 @@ export function CreativeAnalysisClient({ initialData }: Props) {
           ...current,
           [selected.id]: {
             status: "error",
-            error: error instanceof Error ? error.message : "Unable to load live Meta video metrics.",
+            error: translateError(error, "Unable to load live Meta video metrics."),
           },
         }));
       });
@@ -1340,15 +1341,15 @@ function AdvancedDetails({
               Use these to find the exact ad in Meta Ads Manager, or to copy/paste into a report.
             </p>
             <div className="mt-4 space-y-3 text-sm">
-              <DetailIdRow label="Ad ID" value={row.adId} />
-              <DetailIdRow label="Creative ID" value={row.creativeId} />
-              <DetailIdRow
+              <DetailTechnicalRow label="Ad ID" value={row.adId} />
+              <DetailTechnicalRow label="Creative ID" value={row.creativeId} />
+              <DetailTechnicalRow
                 label="Post / story ID"
                 value={row.effectiveObjectStoryId || row.objectStoryId}
               />
-              <DetailIdRow label="Account" value={row.metaAccountId} />
-              <DetailIdRow label="Configured status" value={metaStatusLabel(row.adConfiguredStatus)} />
-              <DetailIdRow label="Effective status" value={metaStatusLabel(row.adEffectiveStatus)} />
+              <DetailTechnicalRow label="Account" value={row.metaAccountId} />
+              <DetailTextRow label="Configured status" value={metaStatusLabel(row.adConfiguredStatus)} />
+              <DetailTextRow label="Effective status" value={metaStatusLabel(row.adEffectiveStatus)} />
             </div>
           </div>
           <div>
@@ -1400,13 +1401,22 @@ function AdvancedDetails({
   );
 }
 
-function DetailIdRow({ label, value }: { label: string; value: string | null | undefined }) {
+function DetailTechnicalRow({ label, value }: { label: string; value: string | null | undefined }) {
   return (
     <div className="grid grid-cols-[110px_1fr] items-baseline gap-3">
       <dt className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{label}</dt>
-      <dd className="min-w-0 font-mono text-xs leading-5 text-hp-ink [overflow-wrap:anywhere]">
-        {value || "—"}
+      <dd className="min-w-0">
+        <TechnicalId value={value} label={label} />
       </dd>
+    </div>
+  );
+}
+
+function DetailTextRow({ label, value }: { label: string; value: string | null | undefined }) {
+  return (
+    <div className="grid grid-cols-[110px_1fr] items-baseline gap-3">
+      <dt className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{label}</dt>
+      <dd className="min-w-0 text-xs leading-5 text-hp-ink">{value || "—"}</dd>
     </div>
   );
 }

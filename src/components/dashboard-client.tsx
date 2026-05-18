@@ -37,8 +37,9 @@ import {
 
 import type { AppPermission } from "@/lib/access-control";
 import type { ActionBucket, ActionItem, DashboardPayload, PerformanceRow } from "@/lib/analytics";
-import { TERMS } from "@/lib/glossary";
+import { TERMS, translateError } from "@/lib/glossary";
 import { StatusSentence, type StatusHighlight } from "./status-sentence";
+import { TechnicalId } from "./technical-id";
 
 type ViewMode = "table" | "cards" | "gallery";
 type SortKey = "spend" | "primaryResults" | "ctr" | "cpc" | "newMessagingContacts" | "frequency";
@@ -366,7 +367,7 @@ export function DashboardClient({ initialData, permissions }: Props) {
       if (!response.ok) throw new Error(payload.error || "Sync failed");
       window.location.reload();
     } catch (error) {
-      setReportStatus(error instanceof Error ? error.message : String(error));
+      setReportStatus(translateError(error));
     } finally {
       setIsSyncing(false);
     }
@@ -390,7 +391,7 @@ export function DashboardClient({ initialData, permissions }: Props) {
       setReportStatus(`Report generated: ${payload.title}`);
       window.location.reload();
     } catch (error) {
-      setReportStatus(error instanceof Error ? error.message : String(error));
+      setReportStatus(translateError(error));
     } finally {
       setIsReporting(false);
     }
@@ -427,7 +428,7 @@ export function DashboardClient({ initialData, permissions }: Props) {
         ...messages,
         {
           role: "assistant",
-          content: error instanceof Error ? error.message : String(error),
+          content: translateError(error),
         },
       ]);
     } finally {
@@ -1712,7 +1713,9 @@ const DrawerField = memo(function DrawerField({
       <dd className="min-w-0 text-hp-ink [overflow-wrap:anywhere]">
         <div className="text-sm">{value || "—"}</div>
         {id ? (
-          <div className="mt-0.5 font-mono text-[11px] text-hp-muted">{id}</div>
+          <div className="mt-0.5">
+            <TechnicalId value={id} label={label} />
+          </div>
         ) : null}
       </dd>
     </div>

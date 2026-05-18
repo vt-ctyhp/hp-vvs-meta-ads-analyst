@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import { SYNC } from "@/lib/glossary";
+import { SYNC, translateError } from "@/lib/glossary";
 import { StatusSentence, type StatusHighlight } from "./status-sentence";
 import type {
   SocialInboxComment,
@@ -241,7 +241,7 @@ export function SocialInboxClient({
         } messages, ${metrics.comments || 0} comments.${errorNote}`,
       );
     } catch (error) {
-      setSyncStatus(error instanceof Error ? error.message : String(error));
+      setSyncStatus(translateError(error));
     } finally {
       setIsSyncing(false);
     }
@@ -279,7 +279,7 @@ export function SocialInboxClient({
         `Draft ready in ${payload.language === "vi" ? "Vietnamese" : "English"}. Review before sending.`,
       );
     } catch (error) {
-      setSuggestionStatus(error instanceof Error ? error.message : String(error));
+      setSuggestionStatus(translateError(error, "Couldn't generate a reply draft."));
     } finally {
       setIsSuggesting(false);
     }

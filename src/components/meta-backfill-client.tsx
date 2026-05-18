@@ -28,8 +28,11 @@ import {
   formatLockStatus,
   SYNC,
   TERMS,
+  translateError,
 } from "@/lib/glossary";
 import { createBrowserClient } from "@/lib/supabase";
+
+import { TechnicalId } from "./technical-id";
 
 type BackfillStatus = "pending" | "running" | "paused" | "success" | "partial" | "failed" | "canceled";
 type ChunkStatus = "queued" | "running" | "success" | "failed" | "canceled";
@@ -379,7 +382,7 @@ export function MetaBackfillClient({
             : "Recent read-only backfill state loaded.",
         );
       } catch (error) {
-        setStatus(error instanceof Error ? error.message : String(error));
+        setStatus(translateError(error));
       } finally {
         setLoading(false);
       }
@@ -422,7 +425,7 @@ export function MetaBackfillClient({
       setState(payload);
       setStatus(nextStatus);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      setStatus(translateError(error));
     } finally {
       setLoading(false);
     }
@@ -443,7 +446,7 @@ export function MetaBackfillClient({
       setDataHealth(payload);
       setStatus(options.compare ? `Compared ${compareMonth} against Meta.` : "Data health refreshed.");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      setStatus(translateError(error));
     } finally {
       setLoading(false);
     }
@@ -471,7 +474,7 @@ export function MetaBackfillClient({
         `Re-synced ${month}: ${insightRows.toLocaleString()} insight row(s).`,
       );
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      setStatus(translateError(error));
     } finally {
       setLoading(false);
     }
@@ -488,7 +491,7 @@ export function MetaBackfillClient({
       setStatus(`Created job ${payload.id || ""}.`);
       await loadState("Backfill job created.");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      setStatus(translateError(error));
       setLoading(false);
     }
   }
@@ -503,7 +506,7 @@ export function MetaBackfillClient({
       });
       await loadState(`Processed ${payload.processed || 0} chunk(s).`);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      setStatus(translateError(error));
       setLoading(false);
     }
   }
@@ -520,7 +523,7 @@ export function MetaBackfillClient({
       });
       await loadState(`Job ${action.replace("_", " ")} complete.`);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      setStatus(translateError(error));
       setLoading(false);
     }
   }
@@ -790,7 +793,7 @@ function JobRow({
         <div>
           <div className="flex flex-wrap items-center gap-2">
             <StatusPill status={job.status} />
-            <span className="font-mono text-xs text-hp-muted">{job.id.slice(0, 8)}</span>
+            <TechnicalId value={job.id} label="Job ID" truncateTo={8} />
           </div>
           <h2 className="mt-2 text-lg text-hp-ink">
             {job.requestedStart} to {job.requestedEnd}
@@ -1534,5 +1537,5 @@ function monthRange(month: string) {
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
+  return translateError(error);
 }
