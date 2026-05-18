@@ -85,6 +85,20 @@ export type SourceTransparency = {
   recordCounts: Record<string, number>;
 };
 
+export type ActionBucket = "scale" | "fix" | "watch";
+
+export type ActionItem = {
+  id: string;
+  bucket: ActionBucket;
+  entityType: "creative" | "campaign";
+  entityId: string;
+  entityName: string;
+  brandCode?: string;
+  campaignUmbrella?: CampaignUmbrella;
+  headline: string;
+  supporting: string;
+};
+
 export type ComparisonPayload = {
   timeRange: { start: string; end: string; days: number };
   overview: MetricSummary;
@@ -109,6 +123,7 @@ export type DashboardPayload = {
   opportunities: string[];
   underperformers: PerformanceRow[];
   recommendationQueue: string[];
+  actionQueue: ActionItem[];
   latestReports: StoredReport[];
   latestSyncRuns: SyncRun[];
   comparison: ComparisonPayload;
@@ -285,6 +300,7 @@ export function emptyDashboardPayload(missingEnv = getMissingRequiredEnv()): Das
     opportunities: [],
     underperformers: [],
     recommendationQueue: [],
+    actionQueue: [],
     latestReports: [],
     latestSyncRuns: [],
     comparison: {
@@ -721,6 +737,12 @@ export async function fetchDashboardData(
 
     const opportunities = buildOpportunities(creativeRows, campaignRows, overview);
     const recommendationQueue = buildRecommendations(fatigueRisks, underperformers, creativeRows);
+    const actionQueue = buildActionQueue({
+      creatives: creativeRows,
+      fatigueRisks,
+      underperformers,
+      overview,
+    });
 
     const priorOverview = summaryFromAggregate(priorOverviewRows[0]);
     const priorByBrand = priorByBrandRows
@@ -811,6 +833,7 @@ export async function fetchDashboardData(
       opportunities,
       underperformers,
       recommendationQueue,
+      actionQueue,
       latestReports: rows<Record<string, unknown>>(reportsRes.data).map((report) => ({
         id: String(report.id),
         title: String(report.title),
@@ -1356,4 +1379,85 @@ function buildRecommendations(
   recommendations.add("Prioritize tests that isolate one variable: hook, format, offer, or audience.");
 
   return Array.from(recommendations).slice(0, 6);
+}
+
+function buildActionQueue({
+  creatives,
+  fatigueRisks,
+  underperformers,
+  overview,
+}: {
+  creatives: PerformanceRow[];
+  fatigueRisks: PerformanceRow[];
+  underperformers: PerformanceRow[];
+  overview: MetricSummary;
+}): ActionItem[] {
+  const seen = new Set<string>();
+  const items: ActionItem[] = [];
+  const push = (item: ActionItem) => {
+    const key = `${item.bucket}:${item.entityId}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    items.push(item);
+  };
+
+  const benchmarkCtr = overview.ctr;
+
+  const scaleCandidates = creatives
+    .filter(
+      (creative) =>
+        creative.clicks >= 20 &&
+        (benchmarkCtr > 0 ? creative.ctr > benchmarkCtr * 1.25 : creative.ctr > 0) &&
+        creative.primaryResults >= 1,
+    )
+    .sort((a, b) => b.primaryResults - a.primaryResults || b.ctr - a.ctr)
+    .slice(0, 3);
+  for (const creative of scaleCandidates) {
+    push({
+      id: `scale-${creative.id}`,
+      bucket: "scale",
+      entityType: "creative",
+      entityId: creative.id,
+      entityName: creative.name,
+      brandCode: creative.brandCode,
+      campaignUmbrella: creative.campaignUmbrella,
+      headline: `${formatMetric(creative.primaryResults, "number")} ${creative.primaryResultLabel.toLowerCase()} · ${formatMetric(creative.costPerPrimaryResult, "money")} per result`,
+      supporting: `CTR ${creative.ctr.toFixed(2)}% vs ${benchmarkCtr.toFixed(2)}% benchmark · ${formatMetric(creative.spend, "money")} spend`,
+    });
+  }
+
+  const fixCandidates = fatigueRisks.slice(0, 3);
+  for (const creative of fixCandidates) {
+    push({
+      id: `fix-${creative.id}`,
+      bucket: "fix",
+      entityType: "creative",
+      entityId: creative.id,
+      entityName: creative.name,
+      brandCode: creative.brandCode,
+      campaignUmbrella: creative.campaignUmbrella,
+      headline:
+        creative.riskLevel === "high"
+          ? "Fatigue risk — rotate or refresh"
+          : "Early fatigue — watch closely",
+      supporting: `Freq ${creative.frequency.toFixed(2)}x · CTR ${creative.ctr.toFixed(2)}% · ${formatMetric(creative.spend, "money")} spend`,
+    });
+  }
+
+  const watchCandidates = underperformers.slice(0, 3);
+  for (const creative of watchCandidates) {
+    push({
+      id: `watch-${creative.id}`,
+      bucket: "watch",
+      entityType: "creative",
+      entityId: creative.id,
+      entityName: creative.name,
+      brandCode: creative.brandCode,
+      campaignUmbrella: creative.campaignUmbrella,
+      headline: "Spending without efficiency",
+      supporting: `${formatMetric(creative.spend, "money")} spend · CTR ${creative.ctr.toFixed(2)}% (benchmark ${benchmarkCtr.toFixed(2)}%)`,
+    });
+  }
+
+  return items;
 }

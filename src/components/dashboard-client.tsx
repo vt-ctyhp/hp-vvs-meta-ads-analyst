@@ -7,14 +7,13 @@ import {
   BarChart3,
   Bot,
   CalendarRange,
-  ChevronDown,
+  ChevronRight,
   FileDown,
   GalleryHorizontalEnd,
   MessageSquare,
   RefreshCw,
   Search,
   Send,
-  Sparkles,
   Table2,
 } from "lucide-react";
 import {
@@ -36,7 +35,7 @@ import {
   YAxis,
 } from "recharts";
 
-import type { DashboardPayload, PerformanceRow } from "@/lib/analytics";
+import type { ActionBucket, ActionItem, DashboardPayload, PerformanceRow } from "@/lib/analytics";
 
 type ViewMode = "table" | "cards" | "gallery";
 type SortKey = "spend" | "primaryResults" | "ctr" | "cpc" | "newMessagingContacts" | "frequency";
@@ -82,7 +81,6 @@ export function DashboardClient({ initialData }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [sortKey, setSortKey] = useState<SortKey>("spend");
   const [compareEnabled, setCompareEnabled] = useState(true);
-  const [expandedPanel, setExpandedPanel] = useState<string | null>("opportunities");
   const [isSyncing, setIsSyncing] = useState(false);
   const [isReporting, setIsReporting] = useState(false);
   const [reportStatus, setReportStatus] = useState("");
@@ -588,29 +586,10 @@ export function DashboardClient({ initialData }: Props) {
             onReport={generateReport}
           />
 
-          <InsightPanel
-            id="opportunities"
-            title="Top Opportunities"
-            icon={<Sparkles size={18} />}
-            expandedPanel={expandedPanel}
-            setExpandedPanel={setExpandedPanel}
-            items={data.opportunities}
-          />
-          <InsightPanel
-            id="risks"
-            title="Fatigue Risk"
-            icon={<AlertTriangle size={18} />}
-            expandedPanel={expandedPanel}
-            setExpandedPanel={setExpandedPanel}
-            items={data.fatigueRisks.map((risk) => `${risk.name}: ${risk.riskReason}`)}
-          />
-          <InsightPanel
-            id="recommendations"
-            title="Recommendation Queue"
-            icon={<BarChart3 size={18} />}
-            expandedPanel={expandedPanel}
-            setExpandedPanel={setExpandedPanel}
-            items={data.recommendationQueue}
+          <ActionQueue
+            items={data.actionQueue}
+            onSelectUmbrella={setUmbrella}
+            onSearchEntity={setQuery}
           />
 
           <ChatPanel
@@ -756,13 +735,17 @@ const DeltaChip = memo(function DeltaChip({
   const isUp = rounded > 0;
   const isGood = isFlat ? false : lowerIsBetter ? !isUp : isUp;
   const arrow = isFlat ? "→" : isUp ? "▲" : "▼";
-  const tone = isFlat || isGood ? "text-hp-ink" : "text-hp-body";
+  const colorStyle = isFlat
+    ? undefined
+    : { color: isGood ? "#245D4D" : "#8D2E2E" };
+  const colorClass = isFlat ? "text-hp-muted" : "";
   return (
     <span
-      className={`inline-flex items-baseline gap-1.5 font-body text-xs tabular-nums ${tone}`}
+      className={`inline-flex items-baseline gap-1 font-body text-xs tabular-nums ${colorClass}`}
+      style={colorStyle}
       title={`Previous: ${previous}`}
     >
-      <span aria-hidden className="text-[9px] text-hp-muted">{arrow}</span>
+      <span aria-hidden className="text-[10px]">{arrow}</span>
       <span>{Math.abs(rounded).toFixed(1)}%</span>
     </span>
   );
@@ -1403,50 +1386,142 @@ const MiniMetric = memo(function MiniMetric({ label, value }: { label: string; v
   );
 });
 
-const InsightPanel = memo(function InsightPanel({
-  id,
-  title,
-  icon,
-  expandedPanel,
-  setExpandedPanel,
+const ACTION_BUCKETS: { key: ActionBucket; label: string; description: string; tone: string }[] = [
+  {
+    key: "scale",
+    label: "Scale",
+    description: "Allocate more budget",
+    tone: "border-l-[3px] border-l-[#245D4D]",
+  },
+  {
+    key: "fix",
+    label: "Fix",
+    description: "Refresh or rotate",
+    tone: "border-l-[3px] border-l-[#8D2E2E]",
+  },
+  {
+    key: "watch",
+    label: "Watch",
+    description: "Spending without efficiency",
+    tone: "border-l-[3px] border-l-hp-platinum",
+  },
+];
+
+const BUCKET_TEXT_TONE: Record<ActionBucket, string> = {
+  scale: "text-[#245D4D]",
+  fix: "text-[#8D2E2E]",
+  watch: "text-hp-muted",
+};
+
+const ActionQueue = memo(function ActionQueue({
   items,
+  onSelectUmbrella,
+  onSearchEntity,
 }: {
-  id: string;
-  title: string;
-  icon: React.ReactNode;
-  expandedPanel: string | null;
-  setExpandedPanel: (panel: string | null) => void;
-  items: string[];
+  items: ActionItem[];
+  onSelectUmbrella: (umbrella: string) => void;
+  onSearchEntity: (query: string) => void;
 }) {
-  const isOpen = expandedPanel === id;
+  const grouped = useMemo(() => {
+    const map: Record<ActionBucket, ActionItem[]> = { scale: [], fix: [], watch: [] };
+    for (const item of items) {
+      if (map[item.bucket].length < 3) {
+        map[item.bucket].push(item);
+      }
+    }
+    return map;
+  }, [items]);
+
   return (
     <section className="border border-hp-rule bg-hp-card">
-      <button
-        onClick={() => setExpandedPanel(isOpen ? null : id)}
-        className="flex w-full items-center justify-between gap-3 p-4 text-left"
-      >
-        <span className="flex items-center gap-2 text-hp-ink">
-          {icon}
-          <span className="text-[11px] uppercase tracking-[0.14em]">{title}</span>
+      <header className="flex items-center justify-between border-b border-hp-rule px-5 py-4">
+        <span className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+          Action Queue
         </span>
-        <ChevronDown size={16} className={`transition-transform ${isOpen ? "rotate-180" : ""}`} />
-      </button>
-      {isOpen ? (
-        <div className="border-t border-hp-rule p-4">
-          {items.length ? (
-            <ol className="space-y-3 text-sm">
-              {items.map((item) => (
-                <li key={item} className="leading-6 text-hp-body [overflow-wrap:anywhere]">
-                  {item}
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p className="text-sm text-hp-muted">No current signal.</p>
-          )}
+        <span className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+          {items.length} signals
+        </span>
+      </header>
+      {items.length === 0 ? (
+        <div className="p-5 text-sm text-hp-muted">No current signals in this period.</div>
+      ) : (
+        <div className="divide-y divide-hp-rule">
+          {ACTION_BUCKETS.map((bucket) => (
+            <ActionBucketBlock
+              key={bucket.key}
+              bucket={bucket}
+              items={grouped[bucket.key]}
+              onClick={(item) => {
+                if (item.campaignUmbrella) {
+                  onSelectUmbrella(item.campaignUmbrella);
+                }
+                onSearchEntity(item.entityName);
+              }}
+            />
+          ))}
         </div>
-      ) : null}
+      )}
     </section>
+  );
+});
+
+const ActionBucketBlock = memo(function ActionBucketBlock({
+  bucket,
+  items,
+  onClick,
+}: {
+  bucket: { key: ActionBucket; label: string; description: string; tone: string };
+  items: ActionItem[];
+  onClick: (item: ActionItem) => void;
+}) {
+  return (
+    <div className="p-5">
+      <div className="mb-3 flex items-baseline justify-between gap-3">
+        <span
+          className={`text-[11px] uppercase tracking-[0.14em] ${BUCKET_TEXT_TONE[bucket.key]}`}
+        >
+          {bucket.label}
+          <span className="ml-2 text-hp-muted">{items.length}</span>
+        </span>
+        <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+          {bucket.description}
+        </span>
+      </div>
+      {items.length === 0 ? (
+        <p className="text-xs text-hp-muted">No items.</p>
+      ) : (
+        <ul className="space-y-2">
+          {items.map((item) => (
+            <li key={item.id}>
+              <button
+                type="button"
+                onClick={() => onClick(item)}
+                className={`group flex w-full items-start gap-3 bg-hp-card px-3 py-3 text-left transition-colors duration-150 hover:bg-hp-inset ${bucket.tone}`}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 text-sm text-hp-ink">
+                    <span className="truncate font-body">{item.entityName}</span>
+                    {item.campaignUmbrella ? (
+                      <span className="shrink-0 border border-hp-rule px-1.5 py-0.5 text-[10px] uppercase tracking-[0.12em] text-hp-muted">
+                        {item.campaignUmbrella}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="mt-1 text-xs text-hp-body tabular-nums">{item.headline}</div>
+                  <div className="mt-0.5 text-[11px] text-hp-muted tabular-nums">
+                    {item.supporting}
+                  </div>
+                </div>
+                <ChevronRight
+                  size={14}
+                  className="mt-1 shrink-0 text-hp-muted transition-colors group-hover:text-hp-ink"
+                />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 });
 
