@@ -144,6 +144,44 @@ export function DashboardClient({ initialData }: Props) {
     [filteredCreatives],
   );
 
+  const overviewSparklines = useMemo(() => {
+    const byDate = new Map<
+      string,
+      { spend: number; impressions: number; clicks: number; primaryResults: number }
+    >();
+    for (const row of data.dailyTrend) {
+      const existing = byDate.get(row.date) || {
+        spend: 0,
+        impressions: 0,
+        clicks: 0,
+        primaryResults: 0,
+      };
+      existing.spend += row.spend;
+      existing.impressions += row.impressions;
+      existing.clicks += row.clicks;
+      existing.primaryResults += row.primaryResults;
+      byDate.set(row.date, existing);
+    }
+    const ordered = Array.from(byDate.entries()).sort(([a], [b]) => a.localeCompare(b));
+    return {
+      spend: ordered.map(([, v]) => v.spend),
+      impressions: ordered.map(([, v]) => v.impressions),
+      ctr: ordered.map(([, v]) => (v.impressions > 0 ? (v.clicks / v.impressions) * 100 : 0)),
+      cpc: ordered.map(([, v]) => (v.clicks > 0 ? v.spend / v.clicks : 0)),
+      primaryResults: ordered.map(([, v]) => v.primaryResults),
+    };
+  }, [data.dailyTrend]);
+
+  const umbrellaScorecard = useMemo(() => {
+    const priorById = new Map(
+      data.comparison.byUmbrella.map((row) => [row.id, row]),
+    );
+    return data.byUmbrella.map((row) => {
+      const prior = priorById.get(row.id);
+      return { current: row, prior };
+    });
+  }, [data.byUmbrella, data.comparison.byUmbrella]);
+
   const trendRows = useMemo(() => {
     const byDate = new Map<string, Record<string, string | number>>();
     for (const row of data.dailyTrend.filter((trend) => {
@@ -321,11 +359,47 @@ export function DashboardClient({ initialData }: Props) {
         <DataCoverageNotice data={data} />
 
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-          <MetricTile label="Spend" value={formatMetric(data.overview.spend, "money")} />
-          <MetricTile label="Impressions" value={formatMetric(data.overview.impressions, "number")} />
-          <MetricTile label="CTR" value={formatMetric(data.overview.ctr, "percent")} />
-          <MetricTile label="CPC" value={formatMetric(data.overview.cpc, "money")} />
-          <MetricTile label="Primary Results" value={formatMetric(data.overview.primaryResults, "number")} />
+          <MetricTile
+            label="Spend"
+            value={formatMetric(data.overview.spend, "money")}
+            current={data.overview.spend}
+            previous={data.comparison.overview.spend}
+            sparkline={overviewSparklines.spend}
+            showComparison={compareEnabled}
+          />
+          <MetricTile
+            label="Impressions"
+            value={formatMetric(data.overview.impressions, "number")}
+            current={data.overview.impressions}
+            previous={data.comparison.overview.impressions}
+            sparkline={overviewSparklines.impressions}
+            showComparison={compareEnabled}
+          />
+          <MetricTile
+            label="CTR"
+            value={formatMetric(data.overview.ctr, "percent")}
+            current={data.overview.ctr}
+            previous={data.comparison.overview.ctr}
+            sparkline={overviewSparklines.ctr}
+            showComparison={compareEnabled}
+          />
+          <MetricTile
+            label="CPC"
+            value={formatMetric(data.overview.cpc, "money")}
+            current={data.overview.cpc}
+            previous={data.comparison.overview.cpc}
+            lowerIsBetter
+            sparkline={overviewSparklines.cpc}
+            showComparison={compareEnabled}
+          />
+          <MetricTile
+            label={data.overview.primaryResultLabel || "Primary Results"}
+            value={formatMetric(data.overview.primaryResults, "number")}
+            current={data.overview.primaryResults}
+            previous={data.comparison.overview.primaryResults}
+            sparkline={overviewSparklines.primaryResults}
+            showComparison={compareEnabled}
+          />
         </div>
       </section>
 
@@ -336,6 +410,20 @@ export function DashboardClient({ initialData }: Props) {
           onChange={setUmbrella}
         />
       </section>
+
+      {umbrella === "all" ? (
+        <section className="mx-auto mt-6 max-w-7xl border border-hp-rule bg-hp-card p-4 sm:p-6">
+          <SectionHeader
+            eyebrow="Campaign Umbrellas"
+            title="Scorecard"
+          />
+          <UmbrellaScorecard
+            rows={umbrellaScorecard}
+            showComparison={compareEnabled}
+            onSelect={setUmbrella}
+          />
+        </section>
+      ) : null}
 
       <section className="mx-auto mt-8 grid w-full max-w-7xl min-w-0 gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
         <div className="min-w-0 border border-hp-rule bg-hp-card p-6">
@@ -587,12 +675,94 @@ const SectionHeader = memo(function SectionHeader({
   );
 });
 
-const MetricTile = memo(function MetricTile({ label, value }: { label: string; value: string }) {
+const MetricTile = memo(function MetricTile({
+  label,
+  value,
+  current,
+  previous,
+  lowerIsBetter,
+  sparkline,
+  showComparison,
+}: {
+  label: string;
+  value: string;
+  current?: number | null;
+  previous?: number | null;
+  lowerIsBetter?: boolean;
+  sparkline?: number[];
+  showComparison?: boolean;
+}) {
+  const sparklineData = useMemo(
+    () => (sparkline || []).map((v, i) => ({ i, v })),
+    [sparkline],
+  );
   return (
     <div className="border border-hp-rule bg-hp-card p-5">
       <div className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">{label}</div>
-      <div className="mt-3 text-2xl tabular-nums text-hp-ink">{value}</div>
+      <div className="mt-3 flex items-end justify-between gap-3">
+        <div className="text-2xl tabular-nums text-hp-ink">{value}</div>
+        {showComparison ? (
+          <DeltaChip current={current} previous={previous} lowerIsBetter={lowerIsBetter} />
+        ) : null}
+      </div>
+      {sparklineData.length > 1 ? (
+        <div className="mt-3 h-8 min-w-0">
+          <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 1, height: 1 }}>
+            <LineChart data={sparklineData} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
+              <Line
+                type="monotone"
+                dataKey="v"
+                stroke="#2A2725"
+                strokeWidth={1.2}
+                dot={false}
+                isAnimationActive={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      ) : null}
     </div>
+  );
+});
+
+const DeltaChip = memo(function DeltaChip({
+  current,
+  previous,
+  lowerIsBetter,
+}: {
+  current?: number | null;
+  previous?: number | null;
+  lowerIsBetter?: boolean;
+}) {
+  if (current == null || previous == null || previous === 0) {
+    return (
+      <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">— vs prev</span>
+    );
+  }
+  const change = ((current - previous) / Math.abs(previous)) * 100;
+  const rounded = Math.round(change * 10) / 10;
+  if (!Number.isFinite(rounded)) {
+    return (
+      <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">— vs prev</span>
+    );
+  }
+  const isUp = rounded > 0;
+  const isFlat = rounded === 0;
+  const isGood = isFlat ? false : lowerIsBetter ? !isUp : isUp;
+  const tone = isFlat
+    ? "border-hp-rule text-hp-muted"
+    : isGood
+      ? "border-[#245D4D] text-[#245D4D]"
+      : "border-[#8D2E2E] text-[#8D2E2E]";
+  const arrow = isFlat ? "→" : isUp ? "▲" : "▼";
+  return (
+    <span
+      className={`flex h-5 items-center gap-1 border px-1.5 text-[10px] tabular-nums ${tone}`}
+      title={`Previous: ${previous}`}
+    >
+      <span>{arrow}</span>
+      <span>{Math.abs(rounded).toFixed(1)}%</span>
+    </span>
   );
 });
 
@@ -707,6 +877,174 @@ const DateRangeControls = memo(function DateRangeControls({
         vs Prev
       </label>
     </form>
+  );
+});
+
+type UmbrellaScorecardRow = {
+  current: PerformanceRow;
+  prior?: PerformanceRow;
+};
+
+type ScorecardSortKey = "spend" | "primaryResults" | "costPerPrimaryResult" | "ctr";
+
+const UmbrellaScorecard = memo(function UmbrellaScorecard({
+  rows,
+  showComparison,
+  onSelect,
+}: {
+  rows: UmbrellaScorecardRow[];
+  showComparison: boolean;
+  onSelect: (umbrella: string) => void;
+}) {
+  const [sortKey, setSortKey] = useState<ScorecardSortKey>("spend");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  const sorted = useMemo(() => {
+    const direction = sortDir === "asc" ? 1 : -1;
+    const copy = [...rows];
+    copy.sort((a, b) => {
+      const av = readScorecardValue(a.current, sortKey);
+      const bv = readScorecardValue(b.current, sortKey);
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return (av - bv) * direction;
+    });
+    return copy;
+  }, [rows, sortKey, sortDir]);
+
+  if (!rows.length) {
+    return <div className="text-sm text-hp-muted">No umbrella data in this period.</div>;
+  }
+
+  function toggle(key: ScorecardSortKey) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir(key === "costPerPrimaryResult" ? "asc" : "desc");
+    }
+  }
+
+  return (
+    <div className="w-full overflow-x-auto">
+      <table className="w-full min-w-[760px] table-fixed border-collapse text-sm">
+        <colgroup>
+          <col className="w-[26%]" />
+          <col className="w-[18%]" />
+          <col className="w-[20%]" />
+          <col className="w-[18%]" />
+          <col className="w-[18%]" />
+        </colgroup>
+        <thead>
+          <tr className="text-left text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+            <th className="pb-3 font-normal">Umbrella</th>
+            <ScorecardHeader label="Spend" active={sortKey === "spend"} dir={sortDir} onClick={() => toggle("spend")} />
+            <ScorecardHeader label="Primary KPI" active={sortKey === "primaryResults"} dir={sortDir} onClick={() => toggle("primaryResults")} />
+            <ScorecardHeader label="Cost / Result" active={sortKey === "costPerPrimaryResult"} dir={sortDir} onClick={() => toggle("costPerPrimaryResult")} />
+            <ScorecardHeader label="CTR" active={sortKey === "ctr"} dir={sortDir} onClick={() => toggle("ctr")} />
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map(({ current, prior }) => (
+            <tr
+              key={current.id}
+              className="cursor-pointer border-t border-hp-rule align-top hover:bg-hp-inset"
+              onClick={() => onSelect(current.campaignUmbrella || current.name)}
+            >
+              <td className="py-3 pr-3 text-hp-ink">
+                <div className="font-medium">{current.name}</div>
+                <div className="text-[11px] text-hp-muted">
+                  {formatMetric(current.impressions, "number")} impressions
+                </div>
+              </td>
+              <ScorecardCell
+                value={formatMetric(current.spend, "money")}
+                current={current.spend}
+                previous={prior?.spend}
+                showComparison={showComparison}
+              />
+              <ScorecardCell
+                value={`${formatMetric(current.primaryResults, "number")} ${current.primaryResultLabel}`}
+                current={current.primaryResults}
+                previous={prior?.primaryResults}
+                showComparison={showComparison}
+              />
+              <ScorecardCell
+                value={formatMetric(current.costPerPrimaryResult, "money")}
+                current={current.costPerPrimaryResult}
+                previous={prior?.costPerPrimaryResult}
+                lowerIsBetter
+                showComparison={showComparison}
+              />
+              <ScorecardCell
+                value={formatMetric(current.ctr, "percent")}
+                current={current.ctr}
+                previous={prior?.ctr}
+                showComparison={showComparison}
+              />
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+});
+
+function readScorecardValue(row: PerformanceRow, key: ScorecardSortKey): number | null {
+  if (key === "costPerPrimaryResult") return row.costPerPrimaryResult;
+  if (key === "spend") return row.spend;
+  if (key === "primaryResults") return row.primaryResults;
+  return row.ctr;
+}
+
+const ScorecardHeader = memo(function ScorecardHeader({
+  label,
+  active,
+  dir,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  dir: "asc" | "desc";
+  onClick: () => void;
+}) {
+  return (
+    <th className="pb-3 font-normal">
+      <button
+        type="button"
+        onClick={onClick}
+        className={`inline-flex items-center gap-1 hover:text-hp-ink ${active ? "text-hp-ink" : ""}`}
+      >
+        <span>{label}</span>
+        {active ? <span aria-hidden>{dir === "asc" ? "↑" : "↓"}</span> : null}
+      </button>
+    </th>
+  );
+});
+
+const ScorecardCell = memo(function ScorecardCell({
+  value,
+  current,
+  previous,
+  lowerIsBetter,
+  showComparison,
+}: {
+  value: string;
+  current?: number | null;
+  previous?: number | null;
+  lowerIsBetter?: boolean;
+  showComparison: boolean;
+}) {
+  return (
+    <td className="py-3 pr-3 tabular-nums text-hp-ink">
+      <div>{value}</div>
+      {showComparison ? (
+        <div className="mt-1">
+          <DeltaChip current={current} previous={previous} lowerIsBetter={lowerIsBetter} />
+        </div>
+      ) : null}
+    </td>
   );
 });
 
