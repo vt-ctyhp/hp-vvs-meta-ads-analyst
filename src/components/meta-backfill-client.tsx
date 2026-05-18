@@ -241,7 +241,7 @@ type MetaBackfillClientProps = {
 };
 
 type AccessState = {
-  status: "loading" | "signed-out" | "denied" | "ready";
+  status: "loading" | "signed-out" | "denied" | "ready" | "error";
   permissions: AppPermission[];
   accessToken: string | null;
 };
@@ -269,51 +269,80 @@ export function MetaBackfillClient({
   );
 
   const coverageSummary = useMemo(() => summarizeCoverage(state?.coverage || []), [state]);
+  const visibleCoverageRows = useMemo(() => coverageRowsForDisplay(state?.coverage || []), [state]);
   const hasSecret = Boolean(secret.trim());
   const canManageBackfill = access.permissions.includes("manage_backfill");
   const operatorReady = canManageBackfill && hasSecret;
+  const accessBadge = accessBadgeForState(access.status, canManageBackfill);
+  const stateEmptyText = backfillStateEmptyText(access.status, canManageBackfill);
+  const emptyCoverageCount = state?.coverage.filter((row) => row.insightRows === 0).length || 0;
 
   useEffect(() => {
     let mounted = true;
-    const supabase = createBrowserClient();
+    let unsubscribe: (() => void) | null = null;
 
-    async function loadAccess() {
-      const { data } = await supabase.auth.getSession();
-      const token = data.session?.access_token;
-      if (!token) {
-        if (mounted) setAccess({ status: "signed-out", permissions: [], accessToken: null });
-        return;
+    async function initializeAccess() {
+      try {
+        const supabase = createBrowserClient();
+
+        async function loadAccess() {
+          try {
+            const { data } = await supabase.auth.getSession();
+            const token = data.session?.access_token;
+            if (!token) {
+              if (mounted) setAccess({ status: "signed-out", permissions: [], accessToken: null });
+              return;
+            }
+
+            const response = await fetch("/api/auth/me", {
+              headers: { authorization: `Bearer ${token}` },
+            });
+            const payload = await response.json().catch(() => null);
+            if (!response.ok) {
+              throw new Error(payload?.error || "Could not load access profile.");
+            }
+
+            const permissions = Array.isArray(payload?.permissions)
+              ? (payload.permissions as AppPermission[])
+              : [];
+
+            if (!payload?.authenticated) {
+              if (mounted) setAccess({ status: "signed-out", permissions: [], accessToken: null });
+              return;
+            }
+
+            if (!permissions.includes("view_backfill") && !permissions.includes("manage_backfill")) {
+              if (mounted) setAccess({ status: "denied", permissions, accessToken: token });
+              return;
+            }
+
+            if (mounted) setAccess({ status: "ready", permissions, accessToken: token });
+          } catch (error) {
+            if (!mounted) return;
+            setAccess({ status: "error", permissions: [], accessToken: null });
+            setStatus(`Could not check backfill access: ${errorMessage(error)}`);
+          }
+        }
+
+        void loadAccess();
+        const subscription = supabase.auth.onAuthStateChange(() => {
+          void loadAccess();
+        });
+
+        unsubscribe = () => subscription.data.subscription.unsubscribe();
+      } catch (error) {
+        if (mounted) {
+          setAccess({ status: "error", permissions: [], accessToken: null });
+          setStatus(`Could not initialize Supabase auth: ${errorMessage(error)}`);
+        }
       }
-
-      const response = await fetch("/api/auth/me", {
-        headers: { authorization: `Bearer ${token}` },
-      });
-      const payload = await response.json().catch(() => null);
-      const permissions = Array.isArray(payload?.permissions)
-        ? (payload.permissions as AppPermission[])
-        : [];
-
-      if (!payload?.authenticated) {
-        if (mounted) setAccess({ status: "signed-out", permissions: [], accessToken: null });
-        return;
-      }
-
-      if (!permissions.includes("view_backfill") && !permissions.includes("manage_backfill")) {
-        if (mounted) setAccess({ status: "denied", permissions, accessToken: token });
-        return;
-      }
-
-      if (mounted) setAccess({ status: "ready", permissions, accessToken: token });
     }
 
-    void loadAccess();
-    const subscription = supabase.auth.onAuthStateChange(() => {
-      void loadAccess();
-    });
+    void initializeAccess();
 
     return () => {
       mounted = false;
-      subscription.data.subscription.unsubscribe();
+      unsubscribe?.();
     };
   }, []);
 
@@ -518,15 +547,13 @@ export function MetaBackfillClient({
               </Button>
             </>
           ) : (
-            <span className="border border-hp-rule bg-hp-card px-4 py-3 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-              Read-only
-            </span>
+            <AccessBadge label={accessBadge.label} tone={accessBadge.tone} />
           )}
         </div>
       </header>
 
-      <section className="mx-auto mt-8 grid max-w-7xl gap-6 xl:grid-cols-[360px_1fr]">
-        <aside className="space-y-6">
+      <section className="mx-auto mt-8 grid w-full max-w-7xl min-w-0 gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
+        <aside className="min-w-0 space-y-6">
           <section className="border border-hp-rule bg-hp-card p-4">
             <PanelTitle icon={Shield} title="Access" />
             {canManageBackfill ? (
@@ -548,10 +575,7 @@ export function MetaBackfillClient({
               </>
             ) : (
               <div className="mt-4 space-y-3 text-sm leading-6 text-hp-body">
-                <p>
-                  Recent read-only coverage and jobs load automatically below. Deeper data-health
-                  checks can be loaded on demand. Sync actions and overrides are admin-only.
-                </p>
+                <AccessSummary status={access.status} />
                 {access.status === "signed-out" ? (
                   <Link
                     href="/login?next=/admin/backfill"
@@ -563,6 +587,8 @@ export function MetaBackfillClient({
               </div>
             )}
           </section>
+
+          <BackfillScopePanel state={state} startDate={startDate} endDate={endDate} />
 
           {canManageBackfill ? (
             <section className="border border-hp-rule bg-hp-card p-4">
@@ -584,6 +610,11 @@ export function MetaBackfillClient({
 
           <section className="border border-hp-rule bg-hp-card p-4">
             <PanelTitle icon={Database} title="Coverage" />
+            <p className="mt-2 text-xs leading-5 text-hp-muted">
+              {state
+                ? `${state.coverageRange.start} to ${state.coverageRange.end}`
+                : "Waiting for signed-in access before loading live coverage."}
+            </p>
             <div className="mt-4 grid grid-cols-2 gap-3">
               <Stat label="Accounts" value={coverageSummary.accounts} />
               <Stat label="Months" value={coverageSummary.months} />
@@ -593,7 +624,7 @@ export function MetaBackfillClient({
           </section>
         </aside>
 
-        <section className="space-y-6">
+        <section className="min-w-0 space-y-6">
           {status ? (
             <div className="flex items-center gap-2 border border-hp-rule bg-hp-card px-4 py-3 text-sm text-hp-ink">
               {loading ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
@@ -631,13 +662,7 @@ export function MetaBackfillClient({
                 <EmptyState text="No backfill jobs found for this project." />
               ) : null}
               {!state ? (
-                <EmptyState
-                  text={
-                    canManageBackfill
-                      ? "Enter the secret and load backfill state."
-                      : "No read-only backfill state is available."
-                  }
-                />
+                <EmptyState text={stateEmptyText} />
               ) : null}
             </div>
           </section>
@@ -678,45 +703,55 @@ export function MetaBackfillClient({
               {state && state.chunks.length === 0 ? (
                 <EmptyState text="No chunks found yet." />
               ) : null}
+              {!state ? <EmptyState text={stateEmptyText} /> : null}
             </div>
           </section>
 
           <section className="border border-hp-rule bg-hp-card p-4">
             <PanelTitle icon={CheckCircle2} title="Monthly Coverage" />
+            {state && state.coverage.length > 0 ? (
+              <p className="mt-2 text-xs leading-5 text-hp-muted">
+                {emptyCoverageCount > 0
+                  ? `${emptyCoverageCount.toLocaleString()} empty account-month row(s) need attention.`
+                  : "No empty account-month rows found; showing covered months instead."}
+              </p>
+            ) : null}
             <div className="mt-4 overflow-x-auto">
-              <table className="w-full min-w-[640px] border-collapse text-sm">
+              <table className="w-full min-w-[760px] border-collapse text-sm">
                 <thead className="text-left text-[11px] uppercase tracking-[0.14em] text-hp-muted">
                   <tr className="border-b border-hp-rule">
                     <th className="py-2 pr-3 font-normal">Account</th>
                     <th className="py-2 pr-3 font-normal">Month</th>
+                    <th className="py-2 pr-3 font-normal">Status</th>
                     <th className="py-2 pr-3 font-normal">Rows</th>
                     <th className="py-2 pr-3 font-normal">First Date</th>
                     <th className="py-2 pr-3 font-normal">Last Date</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(state?.coverage || [])
-                    .filter((row) => row.insightRows === 0)
-                    .slice(0, 80)
-                    .map((row) => (
-                      <tr
-                        key={`${row.metaAccountId}-${row.month}`}
-                        className="border-b border-hp-rule/70"
-                      >
-                        <td className="py-2 pr-3 text-hp-ink">
-                          {row.accountName || row.metaAccountId}
-                        </td>
-                        <td className="py-2 pr-3">{row.month}</td>
-                        <td className="py-2 pr-3">{row.insightRows.toLocaleString()}</td>
-                        <td className="py-2 pr-3">{row.firstDate || "-"}</td>
-                        <td className="py-2 pr-3">{row.lastDate || "-"}</td>
-                      </tr>
-                    ))}
+                  {visibleCoverageRows.map((row) => (
+                    <tr
+                      key={`${row.metaAccountId}-${row.month}`}
+                      className="border-b border-hp-rule/70"
+                    >
+                      <td className="py-2 pr-3 text-hp-ink">
+                        {row.accountName || row.metaAccountId}
+                      </td>
+                      <td className="py-2 pr-3">{row.month}</td>
+                      <td className="py-2 pr-3">
+                        <CoverageStatusPill insightRows={row.insightRows} />
+                      </td>
+                      <td className="py-2 pr-3">{row.insightRows.toLocaleString()}</td>
+                      <td className="py-2 pr-3">{row.firstDate || "-"}</td>
+                      <td className="py-2 pr-3">{row.lastDate || "-"}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
-              {state && state.coverage.every((row) => row.insightRows > 0) ? (
-                <EmptyState text="No empty months in the selected coverage range." />
+              {state && state.coverage.length === 0 ? (
+                <EmptyState text="No account-month coverage rows were returned for this range." />
               ) : null}
+              {!state ? <EmptyState text={stateEmptyText} /> : null}
             </div>
           </section>
         </section>
@@ -1310,6 +1345,98 @@ function EmptyState({ text }: { text: string }) {
   return <div className="border border-dashed border-hp-rule bg-hp-foundation p-4 text-sm text-hp-muted">{text}</div>;
 }
 
+function AccessBadge({
+  label,
+  tone,
+}: {
+  label: string;
+  tone: "neutral" | "warning" | "danger" | "positive";
+}) {
+  const className =
+    tone === "positive"
+      ? "border-signal-positive/30 bg-signal-positive/10 text-signal-positive"
+      : tone === "warning"
+        ? "border-signal-warning/30 bg-signal-warning/10 text-signal-warning"
+        : tone === "danger"
+          ? "border-signal-danger/30 bg-signal-danger/10 text-signal-danger"
+          : "border-hp-rule bg-hp-card text-hp-muted";
+
+  return (
+    <span className={`border px-4 py-3 text-[11px] uppercase tracking-[0.14em] ${className}`}>
+      {label}
+    </span>
+  );
+}
+
+function AccessSummary({ status }: { status: AccessState["status"] }) {
+  const message =
+    status === "loading"
+      ? "Checking signed-in access before loading backfill coverage, jobs, and diagnostics."
+      : status === "signed-out"
+        ? "Sign in to load live coverage, recent jobs, chunk progress, and data-health diagnostics."
+        : status === "denied"
+          ? "This signed-in account does not include backfill visibility."
+          : status === "error"
+            ? "Access could not be checked, so live backfill data is unavailable."
+            : "Recent read-only coverage and jobs load automatically. Sync actions and overrides are admin-only.";
+
+  return <p>{message}</p>;
+}
+
+function BackfillScopePanel({
+  state,
+  startDate,
+  endDate,
+}: {
+  state: BackfillState | null;
+  startDate: string;
+  endDate: string;
+}) {
+  return (
+    <section className="border border-hp-rule bg-hp-card p-4">
+      <PanelTitle icon={Database} title="Backfill Scope" />
+      <dl className="mt-4 divide-y divide-hp-rule border-y border-hp-rule text-sm">
+        <InfoRow
+          label="Window"
+          value={
+            state
+              ? `${state.coverageRange.start} to ${state.coverageRange.end}`
+              : `${startDate || "2007-01-01"} to ${endDate || todayString()}`
+          }
+        />
+        <InfoRow label="Source" value="Meta Ads insights stored in Supabase history tables." />
+        <InfoRow label="Chunks" value="One monthly chunk per configured ad account." />
+        <InfoRow label="Writes" value="Daily ad rows are upserted by account, ad, and date." />
+        <InfoRow label="Runner" value="Cron or manual batches process the next queued chunks." />
+      </dl>
+    </section>
+  );
+}
+
+function InfoRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid gap-1 py-3 sm:grid-cols-[96px_minmax(0,1fr)]">
+      <dt className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{label}</dt>
+      <dd className="min-w-0 text-hp-body">{value}</dd>
+    </div>
+  );
+}
+
+function CoverageStatusPill({ insightRows }: { insightRows: number }) {
+  const hasRows = insightRows > 0;
+  return (
+    <span
+      className={`inline-flex border px-2 py-1 text-[10px] uppercase tracking-[0.14em] ${
+        hasRows
+          ? "border-signal-positive/30 bg-signal-positive/10 text-signal-positive"
+          : "border-signal-warning/30 bg-signal-warning/10 text-signal-warning"
+      }`}
+    >
+      {hasRows ? "filled" : "empty"}
+    </span>
+  );
+}
+
 function summarizeCoverage(rows: HistoryCoverage[]) {
   const accounts = new Set(rows.map((row) => row.metaAccountId));
   const months = new Set(rows.map((row) => row.month));
@@ -1319,6 +1446,29 @@ function summarizeCoverage(rows: HistoryCoverage[]) {
     filledMonths: rows.filter((row) => row.insightRows > 0).length,
     rows: rows.reduce((sum, row) => sum + row.insightRows, 0),
   };
+}
+
+function coverageRowsForDisplay(rows: HistoryCoverage[]) {
+  const emptyRows = rows.filter((row) => row.insightRows === 0);
+  return (emptyRows.length ? emptyRows : rows).slice(0, 80);
+}
+
+function accessBadgeForState(status: AccessState["status"], canManageBackfill: boolean) {
+  if (status === "loading") return { label: "Checking access", tone: "neutral" as const };
+  if (status === "signed-out") return { label: "Sign in required", tone: "warning" as const };
+  if (status === "denied") return { label: "No backfill access", tone: "danger" as const };
+  if (status === "error") return { label: "Access error", tone: "danger" as const };
+  if (canManageBackfill) return { label: "Admin", tone: "positive" as const };
+  return { label: "Read-only", tone: "neutral" as const };
+}
+
+function backfillStateEmptyText(status: AccessState["status"], canManageBackfill: boolean) {
+  if (status === "loading") return "Checking access before loading backfill state.";
+  if (status === "signed-out") return "Sign in to load live backfill state.";
+  if (status === "denied") return "Your account does not include backfill visibility.";
+  if (status === "error") return "Access could not be checked, so live backfill state is unavailable.";
+  if (canManageBackfill) return "Enter the operator secret and load backfill state.";
+  return "No read-only backfill state is available yet.";
 }
 
 function formatDateTime(value: string | null) {
@@ -1367,4 +1517,8 @@ function monthRange(month: string) {
     start: start.toISOString().slice(0, 10),
     end: end.toISOString().slice(0, 10),
   };
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }
