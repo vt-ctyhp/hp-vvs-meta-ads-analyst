@@ -39,6 +39,7 @@ import type { ActionBucket, ActionItem, DashboardPayload, PerformanceRow } from 
 
 type ViewMode = "table" | "cards" | "gallery";
 type SortKey = "spend" | "primaryResults" | "ctr" | "cpc" | "newMessagingContacts" | "frequency";
+type CreativeBucket = "winners" | "losers" | "all";
 
 type Props = {
   initialData: DashboardPayload;
@@ -81,6 +82,7 @@ export function DashboardClient({ initialData }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [sortKey, setSortKey] = useState<SortKey>("spend");
   const [compareEnabled, setCompareEnabled] = useState(true);
+  const [creativeBucket, setCreativeBucket] = useState<CreativeBucket>("all");
   const [drawerCreativeId, setDrawerCreativeId] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isReporting, setIsReporting] = useState(false);
@@ -134,8 +136,59 @@ export function DashboardClient({ initialData }: Props) {
   );
 
   const filteredCreatives = useMemo(() => {
-    return filterAndSortRows(data.creatives, brand, umbrella, normalizedQuery, sortKey);
-  }, [brand, data.creatives, normalizedQuery, sortKey, umbrella]);
+    const base = filterAndSortRows(data.creatives, brand, umbrella, normalizedQuery, sortKey);
+    if (creativeBucket === "all") return base;
+    const benchmarkCtr = data.overview.ctr;
+    const spendThreshold = Math.max(data.overview.spend * 0.01, 50);
+    if (creativeBucket === "winners") {
+      return base.filter(
+        (creative) =>
+          creative.primaryResults > 0 &&
+          (benchmarkCtr === 0 ? creative.ctr > 0 : creative.ctr >= benchmarkCtr),
+      );
+    }
+    return base.filter(
+      (creative) =>
+        creative.spend >= spendThreshold &&
+        (creative.primaryResults === 0 ||
+          (benchmarkCtr > 0 && creative.ctr < benchmarkCtr * 0.75)),
+    );
+  }, [
+    brand,
+    creativeBucket,
+    data.creatives,
+    data.overview.ctr,
+    data.overview.spend,
+    normalizedQuery,
+    sortKey,
+    umbrella,
+  ]);
+
+  const creativeBucketCounts = useMemo(() => {
+    const base = filterAndSortRows(data.creatives, brand, umbrella, normalizedQuery, sortKey);
+    const benchmarkCtr = data.overview.ctr;
+    const spendThreshold = Math.max(data.overview.spend * 0.01, 50);
+    const winners = base.filter(
+      (creative) =>
+        creative.primaryResults > 0 &&
+        (benchmarkCtr === 0 ? creative.ctr > 0 : creative.ctr >= benchmarkCtr),
+    ).length;
+    const losers = base.filter(
+      (creative) =>
+        creative.spend >= spendThreshold &&
+        (creative.primaryResults === 0 ||
+          (benchmarkCtr > 0 && creative.ctr < benchmarkCtr * 0.75)),
+    ).length;
+    return { all: base.length, winners, losers };
+  }, [
+    brand,
+    data.creatives,
+    data.overview.ctr,
+    data.overview.spend,
+    normalizedQuery,
+    sortKey,
+    umbrella,
+  ]);
 
   const creativeById = useMemo(() => {
     const map = new Map<string, PerformanceRow>();
@@ -206,20 +259,39 @@ export function DashboardClient({ initialData }: Props) {
   }, [data.byUmbrella, data.comparison.byUmbrella]);
 
   const trendRows = useMemo(() => {
-    const byDate = new Map<string, Record<string, string | number>>();
-    for (const row of data.dailyTrend.filter((trend) => {
-      return (
-        (brand === "all" || trend.brandCode === brand) &&
-        (umbrella === "all" || trend.campaignUmbrella === umbrella)
-      );
-    })) {
-      const existing = byDate.get(row.date) || { date: row.date };
-      existing[`${row.brandCode} spend`] = row.spend;
-      existing[`${row.brandCode} ctr`] = row.ctr;
-      byDate.set(row.date, existing);
-    }
-    return Array.from(byDate.values());
-  }, [brand, data.dailyTrend, umbrella]);
+    const aggregate = (
+      rows: DashboardPayload["dailyTrend"],
+    ): Map<string, Record<string, number>> => {
+      const map = new Map<string, Record<string, number>>();
+      for (const row of rows) {
+        if (brand !== "all" && row.brandCode !== brand) continue;
+        if (umbrella !== "all" && row.campaignUmbrella !== umbrella) continue;
+        const existing = map.get(row.date) || {};
+        const spendKey = `${row.brandCode} spend`;
+        const ctrKey = `${row.brandCode} ctr`;
+        existing[spendKey] = (existing[spendKey] || 0) + row.spend;
+        existing[ctrKey] = row.ctr;
+        map.set(row.date, existing);
+      }
+      return map;
+    };
+
+    const currentByDate = aggregate(data.dailyTrend);
+    const priorByDate = aggregate(data.comparison.dailyTrend);
+    const currentDates = Array.from(currentByDate.keys()).sort();
+    const priorDates = Array.from(priorByDate.keys()).sort();
+
+    return currentDates.map((date, index) => {
+      const current = currentByDate.get(date) || {};
+      const priorDate = priorDates[index];
+      const priorEntry = priorDate ? priorByDate.get(priorDate) || {} : {};
+      const merged: Record<string, string | number> = { date, ...current };
+      for (const [key, value] of Object.entries(priorEntry)) {
+        merged[`${key} prior`] = value;
+      }
+      return merged;
+    });
+  }, [brand, data.comparison.dailyTrend, data.dailyTrend, umbrella]);
 
   const runManualSync = useCallback(async function runManualSync() {
     setIsSyncing(true);
@@ -426,6 +498,40 @@ export function DashboardClient({ initialData }: Props) {
         </div>
       </section>
 
+      <section className="mx-auto mt-6 flex max-w-7xl flex-col gap-3 border-y border-hp-rule py-4 xl:flex-row xl:items-center xl:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="pr-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+            Brand
+          </span>
+          {brands.map((brandOption) => (
+            <button
+              key={brandOption}
+              onClick={() => setBrand(brandOption)}
+              className={`h-9 border px-3 text-[11px] uppercase tracking-[0.14em] transition-colors duration-150 ${
+                brand === brandOption
+                  ? "border-hp-ink bg-hp-ink text-hp-foundation"
+                  : "border-hp-rule text-hp-body hover:border-hp-ink"
+              }`}
+            >
+              {brandOption === "all" ? "All Brands" : brandOption}
+            </button>
+          ))}
+        </div>
+
+        <DateRangeControls
+          startDate={startDate}
+          endDate={endDate}
+          onStartDateChange={setStartDate}
+          onEndDateChange={setEndDate}
+          onApply={applyDateRange}
+          onQuickRange={applyQuickRange}
+          isApplying={isApplyingRange}
+          compareEnabled={compareEnabled}
+          onCompareChange={setCompareEnabled}
+          comparisonRange={data.comparison.timeRange}
+        />
+      </section>
+
       <section className="mx-auto mt-6 max-w-7xl">
         <UmbrellaTabs
           umbrellas={umbrellaOptions}
@@ -473,6 +579,30 @@ export function DashboardClient({ initialData }: Props) {
                 <Line type="monotone" dataKey="VVS spend" stroke="#8B5B19" strokeWidth={2} dot={false} />
                 <Line type="monotone" dataKey="HP ctr" stroke="#245D4D" strokeWidth={1.5} dot={false} />
                 <Line type="monotone" dataKey="VVS ctr" stroke="#8D2E2E" strokeWidth={1.5} dot={false} />
+                {compareEnabled ? (
+                  <>
+                    <Line
+                      type="monotone"
+                      dataKey="HP spend prior"
+                      stroke="#2A2725"
+                      strokeWidth={1}
+                      strokeDasharray="4 4"
+                      strokeOpacity={0.5}
+                      dot={false}
+                      isAnimationActive={false}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="VVS spend prior"
+                      stroke="#8B5B19"
+                      strokeWidth={1}
+                      strokeDasharray="4 4"
+                      strokeOpacity={0.5}
+                      dot={false}
+                      isAnimationActive={false}
+                    />
+                  </>
+                ) : null}
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -503,68 +633,6 @@ export function DashboardClient({ initialData }: Props) {
         </div>
       </section>
 
-      <section className="mx-auto mt-8 max-w-7xl">
-        <div className="flex flex-col gap-4 border-y border-hp-rule py-5">
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-            <div className="flex flex-wrap items-center gap-2">
-              {brands.map((brandOption) => (
-                <button
-                  key={brandOption}
-                  onClick={() => setBrand(brandOption)}
-                  className={`h-10 border px-4 text-[11px] uppercase tracking-[0.14em] transition-colors ${
-                    brand === brandOption
-                      ? "border-hp-ink bg-hp-ink text-hp-foundation"
-                      : "border-hp-rule text-hp-body hover:border-hp-ink"
-                  }`}
-                >
-                  {brandOption === "all" ? "All Brands" : brandOption}
-                </button>
-              ))}
-            </div>
-
-            <DateRangeControls
-              startDate={startDate}
-              endDate={endDate}
-              onStartDateChange={setStartDate}
-              onEndDateChange={setEndDate}
-              onApply={applyDateRange}
-              onQuickRange={applyQuickRange}
-              isApplying={isApplyingRange}
-              compareEnabled={compareEnabled}
-              onCompareChange={setCompareEnabled}
-              comparisonRange={data.comparison.timeRange}
-            />
-          </div>
-
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <label className="flex min-w-0 flex-1 items-center gap-2 border-b border-hp-rule px-1 py-2 focus-within:border-hp-pink lg:max-w-xl">
-              <Search size={16} className="text-hp-muted" />
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search names, copy, umbrella"
-                className="w-full bg-transparent text-sm outline-none placeholder:text-hp-muted"
-              />
-            </label>
-
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <select
-                value={sortKey}
-                onChange={(event) => setSortKey(event.target.value as SortKey)}
-                className="h-10 border border-hp-rule bg-transparent px-3 text-sm outline-none focus:border-hp-pink sm:w-48"
-              >
-                {Object.entries(SORT_LABELS).map(([key, label]) => (
-                  <option key={key} value={key}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-
-              <SegmentedView value={viewMode} onChange={setViewMode} />
-            </div>
-          </div>
-        </div>
-      </section>
 
       <section className="mx-auto mt-8 grid w-full max-w-7xl min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,360px)]">
         <div className="min-w-0 space-y-8">
@@ -574,7 +642,7 @@ export function DashboardClient({ initialData }: Props) {
           <div className="min-w-0 border border-hp-rule bg-hp-card p-4 sm:p-6">
             <SectionHeader
               eyebrow="Creative Leaderboard"
-              title="Creative gallery and table"
+              title="Creative performance"
               actions={
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                   <label className="flex h-10 items-center gap-2 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
@@ -596,6 +664,38 @@ export function DashboardClient({ initialData }: Props) {
                 </div>
               }
             />
+
+            <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <CreativeBucketTabs
+                value={creativeBucket}
+                onChange={setCreativeBucket}
+                counts={creativeBucketCounts}
+              />
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <label className="flex min-w-0 items-center gap-2 border-b border-hp-rule px-1 py-2 focus-within:border-hp-pink sm:w-64">
+                  <Search size={16} className="text-hp-muted" />
+                  <input
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder="Search creatives"
+                    className="w-full bg-transparent text-sm outline-none placeholder:text-hp-muted"
+                  />
+                </label>
+                <select
+                  value={sortKey}
+                  onChange={(event) => setSortKey(event.target.value as SortKey)}
+                  className="h-10 border border-hp-rule bg-transparent px-3 text-sm outline-none focus:border-hp-pink sm:w-40"
+                >
+                  {Object.entries(SORT_LABELS).map(([key, label]) => (
+                    <option key={key} value={key}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+                <SegmentedView value={viewMode} onChange={setViewMode} />
+              </div>
+            </div>
+
             {viewMode === "table" && (
               <CreativeTable rows={visibleCreativeTableRows} onSelect={openCreativeDrawer} />
             )}
@@ -1075,6 +1175,52 @@ const ScorecardCell = memo(function ScorecardCell({
   );
 });
 
+const CREATIVE_BUCKETS: { key: CreativeBucket; label: string }[] = [
+  { key: "winners", label: "Winners" },
+  { key: "losers", label: "Losers" },
+  { key: "all", label: "All" },
+];
+
+const CreativeBucketTabs = memo(function CreativeBucketTabs({
+  value,
+  onChange,
+  counts,
+}: {
+  value: CreativeBucket;
+  onChange: (value: CreativeBucket) => void;
+  counts: { winners: number; losers: number; all: number };
+}) {
+  return (
+    <div className="flex items-center gap-1">
+      {CREATIVE_BUCKETS.map((bucket) => {
+        const isActive = value === bucket.key;
+        const count = counts[bucket.key];
+        const indicator =
+          bucket.key === "winners"
+            ? "border-l-[3px] border-l-[#245D4D]"
+            : bucket.key === "losers"
+              ? "border-l-[3px] border-l-[#8D2E2E]"
+              : "border-l-[3px] border-l-hp-rule";
+        return (
+          <button
+            key={bucket.key}
+            type="button"
+            onClick={() => onChange(bucket.key)}
+            className={`h-9 ${indicator} px-3 text-xs uppercase tracking-[0.14em] transition-colors duration-150 ${
+              isActive
+                ? "bg-hp-ink text-hp-foundation"
+                : "border-y border-r border-hp-rule text-hp-body hover:border-hp-ink"
+            }`}
+          >
+            <span>{bucket.label}</span>
+            <span className="ml-2 text-[10px] opacity-70 tabular-nums">{count}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+});
+
 const UmbrellaTabs = memo(function UmbrellaTabs({
   umbrellas,
   value,
@@ -1211,17 +1357,16 @@ const CreativeTable = memo(function CreativeTable({
 }) {
   return (
     <div className="w-full overflow-x-auto">
-      <table className="w-full min-w-[840px] table-fixed border-collapse text-sm">
+      <table className="w-full min-w-[780px] table-fixed border-collapse text-sm">
         <colgroup>
-          <col className="w-[26%]" />
+          <col className="w-[30%]" />
           <col className="w-[10%]" />
           <col className="w-[6%]" />
-          <col className="w-[13%]" />
-          <col className="w-[9%]" />
-          <col className="w-[7%]" />
-          <col className="w-[7%]" />
-          <col className="w-[7%]" />
-          <col className="w-[11%]" />
+          <col className="w-[14%]" />
+          <col className="w-[10%]" />
+          <col className="w-[8%]" />
+          <col className="w-[8%]" />
+          <col className="w-[10%]" />
           <col className="w-[4%]" />
         </colgroup>
         <thead>
@@ -1233,7 +1378,6 @@ const CreativeTable = memo(function CreativeTable({
             <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">Spend</th>
             <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">CTR</th>
             <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">CPC</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">Freq.</th>
             <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">Primary KPI</th>
             <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Risk</th>
           </tr>
@@ -1247,11 +1391,6 @@ const CreativeTable = memo(function CreativeTable({
             >
               <td className="px-3 py-4">
                 <div className="max-w-full text-hp-ink [overflow-wrap:anywhere]">{row.name}</div>
-                {row.body ? (
-                  <div className="mt-1 line-clamp-2 text-xs leading-5 text-hp-muted [overflow-wrap:anywhere]">
-                    {row.body}
-                  </div>
-                ) : null}
               </td>
               <td className="px-3 py-4">
                 <CreativePreview creative={row} compact />
@@ -1263,7 +1402,6 @@ const CreativeTable = memo(function CreativeTable({
               <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.spend, "money")}</td>
               <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.ctr, "percent")}</td>
               <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.cpc, "money")}</td>
-              <td className="px-3 py-4 text-right tabular-nums">{row.frequency.toFixed(2)}x</td>
               <td className="px-3 py-4 text-right">
                 <ResultCell row={row} align="right" />
               </td>
@@ -1274,7 +1412,7 @@ const CreativeTable = memo(function CreativeTable({
           ))}
           {!rows.length ? (
             <tr>
-              <td colSpan={10} className="px-3 py-8 text-center text-sm text-hp-muted">
+              <td colSpan={9} className="px-3 py-8 text-center text-sm text-hp-muted">
                 No creatives match the selected filters.
               </td>
             </tr>
@@ -1320,7 +1458,6 @@ const CreativeCards = memo(function CreativeCards({
                   {formatMetric(row.secondaryResults, "number")} {row.secondaryResultLabel}
                 </div>
               ) : null}
-              {row.body ? <p className="mt-3 line-clamp-3 text-sm text-hp-muted">{row.body}</p> : null}
             </div>
           </div>
         </article>
