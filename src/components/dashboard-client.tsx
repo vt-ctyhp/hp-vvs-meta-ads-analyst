@@ -412,10 +412,10 @@ export function DashboardClient({ initialData }: Props) {
       </section>
 
       {umbrella === "all" ? (
-        <section className="mx-auto mt-6 max-w-7xl border border-hp-rule bg-hp-card p-4 sm:p-6">
+        <section className="mx-auto mt-6 max-w-7xl border border-hp-rule bg-hp-card p-6 sm:p-8">
           <SectionHeader
             eyebrow="Campaign Umbrellas"
-            title="Scorecard"
+            title="Performance scorecard"
           />
           <UmbrellaScorecard
             rows={umbrellaScorecard}
@@ -697,23 +697,25 @@ const MetricTile = memo(function MetricTile({
     [sparkline],
   );
   return (
-    <div className="border border-hp-rule bg-hp-card p-5">
+    <div className="border border-hp-rule bg-hp-card p-6">
       <div className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">{label}</div>
-      <div className="mt-3 flex items-end justify-between gap-3">
-        <div className="text-2xl tabular-nums text-hp-ink">{value}</div>
-        {showComparison ? (
-          <DeltaChip current={current} previous={previous} lowerIsBetter={lowerIsBetter} />
-        ) : null}
+      <div className="mt-3 font-title text-[28px] leading-tight tabular-nums text-hp-ink">
+        {value}
       </div>
+      {showComparison ? (
+        <div className="mt-2 flex items-center justify-between gap-3">
+          <DeltaChip current={current} previous={previous} lowerIsBetter={lowerIsBetter} />
+        </div>
+      ) : null}
       {sparklineData.length > 1 ? (
-        <div className="mt-3 h-8 min-w-0">
+        <div className="mt-4 h-8 min-w-0">
           <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 1, height: 1 }}>
             <LineChart data={sparklineData} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
               <Line
                 type="monotone"
                 dataKey="v"
                 stroke="#2A2725"
-                strokeWidth={1.2}
+                strokeWidth={1}
                 dot={false}
                 isAnimationActive={false}
               />
@@ -736,31 +738,31 @@ const DeltaChip = memo(function DeltaChip({
 }) {
   if (current == null || previous == null || previous === 0) {
     return (
-      <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">— vs prev</span>
+      <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+        — vs prev
+      </span>
     );
   }
   const change = ((current - previous) / Math.abs(previous)) * 100;
   const rounded = Math.round(change * 10) / 10;
   if (!Number.isFinite(rounded)) {
     return (
-      <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">— vs prev</span>
+      <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+        — vs prev
+      </span>
     );
   }
-  const isUp = rounded > 0;
   const isFlat = rounded === 0;
+  const isUp = rounded > 0;
   const isGood = isFlat ? false : lowerIsBetter ? !isUp : isUp;
-  const tone = isFlat
-    ? "border-hp-rule text-hp-muted"
-    : isGood
-      ? "border-[#245D4D] text-[#245D4D]"
-      : "border-[#8D2E2E] text-[#8D2E2E]";
   const arrow = isFlat ? "→" : isUp ? "▲" : "▼";
+  const tone = isFlat || isGood ? "text-hp-ink" : "text-hp-body";
   return (
     <span
-      className={`flex h-5 items-center gap-1 border px-1.5 text-[10px] tabular-nums ${tone}`}
+      className={`inline-flex items-baseline gap-1.5 font-body text-xs tabular-nums ${tone}`}
       title={`Previous: ${previous}`}
     >
-      <span>{arrow}</span>
+      <span aria-hidden className="text-[9px] text-hp-muted">{arrow}</span>
       <span>{Math.abs(rounded).toFixed(1)}%</span>
     </span>
   );
@@ -937,8 +939,10 @@ const UmbrellaScorecard = memo(function UmbrellaScorecard({
           <col className="w-[18%]" />
         </colgroup>
         <thead>
-          <tr className="text-left text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-            <th className="pb-3 font-normal">Umbrella</th>
+          <tr className="bg-hp-inset text-left">
+            <th className="border-b border-hp-rule px-4 py-3 text-[10px] font-normal uppercase tracking-[0.14em] text-hp-muted">
+              Umbrella
+            </th>
             <ScorecardHeader label="Spend" active={sortKey === "spend"} dir={sortDir} onClick={() => toggle("spend")} />
             <ScorecardHeader label="Primary KPI" active={sortKey === "primaryResults"} dir={sortDir} onClick={() => toggle("primaryResults")} />
             <ScorecardHeader label="Cost / Result" active={sortKey === "costPerPrimaryResult"} dir={sortDir} onClick={() => toggle("costPerPrimaryResult")} />
@@ -949,12 +953,12 @@ const UmbrellaScorecard = memo(function UmbrellaScorecard({
           {sorted.map(({ current, prior }) => (
             <tr
               key={current.id}
-              className="cursor-pointer border-t border-hp-rule align-top hover:bg-hp-inset"
+              className="cursor-pointer border-b border-hp-rule bg-hp-card align-top transition-colors duration-150 hover:bg-hp-inset"
               onClick={() => onSelect(current.campaignUmbrella || current.name)}
             >
-              <td className="py-3 pr-3 text-hp-ink">
-                <div className="font-medium">{current.name}</div>
-                <div className="text-[11px] text-hp-muted">
+              <td className="px-4 py-4 text-hp-ink">
+                <div className="font-body text-base">{current.name}</div>
+                <div className="mt-1 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
                   {formatMetric(current.impressions, "number")} impressions
                 </div>
               </td>
@@ -1010,14 +1014,18 @@ const ScorecardHeader = memo(function ScorecardHeader({
   onClick: () => void;
 }) {
   return (
-    <th className="pb-3 font-normal">
+    <th className="border-b border-hp-rule px-4 py-3 text-[10px] font-normal uppercase tracking-[0.14em] text-hp-muted">
       <button
         type="button"
         onClick={onClick}
-        className={`inline-flex items-center gap-1 hover:text-hp-ink ${active ? "text-hp-ink" : ""}`}
+        className={`inline-flex items-center gap-1.5 transition-colors duration-150 hover:text-hp-ink ${
+          active ? "text-hp-ink" : ""
+        }`}
       >
         <span>{label}</span>
-        {active ? <span aria-hidden>{dir === "asc" ? "↑" : "↓"}</span> : null}
+        <span aria-hidden className={active ? "text-hp-ink" : "text-hp-muted/60"}>
+          {active ? (dir === "asc" ? "↑" : "↓") : "↕"}
+        </span>
       </button>
     </th>
   );
@@ -1037,10 +1045,10 @@ const ScorecardCell = memo(function ScorecardCell({
   showComparison: boolean;
 }) {
   return (
-    <td className="py-3 pr-3 tabular-nums text-hp-ink">
-      <div>{value}</div>
+    <td className="px-4 py-4 font-body tabular-nums text-hp-ink">
+      <div className="text-base">{value}</div>
       {showComparison ? (
-        <div className="mt-1">
+        <div className="mt-1.5">
           <DeltaChip current={current} previous={previous} lowerIsBetter={lowerIsBetter} />
         </div>
       ) : null}
