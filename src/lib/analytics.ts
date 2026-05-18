@@ -85,6 +85,14 @@ export type SourceTransparency = {
   recordCounts: Record<string, number>;
 };
 
+export type ComparisonPayload = {
+  timeRange: { start: string; end: string; days: number };
+  overview: MetricSummary;
+  byBrand: PerformanceRow[];
+  byUmbrella: PerformanceRow[];
+  dailyTrend: DailyTrendRow[];
+};
+
 export type DashboardPayload = {
   configured: boolean;
   missingEnv: string[];
@@ -103,6 +111,7 @@ export type DashboardPayload = {
   recommendationQueue: string[];
   latestReports: StoredReport[];
   latestSyncRuns: SyncRun[];
+  comparison: ComparisonPayload;
   generatedAt: string;
 };
 
@@ -278,6 +287,13 @@ export function emptyDashboardPayload(missingEnv = getMissingRequiredEnv()): Das
     recommendationQueue: [],
     latestReports: [],
     latestSyncRuns: [],
+    comparison: {
+      timeRange: { start: "", end: "", days: 30 },
+      overview: EMPTY_METRICS,
+      byBrand: [],
+      byUmbrella: [],
+      dailyTrend: [],
+    },
     generatedAt: new Date().toISOString(),
   };
 }
@@ -298,6 +314,7 @@ export async function fetchDashboardData(
   try {
     const supabase = createServiceClient();
     const dateRange = resolveDashboardDateRange(dateRangeInput);
+    const priorRange = resolvePriorDateRange(dateRange);
 
     const coreMetadataPromise = Promise.all([
       supabase.from("brands").select(BRAND_COLUMNS),
@@ -395,6 +412,46 @@ export async function fetchDashboardData(
     ];
     const aggregatePromise = Promise.all(aggregateTasks.map((task) => task()));
 
+    const priorAggregateTasks = [
+      () =>
+        aggregateMetaInsights({
+          start: priorRange.start,
+          end: priorRange.end,
+          dimensions: [],
+          sortField: "spend",
+          sortDirection: "desc",
+          limit: 1,
+        }),
+      () =>
+        aggregateMetaInsights({
+          start: priorRange.start,
+          end: priorRange.end,
+          dimensions: ["brand"],
+          sortField: "spend",
+          sortDirection: "desc",
+          limit: 100,
+        }),
+      () =>
+        aggregateMetaInsights({
+          start: priorRange.start,
+          end: priorRange.end,
+          dimensions: ["campaign_umbrella"],
+          sortField: "spend",
+          sortDirection: "desc",
+          limit: 100,
+        }),
+      () =>
+        aggregateMetaInsights({
+          start: priorRange.start,
+          end: priorRange.end,
+          dimensions: ["date", "brand", "campaign_umbrella"],
+          sortField: "date",
+          sortDirection: "asc",
+          limit: 10000,
+        }),
+    ];
+    const priorAggregatePromise = Promise.all(priorAggregateTasks.map((task) => task()));
+
     const [
       [
         brandsRes,
@@ -418,7 +475,18 @@ export async function fetchDashboardData(
         dailyTrendAggregateRows,
         dateCoverageAggregateRows,
       ],
-    ] = await Promise.all([coreMetadataPromise, metadataCountPromise, aggregatePromise]);
+      [
+        priorOverviewRows,
+        priorByBrandRows,
+        priorByUmbrellaRows,
+        priorDailyTrendAggregateRows,
+      ],
+    ] = await Promise.all([
+      coreMetadataPromise,
+      metadataCountPromise,
+      aggregatePromise,
+      priorAggregatePromise,
+    ]);
 
     const firstError = [
       brandsRes,
@@ -654,6 +722,52 @@ export async function fetchDashboardData(
     const opportunities = buildOpportunities(creativeRows, campaignRows, overview);
     const recommendationQueue = buildRecommendations(fatigueRisks, underperformers, creativeRows);
 
+    const priorOverview = summaryFromAggregate(priorOverviewRows[0]);
+    const priorByBrand = priorByBrandRows
+      .map((row) => {
+        const brandCode = row.brand || "Unassigned";
+        return {
+          id: brandCode,
+          name: brandCode,
+          brandCode,
+          ...summaryFromAggregate(row),
+        };
+      })
+      .sort(bySpendDesc);
+    const priorByUmbrella = priorByUmbrellaRows
+      .map((row) => {
+        const umbrella = resolveUmbrella(row.campaign_umbrella);
+        return {
+          id: umbrella,
+          name: umbrella,
+          brandCode: "All",
+          campaignUmbrella: umbrella,
+          ...summaryFromAggregate(row, umbrella),
+        };
+      })
+      .sort(bySpendDesc);
+    const priorDailyTrend = priorDailyTrendAggregateRows
+      .map((row) => {
+        const campaignUmbrella = resolveUmbrella(row.campaign_umbrella);
+        const metrics = summaryFromAggregate(row, campaignUmbrella);
+        return {
+          date: row.date || priorRange.start,
+          brandCode: row.brand || "Unassigned",
+          campaignUmbrella,
+          spend: metrics.spend,
+          impressions: metrics.impressions,
+          clicks: metrics.clicks,
+          leads: metrics.leads,
+          primaryResults: metrics.primaryResults,
+          websiteBookings: metrics.websiteBookings,
+          messagingContacts: metrics.messagingContacts,
+          newMessagingContacts: metrics.newMessagingContacts,
+          ctr: metrics.ctr,
+          cpc: metrics.cpc,
+        };
+      })
+      .sort((a, b) => a.date.localeCompare(b.date));
+
     const sourceTransparency: SourceTransparency = {
       timeRange: {
         start: dateRange.start,
@@ -705,6 +819,17 @@ export async function fetchDashboardData(
         content: null,
         sourceTransparency: (report.source_transparency || sourceTransparency) as SourceTransparency,
       })),
+      comparison: {
+        timeRange: {
+          start: priorRange.start,
+          end: priorRange.end,
+          days: priorRange.days,
+        },
+        overview: priorOverview,
+        byBrand: priorByBrand,
+        byUmbrella: priorByUmbrella,
+        dailyTrend: priorDailyTrend,
+      },
       latestSyncRuns: rows<Record<string, unknown>>(syncRunsRes.data).map((run) => ({
         id: String(run.id),
         trigger: String(run.trigger),
@@ -931,6 +1056,12 @@ function resolveDashboardDateRange(input: number | DashboardDateRangeInput) {
     end,
     days: differenceInCalendarDays(parseDate(end), parseDate(start)) + 1,
   };
+}
+
+function resolvePriorDateRange(current: { start: string; end: string; days: number }) {
+  const end = toDateString(subDays(parseDate(current.start), 1));
+  const start = toDateString(subDays(parseDate(end), current.days - 1));
+  return { start, end, days: current.days };
 }
 
 function normalizeDays(days: number | null | undefined) {

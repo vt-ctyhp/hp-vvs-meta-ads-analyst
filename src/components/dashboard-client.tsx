@@ -81,6 +81,7 @@ export function DashboardClient({ initialData }: Props) {
   const [query, setQuery] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [sortKey, setSortKey] = useState<SortKey>("spend");
+  const [compareEnabled, setCompareEnabled] = useState(true);
   const [expandedPanel, setExpandedPanel] = useState<string | null>("opportunities");
   const [isSyncing, setIsSyncing] = useState(false);
   const [isReporting, setIsReporting] = useState(false);
@@ -328,29 +329,12 @@ export function DashboardClient({ initialData }: Props) {
         </div>
       </section>
 
-      <section className="mx-auto mt-8 max-w-7xl border border-hp-rule bg-hp-card p-6">
-        <SectionHeader eyebrow="Campaign Umbrellas" title="Spend by internal grouping" />
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          {data.byUmbrella.map((row) => (
-            <button
-              key={row.id}
-              onClick={() => setUmbrella(row.campaignUmbrella || row.name)}
-              className={`border p-4 text-left transition-colors ${
-                umbrella === row.campaignUmbrella
-                  ? "border-hp-ink bg-hp-ink text-hp-foundation"
-                  : "border-hp-rule hover:border-hp-ink"
-              }`}
-            >
-              <div className="min-h-10 text-sm font-medium leading-5">{row.name}</div>
-              <div className="mt-3 flex items-end justify-between gap-3">
-                <span className="text-xl tabular-nums">{formatMetric(row.spend, "money")}</span>
-                <span className="text-right text-xs tabular-nums">
-                  {formatMetric(row.primaryResults, "number")} {row.primaryResultLabel}
-                </span>
-              </div>
-            </button>
-          ))}
-        </div>
+      <section className="mx-auto mt-6 max-w-7xl">
+        <UmbrellaTabs
+          umbrellas={umbrellaOptions}
+          value={umbrella}
+          onChange={setUmbrella}
+        />
       </section>
 
       <section className="mx-auto mt-8 grid w-full max-w-7xl min-w-0 gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
@@ -435,6 +419,9 @@ export function DashboardClient({ initialData }: Props) {
               onApply={applyDateRange}
               onQuickRange={applyQuickRange}
               isApplying={isApplyingRange}
+              compareEnabled={compareEnabled}
+              onCompareChange={setCompareEnabled}
+              comparisonRange={data.comparison.timeRange}
             />
           </div>
 
@@ -450,18 +437,6 @@ export function DashboardClient({ initialData }: Props) {
             </label>
 
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <select
-                value={umbrella}
-                onChange={(event) => setUmbrella(event.target.value)}
-                className="h-10 min-w-0 border border-hp-rule bg-transparent px-3 text-sm outline-none focus:border-hp-pink sm:w-72"
-              >
-                {umbrellaOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option === "all" ? "All Umbrellas" : option}
-                  </option>
-                ))}
-              </select>
-
               <select
                 value={sortKey}
                 onChange={(event) => setSortKey(event.target.value as SortKey)}
@@ -649,6 +624,9 @@ const DateRangeControls = memo(function DateRangeControls({
   onApply,
   onQuickRange,
   isApplying,
+  compareEnabled,
+  onCompareChange,
+  comparisonRange,
 }: {
   startDate: string;
   endDate: string;
@@ -657,6 +635,9 @@ const DateRangeControls = memo(function DateRangeControls({
   onApply: (startDate: string, endDate: string) => void;
   onQuickRange: (days: number) => void;
   isApplying: boolean;
+  compareEnabled: boolean;
+  onCompareChange: (value: boolean) => void;
+  comparisonRange: { start: string; end: string; days: number };
 }) {
   function submitDateRange(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -705,7 +686,65 @@ const DateRangeControls = memo(function DateRangeControls({
           </button>
         ))}
       </div>
+      <label
+        title={
+          compareEnabled && comparisonRange.start
+            ? `Comparing to ${comparisonRange.start} → ${comparisonRange.end}`
+            : "Toggle prior-period comparison"
+        }
+        className={`flex h-8 items-center gap-2 border px-3 text-[10px] uppercase tracking-[0.14em] transition-colors ${
+          compareEnabled
+            ? "border-hp-ink bg-hp-ink text-hp-foundation"
+            : "border-hp-rule text-hp-muted hover:border-hp-ink hover:text-hp-ink"
+        }`}
+      >
+        <input
+          type="checkbox"
+          checked={compareEnabled}
+          onChange={(event) => onCompareChange(event.target.checked)}
+          className="sr-only"
+        />
+        vs Prev
+      </label>
     </form>
+  );
+});
+
+const UmbrellaTabs = memo(function UmbrellaTabs({
+  umbrellas,
+  value,
+  onChange,
+}: {
+  umbrellas: string[];
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="border-y border-hp-rule">
+      <div className="flex items-center gap-1 overflow-x-auto py-3">
+        <span className="shrink-0 pr-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+          Umbrella
+        </span>
+        {umbrellas.map((option) => {
+          const isActive = value === option;
+          const label = option === "all" ? "All" : option;
+          return (
+            <button
+              key={option}
+              type="button"
+              onClick={() => onChange(option)}
+              className={`h-9 shrink-0 whitespace-nowrap border px-3 text-xs transition-colors ${
+                isActive
+                  ? "border-hp-ink bg-hp-ink text-hp-foundation"
+                  : "border-hp-rule text-hp-body hover:border-hp-ink"
+              }`}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 });
 
