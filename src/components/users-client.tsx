@@ -16,6 +16,7 @@ import type {
   ROLE_LABELS,
   UserRole,
 } from "@/lib/access-control";
+import { AUTH } from "@/lib/glossary";
 import { createBrowserClient } from "@/lib/supabase";
 
 type PermissionLabelMap = typeof APP_PERMISSIONS;
@@ -226,10 +227,10 @@ export function UsersClient() {
   if (profile && !profile.authenticated) {
     return (
       <AccessMessage
-        title="Sign in required"
+        title={`${AUTH.signIn} required`}
         body="The users page requires an approved internal account."
         actionHref="/login?next=/users"
-        actionLabel="Sign in"
+        actionLabel={AUTH.signIn}
       />
     );
   }

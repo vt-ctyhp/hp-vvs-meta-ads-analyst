@@ -22,6 +22,13 @@ import type { ButtonHTMLAttributes, ComponentType } from "react";
 import { useEffect, useMemo, useState } from "react";
 
 import type { AppPermission } from "@/lib/access-control";
+import {
+  formatBackfillChunkStatus,
+  formatBackfillJobStatus,
+  formatLockStatus,
+  SYNC,
+  TERMS,
+} from "@/lib/glossary";
 import { createBrowserClient } from "@/lib/supabase";
 
 type BackfillStatus = "pending" | "running" | "paused" | "success" | "partial" | "failed" | "canceled";
@@ -916,7 +923,7 @@ function DataHealthPanel({
               value={`${health.insights.dateRange.min || "-"} to ${health.insights.dateRange.max || "-"}`}
             />
             <SmallMetric label="Finalized Before" value={health.syncPolicy.finalizedCutoffDate} />
-            <SmallMetric label="Refresh Window" value={health.syncPolicy.incrementalDatePreset} />
+            <SmallMetric label={SYNC.window} value={health.syncPolicy.incrementalDatePreset} />
             <SmallMetric
               label="Last Sync"
               value={
@@ -1105,7 +1112,7 @@ function DataHealthPanel({
               <thead className="text-left text-[11px] uppercase tracking-[0.14em] text-hp-muted">
                 <tr className="border-b border-hp-rule">
                   <th className="py-2 pr-3 font-normal">Month</th>
-                  <th className="py-2 pr-3 font-normal">Umbrella</th>
+                  <th className="py-2 pr-3 font-normal">{TERMS.umbrellaShort}</th>
                   <th className="py-2 pr-3 font-normal">Spend</th>
                   <th className="py-2 pr-3 font-normal">Rows</th>
                   <th className="py-2 pr-3 font-normal">Leads</th>
@@ -1298,16 +1305,23 @@ function PanelTitle({
 }
 
 function StatusPill({ status }: { status: BackfillStatus | ChunkStatus }) {
+  const label = isJobStatus(status)
+    ? formatBackfillJobStatus(status)
+    : formatBackfillChunkStatus(status);
   return (
     <span className={`inline-flex border px-2 py-1 text-[10px] uppercase tracking-[0.14em] ${STATUS_CLASS[status]}`}>
-      {status}
+      {label}
     </span>
   );
 }
 
+function isJobStatus(value: BackfillStatus | ChunkStatus): value is BackfillStatus {
+  return value === "pending" || value === "paused" || value === "partial";
+}
+
 function LockStatusPill({ status }: { status: MonthlyDiagnostic["lockStatus"] }) {
   const Icon = status === "locked" ? Lock : status === "settling" ? CalendarClock : Unlock;
-  const label = status === "locked" ? "locked" : status === "settling" ? "settling" : "active";
+  const label = formatLockStatus(status);
   const className =
     status === "locked"
       ? "border-hp-rule bg-hp-inset text-hp-body"

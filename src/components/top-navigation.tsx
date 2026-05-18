@@ -15,6 +15,7 @@ import {
 import { useEffect, useState } from "react";
 
 import { type AppPermission } from "@/lib/access-control";
+import { AUTH } from "@/lib/glossary";
 import { createBrowserClient } from "@/lib/supabase";
 
 const NAV_ITEMS = [
@@ -151,7 +152,7 @@ export function TopNavigation() {
               onClick={signOut}
               className="flex h-10 items-center px-2 text-sm text-hp-muted underline-offset-4 transition-colors hover:text-hp-ink hover:underline"
             >
-              Sign out
+              {AUTH.signOut}
             </button>
           ) : (
             <Link
@@ -163,7 +164,7 @@ export function TopNavigation() {
               }`}
             >
               <LogIn size={15} />
-              Sign In
+              {AUTH.signIn}
             </Link>
           )}
         </div>

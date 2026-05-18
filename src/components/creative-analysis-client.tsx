@@ -17,6 +17,7 @@ import {
   type CreativeAnalysisPayload,
   type CreativeAnalysisRow,
 } from "@/lib/creative-analysis";
+import { formatMetaStatus, formatRanking, TERMS } from "@/lib/glossary";
 
 type Props = {
   initialData: CreativeAnalysisPayload;
@@ -463,7 +464,7 @@ export function CreativeAnalysisClient({ initialData }: Props) {
           <div className="mt-4 grid gap-4 border-t border-hp-rule pt-4 sm:grid-cols-5">
             <SummaryStat label="Total spend" value={formatMoney(summary.totalSpend, true)} />
             <SummaryStat
-              label="KPI results"
+              label={TERMS.primaryKpi}
               value={formatNumber(summary.totalResults)}
               detail={summary.kpiDetail}
             />
@@ -516,7 +517,7 @@ export function CreativeAnalysisClient({ initialData }: Props) {
                     "Rank",
                     "Creative",
                     "Internal score",
-                    "KPI results",
+                    TERMS.primaryKpi,
                     "Spend",
                     "CPA",
                     "Hook rate",
@@ -1444,11 +1445,7 @@ function formatPercentNumber(value: number | null) {
 }
 
 function rankingLabel(value: string | null) {
-  if (!value) return "Unavailable";
-  return value
-    .toLowerCase()
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+  return formatRanking(value);
 }
 
 function dateRangeLabel(range: { start: string | null; end: string | null; days?: number }) {
@@ -1497,11 +1494,8 @@ function kpiResultDetail(row: CreativeAnalysisRow) {
 }
 
 function metaStatusLabel(value: string | null) {
-  if (!value) return "Unavailable";
-  return value
-    .toLowerCase()
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+  const formatted = formatMetaStatus(value);
+  return formatted === "—" ? "Unavailable" : formatted;
 }
 
 function friendlyActionType(value: string) {

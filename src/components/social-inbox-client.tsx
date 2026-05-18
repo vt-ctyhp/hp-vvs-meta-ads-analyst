@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { SYNC } from "@/lib/glossary";
 import type {
   SocialInboxComment,
   SocialInboxData,
@@ -406,7 +407,7 @@ export function SocialInboxClient({
                 className="flex h-10 items-center justify-center gap-2 border border-hp-ink px-4 text-[11px] uppercase tracking-[0.14em] text-hp-ink transition-colors hover:bg-hp-ink hover:text-hp-foundation disabled:border-hp-rule disabled:text-hp-muted"
               >
                 <RefreshCw size={14} className={isSyncing ? "animate-spin" : ""} />
-                {isSyncing ? "Syncing" : "Sync Inbox"}
+                {isSyncing ? SYNC.inProgress : `${SYNC.action} Inbox`}
               </button>
             </div>
           </div>

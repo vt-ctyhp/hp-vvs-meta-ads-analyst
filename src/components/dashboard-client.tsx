@@ -36,6 +36,7 @@ import {
 } from "recharts";
 
 import type { ActionBucket, ActionItem, DashboardPayload, PerformanceRow } from "@/lib/analytics";
+import { TERMS } from "@/lib/glossary";
 
 type ViewMode = "table" | "cards" | "gallery";
 type SortKey = "spend" | "primaryResults" | "ctr" | "cpc" | "newMessagingContacts" | "frequency";
@@ -52,7 +53,7 @@ type ChatMessage = {
 
 const SORT_LABELS: Record<SortKey, string> = {
   spend: "Spend",
-  primaryResults: "Primary KPI",
+  primaryResults: TERMS.primaryKpi,
   ctr: "CTR",
   cpc: "CPC",
   newMessagingContacts: "New Msg Contacts",
@@ -488,7 +489,7 @@ export function DashboardClient({ initialData }: Props) {
             showComparison={compareEnabled}
           />
           <MetricTile
-            label={data.overview.primaryResultLabel || "Primary Results"}
+            label={data.overview.primaryResultLabel || TERMS.primaryKpiFallback}
             value={formatMetric(data.overview.primaryResults, "number")}
             current={data.overview.primaryResults}
             previous={data.comparison.overview.primaryResults}
@@ -543,7 +544,7 @@ export function DashboardClient({ initialData }: Props) {
       {umbrella === "all" ? (
         <section className="mx-auto mt-6 max-w-7xl border border-hp-rule bg-hp-card p-6 sm:p-8">
           <SectionHeader
-            eyebrow="Campaign Umbrellas"
+            eyebrow={`${TERMS.campaignUmbrella}s`}
             title="Performance scorecard"
           />
           <UmbrellaScorecard
@@ -1309,11 +1310,11 @@ const PerformanceSection = memo(function PerformanceSection({ title, rows }: { t
             <tr className="bg-hp-inset text-left text-[11px] uppercase tracking-[0.14em] text-hp-muted">
               <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Name</th>
               <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Brand</th>
-              <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Umbrella</th>
+              <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">{TERMS.umbrellaShort}</th>
               <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">Spend</th>
               <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">CTR</th>
               <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">CPC</th>
-              <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">Primary KPI</th>
+              <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">{TERMS.primaryKpi}</th>
             </tr>
           </thead>
           <tbody>
@@ -1374,11 +1375,11 @@ const CreativeTable = memo(function CreativeTable({
             <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Creative</th>
             <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Preview</th>
             <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Brand</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Umbrella</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">{TERMS.umbrellaShort}</th>
             <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">Spend</th>
             <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">CTR</th>
             <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">CPC</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">Primary KPI</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">{TERMS.primaryKpi}</th>
             <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Risk</th>
           </tr>
         </thead>
@@ -2336,12 +2337,12 @@ function creativeTableMarkup(rows: PerformanceRow[], options: CreativeTablePrint
         <th>Creative</th>
         <th>Preview</th>
         <th>Brand</th>
-        <th>Umbrella</th>
+        <th>${TERMS.umbrellaShort}</th>
         ${options.hideFinancials ? "" : `<th class="num">Spend</th>`}
         <th class="num">CTR</th>
         ${options.hideFinancials ? "" : `<th class="num">CPC</th>`}
         <th class="num">Freq.</th>
-        <th class="num">Primary KPI</th>
+        <th class="num">${TERMS.primaryKpi}</th>
         <th>Risk</th>
       </tr>
     </thead>
@@ -2445,7 +2446,7 @@ function formatDateLabel(value: string) {
 }
 
 function formatUmbrellaName(value: string) {
-  return value === "all" ? "All Campaign Umbrellas" : value;
+  return value === "all" ? `All ${TERMS.campaignUmbrella}s` : value;
 }
 
 function truncateText(value: string | null | undefined, maxLength: number) {

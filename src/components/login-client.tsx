@@ -4,6 +4,7 @@ import { Eye, EyeOff, LockKeyhole, LogIn } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useState } from "react";
 
+import { AUTH } from "@/lib/glossary";
 import { createBrowserClient } from "@/lib/supabase";
 
 export function LoginClient() {
@@ -111,7 +112,7 @@ export function LoginClient() {
             className="flex w-full items-center justify-center gap-2 bg-hp-ink px-5 py-4 text-[11px] uppercase tracking-[0.14em] text-hp-foundation transition-colors hover:bg-hp-pink"
           >
             <LogIn size={15} />
-            {loading ? "Signing In" : "Sign In"}
+            {loading ? AUTH.signingIn : AUTH.signIn}
           </button>
 
           {status ? <p className="mt-4 text-sm text-hp-pink">{status}</p> : null}
