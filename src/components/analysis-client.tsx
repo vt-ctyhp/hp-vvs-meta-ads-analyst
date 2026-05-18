@@ -46,6 +46,36 @@ type Props = {
 
 const CHART_COLORS = ["#2A2725", "#245D4D", "#8B5B19", "#8D2E2E", "#E91D79"];
 
+const ANALYSIS_GUIDE = [
+  {
+    title: "Good requests",
+    items: [
+      "Meta Ads spend, budget, results, leads, bookings, messages, CTR, CPC, CPM, reach, impressions, and frequency.",
+      "Cuts by day, week, month, brand, campaign umbrella, campaign, ad set, ad, or creative.",
+      "Tables, metric cards, bar charts, line charts, and pivot tables with row and column intersections.",
+      "Saved dashboard edits, including adding metrics, reordering widgets, changing groupings, and comparing time periods.",
+    ],
+  },
+  {
+    title: "Useful examples",
+    items: [
+      "Spend and primary KPI by campaign umbrella for the last 4 weeks.",
+      "Pivot spend by campaign umbrella across months since January 1, 2026.",
+      "Line chart of messages and spend by day for Cash for Gold over the last 14 days.",
+      "Top 10 ad sets by lowest CPL for the last 30 days.",
+    ],
+  },
+  {
+    title: "Not yet supported",
+    items: [
+      "CRM revenue, sales, customer, employee, or order analysis.",
+      "Website visitor or landing-page breakdowns inside this Meta Ads analyst.",
+      "Social inbox response-time or staff performance cuts.",
+      "Live Meta API refreshes from this page; it reads the synced Supabase Meta Ads data.",
+    ],
+  },
+] as const;
+
 export function AnalysisClient({ initialSaved }: Props) {
   const [mode, setMode] = useState<AnalysisMode>("fast");
   const [prompt, setPrompt] = useState("");
@@ -258,6 +288,8 @@ export function AnalysisClient({ initialSaved }: Props) {
             {status ? <p className="mt-3 text-sm text-signal-danger">{status}</p> : null}
           </section>
 
+          <AnalysisGuidePanel />
+
           <section className="border border-hp-rule bg-hp-card p-4">
             <div className="mb-4 flex items-center gap-2 text-hp-ink">
               <History size={18} />
@@ -434,6 +466,34 @@ function CurrentDashboardPanel({
             </button>
           </div>
         </div>
+      </div>
+    </section>
+  );
+}
+
+function AnalysisGuidePanel() {
+  return (
+    <section className="border border-hp-rule bg-hp-card p-4">
+      <div className="mb-4 flex items-center gap-2 text-hp-ink">
+        <Info size={18} />
+        <span className="text-[11px] uppercase tracking-[0.14em]">What This Analyst Can Do</span>
+      </div>
+      <div className="space-y-5">
+        {ANALYSIS_GUIDE.map((group) => (
+          <div key={group.title}>
+            <div className="mb-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+              {group.title}
+            </div>
+            <ul className="space-y-2 text-sm leading-5 text-hp-body">
+              {group.items.map((item) => (
+                <li key={item} className="flex gap-2">
+                  <span className="mt-2 h-1.5 w-1.5 shrink-0 bg-hp-ink" />
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
       </div>
     </section>
   );
