@@ -5,10 +5,12 @@ import { usePathname } from "next/navigation";
 import {
   BarChart3,
   Brain,
+  ClipboardCheck,
   Database,
   Gauge,
   Inbox,
   MousePointerClick,
+  Target,
   Users,
   X,
 } from "lucide-react";
@@ -22,6 +24,8 @@ import type { SystemHealthSnapshot } from "@/lib/system-health";
 
 const NAV_ICONS: Record<string, typeof BarChart3> = {
   "/": BarChart3,
+  "/review": ClipboardCheck,
+  "/outcomes": Target,
   "/creative-analysis": Gauge,
   "/analysis": Brain,
   "/website-funnel": MousePointerClick,

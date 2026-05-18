@@ -11,7 +11,9 @@ export type AppPermission =
   | "run_meta_sync"
   | "manage_backfill"
   | "view_users"
-  | "manage_users";
+  | "manage_users"
+  | "view_review"
+  | "view_outcomes";
 
 export type PermissionGroup = {
   key: "admin" | "marketing" | "sales";
@@ -58,6 +60,14 @@ export const APP_PERMISSIONS: Record<AppPermission, { label: string; description
     label: "Manage Users",
     description: "Invite users, change roles, and activate or deactivate access.",
   },
+  view_review: {
+    label: "Review Queue",
+    description: "Tag appointment outcomes and weekly creative effectiveness ratings.",
+  },
+  view_outcomes: {
+    label: "Outcome Analysis",
+    description: "Validated outcomes by creative and umbrella once review data exists.",
+  },
 };
 
 export const PERMISSION_GROUPS: PermissionGroup[] = [
@@ -76,6 +86,8 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       "manage_backfill",
       "view_users",
       "manage_users",
+      "view_review",
+      "view_outcomes",
     ],
   },
   {
@@ -102,8 +114,12 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
 
 export const ASSIGNABLE_USER_ROLES: UserRole[] = [
   "admin",
+  "executive",
   "marketing",
   "sales",
+  "sales_lead",
+  "sales_appointment_reviewer",
+  "sales_creative_reviewer",
   "client_advisor",
   "joc",
   "diamond_order_admin",
@@ -114,8 +130,12 @@ export const ASSIGNABLE_USER_ROLES: UserRole[] = [
 
 export const ROLE_LABELS: Record<UserRole, string> = {
   admin: "Admin",
+  executive: "Executive",
   marketing: "Marketing",
   sales: "Sales",
+  sales_lead: "Sales Lead",
+  sales_appointment_reviewer: "Sales — Appointment Reviewer",
+  sales_creative_reviewer: "Sales — Creative Reviewer",
   client_advisor: "Client Advisor",
   joc: "JOC",
   diamond_order_admin: "Diamond Order Admin",
@@ -139,6 +159,43 @@ export function permissionsForRoles(roles: UserRole[]): AppPermission[] {
       PERMISSION_GROUPS.find((group) => group.key === "marketing")?.permissions.forEach((permission) =>
         permissions.add(permission),
       );
+      continue;
+    }
+
+    if (role === "executive") {
+      // Executive lands on the snapshot at /, with read-only depth across the
+      // analyst surfaces. No sync triggers, no user management.
+      [
+        "view_dashboard",
+        "view_creative_analysis",
+        "view_ai_analysis",
+        "view_inbox",
+        "view_backfill",
+        "view_outcomes",
+      ].forEach((permission) => permissions.add(permission as AppPermission));
+      continue;
+    }
+
+    if (role === "sales_appointment_reviewer" || role === "sales_creative_reviewer") {
+      // Review-side roles can see the review queue and the dashboard for context.
+      // They cannot trigger sync or change anything else.
+      ["view_dashboard", "view_review"].forEach((permission) =>
+        permissions.add(permission as AppPermission),
+      );
+      continue;
+    }
+
+    if (role === "sales_lead") {
+      // Sales lead validates marketing claims against outcome data; they get the
+      // outcome surface plus full read across analyst depth.
+      [
+        "view_dashboard",
+        "view_creative_analysis",
+        "view_ai_analysis",
+        "view_inbox",
+        "view_review",
+        "view_outcomes",
+      ].forEach((permission) => permissions.add(permission as AppPermission));
       continue;
     }
 

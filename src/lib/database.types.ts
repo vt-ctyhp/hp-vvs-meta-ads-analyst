@@ -6570,6 +6570,10 @@ export type Database = {
         | "wax_request_admin"
         | "marketing"
         | "sales"
+        | "executive"
+        | "sales_appointment_reviewer"
+        | "sales_creative_reviewer"
+        | "sales_lead"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -6806,6 +6810,10 @@ export const Constants = {
         "wax_request_admin",
         "marketing",
         "sales",
+        "executive",
+        "sales_appointment_reviewer",
+        "sales_creative_reviewer",
+        "sales_lead",
       ],
     },
   },
