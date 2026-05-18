@@ -580,50 +580,27 @@ export function DashboardClient({ initialData, permissions }: Props) {
         </div>
       </section>
 
-      <section className="mx-auto mt-6 flex max-w-7xl flex-col gap-3 border-y border-hp-rule py-4 xl:flex-row xl:items-center xl:justify-between">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="pr-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-            Brand
-          </span>
-          {brands.map((brandOption) => (
-            <button
-              key={brandOption}
-              onClick={() => setBrand(brandOption)}
-              className={`h-9 border px-3 text-[11px] uppercase tracking-[0.14em] transition-colors duration-150 ${
-                brand === brandOption
-                  ? "border-hp-ink bg-hp-ink text-hp-foundation"
-                  : "border-hp-rule text-hp-body hover:border-hp-ink"
-              }`}
-            >
-              {brandOption === "all" ? "All Brands" : brandOption}
-            </button>
-          ))}
-
-          <span aria-hidden className="mx-1 hidden h-6 w-px bg-hp-rule xl:inline-block" />
-
-          <span className="pr-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-            Delivery
-          </span>
-          {(
-            [
+      <section className="mx-auto mt-6 flex max-w-7xl flex-col gap-4 border-y border-hp-rule py-4 xl:flex-row xl:flex-wrap xl:items-center xl:justify-between xl:gap-x-6">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+          <FilterChipGroup
+            label="Brand"
+            value={brand}
+            onChange={setBrand}
+            options={brands.map((option) => ({
+              value: option,
+              label: option === "all" ? "All Brands" : option,
+            }))}
+          />
+          <FilterChipGroup
+            label="Delivery"
+            value={delivery}
+            onChange={(value) => setDelivery(value as DeliveryFilter)}
+            options={[
               { value: "all", label: "All" },
               { value: "active", label: "Active" },
               { value: "paused", label: "Paused" },
-            ] as const
-          ).map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() => setDelivery(option.value)}
-              className={`h-9 border px-3 text-[11px] uppercase tracking-[0.14em] transition-colors duration-150 ${
-                delivery === option.value
-                  ? "border-hp-ink bg-hp-ink text-hp-foundation"
-                  : "border-hp-rule text-hp-body hover:border-hp-ink"
-              }`}
-            >
-              {option.label}
-            </button>
-          ))}
+            ]}
+          />
         </div>
 
         <DateRangeControls
@@ -1291,6 +1268,41 @@ const CREATIVE_BUCKETS: { key: CreativeBucket; label: string }[] = [
   { key: "losers", label: "Losers" },
   { key: "all", label: "All" },
 ];
+
+const FilterChipGroup = memo(function FilterChipGroup({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: { value: string; label: string }[];
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="pr-1 text-[10px] uppercase tracking-[0.14em] text-hp-muted">{label}</span>
+      {options.map((option) => {
+        const isActive = value === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => onChange(option.value)}
+            className={`h-9 border px-3 text-[11px] uppercase tracking-[0.14em] transition-colors duration-150 ${
+              isActive
+                ? "border-hp-ink bg-hp-ink text-hp-foundation"
+                : "border-hp-rule text-hp-body hover:border-hp-ink"
+            }`}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+});
 
 const CreativeBucketTabs = memo(function CreativeBucketTabs({
   value,
