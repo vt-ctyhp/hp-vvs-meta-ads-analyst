@@ -706,74 +706,6 @@ export function DashboardClient({ initialData, permissions }: Props) {
         <div className="min-w-0 space-y-8">
           <PerformanceSection title="Campaign Performance" rows={visibleCampaigns} />
           <PerformanceSection title="Ad Set Performance" rows={visibleAdSets} />
-
-          <div className="min-w-0 border border-hp-rule bg-hp-card p-4 sm:p-6">
-            <SectionHeader
-              eyebrow="Creative Leaderboard"
-              title="Creative performance"
-              actions={
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <label className="flex h-10 items-center gap-2 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-                    <input
-                      type="checkbox"
-                      checked={hidePdfFinancials}
-                      onChange={(event) => setHidePdfFinancials(event.target.checked)}
-                      className="h-4 w-4 accent-hp-ink"
-                    />
-                    Hide financials
-                  </label>
-                  <button
-                    onClick={() => void exportCreativesPdf()}
-                    className="flex h-10 items-center justify-center gap-2 border border-hp-ink px-3 text-[10px] uppercase tracking-[0.14em] text-hp-ink transition-colors hover:bg-hp-ink hover:text-hp-foundation"
-                  >
-                    <FileDown size={15} />
-                    Export PDF
-                  </button>
-                </div>
-              }
-            />
-
-            <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <CreativeBucketTabs
-                value={creativeBucket}
-                onChange={setCreativeBucket}
-                counts={creativeBucketCounts}
-              />
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <label className="flex min-w-0 items-center gap-2 border-b border-hp-rule px-1 py-2 focus-within:border-hp-pink sm:w-64">
-                  <Search size={16} className="text-hp-muted" />
-                  <input
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                    placeholder="Search creatives"
-                    className="w-full bg-transparent text-sm outline-none placeholder:text-hp-muted"
-                  />
-                </label>
-                <select
-                  value={sortKey}
-                  onChange={(event) => setSortKey(event.target.value as SortKey)}
-                  className="h-10 border border-hp-rule bg-transparent px-3 text-sm outline-none focus:border-hp-pink sm:w-40"
-                >
-                  {Object.entries(SORT_LABELS).map(([key, label]) => (
-                    <option key={key} value={key}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-                <SegmentedView value={viewMode} onChange={setViewMode} />
-              </div>
-            </div>
-
-            {viewMode === "table" && (
-              <CreativeTable rows={visibleCreativeTableRows} onSelect={openCreativeDrawer} />
-            )}
-            {viewMode === "cards" && (
-              <CreativeCards rows={visibleCreativeCardRows} onSelect={openCreativeDrawer} />
-            )}
-            {viewMode === "gallery" && (
-              <CreativeGallery rows={visibleCreativeGalleryRows} onSelect={openCreativeDrawer} />
-            )}
-          </div>
         </div>
 
         <aside className="min-w-0 space-y-6">
@@ -805,6 +737,76 @@ export function DashboardClient({ initialData, permissions }: Props) {
 
           <SourcePanel data={data} />
         </aside>
+      </section>
+
+      <section className="mx-auto mt-8 w-full max-w-7xl min-w-0">
+        <div className="min-w-0 border border-hp-rule bg-hp-card p-4 sm:p-6">
+          <SectionHeader
+            eyebrow="Creative Leaderboard"
+            title="Creative performance"
+            actions={
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <label className="flex h-10 items-center gap-2 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                  <input
+                    type="checkbox"
+                    checked={hidePdfFinancials}
+                    onChange={(event) => setHidePdfFinancials(event.target.checked)}
+                    className="h-4 w-4 accent-hp-ink"
+                  />
+                  Hide financials
+                </label>
+                <button
+                  onClick={() => void exportCreativesPdf()}
+                  className="flex h-10 items-center justify-center gap-2 border border-hp-ink px-3 text-[10px] uppercase tracking-[0.14em] text-hp-ink transition-colors hover:bg-hp-ink hover:text-hp-foundation"
+                >
+                  <FileDown size={15} />
+                  Export PDF
+                </button>
+              </div>
+            }
+          />
+
+          <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <CreativeBucketTabs
+              value={creativeBucket}
+              onChange={setCreativeBucket}
+              counts={creativeBucketCounts}
+            />
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <label className="flex min-w-0 items-center gap-2 border-b border-hp-rule px-1 py-2 focus-within:border-hp-pink sm:w-64">
+                <Search size={16} className="text-hp-muted" />
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search creatives"
+                  className="w-full bg-transparent text-sm outline-none placeholder:text-hp-muted"
+                />
+              </label>
+              <select
+                value={sortKey}
+                onChange={(event) => setSortKey(event.target.value as SortKey)}
+                className="h-10 border border-hp-rule bg-transparent px-3 text-sm outline-none focus:border-hp-pink sm:w-40"
+              >
+                {Object.entries(SORT_LABELS).map(([key, label]) => (
+                  <option key={key} value={key}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+              <SegmentedView value={viewMode} onChange={setViewMode} />
+            </div>
+          </div>
+
+          {viewMode === "table" && (
+            <CreativeTable rows={visibleCreativeTableRows} onSelect={openCreativeDrawer} />
+          )}
+          {viewMode === "cards" && (
+            <CreativeCards rows={visibleCreativeCardRows} onSelect={openCreativeDrawer} />
+          )}
+          {viewMode === "gallery" && (
+            <CreativeGallery rows={visibleCreativeGalleryRows} onSelect={openCreativeDrawer} />
+          )}
+        </div>
       </section>
 
       <CreativeDrawer creative={drawerCreative} onClose={closeCreativeDrawer} />
@@ -1426,7 +1428,7 @@ const CreativeTable = memo(function CreativeTable({
 }) {
   return (
     <div className="w-full overflow-x-auto">
-      <table className="w-full min-w-[1040px] table-fixed border-collapse text-sm">
+      <table className="w-full min-w-[900px] table-fixed border-collapse text-sm">
         <colgroup>
           <col className="w-[24%]" />
           <col className="w-[8%]" />
