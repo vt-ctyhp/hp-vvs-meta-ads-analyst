@@ -8,16 +8,12 @@ export const dynamic = "force-dynamic";
 
 type SearchParams = Promise<DashboardPageSearchParams>;
 
-// During v1 Days 2–3 this route renders the same dashboard as /analyst so users
-// keep their home page while we build the executive snapshot. In v1 Days 4–5
-// this file is rewritten to render the executive snapshot; /analyst keeps
-// rendering the analyst dashboard via the shared loader.
-export default async function Home({
+export default async function AnalystDashboardPage({
   searchParams,
 }: {
   searchParams?: SearchParams;
 }) {
   const params = searchParams ? await searchParams : {};
-  const { dashboard, permissions } = await loadDashboardPagePayload(params, "/");
+  const { dashboard, permissions } = await loadDashboardPagePayload(params, "/analyst");
   return <DashboardClient initialData={dashboard} permissions={permissions} />;
 }

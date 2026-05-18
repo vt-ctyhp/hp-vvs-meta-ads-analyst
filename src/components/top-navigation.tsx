@@ -9,6 +9,7 @@ import {
   Database,
   Gauge,
   Inbox,
+  LineChart as LineChartIcon,
   MousePointerClick,
   Target,
   Users,
@@ -24,6 +25,7 @@ import type { SystemHealthSnapshot } from "@/lib/system-health";
 
 const NAV_ICONS: Record<string, typeof BarChart3> = {
   "/": BarChart3,
+  "/analyst": LineChartIcon,
   "/review": ClipboardCheck,
   "/outcomes": Target,
   "/creative-analysis": Gauge,

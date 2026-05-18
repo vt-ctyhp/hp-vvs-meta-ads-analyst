@@ -15,6 +15,7 @@ export type PermissionProfile = {
 
 export const APP_NAV_ROUTES = [
   { href: "/", label: "Dashboard", permission: "view_dashboard" },
+  { href: "/analyst", label: "Analyst View", permission: "view_dashboard" },
   { href: "/review", label: "Review", permission: "view_review" },
   { href: "/outcomes", label: "Outcomes", permission: "view_outcomes" },
   { href: "/creative-analysis", label: "Creative Analysis", permission: "view_creative_analysis" },
