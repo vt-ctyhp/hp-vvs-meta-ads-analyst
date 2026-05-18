@@ -278,6 +278,37 @@ describe("ad-hoc analytics prompt normalization", () => {
     assert.deepEqual(spec.widgets[0]?.metrics, ["spend", "primary_results"]);
   });
 
+  it("keeps the latest explicit date range when a later pivot orientation edit has no range", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "ad spend and primary kpi by campaign umbrella for the last 4 weeks.\n\nFollow-up: reorganize in pivot table with data organized by week for the past 8 weeks\n\nFollow-up: switch pivot so umbrella campaign is header and column is weeks",
+    );
+
+    assert.deepEqual(plan.spec.dateRange, { preset: "last_8_weeks" });
+    assert.deepEqual(plan.spec.dimensions, ["week", "campaign_umbrella"]);
+    assert.deepEqual(plan.spec.tableLayout, {
+      type: "pivot",
+      rowDimension: "campaign_umbrella",
+      columnDimension: "week",
+      metric: "spend",
+    });
+  });
+
+  it("supports switching pivot orientation with rows and columns wording", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "ad spend and primary kpi by campaign umbrella for the last 4 weeks.\n\nFollow-up: switch pivot so weeks are rows and campaign umbrella is columns",
+    );
+
+    assert.deepEqual(plan.spec.dimensions, ["week", "campaign_umbrella"]);
+    assert.deepEqual(plan.spec.tableLayout, {
+      type: "pivot",
+      rowDimension: "week",
+      columnDimension: "campaign_umbrella",
+      metric: "spend",
+    });
+  });
+
   it("marks website visitor requests unsupported instead of falling back to Meta defaults", () => {
     const plan = buildAnalysisPlanForPrompt({}, "website visitors by landing page");
 

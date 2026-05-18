@@ -1964,7 +1964,7 @@ function inferPromptIntent(prompt: string): PromptIntent {
     hasFollowUp && shouldMergeFollowUpDimensions(latestLower, latestDimensions, allMentionedDimensions)
       ? mergeDimensionsForFollowUp(allMentionedDimensions || [], latestDimensions || [])
       : latestDimensions || allMentionedDimensions;
-  const dateRange = (hasFollowUp && inferDateRangeFromPrompt(latestPrompt)) || inferDateRangeFromPrompt(prompt);
+  const dateRange = inferDateRangeFromPromptSegments(segments, prompt);
   const grain = inferGrainFromPrompt(latestPrompt) || inferGrainFromPrompt(prompt);
   const glossaryFilters = campaignGlossaryFilters(prompt);
   const searchTerm = inferSearchTerm(prompt);
@@ -2169,10 +2169,22 @@ function inferDimensionsFromPrompt(
   lower: string,
   metrics?: AnalysisMetric[],
 ): AnalysisDimension[] | undefined {
-  const wantsMonth = /\bmonth(?:\s+by\s+month)?\b|\bby month\b|month-by-month|\bmonthly\b(?!\s+budgets?\b)/.test(lower);
-  const wantsWeek = /\bweek(?:\s+by\s+week|ly)?\b|\bby week\b|week-by-week/.test(lower);
-  const wantsDay = /\bday(?:\s+by\s+day)?\b|\bdaily\b|\bby day\b|day-by-day/.test(lower);
-  const wantsUmbrella = /\bcampaign[-\s]?umbrellas?\b|\binternal campaign umbrellas?\b|\bumbrellas?\b/.test(lower);
+  const wantsMonth =
+    /\bmonths?\s+by\s+months?\b|\bby months?\b|month-by-month|\bmonthly\b(?!\s+budgets?\b)|\b(?:group(?:ed)?|organize(?:d)?|break(?:down| out))\s+by\s+months?\b|\bmonths?\s+(?:is|are|as)\s+(?:rows?|columns?|headers?)\b|\b(?:rows?|columns?|headers?)\s+(?:is|are|as)?\s*months?\b/.test(
+      lower,
+    );
+  const wantsWeek =
+    /\bweeks?\s+by\s+weeks?\b|\bby weeks?\b|week-by-week|\bweekly\b|\b(?:group(?:ed)?|organize(?:d)?|break(?:down| out))\s+by\s+weeks?\b|\bweeks?\s+(?:is|are|as)\s+(?:rows?|columns?|headers?)\b|\b(?:rows?|columns?|headers?)\s+(?:is|are|as)?\s*weeks?\b/.test(
+      lower,
+    );
+  const wantsDay =
+    /\bdays?\s+by\s+days?\b|\bdaily\b|\bby days?\b|day-by-day|\b(?:group(?:ed)?|organize(?:d)?|break(?:down| out))\s+by\s+days?\b|\bdays?\s+(?:is|are|as)\s+(?:rows?|columns?|headers?)\b|\b(?:rows?|columns?|headers?)\s+(?:is|are|as)?\s*days?\b/.test(
+      lower,
+    );
+  const wantsUmbrella =
+    /\bcampaign[-\s]?umbrellas?\b|\bumbrella[-\s]?campaigns?\b|\binternal campaign umbrellas?\b|\bumbrellas?\b/.test(
+      lower,
+    );
   const wantsCampaign = /\bcampaigns?\b/.test(lower) && !wantsUmbrella;
   const wantsAdSet = /\bad sets?\b/.test(lower);
   const wantsAd = /\bads?\b/.test(lower);
@@ -2349,8 +2361,12 @@ function inferTableLayoutFromPrompt(
   const availableDimensions = dimensions || [];
   if (availableDimensions.length < 2) return undefined;
 
-  const explicitRowDimension = dimensionNearLayoutCue(lower, "row", availableDimensions);
-  const explicitColumnDimension = dimensionNearLayoutCue(lower, "column", availableDimensions);
+  const explicitRowDimension =
+    dimensionForExplicitPositionCue(lower, "row", availableDimensions) ||
+    dimensionNearLayoutCue(lower, "row", availableDimensions);
+  const explicitColumnDimension =
+    dimensionForExplicitPositionCue(lower, "column", availableDimensions) ||
+    dimensionNearLayoutCue(lower, "column", availableDimensions);
   const timeDimension = availableDimensions.find(isTimeDimension);
   const nonTimeDimension = availableDimensions.find((dimension) => !isTimeDimension(dimension));
   const rowDimension =
@@ -2381,8 +2397,8 @@ function dimensionNearLayoutCue(
 ) {
   const cuePattern =
     cue === "row"
-      ? "\\b(rows?|left|first\\s+column)\\b"
-      : "\\b(columns?|across|top|first\\s+row)\\b";
+      ? "\\b(rows?|left|first\\s+column|row\\s+headers?)\\b"
+      : "\\b(columns?|across|top|first\\s+row|column\\s+headers?)\\b";
   const match = lower.match(new RegExp(cuePattern));
   if (!match) return undefined;
   const start = Math.max((match.index || 0) - 80, 0);
@@ -2390,9 +2406,35 @@ function dimensionNearLayoutCue(
   return dimensionFromText(lower.slice(start, end), availableDimensions);
 }
 
+function dimensionForExplicitPositionCue(
+  lower: string,
+  cue: "row" | "column",
+  availableDimensions: AnalysisDimension[],
+) {
+  const positionPattern =
+    cue === "row"
+      ? "\\b(rows?|left|first\\s+column|row\\s+headers?)\\b"
+      : "\\b(columns?|across|top|first\\s+row|column\\s+headers?)\\b";
+  const dimensionThenHeader =
+    cue === "row" ? "\\b(?:headers?|row\\s+headers?)\\b" : "\\b(?:column\\s+headers?)\\b";
+  const connector = "(?:is|are|as|in|on|to\\s+be|should\\s+be|=)?";
+
+  for (const dimension of availableDimensions) {
+    const dimensionPattern = `(?:${dimensionPatternSource(dimension)})`;
+    const dimensionThenPosition = new RegExp(`${dimensionPattern}\\s+${connector}\\s*${positionPattern}`);
+    const positionThenDimension = new RegExp(`${positionPattern}\\s+${connector}\\s*${dimensionPattern}`);
+    const dimensionAsHeader = new RegExp(`${dimensionPattern}\\s+${connector}\\s*${dimensionThenHeader}`);
+    if (dimensionThenPosition.test(lower) || positionThenDimension.test(lower) || dimensionAsHeader.test(lower)) {
+      return dimension;
+    }
+  }
+
+  return undefined;
+}
+
 function dimensionFromText(text: string, availableDimensions: AnalysisDimension[]) {
   const dimensionPatterns: Array<[AnalysisDimension, RegExp]> = [
-    ["campaign_umbrella", /\bcampaign[-\s]?umbrellas?\b|\binternal campaign umbrellas?\b|\bumbrellas?\b/],
+    ["campaign_umbrella", /\bcampaign[-\s]?umbrellas?\b|\bumbrella[-\s]?campaigns?\b|\binternal campaign umbrellas?\b|\bumbrellas?\b/],
     ["campaign", /\bcampaigns?\b/],
     ["ad_set", /\bad sets?\b/],
     ["creative", /\b(?:ad\s+)?creatives?\b/],
@@ -2404,6 +2446,21 @@ function dimensionFromText(text: string, availableDimensions: AnalysisDimension[
   ];
 
   return dimensionPatterns.find(([dimension, pattern]) => availableDimensions.includes(dimension) && pattern.test(text))?.[0];
+}
+
+function dimensionPatternSource(dimension: AnalysisDimension) {
+  const dimensionPatterns: Record<AnalysisDimension, string> = {
+    campaign_umbrella: "\\b(?:campaign[-\\s]?umbrellas?|umbrella[-\\s]?campaigns?|internal campaign umbrellas?|umbrellas?)\\b",
+    campaign: "\\bcampaigns?\\b",
+    ad_set: "\\bad\\s+sets?\\b",
+    creative: "\\b(?:ad\\s+)?creatives?\\b",
+    ad: "\\bads?\\b",
+    brand: "\\bbrands?\\b",
+    month: "\\bmonths?\\b|\\bmonthly\\b",
+    week: "\\bweeks?\\b|\\bweekly\\b",
+    date: "\\bdates?\\b|\\bdays?\\b|\\bdaily\\b",
+  };
+  return dimensionPatterns[dimension];
 }
 
 function pivotMetricFromPrompt(lower: string, metrics: AnalysisMetric[]) {
@@ -2502,6 +2559,15 @@ function inferDateRangeFromPrompt(prompt: string): AnalysisSpec["dateRange"] | u
   }
 
   return inferRelativeDateRange(lower, includeToday);
+}
+
+function inferDateRangeFromPromptSegments(segments: string[], prompt: string) {
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    const range = inferDateRangeFromPrompt(segments[index]);
+    if (range) return range;
+  }
+
+  return inferDateRangeFromPrompt(prompt);
 }
 
 function inferRelativeDateRange(lower: string, includeToday = false): AnalysisSpec["dateRange"] | undefined {
