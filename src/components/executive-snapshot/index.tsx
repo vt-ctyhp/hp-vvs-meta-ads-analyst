@@ -1,6 +1,7 @@
 import type { DashboardPayload } from "@/lib/analytics";
 import type { WowMode } from "@/lib/wow-window";
 
+import { NeedsAttentionSection } from "./needs-attention-section";
 import { TopStorySection } from "./top-story-section";
 import { UmbrellaScorecardSection } from "./umbrella-scorecard-section";
 
@@ -35,38 +36,9 @@ export function ExecutiveSnapshot({
 
         <UmbrellaScorecardSection data={data} />
 
-        <UpcomingSectionStub
-          eyebrow="Section 3"
-          title="What Needs Attention"
-          due="v1 Day 8"
-          description="Up to five rule-derived items — Scale, Watch, Investigate — each linking to its specific creative or umbrella detail. No LLM-generated narrative."
-        />
+        <NeedsAttentionSection data={data} />
       </section>
     </main>
   );
 }
 
-function UpcomingSectionStub({
-  eyebrow,
-  title,
-  due,
-  description,
-}: {
-  eyebrow: string;
-  title: string;
-  due: string;
-  description: string;
-}) {
-  return (
-    <section className="mt-8 border border-dashed border-hp-rule bg-transparent p-6 md:p-8">
-      <div className="flex items-baseline justify-between gap-3">
-        <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{eyebrow}</p>
-        <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-          Coming {due}
-        </p>
-      </div>
-      <h2 className="mt-2 font-title text-2xl leading-tight text-hp-muted">{title}</h2>
-      <p className="mt-3 max-w-3xl text-sm leading-6 text-hp-muted">{description}</p>
-    </section>
-  );
-}
