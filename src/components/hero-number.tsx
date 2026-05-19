@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { MaturityBadge, type MaturityLevel } from "./maturity-badge";
 import { Sparkline, type SparklineTone } from "./sparkline";
 
 /**
@@ -24,6 +25,8 @@ export type HeroNumberProps = {
   /** Sparkline trend data (one number per day). Renders if >= 2 points. */
   sparkline?: readonly number[];
   sparklineTone?: SparklineTone;
+  /** Optional maturity label rendered next to the eyebrow. */
+  maturity?: MaturityLevel;
 };
 
 export function HeroNumber({
@@ -33,10 +36,14 @@ export function HeroNumber({
   footnote,
   sparkline,
   sparklineTone,
+  maturity,
 }: HeroNumberProps) {
   return (
     <div className="border border-hp-rule bg-hp-card p-6">
-      <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{label}</div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{label}</div>
+        {maturity ? <MaturityBadge level={maturity} /> : null}
+      </div>
       <div className="mt-3 flex flex-wrap items-baseline gap-3">
         <span className="font-title text-[36px] leading-none tabular-nums text-hp-ink">
           {value}

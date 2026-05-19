@@ -68,6 +68,7 @@ export function TopStorySection({
             <DeltaPill change={spendDeltaPct} lowerIsBetter footnote="vs last week" />
           }
           sparkline={sparklines.spend}
+          maturity="leading"
         />
         <HeroNumber
           label={TERMS.primaryKpi}
@@ -75,6 +76,7 @@ export function TopStorySection({
           delta={<DeltaPill change={resultsDeltaPct} footnote="vs last week" />}
           footnote="Mixed units across umbrellas — see per-umbrella below."
           sparkline={sparklines.primaryResults}
+          maturity="leading"
         />
         <HeroNumber
           label="Needs Attention"
@@ -92,7 +94,8 @@ export function TopStorySection({
               </span>
             )
           }
-          footnote="Rule-derived from current period; full list lands Day 8."
+          footnote="Rule-derived signals; full list below."
+          maturity="leading"
         />
       </div>
     </section>

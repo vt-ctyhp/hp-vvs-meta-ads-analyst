@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import type { DashboardPayload } from "@/lib/analytics";
 import type { WowMode } from "@/lib/wow-window";
 
@@ -37,8 +39,30 @@ export function ExecutiveSnapshot({
         <UmbrellaScorecardSection data={data} />
 
         <NeedsAttentionSection data={data} />
+
+        <MaturityFooter />
       </section>
     </main>
+  );
+}
+
+function MaturityFooter() {
+  return (
+    <footer className="mt-8 border-t border-hp-rule pt-6 text-xs leading-6 text-hp-muted">
+      <p>
+        <span className="text-hp-body">All metrics on this page are leading
+        indicators</span> — they respond to ad changes within hours but are not
+        yet validated against business outcomes. Trailing data (validated
+        closed sales, qualified-lead rates) lands when the sales review
+        system arrives in v1.5.{" "}
+        <Link
+          href="/review"
+          className="text-hp-ink underline-offset-4 transition-colors duration-150 hover:underline"
+        >
+          See the v1.5 plan →
+        </Link>
+      </p>
+    </footer>
   );
 }
 

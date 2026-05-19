@@ -1,0 +1,83 @@
+-- v1.5 — Sales review system schema
+--
+-- Status: DRAFT. Reviewed in v1 Day 9; not applied to any environment.
+--
+-- This file deliberately lives OUTSIDE supabase/migrations/ so that
+-- `supabase db push` cannot apply it accidentally. When v1.5 begins,
+-- move this file into supabase/migrations/ with a fresh timestamp and
+-- run the normal migration flow.
+--
+-- Spec context: docs/dashboard-revamp-v1.md → Roadmap beyond v1 → v1.5.
+
+-- ── appointment_reviews ────────────────────────────────────────────────────
+-- Per-appointment outcome tagging for the Book Appts US umbrella.
+-- Sales reviewer sees a queue of completed appointments; one row per
+-- (appointment_event_id) records the outcome and dollar value.
+create table appointment_reviews (
+  id uuid primary key default gen_random_uuid(),
+  appointment_event_id uuid not null
+    references appointment_events(id) on delete cascade,
+  outcome text not null check (
+    outcome in ('showed_up', 'no_show', 'browsed', 'sold', 'lost')
+  ),
+  deal_value_usd numeric(10, 2),
+  notes text,
+  reviewed_by uuid not null references users(id),
+  reviewed_at timestamptz not null default now(),
+  unique (appointment_event_id)
+);
+
+create index appointment_reviews_reviewed_at_idx
+  on appointment_reviews (reviewed_at desc);
+
+comment on table appointment_reviews is
+  'Per-appointment outcome tags submitted by sales reviewers. Powers the '
+  '"Trailing" column on Book Appts US in the executive snapshot.';
+
+-- ── creative_weekly_reviews ─────────────────────────────────────────────────
+-- Weekly creative effectiveness ratings for the Facebook US Product umbrella.
+-- One row per (ad_id, week_start). Sales rates 1-10 + optional notes + an
+-- optional "approximate count of serious conversations" they recall.
+create table creative_weekly_reviews (
+  id uuid primary key default gen_random_uuid(),
+  ad_id text not null,
+  creative_id text,
+  brand_code text not null,
+  campaign_umbrella text not null,
+  -- Monday of the reviewed ISO week.
+  week_start date not null,
+  effectiveness_rating int not null
+    check (effectiveness_rating between 1 and 10),
+  serious_conversation_count int,
+  notes text,
+  reviewed_by uuid not null references users(id),
+  reviewed_at timestamptz not null default now(),
+  unique (ad_id, week_start)
+);
+
+create index creative_weekly_reviews_week_start_idx
+  on creative_weekly_reviews (week_start desc);
+create index creative_weekly_reviews_ad_id_idx
+  on creative_weekly_reviews (ad_id);
+
+comment on table creative_weekly_reviews is
+  'Weekly per-creative effectiveness ratings (1-10) submitted by sales. '
+  'Combined with Meta-side metrics to filter the Scale recommendations on '
+  'the executive snapshot to creatives that actually convert.';
+
+-- ── fbclid capture columns on appointment_events ────────────────────────────
+-- Today appointment_events.raw_payload arrives from the Acuity import without
+-- the fbclid / utm context needed to attribute the appointment to a Meta
+-- creative. These columns are populated by the new booking-page wiring (the
+-- "Option A" change recommended by the Acuity audit) so we can roll up
+-- appointment outcomes to individual creatives instead of only umbrellas.
+alter table appointment_events
+  add column fbclid_at_booking text,
+  add column utm_source_at_booking text,
+  add column utm_campaign_at_booking text,
+  add column utm_content_at_booking text;
+
+comment on column appointment_events.fbclid_at_booking is
+  'Meta click ID captured on the booking page session that produced this '
+  'appointment. Set by the booking widget (v1.5 frontend change); used to '
+  'resolve the appointment back to its originating ad and creative.';
