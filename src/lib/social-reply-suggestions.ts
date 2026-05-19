@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 
+import { createAdsAnalystClient, withAdsAnalystEnvironment } from "./ads-analyst-db";
 import { ConfigurationError, getOpenAIModel } from "./env";
-import { createServiceClient } from "./supabase";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -180,7 +180,7 @@ export async function suggestSocialReply(input: SuggestReplyInput): Promise<Sugg
 
   const insert = await supabase
     .from("ai_reply_suggestions")
-    .insert({
+    .insert(withAdsAnalystEnvironment({
       platform: input.platform,
       source_type: input.sourceType,
       thread_id: input.sourceType === "message" ? source.threadId : null,
@@ -192,7 +192,7 @@ export async function suggestSocialReply(input: SuggestReplyInput): Promise<Sugg
       context_used: contextUsed,
       model,
       prompt_version: voice.version,
-    })
+    }))
     .select("id")
     .single();
 
@@ -444,7 +444,7 @@ function parseSuggestionResponse(content: string | null | undefined) {
 }
 
 function dynamicSupabase() {
-  return createServiceClient() as unknown as DynamicSupabaseClient;
+  return createAdsAnalystClient("web") as unknown as DynamicSupabaseClient;
 }
 
 function createOpenAIClient() {

@@ -26,6 +26,45 @@ The Meta webhook endpoint verifies `X-Hub-Signature-256` with `META_APP_SECRET` 
 - The browser bundle does not receive Meta, OpenAI, cron, or service role secrets.
 - `.env*` files are ignored by Git.
 
+## ERP Data Boundary
+
+Sales/ERP Core data is the system of record. Ads Analyst must not write
+Sales/ERP Core tables such as customers, appointments, tasks, payments,
+documents, users, or roles. The ownership registry lives in
+`src/lib/data-boundaries.ts`, and the static boundary test fails if source code
+mutates Sales/ERP-owned tables.
+
+The current service-role runtime is a transitional risk because Supabase service
+role access bypasses RLS. Later hardening phases replace it with limited Ads
+Analyst module credentials. Set `ADS_ANALYST_ENFORCE_LIMITED_DB_ACCESS=true` to
+make `/api/health` fail until service-role access is removed and module
+credentials are configured.
+
+The Phase 2 data-boundary migration creates dedicated Ads Analyst module roles,
+grants them only analyst-owned table privileges, and exposes Sales/ERP data only
+through narrow read-only views in the `analytics` schema. The migration is not
+applied automatically by the application.
+
+The Phase 3 environment-boundary migration adds a production/staging row fence
+inside analyst-owned tables. Limited module JWTs should include
+`ads_analyst_environment` or `app_environment`; RLS then allows those credentials
+to see and write only rows for that environment. This does not protect any
+runtime that still uses the Supabase service-role key, because service-role
+access bypasses RLS.
+
+The Phase 4 runtime path keeps legacy service-role behavior until
+`ADS_ANALYST_ENFORCE_LIMITED_DB_ACCESS=true`. In limited mode, the app uses
+separate web, worker, and ingest module JWTs and adds the current
+`ADS_ANALYST_ENVIRONMENT` to analyst-owned writes. The backfill chunk-claim RPC
+is replaced by an environment-aware version because it is `security definer` and
+must not rely on RLS alone.
+
+The Phase 5 unique-key migration is the step that makes staging usable for full
+sync testing in the shared Supabase project. It replaces analyst natural-key
+uniqueness like Meta ad id, social message id, and website event id with
+environment-scoped uniqueness, so staging can store its own copy without
+overwriting or colliding with production analyst rows.
+
 ## Internal Access
 
 This app is intended for internal use. Before production launch, keep Vercel Deployment Protection enabled or place the app behind the organization’s preferred SSO/access layer.

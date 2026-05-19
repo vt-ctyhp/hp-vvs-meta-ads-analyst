@@ -7,7 +7,7 @@ import {
   type SourceTransparency,
 } from "./analytics";
 import { ConfigurationError, getOpenAIModel } from "./env";
-import { createServiceClient } from "./supabase";
+import { createAdsAnalystClient, withAdsAnalystEnvironment } from "./ads-analyst-db";
 
 export type ExecutiveReportContent = {
   executiveSummary: string[];
@@ -78,11 +78,11 @@ export async function generateExecutiveReport(dateRange: number | DashboardDateR
   });
 
   const content = parseReport(response.choices[0]?.message?.content);
-  const supabase = createServiceClient();
+  const supabase = createAdsAnalystClient("web");
   const title = `Executive Meta Ads Report - ${dashboard.sourceTransparency.timeRange.start || "no data"} to ${dashboard.sourceTransparency.timeRange.end || "no data"}`;
   const insert = await supabase
     .from("ai_reports")
-    .insert({
+    .insert(withAdsAnalystEnvironment({
       report_type: "executive",
       title,
       time_range: dashboard.sourceTransparency.timeRange,
@@ -91,7 +91,7 @@ export async function generateExecutiveReport(dateRange: number | DashboardDateR
       source_transparency: dashboard.sourceTransparency,
       model,
       content,
-    })
+    }))
     .select("*")
     .single();
 
@@ -126,15 +126,15 @@ export async function answerExecutiveChat(input: {
     );
   }
 
-  const supabase = createServiceClient();
+  const supabase = createAdsAnalystClient("web");
   const sessionId = await ensureChatSession(input.sessionId, input.message);
 
-  await supabase.from("ai_chat_messages").insert({
+  await supabase.from("ai_chat_messages").insert(withAdsAnalystEnvironment({
     session_id: sessionId,
     role: "user",
     content: input.message,
     source_transparency: dashboard.sourceTransparency,
-  });
+  }));
 
   const history = await supabase
     .from("ai_chat_messages")
@@ -175,12 +175,12 @@ export async function answerExecutiveChat(input: {
     response.choices[0]?.message?.content ||
     "I could not generate an answer from the retrieved Supabase context.";
 
-  await supabase.from("ai_chat_messages").insert({
+  await supabase.from("ai_chat_messages").insert(withAdsAnalystEnvironment({
     session_id: sessionId,
     role: "assistant",
     content: answer,
     source_transparency: dashboard.sourceTransparency,
-  });
+  }));
 
   return {
     sessionId,
@@ -198,7 +198,7 @@ function createOpenAIClient() {
 }
 
 async function ensureChatSession(sessionId: string | null | undefined, message: string) {
-  const supabase = createServiceClient();
+  const supabase = createAdsAnalystClient("web");
   if (sessionId) {
     return sessionId;
   }
@@ -206,7 +206,7 @@ async function ensureChatSession(sessionId: string | null | undefined, message: 
   const title = message.length > 80 ? `${message.slice(0, 77)}...` : message;
   const insert = await supabase
     .from("ai_chat_sessions")
-    .insert({ title })
+    .insert(withAdsAnalystEnvironment({ title }))
     .select("id")
     .single();
 

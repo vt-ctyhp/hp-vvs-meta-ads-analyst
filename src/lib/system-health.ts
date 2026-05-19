@@ -11,7 +11,7 @@
  */
 
 import { ConfigurationError, getMissingRequiredEnv } from "./env";
-import { createServiceClient } from "./supabase";
+import { createAdsAnalystClient } from "./ads-analyst-db";
 
 export type SystemHealthStatus = "ok" | "warning" | "critical";
 
@@ -40,11 +40,7 @@ export type SystemHealthSnapshot = {
 const STALE_SYNC_THRESHOLD_HOURS = 36;
 
 export async function getSystemHealth(): Promise<SystemHealthSnapshot> {
-  const missingEnv = getMissingRequiredEnv([
-    "NEXT_PUBLIC_SUPABASE_URL",
-    "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
-    "SUPABASE_SERVICE_ROLE_KEY",
-  ]);
+  const missingEnv = getMissingRequiredEnv();
 
   const issues: SystemHealthIssue[] = [];
 
@@ -70,7 +66,7 @@ export async function getSystemHealth(): Promise<SystemHealthSnapshot> {
   };
 
   try {
-    const supabase = createServiceClient();
+    const supabase = createAdsAnalystClient("web");
     const { data, error } = await supabase
       .from("sync_runs")
       .select("status,trigger,started_at,completed_at")

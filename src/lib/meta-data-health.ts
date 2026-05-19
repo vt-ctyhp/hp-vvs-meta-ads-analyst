@@ -8,7 +8,7 @@ import {
   fetchMetaAccountInsightTotalsForRange,
   type MetaAccountInsightTotals,
 } from "./meta";
-import { createServiceClient } from "./supabase";
+import { createAdsAnalystClient } from "./ads-analyst-db";
 
 type JsonRecord = Record<string, unknown>;
 type SupabaseSelectChain = PromiseLike<{ data: unknown; error: Error | null }> & {
@@ -140,7 +140,7 @@ export async function getMetaDataHealth(input: { compareMonth?: string | null } 
 }
 
 async function fetchRecentSyncRuns() {
-  const supabase = createServiceClient() as unknown as SupabaseSelectClient;
+  const supabase = createAdsAnalystClient("web") as unknown as SupabaseSelectClient;
   const response = await supabase
     .from("sync_runs")
     .select("id,trigger,status,started_at,completed_at,metrics,errors")
@@ -161,7 +161,7 @@ async function fetchRecentSyncRuns() {
 }
 
 async function fetchAll(table: string, columns: string, orderBy: FetchOrder[] = []) {
-  const supabase = createServiceClient() as unknown as SupabaseSelectClient;
+  const supabase = createAdsAnalystClient("web") as unknown as SupabaseSelectClient;
   const output: JsonRecord[] = [];
   const pageSize = 1000;
 

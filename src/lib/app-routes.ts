@@ -23,7 +23,7 @@ export type PermissionProfile = {
   authenticated: boolean;
   active: boolean;
   missingAppProfile: boolean;
-  permissions: AppPermission[];
+  permissions: readonly AppPermission[];
 };
 
 /**
@@ -78,7 +78,7 @@ export function hasInternalAppAccess(profile: PermissionProfile) {
   );
 }
 
-export function firstPermittedAppPath(permissions: AppPermission[]) {
+export function firstPermittedAppPath(permissions: readonly AppPermission[]) {
   return APP_NAV_ROUTES.find((route) => permissions.includes(route.permission))?.href || null;
 }
 
@@ -86,7 +86,7 @@ export function getAppRouteForPath(pathname: string) {
   return APP_NAV_ROUTES.find((route) => routeMatches(route.href, pathname)) || null;
 }
 
-export function canAccessAppPath(permissions: AppPermission[], path: string) {
+export function canAccessAppPath(permissions: readonly AppPermission[], path: string) {
   const pathname = pathnameFromAppPath(path);
   const route = getAppRouteForPath(pathname);
   return Boolean(route && permissions.includes(route.permission));

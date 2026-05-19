@@ -7,7 +7,7 @@ import {
   todayString,
   type DateChunk,
 } from "./meta-backfill-utils";
-import { createServiceClient } from "./supabase";
+import { createAdsAnalystClient, withAdsAnalystEnvironment, withAdsAnalystEnvironmentRows } from "./ads-analyst-db";
 
 type JsonRecord = Record<string, unknown>;
 type BackfillStatus = "pending" | "running" | "paused" | "success" | "partial" | "failed" | "canceled";
@@ -78,7 +78,7 @@ export async function getMetaAdsBackfillState(input: {
   startDate?: string | null;
   endDate?: string | null;
 } = {}) {
-  const supabase = createServiceClient() as unknown as SupabaseAny;
+  const supabase = createAdsAnalystClient("web") as unknown as SupabaseAny;
   const coverageStart = normalizeDateInput(input.startDate) || getBackfillStartDate();
   const coverageEnd = normalizeDateInput(input.endDate) || todayString();
   const [jobsRes, chunksRes, coverageRes] = await Promise.all([
@@ -113,7 +113,7 @@ export async function createMetaAdsBackfillJob(input: {
   startDate?: string | null;
   endDate?: string | null;
 } = {}) {
-  const supabase = createServiceClient() as unknown as SupabaseAny;
+  const supabase = createAdsAnalystClient("worker") as unknown as SupabaseAny;
   const accounts = getConfiguredAccounts().map((account) => ({
     brandCode: account.brandCode,
     brandName: account.brandName,
@@ -128,7 +128,7 @@ export async function createMetaAdsBackfillJob(input: {
 
   const jobInsert = await supabase
     .from("meta_ads_backfill_jobs")
-    .insert({
+    .insert(withAdsAnalystEnvironment({
       status: "pending",
       requested_start: start,
       requested_end: end,
@@ -138,7 +138,7 @@ export async function createMetaAdsBackfillJob(input: {
       })),
       total_chunks: chunkRows.length,
       metrics: { insightRows: 0 },
-    })
+    }))
     .select("*")
     .single();
 
@@ -149,7 +149,7 @@ export async function createMetaAdsBackfillJob(input: {
   for (const chunk of chunks(chunkRows, 500)) {
     const insert = await supabase
       .from("meta_ads_backfill_chunks")
-      .insert(chunk.map((row) => ({ ...row, job_id: jobId })));
+      .insert(withAdsAnalystEnvironmentRows(chunk.map((row) => ({ ...row, job_id: jobId }))));
     if (insert.error) throw insert.error;
   }
 
@@ -160,7 +160,7 @@ export async function updateMetaAdsBackfillJob(input: {
   jobId: string;
   action: "pause" | "resume" | "cancel" | "retry_failed";
 }) {
-  const supabase = createServiceClient() as unknown as SupabaseAny;
+  const supabase = createAdsAnalystClient("worker") as unknown as SupabaseAny;
 
   if (input.action === "pause") {
     const { error } = await supabase
@@ -218,7 +218,7 @@ export async function updateMetaAdsBackfillJob(input: {
 export async function runMetaAdsBackfillBatch(input: { limit?: number } = {}) {
   await validateMetaAdsSyncPermissions();
 
-  const supabase = createServiceClient() as unknown as SupabaseAny;
+  const supabase = createAdsAnalystClient("worker") as unknown as SupabaseAny;
   const limit = input.limit || getBackfillChunksPerRun();
   const claim = await supabase.rpc("claim_meta_ads_backfill_chunks", {
     p_limit: limit,
@@ -308,16 +308,16 @@ export async function resyncMetaAdsMonth(input: { month?: string | null }) {
 
   await validateMetaAdsSyncPermissions();
 
-  const supabase = createServiceClient() as unknown as SupabaseAny;
+  const supabase = createAdsAnalystClient("worker") as unknown as SupabaseAny;
   const accounts = getConfiguredAccounts();
   const runInsert = await supabase
     .from("sync_runs")
-    .insert({
+    .insert(withAdsAnalystEnvironment({
       trigger: "manual_month_resync",
       status: "running",
       ad_account_ids: accounts.map((account) => account.accountId),
       metrics: { month: input.month, range, insightRows: 0 },
-    })
+    }))
     .select("id")
     .single();
 
@@ -367,12 +367,12 @@ export async function resyncMetaAdsMonth(input: { month?: string | null }) {
   const status = errors.length ? (metrics.accounts > 0 ? "partial" : "failed") : "success";
   const update = await supabase
     .from("sync_runs")
-    .update({
+    .update(withAdsAnalystEnvironment({
       status,
       completed_at: new Date().toISOString(),
       metrics,
       errors,
-    })
+    }))
     .eq("id", syncRunId);
 
   if (update.error) throw update.error;
@@ -416,7 +416,7 @@ function formatDate(date: Date) {
 }
 
 async function refreshBackfillJobRollup(jobId: string) {
-  const supabase = createServiceClient() as unknown as SupabaseAny;
+  const supabase = createAdsAnalystClient("worker") as unknown as SupabaseAny;
   const [jobRes, chunksRes] = await Promise.all([
     supabase.from("meta_ads_backfill_jobs").select("*").eq("id", jobId).single(),
     supabase.from("meta_ads_backfill_chunks").select("status,insight_rows,error").eq("job_id", jobId),
@@ -465,7 +465,7 @@ async function refreshBackfillJobRollup(jobId: string) {
 
   const update = await supabase
     .from("meta_ads_backfill_jobs")
-    .update({
+    .update(withAdsAnalystEnvironment({
       status: nextStatus,
       completed_chunks: counts.completed,
       failed_chunks: counts.failed,
@@ -476,7 +476,7 @@ async function refreshBackfillJobRollup(jobId: string) {
         nextStatus === "success" || nextStatus === "partial" || nextStatus === "failed" || nextStatus === "canceled"
           ? new Date().toISOString()
           : null,
-    })
+    }))
     .eq("id", jobId)
     .select("*")
     .single();
