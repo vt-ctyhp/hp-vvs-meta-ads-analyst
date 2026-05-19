@@ -106,7 +106,7 @@ export function UmbrellaScorecardSection({ data }: { data: DashboardPayload }) {
       </header>
 
       <div className="w-full overflow-x-auto">
-        <table className="w-full min-w-[820px] table-fixed border-collapse text-sm">
+        <table className="w-full min-w-[720px] table-fixed border-collapse text-sm">
           <colgroup>
             <col className="w-[32%]" />
             <col className="w-[16%]" />
