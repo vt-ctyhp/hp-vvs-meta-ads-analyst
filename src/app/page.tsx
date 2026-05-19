@@ -1,4 +1,4 @@
-import { DashboardClient } from "@/components/dashboard-client";
+import { ExecutiveSnapshot } from "@/components/executive-snapshot";
 import {
   loadDashboardPagePayload,
   type DashboardPageSearchParams,
@@ -8,16 +8,19 @@ export const dynamic = "force-dynamic";
 
 type SearchParams = Promise<DashboardPageSearchParams>;
 
-// During v1 Days 2–3 this route renders the same dashboard as /analyst so users
-// keep their home page while we build the executive snapshot. In v1 Days 4–5
-// this file is rewritten to render the executive snapshot; /analyst keeps
-// rendering the analyst dashboard via the shared loader.
+// / is the Executive Snapshot as of v1 Days 4-5. The analyst dashboard lives
+// at /analyst (unchanged) for power users.
+//
+// Default WoW window is the current calendar week (Mon → today, capped at
+// Sunday) when the user hasn't explicitly chosen via the WeekWindowToggle.
 export default async function Home({
   searchParams,
 }: {
   searchParams?: SearchParams;
 }) {
   const params = searchParams ? await searchParams : {};
-  const { dashboard, permissions } = await loadDashboardPagePayload(params, "/");
-  return <DashboardClient initialData={dashboard} permissions={permissions} />;
+  const { dashboard, wow } = await loadDashboardPagePayload(params, "/", {
+    defaultWow: "cal",
+  });
+  return <ExecutiveSnapshot data={dashboard} wow={wow} />;
 }
