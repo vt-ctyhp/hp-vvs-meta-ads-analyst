@@ -2,8 +2,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { addDays, differenceInCalendarDays, format, parseISO, subDays } from "date-fns";
 import { z } from "zod";
 
+import {
+  adsAnalystOnConflict,
+  createAdsAnalystClient,
+  usesLimitedAdsAnalystDbAccess,
+  withAdsAnalystEnvironment,
+} from "./ads-analyst-db.ts";
 import { BOOKING_ACTION_TYPES, actionArray, actionCount } from "./meta-kpi.ts";
-import { createServiceClient } from "./supabase.ts";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_ALLOWED_ORIGINS = [
@@ -143,6 +148,26 @@ export type AppointmentEventConversionRow = {
   booked_at: string | null;
   created_at: string;
   raw_payload: unknown;
+};
+
+type SalesAppointmentConversionViewRow = {
+  appointment_event_id: string;
+  appointment_record_id: string;
+  booking_source: string;
+  external_booking_id: string | null;
+  conversion_event_id: string | null;
+  brand: string;
+  appointment_status: string;
+  appointment_source: string | null;
+  appointment_type: string | null;
+  appointment_type_id: string | null;
+  calendar_id: string | null;
+  appointment_timezone: string | null;
+  duration_minutes: number | null;
+  visit_date_time: string | null;
+  booked_at: string | null;
+  created_at: string;
+  conversion_occurred_at: string | null;
 };
 
 type WebsiteSupabaseClient = {
@@ -312,7 +337,7 @@ export async function fetchWebsiteFunnelData(input: {
 }): Promise<WebsiteFunnelData> {
   const range = normalizeDateRange(input);
   const reconciliation = await reconcileAppointmentConversionsForRange(range);
-  const client = createWebsiteClient();
+  const client = createWebsiteClient("ingest");
   const startIso = `${range.start}T00:00:00.000Z`;
   const endIso = `${range.end}T23:59:59.999Z`;
 
@@ -421,38 +446,20 @@ async function reconcileAppointmentConversionsForRange(range: {
   end: string;
   days: number;
 }): Promise<WebsiteConversionReconciliationResult> {
-  const client = createWebsiteClient();
+  const client = createWebsiteClient("worker");
   const startIso = `${range.start}T00:00:00.000Z`;
   const endIso = `${range.end}T23:59:59.999Z`;
 
-  const appointmentsResult = await client
-    .from("appointment_events")
-    .select(
-      [
-        "id",
-        "appt_id",
-        "booking_source",
-        "external_booking_id",
-        "visit_date_time",
-        "visit_type",
-        "brand",
-        "status",
-        "source",
-        "booked_at",
-        "created_at",
-        "raw_payload",
-      ].join(","),
-    )
-    .gte("created_at", startIso)
-    .lte("created_at", endIso)
-    .order("created_at", { ascending: false })
-    .limit(MAX_APPOINTMENT_CONVERSIONS);
+  const appointmentRows = usesLimitedAdsAnalystDbAccess()
+    ? await fetchAppointmentConversionsFromBoundaryView(startIso, endIso)
+    : await fetchAppointmentConversionsFromCoreTable(client, startIso, endIso);
 
-  if (appointmentsResult.error) throw appointmentsResult.error;
-
-  const appointmentRows = appointmentsResult.data || [];
   const conversions = appointmentRows
-    .map(appointmentEventToWebsiteConversionInput)
+    .map((row) =>
+      "conversion_event_id" in row
+        ? salesAppointmentConversionViewToWebsiteConversionInput(row)
+        : appointmentEventToWebsiteConversionInput(row),
+    )
     .filter((conversion): conversion is ReconciledWebsiteConversionInput =>
       Boolean(conversion?.eventId),
     );
@@ -497,6 +504,79 @@ async function reconcileAppointmentConversionsForRange(range: {
     insertedConversions,
     skippedExistingConversions: conversions.length - insertedConversions,
   };
+}
+
+async function fetchAppointmentConversionsFromCoreTable(
+  client: WebsiteSupabaseClient,
+  startIso: string,
+  endIso: string,
+) {
+  const appointmentsResult = await client
+    .from("appointment_events")
+    .select(
+      [
+        "id",
+        "appt_id",
+        "booking_source",
+        "external_booking_id",
+        "visit_date_time",
+        "visit_type",
+        "brand",
+        "status",
+        "source",
+        "booked_at",
+        "created_at",
+        "raw_payload",
+      ].join(","),
+    )
+    .gte("created_at", startIso)
+    .lte("created_at", endIso)
+    .order("created_at", { ascending: false })
+    .limit(MAX_APPOINTMENT_CONVERSIONS);
+
+  if (appointmentsResult.error) throw appointmentsResult.error;
+  return appointmentsResult.data || [];
+}
+
+async function fetchAppointmentConversionsFromBoundaryView(startIso: string, endIso: string) {
+  const client = createAdsAnalystClient("worker") as unknown as {
+    schema: (schema: "analytics") => {
+      from: (table: "sales_appointment_conversions_v1") => {
+        select: (columns: string) => WebsiteSelectChain<SalesAppointmentConversionViewRow[]>;
+      };
+    };
+  };
+  const result = await client
+    .schema("analytics")
+    .from("sales_appointment_conversions_v1")
+    .select(
+      [
+        "appointment_event_id",
+        "appointment_record_id",
+        "booking_source",
+        "external_booking_id",
+        "conversion_event_id",
+        "brand",
+        "appointment_status",
+        "appointment_source",
+        "appointment_type",
+        "appointment_type_id",
+        "calendar_id",
+        "appointment_timezone",
+        "duration_minutes",
+        "visit_date_time",
+        "booked_at",
+        "created_at",
+        "conversion_occurred_at",
+      ].join(","),
+    )
+    .gte("created_at", startIso)
+    .lte("created_at", endIso)
+    .order("created_at", { ascending: false })
+    .limit(MAX_APPOINTMENT_CONVERSIONS);
+
+  if (result.error) throw result.error;
+  return result.data || [];
 }
 
 export function appointmentEventToWebsiteConversionInput(
@@ -547,6 +627,42 @@ export function appointmentEventToWebsiteConversionInput(
     metaEventId: `acuity-${acuityAppointmentId}`,
     acuityAppointmentId,
     appointmentType: appointmentType ? appointmentType.slice(0, 180) : undefined,
+  };
+}
+
+function salesAppointmentConversionViewToWebsiteConversionInput(
+  row: SalesAppointmentConversionViewRow,
+): ReconciledWebsiteConversionInput | null {
+  if (row.booking_source !== "acuity" || !row.conversion_event_id) return null;
+
+  const properties: Record<string, unknown> = {
+    appointmentEventId: row.appointment_event_id,
+    appointmentRecordId: row.appointment_record_id,
+    appointmentSource: row.appointment_source,
+    appointmentStatus: row.appointment_status,
+    reconciledFromAppointmentEvent: true,
+  };
+
+  if (row.visit_date_time) properties.datetime = row.visit_date_time;
+  if (row.appointment_timezone) properties.timezone = row.appointment_timezone;
+  if (row.appointment_type_id) properties.appointmentTypeID = row.appointment_type_id;
+  if (row.calendar_id) properties.calendarID = row.calendar_id;
+  if (row.duration_minutes !== null) properties.duration = row.duration_minutes;
+
+  return {
+    eventId: row.conversion_event_id,
+    eventName: "Schedule",
+    eventType: "conversion",
+    occurredAt: row.conversion_occurred_at || row.created_at || new Date().toISOString(),
+    brand: websiteBrand(row.brand),
+    pageUrl: bookingPageUrl(row.brand),
+    pagePath: "/pages/book-an-appointment",
+    pageGroup: "booking",
+    properties,
+    metaEventName: "Schedule",
+    metaEventId: row.conversion_event_id,
+    acuityAppointmentId: row.external_booking_id || undefined,
+    appointmentType: row.appointment_type?.slice(0, 180) || undefined,
   };
 }
 
@@ -620,15 +736,15 @@ async function recordWebsiteEvent(
       ip_hash: row.ip_hash,
       raw_json: { source: options.source },
     };
-    const { error } = await client.from("website_sessions").upsert(sessionRow, {
-      onConflict: "session_id",
+    const { error } = await client.from("website_sessions").upsert(withAdsAnalystEnvironment(sessionRow), {
+      onConflict: adsAnalystOnConflict("session_id"),
     });
     if (error) throw error;
   }
 
   const { data, error } = await client
     .from("website_events")
-    .upsert(row, { onConflict: "event_id" })
+    .upsert(withAdsAnalystEnvironment(row), { onConflict: adsAnalystOnConflict("event_id") })
     .select("id")
     .single();
   if (error) throw error;
@@ -640,8 +756,8 @@ async function recordWebsiteEvent(
   };
 }
 
-function createWebsiteClient() {
-  return createServiceClient() as unknown as WebsiteSupabaseClient;
+function createWebsiteClient(role: "web" | "worker" | "ingest" = "web") {
+  return createAdsAnalystClient(role) as unknown as WebsiteSupabaseClient;
 }
 
 function allowedOrigins() {

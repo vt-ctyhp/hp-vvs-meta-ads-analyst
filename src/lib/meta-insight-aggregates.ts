@@ -1,4 +1,4 @@
-import { createServiceClient } from "./supabase.ts";
+import { createAdsAnalystClient } from "./ads-analyst-db.ts";
 
 export type MetaInsightDimension =
   | "date"
@@ -63,7 +63,7 @@ type AggregateInput = {
 };
 
 export async function aggregateMetaInsights(input: AggregateInput) {
-  const supabase = createServiceClient() as unknown as {
+  const supabase = createAdsAnalystClient("web") as unknown as {
     rpc: (
       name: string,
       args: Record<string, unknown>,

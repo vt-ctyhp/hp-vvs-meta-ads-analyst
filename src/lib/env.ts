@@ -1,7 +1,6 @@
-const REQUIRED_APP_ENV = [
+const REQUIRED_BASE_ENV = [
   "NEXT_PUBLIC_SUPABASE_URL",
   "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
-  "SUPABASE_SERVICE_ROLE_KEY",
   "OPENAI_API_KEY",
   "META_APP_ID",
   "META_APP_SECRET",
@@ -9,6 +8,14 @@ const REQUIRED_APP_ENV = [
   "META_HP_AD_ACCOUNT_ID",
   "CRON_SECRET",
 ] as const;
+
+const LEGACY_SERVICE_ROLE_ENV = ["SUPABASE_SERVICE_ROLE_KEY"] as const;
+const LIMITED_MODULE_ENV = [
+  "SUPABASE_ADS_ANALYST_WEB_JWT",
+  "SUPABASE_ADS_ANALYST_WORKER_JWT",
+  "SUPABASE_ADS_ANALYST_INGEST_JWT",
+] as const;
+const REQUIRED_APP_ENV = [...REQUIRED_BASE_ENV, ...LEGACY_SERVICE_ROLE_ENV] as const;
 
 export type RequiredAppEnv = (typeof REQUIRED_APP_ENV)[number];
 export type AnalysisMode = "fast" | "deep";
@@ -23,7 +30,15 @@ export class ConfigurationError extends Error {
   }
 }
 
-export function getMissingRequiredEnv(keys: readonly string[] = REQUIRED_APP_ENV): string[] {
+export function getDefaultRequiredEnv(): readonly string[] {
+  if (isTruthyEnv("ADS_ANALYST_ENFORCE_LIMITED_DB_ACCESS")) {
+    return [...REQUIRED_BASE_ENV, ...LIMITED_MODULE_ENV];
+  }
+
+  return REQUIRED_APP_ENV;
+}
+
+export function getMissingRequiredEnv(keys: readonly string[] = getDefaultRequiredEnv()): string[] {
   return keys.filter((key) => !process.env[key]?.trim());
 }
 
@@ -68,4 +83,8 @@ export function getOpenAIAnalysisModel(mode: AnalysisMode): string {
 
 export function getOpenAIModel(): string {
   return getOptionalEnv("OPENAI_MODEL", "gpt-4.1-mini");
+}
+
+export function isTruthyEnv(name: string) {
+  return ["1", "true", "yes", "on"].includes(getOptionalEnv(name).toLowerCase());
 }

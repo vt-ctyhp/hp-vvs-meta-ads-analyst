@@ -10,7 +10,7 @@ import {
   getOpenAIAnalysisModel,
 } from "./env.ts";
 import { aggregateMetaInsights, type MetaInsightAggregateRow } from "./meta-insight-aggregates.ts";
-import { createServiceClient } from "./supabase.ts";
+import { createAdsAnalystClient, withAdsAnalystEnvironment } from "./ads-analyst-db.ts";
 
 const ANALYSIS_METRICS = [
   "spend",
@@ -384,7 +384,7 @@ export async function fetchSavedAnalysisDashboards(limit = 12): Promise<SavedAna
   if (missing.length) return [];
 
   try {
-    const supabase = createServiceClient();
+    const supabase = createAdsAnalystClient("web");
     const response = await supabase
       .from("ai_analysis_dashboards")
       .select("id,title,prompt,mode,created_at,updated_at")
@@ -465,13 +465,13 @@ export async function renameSavedAnalysisDashboard(input: {
     title,
   };
 
-  const supabase = createServiceClient();
+  const supabase = createAdsAnalystClient("web");
   const response = await supabase
     .from("ai_analysis_dashboards")
-    .update({
+    .update(withAdsAnalystEnvironment({
       title,
       spec: spec as unknown as Json,
-    })
+    }))
     .eq("id", input.dashboardId)
     .select("id,title,prompt,mode,created_at,updated_at")
     .single();
@@ -481,7 +481,7 @@ export async function renameSavedAnalysisDashboard(input: {
 }
 
 export async function deleteSavedAnalysisDashboard(dashboardId: string) {
-  const supabase = createServiceClient();
+  const supabase = createAdsAnalystClient("web");
   const response = await supabase
     .from("ai_analysis_dashboards")
     .delete()
@@ -879,7 +879,7 @@ async function aggregateSpec(
       ? 10000
       : spec.limit;
 
-  const supabase = createServiceClient();
+  const supabase = createAdsAnalystClient("web");
   const [aggregateRows, totalRows, countRowsByMetric, totalCountRowsByMetric, accountsRes] = await Promise.all([
     aggregateMetaInsights({
       start: range.start,
@@ -1010,7 +1010,7 @@ async function aggregateSpec(
 }
 
 async function fetchLatestSyncedInsightDate() {
-  const supabase = createServiceClient();
+  const supabase = createAdsAnalystClient("web");
   const response = await supabase
     .from("meta_daily_insights")
     .select("date_start")
@@ -1874,7 +1874,7 @@ async function persistAnalysis(
   dashboardId?: string | null,
 ) {
   try {
-    const supabase = createServiceClient();
+    const supabase = createAdsAnalystClient("web");
     const dashboardPayload = {
       title: result.title,
       prompt: result.prompt,
@@ -1887,22 +1887,22 @@ async function persistAnalysis(
     const savedDashboard = dashboardId
       ? await supabase
           .from("ai_analysis_dashboards")
-          .update(dashboardPayload)
+          .update(withAdsAnalystEnvironment(dashboardPayload))
           .eq("id", dashboardId)
           .select("id")
           .single()
       : await supabase
           .from("ai_analysis_dashboards")
-          .insert({
+          .insert(withAdsAnalystEnvironment({
             ...dashboardPayload,
-          })
+          }))
           .select("id")
           .single();
 
     if (savedDashboard.error) throw savedDashboard.error;
 
     const savedDashboardId = String((savedDashboard.data as { id: string }).id);
-    await supabase.from("ai_analysis_runs").insert({
+    await supabase.from("ai_analysis_runs").insert(withAdsAnalystEnvironment({
       dashboard_id: savedDashboardId,
       prompt: result.prompt,
       mode: result.mode,
@@ -1915,7 +1915,7 @@ async function persistAnalysis(
         rowCount: result.table.rows.length,
         widgets: result.widgets.map((widget) => widget.type),
       } as unknown as Json,
-    });
+    }));
 
     return { dashboardId: savedDashboardId };
   } catch (error) {
@@ -1927,7 +1927,7 @@ async function persistAnalysis(
 }
 
 async function fetchAnalysisDashboardRecord(dashboardId: string): Promise<AnalysisDashboardRecord> {
-  const supabase = createServiceClient();
+  const supabase = createAdsAnalystClient("web");
   const response = await supabase
     .from("ai_analysis_dashboards")
     .select("id,title,prompt,mode,spec,model_plan,model_analysis,created_at,updated_at")

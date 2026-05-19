@@ -13,7 +13,14 @@ import {
   type InsightDateRange,
 } from "./meta-backfill-utils";
 import { resolveMetaKpi } from "./meta-kpi";
-import { createServiceClient } from "./supabase";
+import {
+  adsAnalystOnConflict,
+  createAdsAnalystClient,
+  getAdsAnalystEnvironment,
+  usesLimitedAdsAnalystDbAccess,
+  withAdsAnalystEnvironment,
+  withAdsAnalystEnvironmentRows,
+} from "./ads-analyst-db";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -212,15 +219,15 @@ class MetaGraphError extends Error {
 }
 
 export async function syncMetaAds(trigger: "cron" | "manual" | "preview" = "manual") {
-  const supabase = createServiceClient();
+  const supabase = createAdsAnalystClient("worker");
   const accounts = getConfiguredAccounts();
   const runInsert = await supabase
     .from("sync_runs")
-    .insert({
+    .insert(withAdsAnalystEnvironment({
       trigger,
       status: "running",
       ad_account_ids: accounts.map((account) => account.accountId),
-    })
+    }))
     .select("id")
     .single();
 
@@ -276,12 +283,12 @@ export async function syncMetaAds(trigger: "cron" | "manual" | "preview" = "manu
     const status = errors.length ? (metrics.accounts > 0 ? "partial" : "failed") : "success";
     await supabase
       .from("sync_runs")
-      .update({
+      .update(withAdsAnalystEnvironment({
         status,
         completed_at: new Date().toISOString(),
         metrics,
         errors,
-      })
+      }))
       .eq("id", syncRunId);
 
     return { status, metrics, errors, syncRunId } satisfies SyncResult;
@@ -290,12 +297,12 @@ export async function syncMetaAds(trigger: "cron" | "manual" | "preview" = "manu
     metrics.audit = auditSummary;
     await supabase
       .from("sync_runs")
-      .update({
+      .update(withAdsAnalystEnvironment({
         status: "failed",
         completed_at: new Date().toISOString(),
         metrics,
         errors,
-      })
+      }))
       .eq("id", syncRunId);
 
     return { status: "failed", metrics, errors, syncRunId } satisfies SyncResult;
@@ -1117,13 +1124,21 @@ async function replaceStoredInsightRows(
 ) {
   if (!range.start || !range.end) return;
 
-  const supabase = createServiceClient();
-  const { error } = await supabase
+  const supabase = createAdsAnalystClient("worker");
+  const query = supabase
     .from("meta_daily_insights")
     .delete()
     .eq("meta_account_id", metaAccountId)
     .gte("date_start", range.start)
     .lte("date_start", range.end);
+  const scopedQuery = usesLimitedAdsAnalystDbAccess()
+    ? (query as unknown as { eq: (column: string, value: string) => typeof query }).eq(
+        "environment",
+        getAdsAnalystEnvironment(),
+      )
+    : query;
+
+  const { error } = await scopedQuery;
 
   if (error) throw error;
   if (!rowsToInsert.length) return;
@@ -1169,7 +1184,7 @@ async function fetchStoredInsightRows(
 ) {
   if (!range.start || !range.end) return [];
 
-  const supabase = createServiceClient() as unknown as SupabaseSelectClient;
+  const supabase = createAdsAnalystClient("worker") as unknown as SupabaseSelectClient;
   const output: JsonRecord[] = [];
   const pageSize = 1000;
 
@@ -1194,7 +1209,7 @@ async function fetchStoredInsightRows(
 }
 
 async function fetchStoredAdRows(metaAccountId: string) {
-  const supabase = createServiceClient() as unknown as SupabaseSelectClient;
+  const supabase = createAdsAnalystClient("worker") as unknown as SupabaseSelectClient;
   const output: JsonRecord[] = [];
   const pageSize = 1000;
 
@@ -1237,7 +1252,7 @@ async function fetchStoredAdRows(metaAccountId: string) {
 }
 
 async function fetchStoredCreativeRows(metaAccountId: string) {
-  const supabase = createServiceClient() as unknown as SupabaseSelectClient;
+  const supabase = createAdsAnalystClient("worker") as unknown as SupabaseSelectClient;
   const output: JsonRecord[] = [];
   const pageSize = 1000;
 
@@ -1862,12 +1877,14 @@ function requireMetaAccessToken() {
 }
 
 async function ensureBrands(accounts: SyncAccountConfig[]) {
-  const supabase = createServiceClient();
+  const supabase = createAdsAnalystClient("worker");
   const { data, error } = await supabase
     .from("brands")
     .upsert(
-      accounts.map((account) => ({ code: account.brandCode, name: account.brandName })),
-      { onConflict: "code" },
+      withAdsAnalystEnvironmentRows(
+        accounts.map((account) => ({ code: account.brandCode, name: account.brandName })),
+      ),
+      { onConflict: adsAnalystOnConflict("code") },
     )
     .select("*");
 
@@ -1876,7 +1893,7 @@ async function ensureBrands(accounts: SyncAccountConfig[]) {
 }
 
 async function fetchCampaignUmbrellaOverrides(metaAccountId: string) {
-  const supabase = createServiceClient();
+  const supabase = createAdsAnalystClient("worker");
   const { data, error } = await supabase
     .from("campaign_umbrella_overrides")
     .select("entity_type, entity_id, campaign_umbrella, reason")
@@ -1956,13 +1973,15 @@ async function upsertSingle(table: string, row: JsonRecord, onConflict: string) 
 
 async function upsertMany(table: string, rows: JsonRecord[], onConflict: string) {
   if (!rows.length) return [];
-  const supabase = createServiceClient() as unknown as DynamicSupabaseClient;
+  const supabase = createAdsAnalystClient("worker") as unknown as DynamicSupabaseClient;
   const results: JsonRecord[] = [];
 
   for (const chunk of chunks(rows, 500)) {
     const { data, error } = await supabase
       .from(table)
-      .upsert(chunk, { onConflict })
+      .upsert(withAdsAnalystEnvironmentRows(chunk), {
+        onConflict: adsAnalystOnConflict(onConflict),
+      })
       .select("*");
 
     if (error) throw error;
