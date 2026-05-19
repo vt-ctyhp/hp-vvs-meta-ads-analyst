@@ -12,28 +12,58 @@
 import { fetchDashboardData, type DashboardPayload } from "./analytics";
 import type { AppPermission } from "./access-control";
 import { requirePagePermission } from "./server-route-auth";
+import { isWowMode, resolveWowWindow, type WowMode } from "./wow-window";
 
 export type DashboardPageSearchParams = Record<string, string | string[] | undefined>;
 
 export type DashboardPageResult = {
   dashboard: DashboardPayload;
   permissions: AppPermission[];
+  /**
+   * The active week-over-week mode if one was applied (via `?wow=cal|rolling`
+   * or via `defaultWow`). Null when the legacy days/start/end input was used.
+   * Rendered surfaces inspect this to know which toggle state to highlight.
+   */
+  wow: WowMode | null;
+};
+
+export type LoadDashboardOptions = {
+  /**
+   * If `?wow=` is missing from the URL, fall back to this mode. Defaults to
+   * `null` (preserve legacy days/start/end behavior). The executive snapshot
+   * will pass `"cal"` here to default to the current calendar week.
+   */
+  defaultWow?: WowMode | null;
 };
 
 export async function loadDashboardPagePayload(
   params: DashboardPageSearchParams,
   requestedPath: string,
+  options: LoadDashboardOptions = {},
 ): Promise<DashboardPageResult> {
   const profile = await requirePagePermission(
     "view_dashboard",
     pathWithQuery(requestedPath, params),
   );
+
+  const wowParam = firstParam(params.wow);
+  const wow = isWowMode(wowParam) ? wowParam : options.defaultWow ?? null;
+
+  if (wow) {
+    const window = resolveWowWindow(wow);
+    const dashboard = await fetchDashboardData({
+      startDate: window.start,
+      endDate: window.end,
+    });
+    return { dashboard, permissions: profile.permissions, wow };
+  }
+
   const dashboard = await fetchDashboardData({
     startDate: firstParam(params.start),
     endDate: firstParam(params.end),
     days: numberParam(params.days) || 30,
   });
-  return { dashboard, permissions: profile.permissions };
+  return { dashboard, permissions: profile.permissions, wow: null };
 }
 
 export function firstParam(value: string | string[] | undefined) {
