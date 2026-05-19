@@ -1045,7 +1045,7 @@ async function upsertWebsiteVisitor(
     last_referrer: row.referrer,
     first_touch: existing?.first_touch || touch,
     last_touch: touch,
-    last_paid_touch: isPaidTouch(touch) ? touch : existing?.last_paid_touch || null,
+    last_paid_touch: selectLastPaidTouch(existing?.last_paid_touch || null, touch),
     fbp: row.fbp || existing?.fbp || null,
     fbc: row.fbc || existing?.fbc || null,
     user_agent: row.user_agent || existing?.user_agent || null,
@@ -1114,7 +1114,7 @@ async function upsertWebsiteSession(
     os_name: row.os_name || existing?.os_name || null,
     first_touch: existing?.first_touch || touch,
     last_touch: touch,
-    last_paid_touch: isPaidTouch(touch) ? touch : existing?.last_paid_touch || null,
+    last_paid_touch: selectLastPaidTouch(existing?.last_paid_touch || null, touch),
     customer_name: row.customer_name || existing?.customer_name || null,
     customer_email: row.customer_email || existing?.customer_email || null,
     customer_phone: row.customer_phone || existing?.customer_phone || null,
@@ -1317,6 +1317,29 @@ export function isPaidTouch(touch: AttributionTouch | null | undefined) {
     return true;
   }
   return touch.sourceType.startsWith("paid_");
+}
+
+export function selectLastPaidTouch(
+  existing: AttributionTouch | null | undefined,
+  touch: AttributionTouch,
+) {
+  if (!isPaidTouch(touch)) return existing || null;
+  if (!existing) return touch;
+  if (hasExplicitPaidAttribution(touch)) return touch;
+  if (!hasExplicitPaidAttribution(existing)) return touch;
+  return existing;
+}
+
+function hasExplicitPaidAttribution(touch: AttributionTouch | null | undefined) {
+  if (!touch?.utm) return false;
+  const medium = (touch.utm.medium || "").toLowerCase();
+  return Boolean(
+    touch.utm.fbclid ||
+      touch.utm.adId ||
+      touch.utm.adsetId ||
+      touch.utm.campaignId ||
+      (medium.includes("paid") && (touch.utm.source || touch.utm.campaign || touch.utm.content || touch.utm.id)),
+  );
 }
 
 function classifySourceType(input: {
