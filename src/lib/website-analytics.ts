@@ -150,6 +150,7 @@ type WebsiteEventRow = {
 };
 
 type WebsiteSessionRow = {
+  environment: string;
   session_id: string;
   visitor_id: string | null;
   brand: string;
@@ -549,11 +550,12 @@ export async function resolveWebsiteAttribution(input: unknown): Promise<Website
   }
 
   const client = createWebsiteClient();
+  const environment = websiteAttributionEnvironment();
   const visitor = parsed.data.visitorId
     ? await findVisitor(client, parsed.data.visitorId)
     : null;
   const session = parsed.data.sessionId
-    ? await findSession(client, parsed.data.sessionId)
+    ? await findSession(client, parsed.data.sessionId, environment)
     : null;
   const firstTouch = visitor?.first_touch || session?.first_touch || null;
   const lastTouch = mostRecentTouch(visitor?.last_touch, session?.last_touch);
@@ -1013,10 +1015,11 @@ async function findVisitor(client: WebsiteSupabaseClient, visitorId: string) {
   return data;
 }
 
-async function findSession(client: WebsiteSupabaseClient, sessionId: string) {
+async function findSession(client: WebsiteSupabaseClient, sessionId: string, environment: string) {
   const { data, error } = await client
     .from("website_sessions")
-    .select("session_id,visitor_id,brand,first_seen_at,last_seen_at,first_page_url,last_page_url,first_referrer,last_referrer,utm_source,utm_medium,utm_campaign,utm_content,utm_term,utm_id,utm_campaign_id,utm_creative,utm_ad,utm_ad_id,utm_adset,utm_adset_id,utm_placement,fbclid,gclid,msclkid,ttclid,fbp,fbc,user_agent,device_category,browser_name,os_name,first_touch,last_touch,last_paid_touch,customer_name,customer_email,customer_phone,conversion_event_id,ip_hash,raw_json")
+    .select("environment,session_id,visitor_id,brand,first_seen_at,last_seen_at,first_page_url,last_page_url,first_referrer,last_referrer,utm_source,utm_medium,utm_campaign,utm_content,utm_term,utm_id,utm_campaign_id,utm_creative,utm_ad,utm_ad_id,utm_adset,utm_adset_id,utm_placement,fbclid,gclid,msclkid,ttclid,fbp,fbc,user_agent,device_category,browser_name,os_name,first_touch,last_touch,last_paid_touch,customer_name,customer_email,customer_phone,conversion_event_id,ip_hash,raw_json")
+    .eq("environment", environment)
     .eq("session_id", sessionId)
     .maybeSingle();
   if (error) throw error;
@@ -1060,9 +1063,9 @@ async function upsertWebsiteVisitor(
     },
   };
 
-  const { error } = existing
-    ? await client.from("website_visitors").update(next).eq("visitor_id", row.visitor_id)
-    : await client.from("website_visitors").insert(next);
+  const { error } = await client.from("website_visitors").upsert(next, {
+    onConflict: "visitor_id",
+  });
   if (error) throw error;
   return next;
 }
@@ -1074,8 +1077,9 @@ async function upsertWebsiteSession(
 ) {
   if (!row.session_id) return null;
 
-  const existing = await findSession(client, row.session_id);
+  const existing = await findSession(client, row.session_id, row.environment);
   const next: WebsiteSessionRow = {
+    environment: row.environment,
     session_id: row.session_id,
     visitor_id: row.visitor_id || existing?.visitor_id || null,
     brand: row.brand,
@@ -1122,9 +1126,9 @@ async function upsertWebsiteSession(
     },
   };
 
-  const { error } = existing
-    ? await client.from("website_sessions").update(next).eq("session_id", row.session_id)
-    : await client.from("website_sessions").insert(next);
+  const { error } = await client.from("website_sessions").upsert(next, {
+    onConflict: "environment,session_id",
+  });
   if (error) throw error;
   return next;
 }
