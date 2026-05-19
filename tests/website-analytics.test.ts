@@ -6,6 +6,7 @@ import {
   appointmentEventToWebsiteConversionInput,
   isAuthorizedConversionRequest,
   isPaidTouch,
+  selectLastPaidTouch,
   type AppointmentEventConversionRow,
 } from "../src/lib/website-analytics.ts";
 
@@ -113,6 +114,38 @@ describe("website analytics appointment reconciliation", () => {
       }),
       false,
     );
+  });
+
+  it("does not let direct fbc-only returns replace richer paid ad context", () => {
+    const originalAdTouch = {
+      capturedAt: "2026-05-19T10:00:00.000Z",
+      eventId: "evt-paid",
+      eventName: "PageView",
+      fbc: "fb.1.1779200000000.original-click",
+      fbp: "fb.1.1779200000000.123",
+      pageUrl: "https://www.hungphatusa.com/pages/book-an-appointment?fbclid=original-click",
+      source: "shopify_browser",
+      sourceType: "paid_meta",
+      utm: {
+        adId: "2380000000001",
+        adsetId: "2380000000002",
+        campaignId: "2380000000003",
+        fbclid: "original-click",
+      },
+    };
+
+    const directReturnTouch = {
+      capturedAt: "2026-05-20T10:00:00.000Z",
+      eventId: "evt-direct-return",
+      eventName: "PageView",
+      fbc: "fb.1.1779200000000.original-click",
+      fbp: "fb.1.1779200000000.123",
+      pageUrl: "https://www.hungphatusa.com/pages/book-an-appointment",
+      source: "shopify_browser",
+      sourceType: "paid_meta",
+    };
+
+    assert.equal(selectLastPaidTouch(originalAdTouch, directReturnTouch), originalAdTouch);
   });
 
   it("requires the shared secret for server-side conversion and attribution endpoints", () => {
