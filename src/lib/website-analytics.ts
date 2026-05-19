@@ -98,6 +98,7 @@ export type WebsiteConversionInput = z.input<typeof conversionEventSchema>;
 
 type WebsiteEventRow = {
   event_id: string;
+  environment: string;
   session_id: string | null;
   visitor_id: string | null;
   brand: string;
@@ -867,6 +868,7 @@ async function recordWebsiteEvent(
   input: z.infer<typeof websiteEventSchema> & Partial<z.infer<typeof conversionEventSchema>>,
   options: { request: Request; source: string },
 ) {
+  const environment = websiteAttributionEnvironment();
   const occurredAt = input.occurredAt || new Date().toISOString();
   const pageUrl = input.pageUrl || null;
   const pagePath = input.pagePath || pathFromUrl(pageUrl);
@@ -883,6 +885,7 @@ async function recordWebsiteEvent(
   const customer = normalizeCustomer(input.customer);
   const row: WebsiteEventRow = {
     event_id: eventId,
+    environment,
     session_id: input.sessionId || null,
     visitor_id: input.visitorId || null,
     brand,
@@ -965,7 +968,7 @@ async function recordWebsiteEvent(
 
   const { data, error } = await client
     .from("website_events")
-    .upsert(row, { onConflict: "event_id" })
+    .upsert(row, { onConflict: "environment,event_id" })
     .select("id")
     .single();
   if (error) throw error;
@@ -990,6 +993,10 @@ async function recordWebsiteEvent(
     id: data,
     ok: true as const,
   };
+}
+
+function websiteAttributionEnvironment() {
+  return process.env.WEBSITE_ATTRIBUTION_ENVIRONMENT?.trim() || "production";
 }
 
 function createWebsiteClient() {
