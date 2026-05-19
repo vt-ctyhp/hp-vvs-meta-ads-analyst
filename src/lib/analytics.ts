@@ -660,6 +660,8 @@ export async function fetchDashboardData(
           campaignUmbrella: classification.umbrella,
           campaignUmbrellaConfidence: classification.confidence,
           campaignUmbrellaReason: classification.reason,
+          campaignId: adSet?.campaign_id || null,
+          campaignName: campaign?.name || null,
           ...summaryFromAggregate(row, classification.umbrella),
         };
       })

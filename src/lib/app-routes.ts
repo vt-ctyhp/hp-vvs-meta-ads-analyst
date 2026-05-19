@@ -43,6 +43,7 @@ export const APP_NAV_ROUTES = [
   // Performance: how the account is doing.
   { href: "/", label: "Overview", permission: "view_dashboard", group: "performance" },
   { href: "/analyst", label: "Analyst", permission: "view_dashboard", group: "performance" },
+  { href: "/analyst-v2", label: "Analyst v2", permission: "view_dashboard", group: "performance" },
   { href: "/creative-analysis", label: "Creatives", permission: "view_creative_analysis", group: "performance" },
 
   // Channels: where customers come in.
