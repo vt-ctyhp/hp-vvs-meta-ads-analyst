@@ -7,22 +7,18 @@
  *
  * Workflow: an analyst lands here knowing roughly what they want to look at
  * (an umbrella, a date range, a brand). They drill down — Campaigns → Ad
- * Sets → Creatives → Drawer — one focal point at a time. The drill-down
- * path is encoded in the URL so the back button works and a slice can be
- * shared.
+ * Sets → Creatives → Drawer — INLINE, one focal path at a time, each level
+ * pushing the next level into the row directly below.
  *
- * Intentionally NOT a port of the old DashboardClient. No chat, no trend
- * chart at the top, no creative leaderboard at the bottom. The page does
- * one job: explore down a hierarchy in response to a question that the
- * executive snapshot raised.
+ * State split:
+ *   - Filters (brand / umbrella / delivery / query) live in the URL, because
+ *     changing them changes the data slice we render.
+ *   - Drill-down selection (which campaign + ad set + creative are expanded)
+ *     is purely local React state, so clicks are instant — no router.push,
+ *     no server refetch.
  */
 
-import {
-  ChevronRight,
-  ExternalLink,
-  Search,
-  X as XIcon,
-} from "lucide-react";
+import { ChevronRight, ExternalLink, Search, X as XIcon } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -45,19 +41,25 @@ const COUNT = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
 type DeliveryFilter = "all" | "active" | "paused";
 
+// Columns are stable across all 3 tiers. Sub-tier rows render inline beneath
+// their parent via colSpan, so the column layout stays consistent.
+const CAMPAIGN_COLS = 6;
+
 export function AnalystV2Client({ data }: { data: DashboardPayload }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  // ── URL-derived state ───────────────────────────────────────────────────
+  // ── URL-derived filter state (changing these refetches the dashboard) ────
   const brand = searchParams.get("brand") || "all";
   const umbrella = searchParams.get("umbrella") || "all";
   const delivery = (searchParams.get("delivery") || "all") as DeliveryFilter;
   const query = searchParams.get("query") || "";
-  const campaignId = searchParams.get("campaign");
-  const adSetId = searchParams.get("adSet");
-  const creativeId = searchParams.get("creative");
+
+  // ── Local drill-down state (instant; no URL roundtrip) ──────────────────
+  const [expandedCampaignId, setExpandedCampaignId] = useState<string | null>(null);
+  const [expandedAdSetId, setExpandedAdSetId] = useState<string | null>(null);
+  const [drawerCreativeId, setDrawerCreativeId] = useState<string | null>(null);
 
   // ── URL helpers ─────────────────────────────────────────────────────────
   const updateParams = useCallback(
@@ -75,9 +77,6 @@ export function AnalystV2Client({ data }: { data: DashboardPayload }) {
 
   // Local search input — debounced into the URL so the field stays snappy.
   // The URL is source of truth; this local draft is just for in-flight typing.
-  // When the URL diverges externally (Clear filters, back button) we rebase.
-  // The setState-in-effect here is the canonical "sync to URL" pattern; the
-  // lint rule is conservative for the common case but we accept it here.
   const [searchDraft, setSearchDraft] = useState(query);
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -87,11 +86,21 @@ export function AnalystV2Client({ data }: { data: DashboardPayload }) {
     if (searchDraft === query) return;
     const handle = window.setTimeout(() => {
       updateParams({ query: searchDraft || null });
-    }, 300);
+    }, 350);
     return () => window.clearTimeout(handle);
   }, [searchDraft, query, updateParams]);
 
-  // ── Derived data ────────────────────────────────────────────────────────
+  // When filters change in URL, collapse the drill-down (selected campaign
+  // may no longer match the filter). Standard cross-state sync; lint rule is
+  // conservative here.
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    setExpandedCampaignId(null);
+    setExpandedAdSetId(null);
+  }, [brand, umbrella, delivery, query]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  // ── Filter pipeline ─────────────────────────────────────────────────────
   const brandOptions = useMemo(
     () => ["all", ...Array.from(new Set(data.byBrand.map((row) => row.brandCode)))],
     [data.byBrand],
@@ -127,56 +136,67 @@ export function AnalystV2Client({ data }: { data: DashboardPayload }) {
     [brand, delivery, query, umbrella],
   );
 
+  // Build campaign → ad sets and ad set → creatives lookups once per slice.
+  // Drill-down doesn't re-filter — it just reads from these maps.
   const visibleCampaigns = useMemo(
     () => data.campaigns.filter(baseFilter).sort((a, b) => b.spend - a.spend),
     [baseFilter, data.campaigns],
   );
 
-  const visibleAdSets = useMemo(() => {
-    if (!campaignId) return [];
-    return data.adSets
-      .filter((adSet) => adSet.campaignId === campaignId && baseFilter(adSet))
-      .sort((a, b) => b.spend - a.spend);
-  }, [baseFilter, data.adSets, campaignId]);
+  const adSetsByCampaignId = useMemo(() => {
+    const map = new Map<string, PerformanceRow[]>();
+    for (const adSet of data.adSets) {
+      if (!adSet.campaignId) continue;
+      if (!baseFilter(adSet)) continue;
+      const list = map.get(adSet.campaignId) || [];
+      list.push(adSet);
+      map.set(adSet.campaignId, list);
+    }
+    for (const list of map.values()) {
+      list.sort((a, b) => b.spend - a.spend);
+    }
+    return map;
+  }, [baseFilter, data.adSets]);
 
-  const visibleCreatives = useMemo(() => {
-    if (!adSetId) return [];
-    return data.creatives
-      .filter((creative) => creative.adSetId === adSetId && baseFilter(creative))
-      .sort((a, b) => b.spend - a.spend);
-  }, [adSetId, baseFilter, data.creatives]);
+  const creativesByAdSetId = useMemo(() => {
+    const map = new Map<string, PerformanceRow[]>();
+    for (const creative of data.creatives) {
+      if (!creative.adSetId) continue;
+      if (!baseFilter(creative)) continue;
+      const list = map.get(creative.adSetId) || [];
+      list.push(creative);
+      map.set(creative.adSetId, list);
+    }
+    for (const list of map.values()) {
+      list.sort((a, b) => b.spend - a.spend);
+    }
+    return map;
+  }, [baseFilter, data.creatives]);
 
-  // Δ lookups for campaigns (we have these in comparison.campaigns)
+  // Δ lookups for campaigns (we already ship prior-period campaign data)
   const priorCampaignById = useMemo(
     () => new Map(data.comparison.campaigns.map((row) => [row.id, row])),
     [data.comparison.campaigns],
   );
 
-  // Drill-up names for breadcrumb display
-  const selectedCampaign = useMemo(
-    () => data.campaigns.find((c) => c.id === campaignId) || null,
-    [campaignId, data.campaigns],
-  );
-  const selectedAdSet = useMemo(
-    () => data.adSets.find((a) => a.id === adSetId) || null,
-    [adSetId, data.adSets],
-  );
+  // Selected creative for drawer
   const selectedCreative = useMemo(
-    () => data.creatives.find((c) => c.id === creativeId) || null,
-    [creativeId, data.creatives],
+    () => (drawerCreativeId ? data.creatives.find((c) => c.id === drawerCreativeId) ?? null : null),
+    [drawerCreativeId, data.creatives],
   );
 
   // ── Handlers ────────────────────────────────────────────────────────────
-  function selectCampaign(id: string | null) {
-    // Selecting a campaign clears the lower tiers
-    updateParams({ campaign: id, adSet: null, creative: null });
-  }
-  function selectAdSet(id: string | null) {
-    updateParams({ adSet: id, creative: null });
-  }
-  function selectCreative(id: string | null) {
-    updateParams({ creative: id });
-  }
+  const toggleCampaign = useCallback((id: string) => {
+    setExpandedCampaignId((prev) => (prev === id ? null : id));
+    setExpandedAdSetId(null);
+  }, []);
+
+  const toggleAdSet = useCallback((id: string) => {
+    setExpandedAdSetId((prev) => (prev === id ? null : id));
+  }, []);
+
+  const openDrawer = useCallback((id: string) => setDrawerCreativeId(id), []);
+  const closeDrawer = useCallback(() => setDrawerCreativeId(null), []);
 
   function clearAllFilters() {
     updateParams({
@@ -184,42 +204,36 @@ export function AnalystV2Client({ data }: { data: DashboardPayload }) {
       umbrella: null,
       delivery: null,
       query: null,
-      campaign: null,
-      adSet: null,
-      creative: null,
     });
     setSearchDraft("");
   }
 
-  const activeFilterCount = [
-    brand !== "all" ? 1 : 0,
-    umbrella !== "all" ? 1 : 0,
-    delivery !== "all" ? 1 : 0,
-    query ? 1 : 0,
-  ].reduce((a, b) => a + b, 0);
+  const activeFilterCount =
+    (brand !== "all" ? 1 : 0) +
+    (umbrella !== "all" ? 1 : 0) +
+    (delivery !== "all" ? 1 : 0) +
+    (query ? 1 : 0);
 
   // Close drawer on Escape
   useEffect(() => {
     if (!selectedCreative) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") selectCreative(null);
+      if (e.key === "Escape") closeDrawer();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCreative]);
+  }, [selectedCreative, closeDrawer]);
 
   return (
     <main className="min-h-screen bg-hp-foundation px-4 py-8 text-hp-body md:px-8">
       <section className="mx-auto max-w-7xl">
-        {/* Header */}
         <header className="flex flex-col gap-3 border-b border-hp-rule pb-4 md:flex-row md:items-end md:justify-between md:gap-6">
           <div>
             <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
               Analyst · drill-down view
             </p>
             <h1 className="mt-2 font-title text-2xl leading-tight text-hp-ink md:text-3xl">
-              {sliceTitle({ brand, umbrella, selectedCampaign, selectedAdSet })}
+              {sliceTitle({ brand, umbrella })}
             </h1>
             <p className="mt-1 text-xs text-hp-muted">
               {formatDateRange(
@@ -227,15 +241,13 @@ export function AnalystV2Client({ data }: { data: DashboardPayload }) {
                 data.sourceTransparency.timeRange.end,
               )}
               {" · "}
-              {COUNT.format(data.campaigns.length)} campaigns ·{" "}
-              {COUNT.format(data.adSets.length)} ad sets ·{" "}
-              {COUNT.format(data.creatives.length)} creatives in account
+              {COUNT.format(visibleCampaigns.length)} campaign
+              {visibleCampaigns.length === 1 ? "" : "s"} in view
             </p>
           </div>
           <WeekWindowToggle defaultMode="cal" />
         </header>
 
-        {/* Filter strip */}
         <FilterStrip
           brand={brand}
           brandOptions={brandOptions}
@@ -251,52 +263,21 @@ export function AnalystV2Client({ data }: { data: DashboardPayload }) {
           onClearAll={activeFilterCount > 0 ? clearAllFilters : undefined}
         />
 
-        {/* Breadcrumb (drill-down path) */}
-        <Breadcrumb
-          selectedCampaign={selectedCampaign}
-          selectedAdSet={selectedAdSet}
-          onClearCampaign={() => selectCampaign(null)}
-          onClearAdSet={() => selectAdSet(null)}
-        />
-
-        {/* Tier 1: Campaigns */}
         <CampaignsTable
           rows={visibleCampaigns}
           priorById={priorCampaignById}
-          selectedId={campaignId}
-          onSelect={selectCampaign}
+          adSetsByCampaignId={adSetsByCampaignId}
+          creativesByAdSetId={creativesByAdSetId}
+          expandedCampaignId={expandedCampaignId}
+          expandedAdSetId={expandedAdSetId}
+          onToggleCampaign={toggleCampaign}
+          onToggleAdSet={toggleAdSet}
+          onOpenDrawer={openDrawer}
         />
-
-        {/* Tier 2: Ad Sets (only when a campaign is selected) */}
-        {campaignId ? (
-          <AdSetsTable
-            rows={visibleAdSets}
-            selectedId={adSetId}
-            onSelect={selectAdSet}
-            campaignName={selectedCampaign?.name || campaignId}
-          />
-        ) : null}
-
-        {/* Tier 3: Creatives (only when an ad set is selected) */}
-        {adSetId ? (
-          <CreativesGrid
-            rows={visibleCreatives}
-            onSelect={(id) => selectCreative(id)}
-            adSetName={selectedAdSet?.name || adSetId}
-          />
-        ) : null}
-
-        {/* Helper hint when nothing selected and no filter narrows things */}
-        {!campaignId && visibleCampaigns.length === 0 ? (
-          <EmptyState message="No campaigns match the current filters." />
-        ) : null}
       </section>
 
       {selectedCreative ? (
-        <CreativeDrawer
-          creative={selectedCreative}
-          onClose={() => selectCreative(null)}
-        />
+        <CreativeDrawer creative={selectedCreative} onClose={closeDrawer} />
       ) : null}
     </main>
   );
@@ -462,237 +443,85 @@ function SegmentedFilter<T extends string>({
   );
 }
 
-// ── Breadcrumb (active drill-down path) ────────────────────────────────────
-
-function Breadcrumb({
-  selectedCampaign,
-  selectedAdSet,
-  onClearCampaign,
-  onClearAdSet,
-}: {
-  selectedCampaign: PerformanceRow | null;
-  selectedAdSet: PerformanceRow | null;
-  onClearCampaign: () => void;
-  onClearAdSet: () => void;
-}) {
-  if (!selectedCampaign) return null;
-  return (
-    <nav
-      aria-label="Drill-down path"
-      className="mt-3 flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-hp-muted"
-    >
-      <button
-        type="button"
-        onClick={onClearCampaign}
-        className="border border-hp-rule px-2 py-1 transition-colors duration-150 hover:border-hp-ink hover:text-hp-ink"
-      >
-        ← All campaigns
-      </button>
-      <ChevronRight size={12} aria-hidden />
-      <span className="border border-hp-ink bg-hp-ink px-2 py-1 text-hp-foundation">
-        {selectedCampaign.name}
-      </span>
-      {selectedAdSet ? (
-        <>
-          <ChevronRight size={12} aria-hidden />
-          <button
-            type="button"
-            onClick={onClearAdSet}
-            className="border border-hp-rule px-2 py-1 transition-colors duration-150 hover:border-hp-ink hover:text-hp-ink"
-          >
-            ← {selectedAdSet.name}
-          </button>
-        </>
-      ) : null}
-    </nav>
-  );
-}
-
-// ── Tier 1: Campaigns ──────────────────────────────────────────────────────
+// ── Tier 1: Campaigns table with inline expansion ──────────────────────────
 
 function CampaignsTable({
   rows,
   priorById,
-  selectedId,
-  onSelect,
+  adSetsByCampaignId,
+  creativesByAdSetId,
+  expandedCampaignId,
+  expandedAdSetId,
+  onToggleCampaign,
+  onToggleAdSet,
+  onOpenDrawer,
 }: {
   rows: PerformanceRow[];
   priorById: Map<string, PerformanceRow>;
-  selectedId: string | null;
-  onSelect: (id: string | null) => void;
-}) {
-  if (rows.length === 0) return null;
-  return (
-    <section className="mt-4 border border-hp-rule bg-hp-card">
-      <SectionHead
-        eyebrow="Tier 1"
-        title="Campaigns"
-        count={rows.length}
-        helper="Click a row to drill into ad sets."
-      />
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[760px] table-fixed border-collapse text-sm">
-          <colgroup>
-            <col className="w-[34%]" />
-            <col className="w-[10%]" />
-            <col className="w-[14%]" />
-            <col className="w-[14%]" />
-            <col className="w-[14%]" />
-            <col className="w-[14%]" />
-          </colgroup>
-          <thead className="bg-hp-inset">
-            <tr>
-              <Th>Campaign</Th>
-              <Th>Delivery</Th>
-              <Th align="right">Spend</Th>
-              <Th align="right">{TERMS.primaryKpi}</Th>
-              <Th align="right">Cost / Result</Th>
-              <Th align="right">CTR</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => {
-              const prior = priorById.get(row.id);
-              const isSelected = selectedId === row.id;
-              return (
-                <tr
-                  key={row.id}
-                  onClick={() => onSelect(isSelected ? null : row.id)}
-                  className={`cursor-pointer border-b border-hp-rule align-middle transition-colors duration-150 last:border-b-0 hover:bg-hp-inset ${
-                    isSelected ? "bg-hp-inset" : ""
-                  }`}
-                >
-                  <td className="px-4 py-3 text-hp-ink">
-                    <div className="flex items-center gap-2">
-                      <ChevronRight
-                        size={12}
-                        className={`text-hp-muted transition-transform duration-150 ${
-                          isSelected ? "rotate-90 text-hp-ink" : ""
-                        }`}
-                        aria-hidden
-                      />
-                      <span className="font-body">{row.name}</span>
-                    </div>
-                    <div className="ml-5 mt-1 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-                      {row.campaignUmbrella || "Unassigned"} · {row.brandCode}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-xs text-hp-body">
-                    <DeliveryPill row={row} />
-                  </td>
-                  <ValueCell value={MONEY.format(row.spend)} current={row.spend} prior={prior?.spend} />
-                  <ValueCell
-                    value={COUNT.format(row.primaryResults)}
-                    current={row.primaryResults}
-                    prior={prior?.primaryResults}
-                    label={row.primaryResultLabel}
-                  />
-                  <ValueCell
-                    value={
-                      row.costPerPrimaryResult == null
-                        ? "—"
-                        : MONEY_CENTS.format(row.costPerPrimaryResult)
-                    }
-                    current={row.costPerPrimaryResult ?? undefined}
-                    prior={prior?.costPerPrimaryResult ?? undefined}
-                    lowerIsBetter
-                  />
-                  <td className="px-4 py-3 text-right tabular-nums text-hp-ink">
-                    {row.ctr.toFixed(2)}%
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
-
-// ── Tier 2: Ad Sets ────────────────────────────────────────────────────────
-
-function AdSetsTable({
-  rows,
-  selectedId,
-  onSelect,
-  campaignName,
-}: {
-  rows: PerformanceRow[];
-  selectedId: string | null;
-  onSelect: (id: string | null) => void;
-  campaignName: string;
+  adSetsByCampaignId: Map<string, PerformanceRow[]>;
+  creativesByAdSetId: Map<string, PerformanceRow[]>;
+  expandedCampaignId: string | null;
+  expandedAdSetId: string | null;
+  onToggleCampaign: (id: string) => void;
+  onToggleAdSet: (id: string) => void;
+  onOpenDrawer: (id: string) => void;
 }) {
   return (
     <section className="mt-4 border border-hp-rule bg-hp-card">
-      <SectionHead
-        eyebrow="Tier 2"
-        title="Ad Sets"
-        count={rows.length}
-        helper={`Within "${campaignName}". Click a row to see its creatives.`}
-      />
+      <header className="flex flex-col gap-1 border-b border-hp-rule px-4 py-3 md:flex-row md:items-baseline md:justify-between">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Campaigns</p>
+          <h2 className="mt-0.5 font-title text-xl leading-tight text-hp-ink">
+            {COUNT.format(rows.length)}{" "}
+            <span className="font-body text-base text-hp-muted">in view</span>
+          </h2>
+        </div>
+        <p className="text-[11px] text-hp-muted">
+          Click a row to drill into ad sets; drill again to reveal creatives.
+        </p>
+      </header>
+
       {rows.length === 0 ? (
-        <EmptyState message="This campaign has no ad sets in the current filter." inline />
+        <EmptyState message="No campaigns match the current filters." inline />
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[640px] table-fixed border-collapse text-sm">
+          <table className="w-full min-w-[800px] table-fixed border-collapse text-sm">
             <colgroup>
-              <col className="w-[44%]" />
-              <col className="w-[12%]" />
+              <col className="w-[34%]" />
+              <col className="w-[10%]" />
               <col className="w-[14%]" />
               <col className="w-[14%]" />
-              <col className="w-[16%]" />
+              <col className="w-[14%]" />
+              <col className="w-[14%]" />
             </colgroup>
             <thead className="bg-hp-inset">
               <tr>
-                <Th>Ad Set</Th>
+                <Th>Campaign</Th>
                 <Th>Delivery</Th>
                 <Th align="right">Spend</Th>
                 <Th align="right">{TERMS.primaryKpi}</Th>
                 <Th align="right">Cost / Result</Th>
+                <Th align="right">CTR</Th>
               </tr>
             </thead>
             <tbody>
               {rows.map((row) => {
-                const isSelected = selectedId === row.id;
+                const prior = priorById.get(row.id);
+                const isExpanded = expandedCampaignId === row.id;
+                const childAdSets = adSetsByCampaignId.get(row.id) || [];
                 return (
-                  <tr
+                  <CampaignRow
                     key={row.id}
-                    onClick={() => onSelect(isSelected ? null : row.id)}
-                    className={`cursor-pointer border-b border-hp-rule align-middle transition-colors duration-150 last:border-b-0 hover:bg-hp-inset ${
-                      isSelected ? "bg-hp-inset" : ""
-                    }`}
-                  >
-                    <td className="px-4 py-3 text-hp-ink">
-                      <div className="flex items-center gap-2">
-                        <ChevronRight
-                          size={12}
-                          className={`text-hp-muted transition-transform duration-150 ${
-                            isSelected ? "rotate-90 text-hp-ink" : ""
-                          }`}
-                          aria-hidden
-                        />
-                        <span className="font-body">{row.name}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-xs">
-                      <DeliveryPill row={row} />
-                    </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-hp-ink">
-                      {MONEY.format(row.spend)}
-                    </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-hp-ink">
-                      <div>{COUNT.format(row.primaryResults)}</div>
-                      <div className="mt-0.5 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-                        {row.primaryResultLabel}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-hp-ink">
-                      {row.costPerPrimaryResult == null
-                        ? "—"
-                        : MONEY_CENTS.format(row.costPerPrimaryResult)}
-                    </td>
-                  </tr>
+                    row={row}
+                    prior={prior}
+                    isExpanded={isExpanded}
+                    childAdSets={childAdSets}
+                    expandedAdSetId={expandedAdSetId}
+                    creativesByAdSetId={creativesByAdSetId}
+                    onToggleCampaign={onToggleCampaign}
+                    onToggleAdSet={onToggleAdSet}
+                    onOpenDrawer={onOpenDrawer}
+                  />
                 );
               })}
             </tbody>
@@ -703,68 +532,309 @@ function AdSetsTable({
   );
 }
 
-// ── Tier 3: Creatives ──────────────────────────────────────────────────────
-
-function CreativesGrid({
-  rows,
-  onSelect,
-  adSetName,
+function CampaignRow({
+  row,
+  prior,
+  isExpanded,
+  childAdSets,
+  expandedAdSetId,
+  creativesByAdSetId,
+  onToggleCampaign,
+  onToggleAdSet,
+  onOpenDrawer,
 }: {
-  rows: PerformanceRow[];
-  onSelect: (id: string) => void;
-  adSetName: string;
+  row: PerformanceRow;
+  prior?: PerformanceRow;
+  isExpanded: boolean;
+  childAdSets: PerformanceRow[];
+  expandedAdSetId: string | null;
+  creativesByAdSetId: Map<string, PerformanceRow[]>;
+  onToggleCampaign: (id: string) => void;
+  onToggleAdSet: (id: string) => void;
+  onOpenDrawer: (id: string) => void;
 }) {
   return (
-    <section className="mt-4 border border-hp-rule bg-hp-card">
-      <SectionHead
-        eyebrow="Tier 3"
-        title="Creatives"
-        count={rows.length}
-        helper={`Within "${adSetName}". Click a card to open the drawer.`}
-      />
-      {rows.length === 0 ? (
-        <EmptyState message="This ad set has no creatives in the current filter." inline />
-      ) : (
-        <ul className="grid gap-4 p-4 sm:grid-cols-2 lg:grid-cols-3">
-          {rows.map((row) => (
-            <li key={row.id}>
-              <button
-                type="button"
-                onClick={() => onSelect(row.id)}
-                className="group flex w-full flex-col gap-3 border border-hp-rule bg-hp-foundation p-3 text-left transition-colors duration-150 hover:border-hp-ink hover:bg-hp-inset"
-              >
-                <Preview creative={row} />
-                <div className="min-w-0">
-                  <div className="line-clamp-2 text-sm font-body text-hp-ink">{row.name}</div>
-                  <div className="mt-1 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-                    <DeliveryPill row={row} compact />
-                  </div>
-                </div>
-                <dl className="grid grid-cols-3 gap-2 text-[10px]">
-                  <Stat label="Spend" value={MONEY.format(row.spend)} />
-                  <Stat
-                    label={row.primaryResultLabel}
-                    value={COUNT.format(row.primaryResults)}
-                  />
-                  <Stat
-                    label="Cost / Result"
-                    value={
-                      row.costPerPrimaryResult == null
-                        ? "—"
-                        : MONEY_CENTS.format(row.costPerPrimaryResult)
-                    }
-                  />
-                </dl>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+    <>
+      <tr
+        onClick={() => onToggleCampaign(row.id)}
+        className={`cursor-pointer border-b border-hp-rule align-middle transition-colors duration-150 hover:bg-hp-inset ${
+          isExpanded ? "bg-hp-inset" : ""
+        }`}
+      >
+        <td className="px-4 py-3 text-hp-ink">
+          <div className="flex items-center gap-2">
+            <ChevronRight
+              size={12}
+              className={`text-hp-muted transition-transform duration-150 ${
+                isExpanded ? "rotate-90 text-hp-ink" : ""
+              }`}
+              aria-hidden
+            />
+            <span className="font-body">{row.name}</span>
+          </div>
+          <div className="ml-5 mt-1 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+            {row.campaignUmbrella || "Unassigned"} · {row.brandCode}
+          </div>
+        </td>
+        <td className="px-4 py-3 text-xs text-hp-body">
+          <DeliveryPill row={row} />
+        </td>
+        <ValueCell value={MONEY.format(row.spend)} current={row.spend} prior={prior?.spend} />
+        <ValueCell
+          value={COUNT.format(row.primaryResults)}
+          current={row.primaryResults}
+          prior={prior?.primaryResults}
+          label={row.primaryResultLabel}
+        />
+        <ValueCell
+          value={row.costPerPrimaryResult == null ? "—" : MONEY_CENTS.format(row.costPerPrimaryResult)}
+          current={row.costPerPrimaryResult ?? undefined}
+          prior={prior?.costPerPrimaryResult ?? undefined}
+          lowerIsBetter
+        />
+        <td className="px-4 py-3 text-right tabular-nums text-hp-ink">
+          {row.ctr.toFixed(2)}%
+        </td>
+      </tr>
+
+      {isExpanded ? (
+        <tr className="border-b border-hp-rule">
+          <td colSpan={CAMPAIGN_COLS} className="bg-hp-foundation p-0">
+            <div className="border-l-[3px] border-l-hp-ink/30 pl-4">
+              <AdSetsInline
+                rows={childAdSets}
+                expandedAdSetId={expandedAdSetId}
+                creativesByAdSetId={creativesByAdSetId}
+                onToggleAdSet={onToggleAdSet}
+                onOpenDrawer={onOpenDrawer}
+                campaignName={row.name}
+              />
+            </div>
+          </td>
+        </tr>
+      ) : null}
+    </>
   );
 }
 
-function Preview({ creative }: { creative: PerformanceRow }) {
+// ── Tier 2: Ad Sets inline expansion ───────────────────────────────────────
+
+function AdSetsInline({
+  rows,
+  expandedAdSetId,
+  creativesByAdSetId,
+  onToggleAdSet,
+  onOpenDrawer,
+  campaignName,
+}: {
+  rows: PerformanceRow[];
+  expandedAdSetId: string | null;
+  creativesByAdSetId: Map<string, PerformanceRow[]>;
+  onToggleAdSet: (id: string) => void;
+  onOpenDrawer: (id: string) => void;
+  campaignName: string;
+}) {
+  if (rows.length === 0) {
+    return (
+      <div className="py-4 pr-4 text-sm text-hp-muted">
+        No ad sets in &ldquo;{campaignName}&rdquo; match the current filters.
+      </div>
+    );
+  }
+  return (
+    <div className="py-3 pr-4">
+      <p className="mb-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+        {COUNT.format(rows.length)} ad set{rows.length === 1 ? "" : "s"} in this campaign
+      </p>
+      <table className="w-full table-fixed border-collapse text-sm">
+        <colgroup>
+          <col className="w-[44%]" />
+          <col className="w-[12%]" />
+          <col className="w-[14%]" />
+          <col className="w-[14%]" />
+          <col className="w-[16%]" />
+        </colgroup>
+        <thead>
+          <tr className="border-b border-hp-rule bg-hp-inset/60">
+            <Th>Ad Set</Th>
+            <Th>Delivery</Th>
+            <Th align="right">Spend</Th>
+            <Th align="right">{TERMS.primaryKpi}</Th>
+            <Th align="right">Cost / Result</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const isExpanded = expandedAdSetId === row.id;
+            const childCreatives = creativesByAdSetId.get(row.id) || [];
+            return (
+              <AdSetRow
+                key={row.id}
+                row={row}
+                isExpanded={isExpanded}
+                childCreatives={childCreatives}
+                onToggleAdSet={onToggleAdSet}
+                onOpenDrawer={onOpenDrawer}
+              />
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function AdSetRow({
+  row,
+  isExpanded,
+  childCreatives,
+  onToggleAdSet,
+  onOpenDrawer,
+}: {
+  row: PerformanceRow;
+  isExpanded: boolean;
+  childCreatives: PerformanceRow[];
+  onToggleAdSet: (id: string) => void;
+  onOpenDrawer: (id: string) => void;
+}) {
+  return (
+    <>
+      <tr
+        onClick={() => onToggleAdSet(row.id)}
+        className={`cursor-pointer border-b border-hp-rule align-middle transition-colors duration-150 hover:bg-hp-inset ${
+          isExpanded ? "bg-hp-inset" : ""
+        }`}
+      >
+        <td className="px-3 py-2.5 text-hp-ink">
+          <div className="flex items-center gap-2">
+            <ChevronRight
+              size={11}
+              className={`text-hp-muted transition-transform duration-150 ${
+                isExpanded ? "rotate-90 text-hp-ink" : ""
+              }`}
+              aria-hidden
+            />
+            <span className="font-body">{row.name}</span>
+          </div>
+        </td>
+        <td className="px-3 py-2.5">
+          <DeliveryPill row={row} />
+        </td>
+        <td className="px-3 py-2.5 text-right tabular-nums text-hp-ink">
+          {MONEY.format(row.spend)}
+        </td>
+        <td className="px-3 py-2.5 text-right tabular-nums text-hp-ink">
+          <div>{COUNT.format(row.primaryResults)}</div>
+          <div className="mt-0.5 text-[9px] uppercase tracking-[0.14em] text-hp-muted">
+            {row.primaryResultLabel}
+          </div>
+        </td>
+        <td className="px-3 py-2.5 text-right tabular-nums text-hp-ink">
+          {row.costPerPrimaryResult == null
+            ? "—"
+            : MONEY_CENTS.format(row.costPerPrimaryResult)}
+        </td>
+      </tr>
+      {isExpanded ? (
+        <tr className="border-b border-hp-rule">
+          <td colSpan={5} className="bg-hp-foundation p-0">
+            <div className="border-l-[3px] border-l-hp-ink/30 pl-4">
+              <CreativesInline
+                rows={childCreatives}
+                onOpenDrawer={onOpenDrawer}
+                adSetName={row.name}
+              />
+            </div>
+          </td>
+        </tr>
+      ) : null}
+    </>
+  );
+}
+
+// ── Tier 3: Creatives inline table (not cards) ─────────────────────────────
+
+function CreativesInline({
+  rows,
+  onOpenDrawer,
+  adSetName,
+}: {
+  rows: PerformanceRow[];
+  onOpenDrawer: (id: string) => void;
+  adSetName: string;
+}) {
+  if (rows.length === 0) {
+    return (
+      <div className="py-4 pr-4 text-sm text-hp-muted">
+        No creatives in &ldquo;{adSetName}&rdquo; match the current filters.
+      </div>
+    );
+  }
+  return (
+    <div className="py-3 pr-4">
+      <p className="mb-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+        {COUNT.format(rows.length)} creative{rows.length === 1 ? "" : "s"} in this ad set
+      </p>
+      <table className="w-full table-fixed border-collapse text-sm">
+        <colgroup>
+          <col className="w-[8%]" />
+          <col className="w-[34%]" />
+          <col className="w-[10%]" />
+          <col className="w-[12%]" />
+          <col className="w-[14%]" />
+          <col className="w-[12%]" />
+          <col className="w-[10%]" />
+        </colgroup>
+        <thead>
+          <tr className="border-b border-hp-rule bg-hp-inset/60">
+            <Th>Preview</Th>
+            <Th>Creative</Th>
+            <Th>Delivery</Th>
+            <Th align="right">Spend</Th>
+            <Th align="right">{TERMS.primaryKpi}</Th>
+            <Th align="right">Cost / Result</Th>
+            <Th align="right">CTR</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr
+              key={row.id}
+              onClick={() => onOpenDrawer(row.id)}
+              className="cursor-pointer border-b border-hp-rule align-middle transition-colors duration-150 last:border-b-0 hover:bg-hp-inset"
+            >
+              <td className="px-3 py-2">
+                <ThumbCell creative={row} />
+              </td>
+              <td className="px-3 py-2 text-hp-ink">
+                <span className="font-body">{row.name}</span>
+              </td>
+              <td className="px-3 py-2">
+                <DeliveryPill row={row} />
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums text-hp-ink">
+                {MONEY.format(row.spend)}
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums text-hp-ink">
+                {COUNT.format(row.primaryResults)}
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums text-hp-ink">
+                {row.costPerPrimaryResult == null
+                  ? "—"
+                  : MONEY_CENTS.format(row.costPerPrimaryResult)}
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums text-hp-ink">
+                {row.ctr.toFixed(2)}%
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ThumbCell({ creative }: { creative: PerformanceRow }) {
   const src =
     creative.thumbnailUrl ||
     creative.imageUrl ||
@@ -772,28 +842,17 @@ function Preview({ creative }: { creative: PerformanceRow }) {
     creative.previewUrl;
   if (!src) {
     return (
-      <div className="flex aspect-[4/3] w-full items-center justify-center border border-dashed border-hp-rule bg-hp-card text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-        No preview
-      </div>
+      <div className="h-12 w-12 border border-dashed border-hp-rule bg-hp-card" aria-hidden />
     );
   }
   return (
-    <div className="aspect-[4/3] w-full overflow-hidden border border-hp-rule bg-hp-card">
+    <div className="h-12 w-12 overflow-hidden border border-hp-rule bg-hp-card">
       <img
         src={src}
-        alt={creative.name}
+        alt=""
         referrerPolicy="no-referrer"
         className="h-full w-full object-cover"
       />
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div className="text-[9px] uppercase tracking-[0.14em] text-hp-muted">{label}</div>
-      <div className="mt-0.5 font-body text-sm tabular-nums text-hp-ink">{value}</div>
     </div>
   );
 }
@@ -810,6 +869,11 @@ function CreativeDrawer({
   const adsManagerUrl = creative.adId
     ? `https://business.facebook.com/adsmanager/manage/ads/edit?selected_ad_ids=${encodeURIComponent(creative.adId)}`
     : null;
+  const previewSrc =
+    creative.thumbnailUrl ||
+    creative.imageUrl ||
+    creative.videoThumbnailUrl ||
+    creative.previewUrl;
   return (
     <div className="fixed inset-0 z-50 flex">
       <button
@@ -837,7 +901,7 @@ function CreativeDrawer({
                   <span>{creative.campaignUmbrella}</span>
                 </>
               ) : null}
-              <DeliveryPill row={creative} compact />
+              <DeliveryPill row={creative} />
             </div>
           </div>
           <button
@@ -850,14 +914,27 @@ function CreativeDrawer({
         </header>
         <div className="flex-1 overflow-y-auto">
           <div className="border-b border-hp-rule p-6">
-            <Preview creative={creative} />
+            {previewSrc ? (
+              <div className="aspect-[4/3] w-full overflow-hidden border border-hp-rule bg-hp-card">
+                <img
+                  src={previewSrc}
+                  alt={creative.name}
+                  referrerPolicy="no-referrer"
+                  className="h-full w-full object-cover"
+                />
+              </div>
+            ) : (
+              <div className="flex aspect-[4/3] w-full items-center justify-center border border-dashed border-hp-rule bg-hp-card text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                No preview
+              </div>
+            )}
             <dl className="mt-4 grid grid-cols-2 gap-3">
-              <Stat label="Spend" value={MONEY.format(creative.spend)} />
-              <Stat
+              <DrawerStat label="Spend" value={MONEY.format(creative.spend)} />
+              <DrawerStat
                 label={creative.primaryResultLabel}
                 value={COUNT.format(creative.primaryResults)}
               />
-              <Stat
+              <DrawerStat
                 label="Cost / Result"
                 value={
                   creative.costPerPrimaryResult == null
@@ -865,9 +942,9 @@ function CreativeDrawer({
                     : MONEY_CENTS.format(creative.costPerPrimaryResult)
                 }
               />
-              <Stat label="CTR" value={`${creative.ctr.toFixed(2)}%`} />
-              <Stat label="CPC" value={MONEY_CENTS.format(creative.cpc)} />
-              <Stat label="Frequency" value={`${creative.frequency.toFixed(2)}x`} />
+              <DrawerStat label="CTR" value={`${creative.ctr.toFixed(2)}%`} />
+              <DrawerStat label="CPC" value={MONEY_CENTS.format(creative.cpc)} />
+              <DrawerStat label="Frequency" value={`${creative.frequency.toFixed(2)}x`} />
             </dl>
           </div>
           <section className="border-b border-hp-rule p-6">
@@ -909,6 +986,15 @@ function CreativeDrawer({
   );
 }
 
+function DrawerStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-[9px] uppercase tracking-[0.14em] text-hp-muted">{label}</div>
+      <div className="mt-0.5 font-body text-sm tabular-nums text-hp-ink">{value}</div>
+    </div>
+  );
+}
+
 function PlacementRow({
   label,
   value,
@@ -933,31 +1019,6 @@ function PlacementRow({
 
 // ── Tiny shared bits ───────────────────────────────────────────────────────
 
-function SectionHead({
-  eyebrow,
-  title,
-  count,
-  helper,
-}: {
-  eyebrow: string;
-  title: string;
-  count: number;
-  helper: string;
-}) {
-  return (
-    <header className="flex flex-col gap-1 border-b border-hp-rule px-4 py-3 md:flex-row md:items-baseline md:justify-between">
-      <div>
-        <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{eyebrow}</p>
-        <h2 className="mt-0.5 font-title text-xl leading-tight text-hp-ink">
-          {title}{" "}
-          <span className="ml-1 text-base font-body text-hp-muted">({COUNT.format(count)})</span>
-        </h2>
-      </div>
-      <p className="text-[11px] text-hp-muted">{helper}</p>
-    </header>
-  );
-}
-
 function Th({
   children,
   align = "left",
@@ -967,7 +1028,7 @@ function Th({
 }) {
   return (
     <th
-      className={`border-b border-hp-rule px-4 py-3 text-[10px] font-normal uppercase tracking-[0.14em] text-hp-muted ${
+      className={`border-b border-hp-rule px-3 py-2.5 text-[10px] font-normal uppercase tracking-[0.14em] text-hp-muted ${
         align === "right" ? "text-right" : "text-left"
       }`}
     >
@@ -1029,13 +1090,7 @@ function Delta({
   );
 }
 
-function DeliveryPill({
-  row,
-  compact = false,
-}: {
-  row: PerformanceRow;
-  compact?: boolean;
-}) {
+function DeliveryPill({ row }: { row: PerformanceRow }) {
   const label = formatAdDelivery(row.status, row.effectiveStatus);
   const color =
     label === "Live"
@@ -1047,7 +1102,7 @@ function DeliveryPill({
           : "var(--ink-muted)";
   return (
     <span
-      className={`inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] ${compact ? "" : "border border-hp-rule px-2 py-0.5"}`}
+      className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.14em]"
       style={{ color }}
     >
       <span aria-hidden className="h-1.5 w-1.5 rounded-full" style={{ background: color }} />
@@ -1079,16 +1134,10 @@ function EmptyState({
 function sliceTitle({
   brand,
   umbrella,
-  selectedCampaign,
-  selectedAdSet,
 }: {
   brand: string;
   umbrella: string;
-  selectedCampaign: PerformanceRow | null;
-  selectedAdSet: PerformanceRow | null;
 }) {
-  if (selectedAdSet) return selectedAdSet.name;
-  if (selectedCampaign) return selectedCampaign.name;
   if (umbrella !== "all") return umbrella;
   if (brand !== "all") return `${brand} — all umbrellas`;
   return "All campaigns";
@@ -1108,4 +1157,3 @@ function formatMonthDay(iso: string) {
     timeZone: "UTC",
   }).format(date);
 }
-
