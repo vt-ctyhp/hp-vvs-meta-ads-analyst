@@ -9,9 +9,21 @@ import { WeekWindowToggle } from "../week-window-toggle";
 const TONE_COLOR: Record<HeadlineTone, string> = {
   positive: "#245D4D",
   warning: "#8D2E2E",
-  neutral: "inherit",
+  neutral: "var(--ink-primary)",
 };
 
+/**
+ * Section I — the front-page story.
+ *
+ * Visual structure (top to bottom):
+ *   1. Editorial header strip   — Roman chapter mark + section title + WoW toggle
+ *   2. Italic running date        ("for the week of …")
+ *   3. The pull-quote sentence    (display serif, weight by tone)
+ *   4. Three hero columns         (Total Spend · Primary KPI · Needs Attention)
+ *
+ * The pull-quote is the focal point. Everything above it labels the moment;
+ * everything below it explains the moment in numbers.
+ */
 export function TopStorySection({
   data,
   wow,
@@ -40,27 +52,44 @@ export function TopStorySection({
   const queueCounts = countActionQueue(data.actionQueue);
 
   return (
-    <section className="mb-2">
-      <header className="flex flex-col gap-3 border-b border-hp-rule pb-4 md:flex-row md:items-end md:justify-between md:gap-6">
-        <div>
-          <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-            Executive Overview
-          </p>
-          <h1 className="mt-2 font-title text-2xl leading-tight text-hp-ink md:text-3xl">
-            Week of {formatDateRange(range.start, range.end)}
-          </h1>
+    <section className="pt-8 md:pt-10">
+      {/* Chapter mark · section title · WoW toggle */}
+      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div className="flex items-baseline gap-3">
+          <span
+            aria-hidden
+            className="font-title oldstyle-nums text-[28px] leading-none text-hp-gilt md:text-[32px]"
+          >
+            I.
+          </span>
+          <div>
+            <p className="smallcaps text-[10px] text-hp-muted">
+              The Week in Performance
+            </p>
+            <p className="mt-1 font-title text-[15px] italic leading-snug text-hp-body">
+              for the week of {formatDateRange(range.start, range.end)}
+            </p>
+          </div>
         </div>
         <WeekWindowToggle defaultMode={wow ?? "cal"} />
       </header>
 
-      <p
-        className="mt-6 max-w-4xl font-title text-2xl leading-snug md:text-[28px]"
-        style={{ color: TONE_COLOR[headline.tone] }}
-      >
-        {headline.sentence}
-      </p>
+      {/* The pull-quote. Hanging dash + display serif. */}
+      <figure className="mt-7 md:mt-9">
+        <blockquote
+          className="font-title text-[32px] leading-[1.18] md:text-[40px] md:leading-[1.15]"
+          style={{ color: TONE_COLOR[headline.tone] }}
+        >
+          <span aria-hidden className="mr-2 text-hp-gilt">—</span>
+          {headline.sentence}
+        </blockquote>
+        <figcaption className="mt-3 smallcaps text-[10px] text-hp-muted">
+          The lede, derived from this week vs. the prior comparable window
+        </figcaption>
+      </figure>
 
-      <div className="mt-6 grid gap-3 md:grid-cols-3">
+      {/* Three measured columns. Hairline gilt rules between, no card frames. */}
+      <div className="mt-8 grid gap-px bg-hp-rule-soft md:grid-cols-3">
         <HeroNumber
           label="Total Spend"
           value={formatMoney(overview.spend)}
@@ -83,13 +112,13 @@ export function TopStorySection({
           value={queueCounts.total === 0 ? "0" : String(queueCounts.total)}
           delta={
             queueCounts.total > 0 ? (
-              <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+              <span className="smallcaps text-[10px] text-hp-muted">
                 {queueCounts.scale > 0 ? `${queueCounts.scale} to scale` : null}
                 {queueCounts.scale > 0 && queueCounts.fix > 0 ? " · " : null}
                 {queueCounts.fix > 0 ? `${queueCounts.fix} to fix` : null}
               </span>
             ) : (
-              <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+              <span className="smallcaps text-[10px] text-hp-muted">
                 Nothing urgent
               </span>
             )
@@ -158,7 +187,7 @@ function DeltaPill({
 }) {
   if (change == null) {
     return (
-      <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+      <span className="smallcaps text-[10px] text-hp-muted">
         — {footnote}
       </span>
     );
@@ -166,23 +195,23 @@ function DeltaPill({
   const isFlat = Math.abs(change) < 3;
   if (isFlat) {
     return (
-      <span className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+      <span className="smallcaps text-[10px] text-hp-muted">
         Flat {footnote}
       </span>
     );
   }
   const isUp = change > 0;
   const isGood = lowerIsBetter ? !isUp : isUp;
-  const color = isGood ? "#245D4D" : "#8D2E2E";
+  const color = isGood ? "var(--positive)" : "var(--danger)";
   const arrow = isUp ? "▲" : "▼";
   return (
     <span
-      className="inline-flex items-baseline gap-1 text-[11px] font-body tabular-nums"
+      className="inline-flex items-baseline gap-1 text-[12px] font-body tabular-nums italic"
       style={{ color }}
     >
-      <span aria-hidden className="text-[10px]">{arrow}</span>
-      <span>{Math.round(Math.abs(change))}%</span>
-      <span className="ml-1 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+      <span aria-hidden className="text-[9px] not-italic">{arrow}</span>
+      <span className="oldstyle-nums">{Math.round(Math.abs(change))}%</span>
+      <span className="ml-1 smallcaps text-[10px] not-italic text-hp-muted">
         {footnote}
       </span>
     </span>

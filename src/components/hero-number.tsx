@@ -9,9 +9,12 @@ import { Sparkline, type SparklineTone } from "./sparkline";
  * One number with eyebrow label, optional WoW chip, optional footnote, and
  * optional sparkline. Pure presentational; the page builds the inputs.
  *
- * Bigger and quieter than the analyst MetricTile — it's meant to be the first
- * thing the executive reads, not one of many. Uses the editorial serif for the
- * value at 36px so it carries the visual weight of the section.
+ * Designed as an editorial column rather than a card: no heavy frame, a thin
+ * gilt rule above the eyebrow, and a soft hairline beneath the sparkline.
+ * The value runs at 56px in the editorial serif with old-style figures, so a
+ * row of three hero tiles reads as three pull-quotes rather than dashboard
+ * tiles. The hp-card surface persists but sits flush with the paper to keep
+ * the broadsheet atmosphere going.
  */
 
 export type HeroNumberProps = {
@@ -39,22 +42,29 @@ export function HeroNumber({
   maturity,
 }: HeroNumberProps) {
   return (
-    <div className="border border-hp-rule bg-hp-card p-6">
+    <div className="relative bg-hp-card/60 px-5 pb-5 pt-6 backdrop-blur-[1px]">
+      {/* gilt hairline above the eyebrow — the only ornamental flourish */}
+      <span
+        aria-hidden
+        className="absolute inset-x-5 top-0 h-px bg-hp-gilt/55"
+      />
       <div className="flex items-center justify-between gap-2">
-        <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{label}</div>
+        <div className="smallcaps text-[10px] text-hp-muted">{label}</div>
         {maturity ? <MaturityBadge level={maturity} /> : null}
       </div>
-      <div className="mt-3 flex flex-wrap items-baseline gap-3">
-        <span className="font-title text-[36px] leading-none tabular-nums text-hp-ink">
+      <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <span className="font-title oldstyle-nums text-[52px] leading-[1.02] text-hp-ink md:text-[56px]">
           {value}
         </span>
         {delta ? <span className="shrink-0">{delta}</span> : null}
       </div>
       {footnote ? (
-        <p className="mt-2 text-xs leading-5 text-hp-muted">{footnote}</p>
+        <p className="mt-2 max-w-[28ch] text-xs italic leading-5 text-hp-muted">
+          {footnote}
+        </p>
       ) : null}
       {sparkline ? (
-        <div className="mt-4">
+        <div className="mt-4 border-t border-hp-rule-soft pt-3">
           <Sparkline data={sparkline} tone={sparklineTone} />
         </div>
       ) : null}
