@@ -110,6 +110,8 @@ export type ComparisonPayload = {
   overview: MetricSummary;
   byBrand: PerformanceRow[];
   byUmbrella: PerformanceRow[];
+  /** Per-campaign metrics for the prior period; matches campaigns[] by id. */
+  campaigns: PerformanceRow[];
   dailyTrend: DailyTrendRow[];
 };
 
@@ -314,6 +316,7 @@ export function emptyDashboardPayload(missingEnv = getMissingRequiredEnv()): Das
       overview: EMPTY_METRICS,
       byBrand: [],
       byUmbrella: [],
+      campaigns: [],
       dailyTrend: [],
     },
     generatedAt: new Date().toISOString(),
@@ -466,6 +469,15 @@ export async function fetchDashboardData(
         aggregateMetaInsights({
           start: priorRange.start,
           end: priorRange.end,
+          dimensions: ["campaign"],
+          sortField: "spend",
+          sortDirection: "desc",
+          limit: 5000,
+        }),
+      () =>
+        aggregateMetaInsights({
+          start: priorRange.start,
+          end: priorRange.end,
           dimensions: ["date", "brand", "campaign_umbrella"],
           sortField: "date",
           sortDirection: "asc",
@@ -501,6 +513,7 @@ export async function fetchDashboardData(
         priorOverviewRows,
         priorByBrandRows,
         priorByUmbrellaRows,
+        priorCampaignAggregateRows,
         priorDailyTrendAggregateRows,
       ],
     ] = await Promise.all([
@@ -780,6 +793,34 @@ export async function fetchDashboardData(
         };
       })
       .sort(bySpendDesc);
+    const priorCampaigns = priorCampaignAggregateRows
+      .map((row) => {
+        const campaignId = row.campaign_id || "unknown";
+        const campaign = campaignById.get(campaignId);
+        const classification = resolveCampaignClassification(
+          {
+            umbrella: campaign?.campaign_umbrella,
+            confidence: campaign?.campaign_umbrella_confidence,
+            reason: campaign?.campaign_umbrella_reason,
+          },
+          classifyCampaignUmbrella({
+            campaignName: campaign?.name || row.campaign,
+          }),
+        );
+        return {
+          id: campaignId,
+          name: campaign?.name || row.campaign || "Unknown campaign",
+          brandCode: getBrandCode(campaign?.brand_id),
+          status: campaign?.status,
+          effectiveStatus: campaign?.effective_status,
+          objective: campaign?.objective,
+          campaignUmbrella: classification.umbrella,
+          campaignUmbrellaConfidence: classification.confidence,
+          campaignUmbrellaReason: classification.reason,
+          ...summaryFromAggregate(row, classification.umbrella),
+        };
+      })
+      .sort(bySpendDesc);
     const priorDailyTrend = priorDailyTrendAggregateRows
       .map((row) => {
         const campaignUmbrella = resolveUmbrella(row.campaign_umbrella);
@@ -863,6 +904,7 @@ export async function fetchDashboardData(
         overview: priorOverview,
         byBrand: priorByBrand,
         byUmbrella: priorByUmbrella,
+        campaigns: priorCampaigns,
         dailyTrend: priorDailyTrend,
       },
       latestSyncRuns: rows<Record<string, unknown>>(syncRunsRes.data).map((run) => ({

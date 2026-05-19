@@ -2,6 +2,7 @@ import type { DashboardPayload } from "@/lib/analytics";
 import type { WowMode } from "@/lib/wow-window";
 
 import { TopStorySection } from "./top-story-section";
+import { UmbrellaScorecardSection } from "./umbrella-scorecard-section";
 
 /**
  * Executive Snapshot — the new / landing.
@@ -32,12 +33,8 @@ export function ExecutiveSnapshot({
       <section className="mx-auto max-w-6xl">
         <TopStorySection data={data} wow={wow} />
 
-        <UpcomingSectionStub
-          eyebrow="Section 2"
-          title="Umbrella Scorecard"
-          due="v1 Days 6–7"
-          description="Sortable table with one-level inline expansion into top campaigns per umbrella; deep links into the analyst view for further depth."
-        />
+        <UmbrellaScorecardSection data={data} />
+
         <UpcomingSectionStub
           eyebrow="Section 3"
           title="What Needs Attention"
