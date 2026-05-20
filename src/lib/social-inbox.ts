@@ -367,6 +367,36 @@ async function validateSocialInboxPermissions() {
   }
 }
 
+/**
+ * Look up the Page Access Token for a single Facebook page (or its linked
+ * Instagram Business Account).
+ *
+ * We resolve tokens at send time instead of persisting them so that:
+ *   - Rotating the long-lived user token (via `me/accounts`) automatically
+ *     rotates every page token without a DB write.
+ *   - We never store a Page Access Token at rest in our database.
+ *
+ * Returns the page row (token, ig user id, etc.) or null if the long-lived
+ * token does not manage that page. The caller is responsible for surfacing
+ * a useful error to the operator.
+ */
+export async function getManagedPage(
+  pageOrIgId: string,
+): Promise<{ pageId: string; accessToken: string; igUserId: string | null } | null> {
+  const trimmed = pageOrIgId?.trim();
+  if (!trimmed) return null;
+  const pages = await fetchManagedPages();
+  const match = pages.find(
+    (page) => page.pageId === trimmed || page.igUserId === trimmed,
+  );
+  if (!match) return null;
+  return {
+    pageId: match.pageId,
+    accessToken: match.accessToken,
+    igUserId: match.igUserId,
+  };
+}
+
 async function fetchManagedPages() {
   const pages = await graphPages<JsonRecord>(
     "me/accounts",
