@@ -154,7 +154,7 @@ function PlatformBadge({
         {platformLabel}
       </span>
       <span className="text-[9px] uppercase tracking-wider text-stone-500">
-        {kind === "thread" ? "DM" : "Cmt"}
+        {kind === "thread" ? "Msg" : "Cmt"}
       </span>
     </div>
   );

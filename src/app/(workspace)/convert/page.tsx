@@ -63,7 +63,7 @@ export default async function ConvertPage({
         sentence={sentence}
         metrics={[
           {
-            label: "Visitors",
+            label: "Customers",
             value: funnel.overview.sessions.toLocaleString(),
           },
           {
@@ -71,7 +71,7 @@ export default async function ConvertPage({
             value: funnel.overview.schedules.toLocaleString(),
           },
           {
-            label: "Unread DMs",
+            label: "Unread conversations",
             value: String(unreadCount(inbox)),
           },
           {
@@ -197,14 +197,14 @@ function buildSentence(args: {
   const gaps = capiGap(ledger);
 
   if (sessions === 0 && bookings === 0 && unread === 0 && ledger.length === 0) {
-    return "No customer activity in this range yet. Once the booking pixel + inbox sync are live, traffic + bookings + DMs land here.";
+    return "No customer activity in this range yet. Once the booking pixel + inbox sync are live, traffic + bookings + conversations land here.";
   }
 
   const pieces: string[] = [];
   if (sessions > 0 || bookings > 0) {
     const rate = sessions > 0 ? ((bookings / sessions) * 100).toFixed(1) : null;
     pieces.push(
-      `${sessions.toLocaleString()} visitors → ${bookings} booking${
+      `${sessions.toLocaleString()} customers → ${bookings} booking${
         bookings === 1 ? "" : "s"
       }${rate ? ` (${rate}%)` : ""}.`,
     );

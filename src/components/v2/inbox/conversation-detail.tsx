@@ -63,7 +63,7 @@ export function ConversationDetail({
             {participantName ?? "Unknown"}
           </p>
           <p className="text-[11px] text-stone-500">
-            {platform.toUpperCase()} · {kind === "thread" ? "DM thread" : "Comment"}
+            {platform.toUpperCase()} · {kind === "thread" ? "Conversation" : "Comment"}
             {participantEmail ? ` · ${participantEmail}` : ""}
           </p>
         </div>
