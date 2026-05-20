@@ -6,6 +6,7 @@ import type { Json } from "./database.types.ts";
 import {
   type AnalysisMode,
   ConfigurationError,
+  getMissingDashboardEnv,
   getMissingRequiredEnv,
   getOpenAIAnalysisModel,
 } from "./env.ts";
@@ -377,10 +378,7 @@ const analysisSpecSchema = z.object({
 });
 
 export async function fetchSavedAnalysisDashboards(limit = 12): Promise<SavedAnalysisDashboard[]> {
-  const missing = getMissingRequiredEnv([
-    "NEXT_PUBLIC_SUPABASE_URL",
-    "SUPABASE_SERVICE_ROLE_KEY",
-  ]);
+  const missing = getMissingDashboardEnv();
   if (missing.length) return [];
 
   try {

@@ -48,6 +48,25 @@ export function getDefaultRequiredEnv(): readonly string[] {
   return REQUIRED_APP_ENV;
 }
 
+/**
+ * Helper for callers that historically required SUPABASE_SERVICE_ROLE_KEY.
+ * In limited-access mode the service-role key is intentionally absent —
+ * the deployment uses scoped module keys instead. Anything that hard-coded
+ * a service-role check now routes through this so the dashboard, ad-hoc
+ * analysis, and creative analysis surfaces don't bail to empty payloads on
+ * staging.
+ */
+export function getMissingDashboardEnv(extra: readonly string[] = []): string[] {
+  const limited = isTruthyEnv("ADS_ANALYST_ENFORCE_LIMITED_DB_ACCESS");
+  const required = [
+    "NEXT_PUBLIC_SUPABASE_URL",
+    "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
+    ...(limited ? [] : ["SUPABASE_SERVICE_ROLE_KEY"]),
+    ...extra,
+  ];
+  return getMissingRequiredEnv(required);
+}
+
 export function getMissingRequiredEnv(keys: readonly string[] = getDefaultRequiredEnv()): string[] {
   const missing = keys.filter((key) => !process.env[key]?.trim());
 

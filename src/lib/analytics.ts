@@ -7,7 +7,7 @@ import {
   type CampaignUmbrella,
   type CampaignUmbrellaClassification,
 } from "./campaign-umbrellas";
-import { ConfigurationError, getMissingRequiredEnv } from "./env";
+import { ConfigurationError, getMissingDashboardEnv } from "./env";
 import { aggregateMetaInsights, type MetaInsightAggregateRow } from "./meta-insight-aggregates";
 import { createAdsAnalystClient } from "./ads-analyst-db";
 
@@ -280,7 +280,7 @@ const MESSAGING_CONTACT_ACTION_TYPES = ["onsite_conversion.total_messaging_conne
 const NEW_MESSAGING_CONTACT_ACTION_TYPES = ["onsite_conversion.messaging_first_reply"];
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-export function emptyDashboardPayload(missingEnv = getMissingRequiredEnv()): DashboardPayload {
+export function emptyDashboardPayload(missingEnv = getMissingDashboardEnv()): DashboardPayload {
   return {
     configured: missingEnv.length === 0,
     missingEnv,
@@ -326,11 +326,7 @@ export function emptyDashboardPayload(missingEnv = getMissingRequiredEnv()): Das
 export async function fetchDashboardData(
   dateRangeInput: number | DashboardDateRangeInput = 30,
 ): Promise<DashboardPayload> {
-  const missingEnv = getMissingRequiredEnv([
-    "NEXT_PUBLIC_SUPABASE_URL",
-    "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
-    "SUPABASE_SERVICE_ROLE_KEY",
-  ]);
+  const missingEnv = getMissingDashboardEnv();
 
   if (missingEnv.length) {
     return emptyDashboardPayload(missingEnv);
