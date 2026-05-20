@@ -48,6 +48,7 @@ test("post-login next path is honored only when permitted", () => {
 });
 
 test("unsafe or non-app next paths are ignored", () => {
+  assert.equal(normalizeAppNextPath("/attribution-ledger"), "/attribution-ledger");
   assert.equal(normalizeAppNextPath("https://example.com/inbox"), null);
   assert.equal(normalizeAppNextPath("//example.com/inbox"), null);
   assert.equal(normalizeAppNextPath("/api/users"), null);
@@ -79,4 +80,6 @@ test("page permission checks follow the route permission map", () => {
   assert.equal(canAccessAppPath(["view_inbox"], "/inbox/thread/1"), true);
   assert.equal(canAccessAppPath(["view_inbox"], "/"), false);
   assert.equal(canAccessAppPath(["view_dashboard"], "/website-funnel"), true);
+  assert.equal(canAccessAppPath(["view_dashboard"], "/attribution-ledger"), true);
+  assert.equal(canAccessAppPath(["view_inbox"], "/attribution-ledger"), false);
 });
