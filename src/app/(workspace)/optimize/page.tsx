@@ -31,10 +31,29 @@ export default async function OptimizePage({
 
   const params = await searchParams;
   const days = Number.isFinite(Number(params.days)) ? Number(params.days) : 30;
-  const dashboard = await fetchDashboardData({
-    days,
-    startDate: params.start ?? null,
-    endDate: params.end ?? null,
+  let dashboard: Awaited<ReturnType<typeof fetchDashboardData>>;
+  let fetchError: string | null = null;
+  try {
+    dashboard = await fetchDashboardData({
+      days,
+      startDate: params.start ?? null,
+      endDate: params.end ?? null,
+    });
+  } catch (e) {
+    fetchError = e instanceof Error ? e.message : String(e);
+    console.error("[optimize] fetchDashboardData threw:", e);
+    const { emptyDashboardPayload } = await import("@/lib/analytics");
+    dashboard = emptyDashboardPayload([]);
+  }
+  // Diagnostic logging visible in Vercel function logs.
+  console.log("[optimize] dashboard payload sizes", {
+    creatives: dashboard.creatives.length,
+    campaigns: dashboard.campaigns.length,
+    adSets: dashboard.adSets.length,
+    byBrand: dashboard.byBrand.length,
+    byUmbrella: dashboard.byUmbrella.length,
+    dailyTrend: dashboard.dailyTrend.length,
+    fetchError,
   });
 
   // Build filter option lists from the data so the bar always offers the
