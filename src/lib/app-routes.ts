@@ -18,6 +18,7 @@ export const APP_NAV_ROUTES = [
   { href: "/creative-analysis", label: "Creative Analysis", permission: "view_creative_analysis" },
   { href: "/analysis", label: "AI Analysis", permission: "view_ai_analysis" },
   { href: "/website-funnel", label: "Website Funnel", permission: "view_dashboard" },
+  { href: "/attribution-ledger", label: "Attribution Ledger", permission: "view_dashboard" },
   { href: "/inbox", label: "Inbox", permission: "view_inbox" },
   { href: "/admin/backfill", label: "Backfill", permission: "view_backfill" },
   { href: "/users", label: "Users", permission: "view_users" },
