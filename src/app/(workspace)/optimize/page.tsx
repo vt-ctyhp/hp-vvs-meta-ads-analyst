@@ -46,13 +46,18 @@ export default async function OptimizePage({
     dashboard = emptyDashboardPayload([]);
   }
   // Diagnostic logging visible in Vercel function logs.
+  const { getMissingRequiredEnv } = await import("@/lib/env");
   console.log("[optimize] dashboard payload sizes", {
+    configured: dashboard.configured,
+    payloadMissingEnv: dashboard.missingEnv,
+    currentMissingEnv: getMissingRequiredEnv(),
     creatives: dashboard.creatives.length,
     campaigns: dashboard.campaigns.length,
     adSets: dashboard.adSets.length,
     byBrand: dashboard.byBrand.length,
     byUmbrella: dashboard.byUmbrella.length,
     dailyTrend: dashboard.dailyTrend.length,
+    generatedAt: dashboard.generatedAt,
     fetchError,
   });
 
