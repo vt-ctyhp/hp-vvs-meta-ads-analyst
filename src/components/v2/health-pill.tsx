@@ -15,7 +15,10 @@ export function HealthPill() {
 
     async function load() {
       try {
-        const response = await fetch("/api/system-health", { cache: "no-store" });
+        const response = await fetch("/api/system-health", {
+          cache: "no-store",
+          credentials: "same-origin",
+        });
         if (!response.ok) {
           if (!cancelled) {
             setStatus("warn");

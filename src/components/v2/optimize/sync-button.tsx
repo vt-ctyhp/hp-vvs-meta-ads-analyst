@@ -21,7 +21,10 @@ export function RunSyncButton({ size = "md" }: { size?: "sm" | "md" }) {
     setStatus("running");
     setError(null);
     try {
-      const response = await fetch("/api/sync", { method: "POST" });
+      const response = await fetch("/api/sync", {
+        method: "POST",
+        credentials: "same-origin",
+      });
       const body = (await response.json().catch(() => ({}))) as {
         error?: string;
       };

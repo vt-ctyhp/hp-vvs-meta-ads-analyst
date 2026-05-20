@@ -37,6 +37,7 @@ export function SignalStrip({ room, topCount = 3 }: Props) {
     try {
       const response = await fetch(`/api/signals?room=${room}&limit=25`, {
         cache: "no-store",
+        credentials: "same-origin",
       });
       if (!response.ok) {
         const body = (await response.json().catch(() => ({}))) as { error?: string };
@@ -60,7 +61,10 @@ export function SignalStrip({ room, topCount = 3 }: Props) {
   async function dismiss(signalId: string) {
     setSignals((prev) => prev.filter((s) => s.id !== signalId));
     try {
-      await fetch(`/api/signals/${signalId}/dismiss`, { method: "POST" });
+      await fetch(`/api/signals/${signalId}/dismiss`, {
+        method: "POST",
+        credentials: "same-origin",
+      });
     } catch {
       // Optimistic: even if the server miss, the next poll restores the row.
     }
@@ -68,7 +72,10 @@ export function SignalStrip({ room, topCount = 3 }: Props) {
 
   async function act(signalId: string) {
     try {
-      await fetch(`/api/signals/${signalId}/act`, { method: "POST" });
+      await fetch(`/api/signals/${signalId}/act`, {
+        method: "POST",
+        credentials: "same-origin",
+      });
     } catch {
       // Telemetry only — failures are non-blocking.
     }
