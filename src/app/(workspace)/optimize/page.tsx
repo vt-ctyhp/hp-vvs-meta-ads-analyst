@@ -1,10 +1,12 @@
 import { CreativeGrid } from "@/components/v2/optimize/creative-grid";
 import { OptimizeFilterBar } from "@/components/v2/optimize/filter-bar";
+import { RunSyncButton } from "@/components/v2/optimize/sync-button";
 import { TimeSeriesChart } from "@/components/v2/optimize/time-series-chart";
 import { SignalStrip } from "@/components/v2/signal-strip";
 import { StatusSentence } from "@/components/v2/status-sentence";
 import { fetchDashboardData } from "@/lib/analytics";
 import { CAMPAIGN_UMBRELLAS } from "@/lib/campaign-umbrellas";
+import { hasPermission } from "@/lib/access-control";
 import { requirePagePermission } from "@/lib/server-route-auth";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +26,8 @@ export default async function OptimizePage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
-  await requirePagePermission("view_dashboard", "/optimize");
+  const profile = await requirePagePermission("view_dashboard", "/optimize");
+  const canRunSync = hasPermission(profile.roles, "run_meta_sync");
 
   const params = await searchParams;
   const days = Number.isFinite(Number(params.days)) ? Number(params.days) : 30;
@@ -91,6 +94,8 @@ export default async function OptimizePage({
     notation: "compact",
   });
 
+  const isEmpty = dashboard.creatives.length === 0 && spend7d === 0;
+
   return (
     <div className="space-y-6">
       <StatusSentence
@@ -119,6 +124,21 @@ export default async function OptimizePage({
       />
 
       <SignalStrip room="optimize" />
+
+      {isEmpty && canRunSync ? (
+        <section className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-stone-300 bg-white/60 p-8 text-center">
+          <p className="text-sm text-stone-700">
+            This environment has no Meta data yet. Run a sync to pull the
+            current account into <span className="font-medium">staging</span> rows.
+          </p>
+          <RunSyncButton />
+          <p className="text-[11px] text-stone-500">
+            Reads from Meta with your existing token. Writes are fenced to{" "}
+            <code className="rounded bg-stone-100 px-1">environment=staging</code>
+            ; production rows are untouched.
+          </p>
+        </section>
+      ) : null}
 
       <OptimizeFilterBar brands={brandOptions} groups={groupOptions} />
 
