@@ -70,25 +70,43 @@ async function probeLimitedReads() {
   const rpcStartDate = new Date();
   rpcStartDate.setUTCDate(rpcStartDate.getUTCDate() - 30);
   const rpcStart = rpcStartDate.toISOString().slice(0, 10);
-  const { data: rpcData, error: rpcError } = await web.rpc(
-    "aggregate_meta_daily_insights",
-    {
-      p_start: rpcStart,
-      p_end: rpcEnd,
-      p_dimensions: ["brand"],
-      p_filters: [],
-      p_sort_field: "spend",
-      p_sort_direction: "desc",
-      p_limit: 10,
-    },
-  );
+  const [byBrand, byCreative, byCampaign] = await Promise.all([
+    callRpc(web, rpcStart, rpcEnd, ["brand"]),
+    callRpc(web, rpcStart, rpcEnd, ["creative"]),
+    callRpc(web, rpcStart, rpcEnd, ["campaign"]),
+  ]);
 
   return {
     counts: { insights, ads, creatives, campaigns, accounts },
     rpc_window: { start: rpcStart, end: rpcEnd },
-    rpc_error: rpcError ? rpcError.message : null,
-    rpc_row_count: Array.isArray(rpcData) ? rpcData.length : 0,
-    rpc_sample: Array.isArray(rpcData) ? rpcData.slice(0, 3) : null,
+    rpc: {
+      by_brand: byBrand,
+      by_creative: byCreative,
+      by_campaign: byCampaign,
+    },
+  };
+}
+
+async function callRpc(
+  client: CountClient,
+  start: string,
+  end: string,
+  dimensions: string[],
+) {
+  const { data, error } = await client.rpc("aggregate_meta_daily_insights", {
+    p_start: start,
+    p_end: end,
+    p_dimensions: dimensions,
+    p_filters: [],
+    p_sort_field: "spend",
+    p_sort_direction: "desc",
+    p_limit: 100,
+  });
+  return {
+    dimensions,
+    error: error ? error.message : null,
+    row_count: Array.isArray(data) ? data.length : 0,
+    first_row: Array.isArray(data) ? data[0] : null,
   };
 }
 
