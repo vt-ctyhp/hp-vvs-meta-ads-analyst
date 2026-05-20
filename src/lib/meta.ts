@@ -1804,6 +1804,21 @@ function getSyncDatePreset() {
 function syncOptionsForTrigger(trigger: "cron" | "manual" | "preview") {
   if (trigger === "preview") return {};
 
+  // Manual sync is operator-initiated and rare. Default everything to a full
+  // refresh so the catalog (ads, creatives, previews, ranking diagnostics)
+  // stays in step with the insight rows. This is the only path that
+  // bootstraps the catalog when an environment is empty (e.g. first sync
+  // after spinning up a staging build with env-fenced rows).
+  if (trigger === "manual") {
+    return {
+      refreshPreviews: true,
+      refreshAdCatalog: true,
+      refreshRankingDiagnostics: true,
+      includeCreativeDiagnostics: true,
+    };
+  }
+
+  // Cron is the cheap incremental path — insight rows only.
   return {
     refreshPreviews: false,
     refreshAdCatalog: false,
