@@ -12,6 +12,8 @@ import {
   usesEnvironmentScopedAdsAnalystUpserts,
   usesLimitedAdsAnalystDbAccess,
 } from "../src/lib/ads-analyst-db.ts";
+import { getMissingRequiredEnv } from "../src/lib/env.ts";
+import { getDataBoundaryRuntimeStatus } from "../src/lib/runtime-guardrails.ts";
 import {
   ADS_ANALYST_ENVIRONMENTS,
   ANALYST_ENVIRONMENT_SCOPED_TABLES,
@@ -137,6 +139,49 @@ describe("Ads Analyst environment helpers", () => {
         "environment,meta_account_id,ad_id",
       );
     });
+  });
+
+  it("accepts role-scoped Supabase secret keys instead of manually minted JWTs", () => {
+    withEnv(
+      {
+        ADS_ANALYST_ENFORCE_LIMITED_DB_ACCESS: "true",
+        ADS_ANALYST_ENVIRONMENT: "staging",
+        SUPABASE_ADS_ANALYST_WEB_KEY: "sb_secret_web",
+        SUPABASE_ADS_ANALYST_WORKER_KEY: "sb_secret_worker",
+        SUPABASE_ADS_ANALYST_INGEST_KEY: "sb_secret_ingest",
+        SUPABASE_ADS_ANALYST_WEB_JWT: undefined,
+        SUPABASE_ADS_ANALYST_WORKER_JWT: undefined,
+        SUPABASE_ADS_ANALYST_INGEST_JWT: undefined,
+        SUPABASE_SERVICE_ROLE_KEY: undefined,
+      },
+      () => {
+        assert.deepEqual(
+          getMissingRequiredEnv([
+            "SUPABASE_ADS_ANALYST_WEB_KEY",
+            "SUPABASE_ADS_ANALYST_WORKER_KEY",
+            "SUPABASE_ADS_ANALYST_INGEST_KEY",
+            "SUPABASE_ADS_ANALYST_WEB_JWT",
+            "SUPABASE_ADS_ANALYST_WORKER_JWT",
+            "SUPABASE_ADS_ANALYST_INGEST_JWT",
+          ]),
+          [],
+        );
+
+        const status = getDataBoundaryRuntimeStatus();
+        assert.equal(status.ok, true);
+        assert.equal(status.mode, "limited_module_role");
+        assert.deepEqual(status.moduleCredentialsConfigured, {
+          web: true,
+          worker: true,
+          ingest: true,
+        });
+        assert.deepEqual(status.moduleCredentialSources, {
+          web: "key",
+          worker: "key",
+          ingest: "key",
+        });
+      },
+    );
   });
 });
 

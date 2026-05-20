@@ -15,6 +15,16 @@ const LIMITED_MODULE_ENV = [
   "SUPABASE_ADS_ANALYST_WORKER_JWT",
   "SUPABASE_ADS_ANALYST_INGEST_JWT",
 ] as const;
+const LIMITED_MODULE_KEY_ENV = [
+  "SUPABASE_ADS_ANALYST_WEB_KEY",
+  "SUPABASE_ADS_ANALYST_WORKER_KEY",
+  "SUPABASE_ADS_ANALYST_INGEST_KEY",
+] as const;
+const LIMITED_MODULE_CREDENTIAL_GROUPS: readonly (readonly string[])[] = [
+  ["SUPABASE_ADS_ANALYST_WEB_KEY", "SUPABASE_ADS_ANALYST_WEB_JWT"],
+  ["SUPABASE_ADS_ANALYST_WORKER_KEY", "SUPABASE_ADS_ANALYST_WORKER_JWT"],
+  ["SUPABASE_ADS_ANALYST_INGEST_KEY", "SUPABASE_ADS_ANALYST_INGEST_JWT"],
+] as const;
 const REQUIRED_APP_ENV = [...REQUIRED_BASE_ENV, ...LEGACY_SERVICE_ROLE_ENV] as const;
 
 export type RequiredAppEnv = (typeof REQUIRED_APP_ENV)[number];
@@ -32,14 +42,26 @@ export class ConfigurationError extends Error {
 
 export function getDefaultRequiredEnv(): readonly string[] {
   if (isTruthyEnv("ADS_ANALYST_ENFORCE_LIMITED_DB_ACCESS")) {
-    return [...REQUIRED_BASE_ENV, ...LIMITED_MODULE_ENV];
+    return [...REQUIRED_BASE_ENV, ...LIMITED_MODULE_ENV, ...LIMITED_MODULE_KEY_ENV];
   }
 
   return REQUIRED_APP_ENV;
 }
 
 export function getMissingRequiredEnv(keys: readonly string[] = getDefaultRequiredEnv()): string[] {
-  return keys.filter((key) => !process.env[key]?.trim());
+  const missing = keys.filter((key) => !process.env[key]?.trim());
+
+  if (!isTruthyEnv("ADS_ANALYST_ENFORCE_LIMITED_DB_ACCESS")) {
+    return missing;
+  }
+
+  return missing.filter((key) => {
+    const credentialGroup = LIMITED_MODULE_CREDENTIAL_GROUPS.find((group) =>
+      group.includes(key),
+    );
+    if (!credentialGroup) return true;
+    return !credentialGroup.some((credentialKey) => process.env[credentialKey]?.trim());
+  });
 }
 
 export function requireEnv(
