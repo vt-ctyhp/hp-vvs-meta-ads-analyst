@@ -2083,10 +2083,12 @@ function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function errorToMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  return String(error);
-}
+// Re-export the shared helper. The sync pipeline used to produce
+// "[object Object]" in stored sync_runs.errors entries for any non-Error
+// thrown value (Supabase client errors are plain objects, not Error
+// instances). Using the centralized helper keeps every error path human-
+// readable.
+import { safeErrorMessage as errorToMessage } from "./error-message";
 
 function isAbortError(error: unknown) {
   return error instanceof Error && error.name === "AbortError";
