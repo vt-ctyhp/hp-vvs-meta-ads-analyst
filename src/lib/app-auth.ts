@@ -5,6 +5,7 @@ import {
   type AppPermission,
   type UserRole,
 } from "./access-control";
+import { createAdsAnalystClient, usesLimitedAdsAnalystDbAccess } from "./ads-analyst-db";
 import { createServerAuthClient, createServiceClient } from "./supabase";
 
 export type AccessProfile = {
@@ -31,6 +32,25 @@ export class AuthorizationError extends Error {
     this.status = status;
   }
 }
+
+type IdentityProfileRow = {
+  app_user_id: string;
+  auth_user_id: string;
+  email: string;
+  full_name: string;
+  initials: string | null;
+  active: boolean;
+  roles: unknown;
+};
+
+type AppUserRow = {
+  id: string;
+  auth_user_id: string;
+  email: string;
+  full_name: string;
+  initials: string | null;
+  active: boolean;
+};
 
 type UserRoleRow = {
   role: UserRole;
@@ -73,6 +93,68 @@ export async function getAccessProfileForToken(accessToken: string): Promise<Acc
 }
 
 async function getAccessProfileForAuthUser(user: User): Promise<AccessProfile> {
+  if (!usesLimitedAdsAnalystDbAccess()) {
+    return getLegacyAccessProfileForAuthUser(user);
+  }
+
+  const supabase = createAdsAnalystClient("web") as unknown as {
+    schema: (schema: "analytics") => {
+      from: (table: "ads_analyst_identity_profiles_v1") => {
+        select: (columns: string) => {
+          eq: (column: string, value: string) => {
+            maybeSingle: () => Promise<{ data: IdentityProfileRow | null; error: Error | null }>;
+          };
+        };
+      };
+    };
+  };
+  const { data: appUser, error: userError } = await supabase
+    .schema("analytics")
+    .from("ads_analyst_identity_profiles_v1")
+    .select("app_user_id,auth_user_id,email,full_name,initials,active,roles")
+    .eq("auth_user_id", user.id)
+    .maybeSingle();
+
+  if (userError) throw userError;
+
+  const metadataRoles = rolesFromMetadata(user.app_metadata?.roles);
+  const profile = appUser as IdentityProfileRow | null;
+  if (!profile || !profile.active) {
+    const roles = metadataRoles;
+    return {
+      authenticated: true,
+      authUserId: user.id,
+      appUserId: null,
+      email: user.email || null,
+      fullName: stringFromMetadata(user.user_metadata?.full_name) || user.email || null,
+      initials: null,
+      active: Boolean(profile?.active),
+      roles,
+      permissions: permissionsForRoles(roles),
+      missingAppProfile: !profile,
+    };
+  }
+
+  const roles = uniqueRoles([
+    ...metadataRoles,
+    ...rolesFromView(profile.roles),
+  ]);
+
+  return {
+    authenticated: true,
+    authUserId: user.id,
+    appUserId: profile.app_user_id,
+    email: profile.email,
+    fullName: profile.full_name,
+    initials: profile.initials,
+    active: profile.active,
+    roles,
+    permissions: permissionsForRoles(roles),
+    missingAppProfile: false,
+  };
+}
+
+async function getLegacyAccessProfileForAuthUser(user: User): Promise<AccessProfile> {
   const supabase = createServiceClient();
   const { data: appUser, error: userError } = await supabase
     .from("users")
@@ -83,7 +165,8 @@ async function getAccessProfileForAuthUser(user: User): Promise<AccessProfile> {
   if (userError) throw userError;
 
   const metadataRoles = rolesFromMetadata(user.app_metadata?.roles);
-  if (!appUser || !appUser.active) {
+  const profile = appUser as AppUserRow | null;
+  if (!profile || !profile.active) {
     const roles = metadataRoles;
     return {
       authenticated: true,
@@ -92,17 +175,17 @@ async function getAccessProfileForAuthUser(user: User): Promise<AccessProfile> {
       email: user.email || null,
       fullName: stringFromMetadata(user.user_metadata?.full_name) || user.email || null,
       initials: null,
-      active: Boolean(appUser?.active),
+      active: Boolean(profile?.active),
       roles,
       permissions: permissionsForRoles(roles),
-      missingAppProfile: !appUser,
+      missingAppProfile: !profile,
     };
   }
 
   const { data: roleRows, error: roleError } = await supabase
     .from("user_roles")
     .select("role")
-    .eq("user_id", appUser.id);
+    .eq("user_id", profile.id);
 
   if (roleError) throw roleError;
 
@@ -114,11 +197,11 @@ async function getAccessProfileForAuthUser(user: User): Promise<AccessProfile> {
   return {
     authenticated: true,
     authUserId: user.id,
-    appUserId: appUser.id,
-    email: appUser.email,
-    fullName: appUser.full_name,
-    initials: appUser.initials,
-    active: appUser.active,
+    appUserId: profile.id,
+    email: profile.email,
+    fullName: profile.full_name,
+    initials: profile.initials,
+    active: profile.active,
     roles,
     permissions: permissionsForRoles(roles),
     missingAppProfile: false,
@@ -172,6 +255,11 @@ function anonymousProfile(): AccessProfile {
 }
 
 function rolesFromMetadata(value: unknown): UserRole[] {
+  if (!Array.isArray(value)) return [];
+  return uniqueRoles(value.filter(isKnownRole));
+}
+
+function rolesFromView(value: unknown): UserRole[] {
   if (!Array.isArray(value)) return [];
   return uniqueRoles(value.filter(isKnownRole));
 }

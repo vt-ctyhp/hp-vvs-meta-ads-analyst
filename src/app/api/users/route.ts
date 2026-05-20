@@ -3,10 +3,10 @@ import {
   ASSIGNABLE_USER_ROLES,
   PERMISSION_GROUPS,
   ROLE_LABELS,
-  isUserRole,
   type UserRole,
 } from "@/lib/access-control";
 import { AuthorizationError, requirePermissionFromRequest } from "@/lib/app-auth";
+import { createAdsAnalystClient, usesLimitedAdsAnalystDbAccess } from "@/lib/ads-analyst-db";
 import { jsonError } from "@/lib/http";
 import { createServiceClient } from "@/lib/supabase";
 
@@ -30,10 +30,20 @@ type RoleRow = {
   role: UserRole;
 };
 
+type IdentityProfileRow = {
+  app_user_id: string;
+  auth_user_id: string;
+  email: string;
+  full_name: string;
+  initials: string | null;
+  active: boolean;
+  roles: unknown;
+};
+
 export async function GET(request: Request) {
   try {
-    const profile = await requirePermissionFromRequest(request, "view_users");
-    const payload = await loadUsersPayload(profile.permissions.includes("manage_users"));
+    await requirePermissionFromRequest(request, "view_users");
+    const payload = await loadUsersPayload(false);
     return Response.json(payload);
   } catch (error) {
     return jsonError(error);
@@ -42,50 +52,11 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const profile = await requirePermissionFromRequest(request, "manage_users");
-    const body = (await request.json().catch(() => ({}))) as {
-      email?: string;
-      fullName?: string;
-      roles?: unknown;
-      notes?: string | null;
-    };
-    const email = normalizeEmail(body.email);
-    const fullName = normalizeRequiredText(body.fullName, "Full name");
-    const roles = normalizeRoles(body.roles);
-
-    if (!roles.length) {
-      throw new AuthorizationError("At least one role is required.", 400);
-    }
-
-    const supabase = createServiceClient();
-    const invite = await supabase.auth.admin.inviteUserByEmail(email, {
-      data: { full_name: fullName },
-    });
-
-    if (invite.error) throw invite.error;
-    if (!invite.data.user) {
-      throw new AuthorizationError("Supabase did not return an invited user.", 500);
-    }
-
-    const { data: inserted, error: insertError } = await supabase
-      .from("users")
-      .upsert(
-        {
-          auth_user_id: invite.data.user.id,
-          email,
-          full_name: fullName,
-          active: true,
-          notes: body.notes?.trim() || null,
-        },
-        { onConflict: "auth_user_id" },
-      )
-      .select("id")
-      .single();
-
-    if (insertError) throw insertError;
-    await replaceUserRoles(inserted.id, roles, profile.appUserId);
-
-    return Response.json(await loadUsersPayload(true));
+    await requirePermissionFromRequest(request, "manage_users");
+    throw new AuthorizationError(
+      "Ads Analyst user-management writes are disabled by the ERP data boundary.",
+      403,
+    );
   } catch (error) {
     return jsonError(error);
   }
@@ -93,45 +64,21 @@ export async function POST(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    const profile = await requirePermissionFromRequest(request, "manage_users");
-    const body = (await request.json().catch(() => ({}))) as {
-      userId?: string;
-      fullName?: string;
-      active?: boolean;
-      notes?: string | null;
-      roles?: unknown;
-    };
-    const userId = normalizeRequiredText(body.userId, "User ID");
-    const fullName = normalizeRequiredText(body.fullName, "Full name");
-    const roles = normalizeRoles(body.roles);
-    const active = body.active !== false;
-
-    if (!roles.length) {
-      throw new AuthorizationError("At least one role is required.", 400);
-    }
-
-    await assertAdminWillRemain(userId, roles, active);
-
-    const supabase = createServiceClient();
-    const { error: updateError } = await supabase
-      .from("users")
-      .update({
-        full_name: fullName,
-        active,
-        notes: body.notes?.trim() || null,
-      })
-      .eq("id", userId);
-
-    if (updateError) throw updateError;
-    await replaceUserRoles(userId, roles, profile.appUserId);
-
-    return Response.json(await loadUsersPayload(true));
+    await requirePermissionFromRequest(request, "manage_users");
+    throw new AuthorizationError(
+      "Ads Analyst user-management writes are disabled by the ERP data boundary.",
+      403,
+    );
   } catch (error) {
     return jsonError(error);
   }
 }
 
 async function loadUsersPayload(canManageUsers: boolean) {
+  if (usesLimitedAdsAnalystDbAccess()) {
+    return loadUsersPayloadFromBoundaryView(canManageUsers);
+  }
+
   const supabase = createServiceClient();
   const [usersRes, rolesRes] = await Promise.all([
     supabase
@@ -172,73 +119,53 @@ async function loadUsersPayload(canManageUsers: boolean) {
   };
 }
 
-async function replaceUserRoles(
-  userId: string,
-  roles: UserRole[],
-  grantedBy: string | null,
-) {
-  const supabase = createServiceClient();
-  const { error: deleteError } = await supabase.from("user_roles").delete().eq("user_id", userId);
-  if (deleteError) throw deleteError;
+async function loadUsersPayloadFromBoundaryView(canManageUsers: boolean) {
+  const supabase = createAdsAnalystClient("web") as unknown as {
+    schema: (schema: "analytics") => {
+      from: (table: "ads_analyst_identity_profiles_v1") => {
+        select: (columns: string) => {
+          order: (
+            column: string,
+            options: { ascending: boolean },
+          ) => Promise<{ data: IdentityProfileRow[] | null; error: Error | null }>;
+        };
+      };
+    };
+  };
+  const { data, error } = await supabase
+    .schema("analytics")
+    .from("ads_analyst_identity_profiles_v1")
+    .select("app_user_id,auth_user_id,email,full_name,initials,active,roles")
+    .order("full_name", { ascending: true });
 
-  const { error: insertError } = await supabase.from("user_roles").insert(
-    roles.map((role) => ({
-      user_id: userId,
-      role,
-      granted_by: grantedBy,
+  if (error) throw error;
+
+  return {
+    canManageUsers,
+    users: ((data || []) as IdentityProfileRow[]).map((user) => ({
+      id: user.app_user_id,
+      authUserId: user.auth_user_id,
+      email: user.email,
+      fullName: user.full_name,
+      initials: user.initials,
+      active: user.active,
+      notes: null,
+      roles: rolesFromView(user.roles),
+      createdAt: "",
+      updatedAt: "",
     })),
-  );
-
-  if (insertError) throw insertError;
+    roleOptions: ASSIGNABLE_USER_ROLES.map((role) => ({
+      role,
+      label: ROLE_LABELS[role],
+    })),
+    permissionGroups: PERMISSION_GROUPS,
+    permissionLabels: APP_PERMISSIONS,
+  };
 }
 
-async function assertAdminWillRemain(userId: string, nextRoles: UserRole[], nextActive: boolean) {
-  if (nextActive && nextRoles.includes("admin")) return;
-
-  const supabase = createServiceClient();
-  const { data: adminRoles, error: rolesError } = await supabase
-    .from("user_roles")
-    .select("user_id")
-    .eq("role", "admin");
-
-  if (rolesError) throw rolesError;
-
-  const remainingAdminIds = (adminRoles || [])
-    .map((row) => row.user_id)
-    .filter((id) => id !== userId);
-
-  if (!remainingAdminIds.length) {
-    throw new AuthorizationError("At least one active admin must remain.", 400);
-  }
-
-  const { data: activeAdmins, error: usersError } = await supabase
-    .from("users")
-    .select("id")
-    .in("id", remainingAdminIds)
-    .eq("active", true);
-
-  if (usersError) throw usersError;
-
-  if (!activeAdmins?.length) {
-    throw new AuthorizationError("At least one active admin must remain.", 400);
-  }
-}
-
-function normalizeRoles(value: unknown): UserRole[] {
+function rolesFromView(value: unknown): UserRole[] {
   if (!Array.isArray(value)) return [];
-  return Array.from(new Set(value.filter(isUserRole)));
-}
-
-function normalizeEmail(value: unknown) {
-  const email = typeof value === "string" ? value.trim().toLowerCase() : "";
-  if (!email || !email.includes("@")) {
-    throw new AuthorizationError("A valid email is required.", 400);
-  }
-  return email;
-}
-
-function normalizeRequiredText(value: unknown, label: string) {
-  const text = typeof value === "string" ? value.trim() : "";
-  if (!text) throw new AuthorizationError(`${label} is required.`, 400);
-  return text;
+  return value.filter((role): role is UserRole =>
+    ASSIGNABLE_USER_ROLES.includes(role as UserRole),
+  );
 }

@@ -9,7 +9,7 @@ import {
 } from "./campaign-umbrellas";
 import { ConfigurationError, getMissingRequiredEnv } from "./env";
 import { aggregateMetaInsights, type MetaInsightAggregateRow } from "./meta-insight-aggregates";
-import { createServiceClient } from "./supabase";
+import { createAdsAnalystClient } from "./ads-analyst-db";
 
 export type MetricSummary = {
   spend: number;
@@ -334,7 +334,7 @@ export async function fetchDashboardData(
   }
 
   try {
-    const supabase = createServiceClient();
+    const supabase = createAdsAnalystClient("web");
     const dateRange = resolveDashboardDateRange(dateRangeInput);
     const priorRange = resolvePriorDateRange(dateRange);
 
@@ -890,7 +890,7 @@ async function fetchTargetedDashboardMetadata({
   adSetAggregateRows,
   creativeAggregateRows,
 }: {
-  supabase: ReturnType<typeof createServiceClient>;
+  supabase: ReturnType<typeof createAdsAnalystClient>;
   campaignAggregateRows: MetaInsightAggregateRow[];
   adSetAggregateRows: MetaInsightAggregateRow[];
   creativeAggregateRows: MetaInsightAggregateRow[];
@@ -951,7 +951,7 @@ type MetadataQueryResult<T> = {
 };
 
 async function selectRowsByRemoteId<T>(
-  supabase: ReturnType<typeof createServiceClient>,
+  supabase: ReturnType<typeof createAdsAnalystClient>,
   table: string,
   columns: string,
   idColumn: string,

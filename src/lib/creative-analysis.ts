@@ -13,7 +13,7 @@ import {
   type MetaCreativeAnalysisInsight,
 } from "./meta";
 import { resolveMetaKpi } from "./meta-kpi";
-import { createServiceClient } from "./supabase";
+import { createAdsAnalystClient } from "./ads-analyst-db";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -248,7 +248,7 @@ export async function fetchCreativeAnalysisData(
   if (missingEnv.length) return emptyCreativeAnalysisPayload(missingEnv);
 
   try {
-    const supabase = createServiceClient();
+    const supabase = createAdsAnalystClient("web");
     const dateRange = resolveDateRange(dateRangeInput);
     const comparisonRange = resolveComparisonRange(dateRange);
     const includeLive = dateRangeInput.includeLive === true;
@@ -552,7 +552,7 @@ function aggregateStoredInsightRows(
 }
 
 async function fetchCreativeMetadata(
-  supabase: ReturnType<typeof createServiceClient>,
+  supabase: ReturnType<typeof createAdsAnalystClient>,
   insightRows: RawCreativeInsight[],
 ) {
   const adIds = unique(insightRows.map((row) => row.adId));
@@ -679,7 +679,7 @@ function enrichCreativeRow(input: {
 }
 
 async function fetchStoredInsightRows(
-  supabase: ReturnType<typeof createServiceClient>,
+  supabase: ReturnType<typeof createAdsAnalystClient>,
   range: { start: string; end: string },
 ) {
   const output: StoredInsightRow[] = [];
@@ -739,7 +739,7 @@ async function fetchStoredInsightRows(
 }
 
 async function selectRowsByRemoteId<T>(
-  supabase: ReturnType<typeof createServiceClient>,
+  supabase: ReturnType<typeof createAdsAnalystClient>,
   table: string,
   columns: string,
   idColumn: string,

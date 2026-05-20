@@ -5,6 +5,14 @@ import type { Database } from "./database.types.ts";
 
 let browserClient: SupabaseClient<Database> | null = null;
 
+export type AdsAnalystModuleRole = "web" | "worker" | "ingest";
+
+const MODULE_JWT_ENV_BY_ROLE: Record<AdsAnalystModuleRole, string> = {
+  web: "SUPABASE_ADS_ANALYST_WEB_JWT",
+  worker: "SUPABASE_ADS_ANALYST_WORKER_JWT",
+  ingest: "SUPABASE_ADS_ANALYST_INGEST_JWT",
+};
+
 function getSupabaseUrl() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   if (!url) {
@@ -28,6 +36,30 @@ export function createServiceClient() {
       autoRefreshToken: false,
       persistSession: false,
     },
+  });
+}
+
+export function createAdsAnalystModuleClient(role: AdsAnalystModuleRole) {
+  const publishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  const jwtEnvName = MODULE_JWT_ENV_BY_ROLE[role];
+  const moduleJwt = process.env[jwtEnvName];
+
+  if (!publishableKey) {
+    throw new ConfigurationError("Missing NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", [
+      "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
+    ]);
+  }
+
+  if (!moduleJwt?.trim()) {
+    throw new ConfigurationError(`Missing ${jwtEnvName}`, [jwtEnvName]);
+  }
+
+  return createClient<Database>(getSupabaseUrl(), publishableKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+    accessToken: async () => moduleJwt,
   });
 }
 

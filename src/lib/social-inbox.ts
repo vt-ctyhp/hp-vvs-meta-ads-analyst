@@ -1,6 +1,11 @@
 import { ConfigurationError, getMetaApiVersion } from "./env";
 import { getMetaPermissionHealth } from "./meta";
-import { createServiceClient } from "./supabase";
+import {
+  adsAnalystOnConflict,
+  createAdsAnalystClient,
+  withAdsAnalystEnvironment,
+  withAdsAnalystEnvironmentRows,
+} from "./ads-analyst-db";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -174,13 +179,13 @@ class MetaSocialGraphError extends Error {
 export async function syncSocialInbox(
   trigger: "manual" | "cron" | "webhook" = "manual",
 ): Promise<SocialInboxSyncResult> {
-  const supabase = dynamicSupabase();
+  const supabase = dynamicSupabase("worker");
   const runInsert = await supabase
     .from("meta_social_sync_runs")
-    .insert({
+    .insert(withAdsAnalystEnvironment({
       trigger,
       status: "running",
-    })
+    }))
     .select("id")
     .single();
 
@@ -202,7 +207,7 @@ export async function syncSocialInbox(
 
     await supabase
       .from("meta_social_sync_runs")
-      .update({ page_ids: pages.map((page) => page.pageId) })
+      .update(withAdsAnalystEnvironment({ page_ids: pages.map((page) => page.pageId) }))
       .eq("id", syncRunId);
 
     await upsertPages(pages);
@@ -223,12 +228,12 @@ export async function syncSocialInbox(
 
     await supabase
       .from("meta_social_sync_runs")
-      .update({
+      .update(withAdsAnalystEnvironment({
         status,
         completed_at: new Date().toISOString(),
         metrics,
         errors,
-      })
+      }))
       .eq("id", syncRunId);
 
     return { status, metrics, errors, syncRunId };
@@ -236,12 +241,12 @@ export async function syncSocialInbox(
     errors.push(errorToMessage(error));
     await supabase
       .from("meta_social_sync_runs")
-      .update({
+      .update(withAdsAnalystEnvironment({
         status: "failed",
         completed_at: new Date().toISOString(),
         metrics,
         errors,
-      })
+      }))
       .eq("id", syncRunId);
 
     return { status: "failed", metrics, errors, syncRunId };
@@ -249,7 +254,7 @@ export async function syncSocialInbox(
 }
 
 export async function getSocialInboxData(): Promise<SocialInboxData> {
-  const supabase = dynamicSupabase();
+  const supabase = dynamicSupabase("web");
   const [threads, messages, comments, syncRuns] = await Promise.all([
     supabase
       .from("meta_social_threads")
@@ -301,8 +306,13 @@ export async function ingestMetaWebhookPayload(payload: JsonRecord): Promise<Met
     for (const event of messagingEvents) {
       const row = webhookMessageRow(object, entry, event);
       if (!row) continue;
-      await upsertMany("meta_social_threads", [row.thread], "platform,thread_id");
-      const messages = await upsertMany("meta_social_messages", [row.message], "platform,message_id");
+      await upsertMany("meta_social_threads", [row.thread], "platform,thread_id", "ingest");
+      const messages = await upsertMany(
+        "meta_social_messages",
+        [row.message],
+        "platform,message_id",
+        "ingest",
+      );
       result.messages += messages.length;
     }
 
@@ -310,14 +320,19 @@ export async function ingestMetaWebhookPayload(payload: JsonRecord): Promise<Met
     for (const change of changeEvents) {
       const comment = webhookCommentRow(object, entry, change);
       if (!comment) continue;
-      const comments = await upsertMany("meta_social_comments", [comment], "platform,comment_id");
+      const comments = await upsertMany(
+        "meta_social_comments",
+        [comment],
+        "platform,comment_id",
+        "ingest",
+      );
       result.comments += comments.length;
     }
   }
 
   if (result.messages || result.comments) {
-    const supabase = dynamicSupabase();
-    const { error } = await supabase.from("meta_social_sync_runs").insert({
+    const supabase = dynamicSupabase("ingest");
+    const { error } = await supabase.from("meta_social_sync_runs").insert(withAdsAnalystEnvironment({
       trigger: "webhook",
       status: "success",
       completed_at: new Date().toISOString(),
@@ -328,7 +343,7 @@ export async function ingestMetaWebhookPayload(payload: JsonRecord): Promise<Met
         comments: result.comments,
       },
       errors: [],
-    }).select("id").single();
+    })).select("id").single();
     if (error) throw error;
   }
 
@@ -884,15 +899,22 @@ function requireMetaAccessToken() {
   return accessToken;
 }
 
-async function upsertMany(table: string, rows: JsonRecord[], onConflict: string) {
+async function upsertMany(
+  table: string,
+  rows: JsonRecord[],
+  onConflict: string,
+  role: "worker" | "ingest" = "worker",
+) {
   if (!rows.length) return [];
-  const supabase = dynamicSupabase();
+  const supabase = dynamicSupabase(role);
   const results: JsonRecord[] = [];
 
   for (const chunk of chunks(rows, 500)) {
     const { data, error } = await supabase
       .from(table)
-      .upsert(chunk, { onConflict })
+      .upsert(withAdsAnalystEnvironmentRows(chunk), {
+        onConflict: adsAnalystOnConflict(onConflict),
+      })
       .select("*");
 
     if (error) throw error;
@@ -902,8 +924,8 @@ async function upsertMany(table: string, rows: JsonRecord[], onConflict: string)
   return results;
 }
 
-function dynamicSupabase() {
-  return createServiceClient() as unknown as DynamicSupabaseClient;
+function dynamicSupabase(role: "web" | "worker" | "ingest") {
+  return createAdsAnalystClient(role) as unknown as DynamicSupabaseClient;
 }
 
 function mapThread(row: JsonRecord): SocialInboxThread {

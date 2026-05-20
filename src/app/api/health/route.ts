@@ -1,20 +1,23 @@
 import { getMissingRequiredEnv } from "@/lib/env";
 import { getMetaPermissionHealth, validateConfiguredMetaAccounts } from "@/lib/meta";
+import { getDataBoundaryRuntimeStatus } from "@/lib/runtime-guardrails";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   const missingEnv = getMissingRequiredEnv();
+  const dataBoundary = getDataBoundaryRuntimeStatus();
   const meta =
     missingEnv.includes("META_ACCESS_TOKEN") || missingEnv.includes("META_HP_AD_ACCOUNT_ID")
       ? { ok: false, error: "Meta environment variables are incomplete." }
       : await validateMeta();
 
   return Response.json({
-    ok: missingEnv.length === 0 && meta.ok,
+    ok: missingEnv.length === 0 && meta.ok && dataBoundary.ok,
     missingEnv,
     meta,
+    dataBoundary,
     campaignMutationDisabled: true,
     humanApprovalRequiredForSocialReplies: true,
     forbiddenPermissions: ["ads_management"],
