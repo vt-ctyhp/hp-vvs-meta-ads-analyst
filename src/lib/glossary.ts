@@ -166,7 +166,7 @@ export function formatLockStatus(value: LockStatus | string): string {
  * be passed straight to `setStatus(error.message)`.
  */
 export function translateError(input: unknown, fallback = "Something went wrong"): string {
-  const raw = (() => {
+  const initialRaw = (() => {
     if (!input) return "";
     if (typeof input === "string") return input;
     if (input instanceof Error) return input.message;
@@ -181,10 +181,15 @@ export function translateError(input: unknown, fallback = "Something went wrong"
       return "";
     }
     const stringified = String(input);
-    // String coercion of a plain object is the most common source of the
-    // user-visible "[object Object]" bug. Treat it as no message.
     return stringified === "[object Object]" ? "" : stringified;
   })().trim();
+
+  // Defense-in-depth: even if a server route or third-party lib produced the
+  // literal text "[object Object]" / "[object Error]" upstream and we now
+  // receive it as a plain string (via Error.message or payload.error), do
+  // not display it to users. Force the fallback path instead.
+  const raw =
+    initialRaw === "[object Object]" || initialRaw === "[object Error]" ? "" : initialRaw;
 
   if (!raw) return fallback;
 
