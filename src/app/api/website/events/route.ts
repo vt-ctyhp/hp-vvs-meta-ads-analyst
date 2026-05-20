@@ -28,8 +28,24 @@ export async function POST(request: Request) {
 
     return NextResponse.json(result, { headers });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = readableErrorMessage(error);
     const status = message.includes("Origin is not allowed") ? 403 : 500;
     return NextResponse.json({ error: message, ok: false }, { headers, status });
   }
+}
+
+function readableErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (!error || typeof error !== "object") return String(error);
+
+  const fields = error as {
+    code?: unknown;
+    details?: unknown;
+    hint?: unknown;
+    message?: unknown;
+  };
+  const parts = [fields.message, fields.details, fields.hint, fields.code]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+
+  return parts.length ? parts.join(" | ") : JSON.stringify(error);
 }

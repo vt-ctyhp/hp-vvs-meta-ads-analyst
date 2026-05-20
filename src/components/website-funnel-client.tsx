@@ -159,7 +159,7 @@ export function WebsiteFunnelClient({ initialData }: Props) {
             icon={Activity}
             label="Sessions"
             value={data.overview.sessions}
-            note={`${formatNumber(data.overview.pageViews)} page views`}
+            note={`${formatNumber(data.overview.metaPaidSessions)} Meta-paid sessions`}
           />
           <MetricCard
             icon={Clock3}
@@ -177,7 +177,7 @@ export function WebsiteFunnelClient({ initialData }: Props) {
             icon={CheckCircle2}
             label="First-party Schedule"
             value={data.overview.schedules}
-            note={`${formatNumber(data.overview.metaAttributedBookings)} Meta-attributed`}
+            note={`${formatNumber(data.overview.completeTrackingConversions)} complete tracking records`}
           />
         </div>
 
@@ -352,6 +352,8 @@ export function WebsiteFunnelClient({ initialData }: Props) {
                   <th className="px-5 py-3 font-normal">Event</th>
                   <th className="px-5 py-3 font-normal">Source</th>
                   <th className="px-5 py-3 font-normal">Page</th>
+                  <th className="px-5 py-3 font-normal">Customer</th>
+                  <th className="px-5 py-3 font-normal">Ad IDs</th>
                   <th className="px-5 py-3 font-normal">Event ID</th>
                 </tr>
               </thead>
@@ -372,6 +374,14 @@ export function WebsiteFunnelClient({ initialData }: Props) {
                     <td className="px-5 py-4 text-hp-muted">{event.source}</td>
                     <td className="px-5 py-4 text-hp-muted">
                       {event.pageGroup || "other"} · {event.pagePath || "(unknown)"}
+                    </td>
+                    <td className="max-w-[180px] truncate px-5 py-4 text-hp-muted">
+                      {event.customerName || "Anonymous"}
+                    </td>
+                    <td className="max-w-[220px] px-5 py-4 text-xs text-hp-muted">
+                      <div className="truncate">Campaign {event.campaignId || "n/a"}</div>
+                      <div className="truncate">Ad set {event.adsetId || "n/a"}</div>
+                      <div className="truncate">Ad {event.adId || "n/a"}</div>
                     </td>
                     <td className="max-w-[260px] truncate px-5 py-4 text-xs text-hp-muted">
                       {event.metaEventId || event.eventId}

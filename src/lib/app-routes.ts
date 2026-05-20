@@ -44,6 +44,10 @@ export const APP_NAV_ROUTES = [
   { href: "/", label: "Overview", permission: "view_dashboard", group: "performance" },
   { href: "/analyst", label: "Analyst", permission: "view_dashboard", group: "performance" },
   { href: "/creative-analysis", label: "Creatives", permission: "view_creative_analysis", group: "performance" },
+  // Attribution Ledger: first-party booking attribution per appointment
+  // (added on main while the rebuild branch was in flight). Lives under
+  // Performance because it's another lens on the same booking funnel.
+  { href: "/attribution-ledger", label: "Attribution", permission: "view_dashboard", group: "performance" },
 
   // Channels: where customers come in.
   { href: "/inbox", label: "Inbox", permission: "view_inbox", group: "channels" },

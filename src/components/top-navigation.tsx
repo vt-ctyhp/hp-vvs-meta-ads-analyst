@@ -35,6 +35,7 @@ const NAV_ICONS: Record<string, typeof BarChart3> = {
   "/creative-analysis": Gauge,
   "/analysis": Brain,
   "/website-funnel": MousePointerClick,
+  "/attribution-ledger": Database,
   "/inbox": Inbox,
   "/admin/backfill": Database,
   "/users": Users,

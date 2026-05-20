@@ -165,6 +165,12 @@ function emptyFunnel(days: number): WebsiteFunnelData {
       bookingStarts: 0,
       schedules: 0,
       metaAttributedBookings: 0,
+      // Fields added by main's attribution-ledger work (commit 7dd4293). Stub
+      // them at 0 so the empty-funnel placeholder still satisfies
+      // WebsiteFunnelData["overview"]'s shape.
+      metaPaidSessions: 0,
+      customerLinkedEvents: 0,
+      completeTrackingConversions: 0,
       discrepancy: 0,
     },
     funnel: [],

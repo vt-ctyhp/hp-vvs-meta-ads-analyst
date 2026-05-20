@@ -5,6 +5,7 @@ import { z } from "zod";
 import {
   adsAnalystOnConflict,
   createAdsAnalystClient,
+  getAdsAnalystEnvironment,
   usesLimitedAdsAnalystDbAccess,
   withAdsAnalystEnvironment,
 } from "./ads-analyst-db.ts";
@@ -50,26 +51,52 @@ const websiteEventSchema = z.object({
   referrer: z.string().trim().max(1000).optional(),
   utm: z
     .object({
+      ad: z.string().trim().max(180).optional(),
+      adId: z.string().trim().max(120).optional(),
+      adset: z.string().trim().max(180).optional(),
+      adsetId: z.string().trim().max(120).optional(),
       source: z.string().trim().max(120).optional(),
       medium: z.string().trim().max(120).optional(),
       campaign: z.string().trim().max(180).optional(),
+      campaignId: z.string().trim().max(120).optional(),
       content: z.string().trim().max(180).optional(),
+      creative: z.string().trim().max(180).optional(),
+      fbclid: z.string().trim().max(500).optional(),
+      gclid: z.string().trim().max(500).optional(),
+      id: z.string().trim().max(120).optional(),
+      msclkid: z.string().trim().max(500).optional(),
+      placement: z.string().trim().max(120).optional(),
       term: z.string().trim().max(180).optional(),
+      ttclid: z.string().trim().max(500).optional(),
     })
     .optional(),
+  attribution: jsonObjectSchema.optional(),
   fbp: z.string().trim().max(300).optional(),
   fbc: z.string().trim().max(300).optional(),
   userAgent: z.string().trim().max(600).optional(),
   properties: jsonObjectSchema.optional(),
 });
 
+const customerSchema = z
+  .object({
+    email: z.string().trim().email().optional(),
+    firstName: z.string().trim().max(80).optional(),
+    lastName: z.string().trim().max(80).optional(),
+    name: z.string().trim().max(180).optional(),
+    phone: z.string().trim().max(40).optional(),
+  })
+  .optional();
+
 const conversionEventSchema = websiteEventSchema.extend({
   eventName: z.string().trim().min(1).max(80).default("Schedule"),
   eventType: eventTypeSchema.default("conversion"),
   metaEventName: z.string().trim().max(80).optional(),
   metaEventId: z.string().trim().max(200).optional(),
+  metaCapiStatus: z.string().trim().max(40).optional(),
+  metaCapiTestMode: z.boolean().optional(),
   acuityAppointmentId: z.string().trim().max(80).optional(),
   appointmentType: z.string().trim().max(180).optional(),
+  customer: customerSchema,
 });
 
 export type WebsiteEventInput = z.input<typeof websiteEventSchema>;
@@ -77,6 +104,7 @@ export type WebsiteConversionInput = z.input<typeof conversionEventSchema>;
 
 type WebsiteEventRow = {
   event_id: string;
+  environment: string;
   session_id: string | null;
   visitor_id: string | null;
   brand: string;
@@ -95,9 +123,29 @@ type WebsiteEventRow = {
   utm_campaign: string | null;
   utm_content: string | null;
   utm_term: string | null;
+  utm_id: string | null;
+  utm_campaign_id: string | null;
+  utm_creative: string | null;
+  utm_ad: string | null;
+  utm_ad_id: string | null;
+  utm_adset: string | null;
+  utm_adset_id: string | null;
+  utm_placement: string | null;
+  fbclid: string | null;
+  gclid: string | null;
+  msclkid: string | null;
+  ttclid: string | null;
   fbp: string | null;
   fbc: string | null;
   user_agent: string | null;
+  device_category: string | null;
+  browser_name: string | null;
+  os_name: string | null;
+  source_type: string | null;
+  customer_name: string | null;
+  customer_email: string | null;
+  customer_phone: string | null;
+  conversion_event_id: string | null;
   ip_hash: string | null;
   meta_event_name: string | null;
   meta_event_id: string | null;
@@ -108,6 +156,7 @@ type WebsiteEventRow = {
 };
 
 type WebsiteSessionRow = {
+  environment: string;
   session_id: string;
   visitor_id: string | null;
   brand: string;
@@ -116,16 +165,126 @@ type WebsiteSessionRow = {
   first_page_url: string | null;
   last_page_url: string | null;
   first_referrer: string | null;
+  last_referrer: string | null;
   utm_source: string | null;
   utm_medium: string | null;
   utm_campaign: string | null;
   utm_content: string | null;
   utm_term: string | null;
+  utm_id: string | null;
+  utm_campaign_id: string | null;
+  utm_creative: string | null;
+  utm_ad: string | null;
+  utm_ad_id: string | null;
+  utm_adset: string | null;
+  utm_adset_id: string | null;
+  utm_placement: string | null;
+  fbclid: string | null;
+  gclid: string | null;
+  msclkid: string | null;
+  ttclid: string | null;
   fbp: string | null;
   fbc: string | null;
   user_agent: string | null;
+  device_category: string | null;
+  browser_name: string | null;
+  os_name: string | null;
+  first_touch: AttributionTouch | null;
+  last_touch: AttributionTouch | null;
+  last_paid_touch: AttributionTouch | null;
+  customer_name: string | null;
+  customer_email: string | null;
+  customer_phone: string | null;
+  conversion_event_id: string | null;
   ip_hash: string | null;
   raw_json: Record<string, unknown>;
+};
+
+type WebsiteVisitorRow = {
+  visitor_id: string;
+  brand: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  first_page_url: string | null;
+  last_page_url: string | null;
+  first_referrer: string | null;
+  last_referrer: string | null;
+  first_touch: AttributionTouch | null;
+  last_touch: AttributionTouch | null;
+  last_paid_touch: AttributionTouch | null;
+  fbp: string | null;
+  fbc: string | null;
+  user_agent: string | null;
+  device_category: string | null;
+  browser_name: string | null;
+  os_name: string | null;
+  customer_name: string | null;
+  customer_email: string | null;
+  customer_phone: string | null;
+  conversion_event_id: string | null;
+  ip_hash: string | null;
+  raw_json: Record<string, unknown>;
+};
+
+type WebsiteConversionRow = {
+  event_id: string;
+  session_id: string | null;
+  visitor_id: string | null;
+  brand: string;
+  event_name: string;
+  occurred_at: string;
+  page_url: string | null;
+  page_path: string | null;
+  referrer: string | null;
+  event_source_url: string | null;
+  source_type: string | null;
+  acuity_appointment_id: string | null;
+  appointment_type: string | null;
+  customer_name: string | null;
+  customer_first_name: string | null;
+  customer_last_name: string | null;
+  customer_email: string | null;
+  customer_phone: string | null;
+  customer_email_hash: string | null;
+  customer_phone_hash: string | null;
+  customer_first_name_hash: string | null;
+  customer_last_name_hash: string | null;
+  meta_event_name: string | null;
+  meta_event_id: string | null;
+  meta_capi_status: string | null;
+  meta_capi_test_mode: boolean | null;
+  fbp: string | null;
+  fbc: string | null;
+  user_agent: string | null;
+  device_category: string | null;
+  browser_name: string | null;
+  os_name: string | null;
+  ip_hash: string | null;
+  first_touch: AttributionTouch | null;
+  last_touch: AttributionTouch | null;
+  last_paid_touch: AttributionTouch | null;
+  conversion_touch: AttributionTouch | null;
+  tracking_completeness: Record<string, unknown>;
+  properties: Record<string, unknown>;
+  raw_json: Record<string, unknown>;
+};
+
+export type AttributionTouch = {
+  capturedAt: string;
+  eventId: string;
+  eventName: string;
+  fbc?: string;
+  fbp?: string;
+  pagePath?: string;
+  pageUrl?: string;
+  referrer?: string;
+  source: string;
+  sourceType: string;
+  userAgent?: string;
+  deviceCategory?: string;
+  browserName?: string;
+  osName?: string;
+  utm?: Record<string, string>;
 };
 
 type MetaInsightRow = {
@@ -172,18 +331,41 @@ type SalesAppointmentConversionViewRow = {
 
 type WebsiteSupabaseClient = {
   from: (table: "website_events") => {
+    insert: (row: Partial<WebsiteEventRow>) => WebsiteInsertChain;
+    update: (row: Partial<WebsiteEventRow>) => WebsiteUpdateChain;
     upsert: (
       row: WebsiteEventRow,
       options: { onConflict: string },
-    ) => { select: (columns: string) => { single: () => Promise<{ data: unknown; error: Error | null }> } };
+    ) => WebsiteUpsertChain;
     select: (columns: string) => WebsiteSelectChain<WebsiteEventRow[]>;
   };
 } & {
   from: (table: "website_sessions") => {
+    insert: (row: WebsiteSessionRow) => WebsiteInsertChain;
+    update: (row: Partial<WebsiteSessionRow>) => WebsiteUpdateChain;
     upsert: (
       row: WebsiteSessionRow,
       options: { onConflict: string },
-    ) => Promise<{ data: unknown; error: Error | null }>;
+    ) => WebsiteUpsertChain;
+    select: (columns: string) => WebsiteSelectChain<WebsiteSessionRow[]>;
+  };
+} & {
+  from: (table: "website_visitors") => {
+    insert: (row: WebsiteVisitorRow) => WebsiteInsertChain;
+    update: (row: Partial<WebsiteVisitorRow>) => WebsiteUpdateChain;
+    upsert: (
+      row: WebsiteVisitorRow,
+      options: { onConflict: string },
+    ) => WebsiteUpsertChain;
+    select: (columns: string) => WebsiteSelectChain<WebsiteVisitorRow[]>;
+  };
+} & {
+  from: (table: "website_conversions") => {
+    upsert: (
+      row: WebsiteConversionRow,
+      options: { onConflict: string },
+    ) => WebsiteUpsertChain;
+    select: (columns: string) => WebsiteSelectChain<WebsiteConversionRow[]>;
   };
 } & {
   from: (table: "meta_daily_insights") => {
@@ -196,11 +378,36 @@ type WebsiteSupabaseClient = {
 };
 
 type WebsiteSelectChain<T> = PromiseLike<{ data: T | null; error: Error | null }> & {
+  eq: (column: string, value: unknown) => WebsiteSelectChain<T>;
   gte: (column: string, value: unknown) => WebsiteSelectChain<T>;
   in: (column: string, values: unknown[]) => WebsiteSelectChain<T>;
   lte: (column: string, value: unknown) => WebsiteSelectChain<T>;
   order: (column: string, options: { ascending: boolean }) => WebsiteSelectChain<T>;
   limit: (count: number) => WebsiteSelectChain<T>;
+  maybeSingle: () => Promise<{
+    data: T extends Array<infer Row> ? Row | null : T | null;
+    error: Error | null;
+  }>;
+  single: () => Promise<{
+    data: T extends Array<infer Row> ? Row : T;
+    error: Error | null;
+  }>;
+};
+
+type WebsiteInsertChain = PromiseLike<{ data: unknown; error: Error | null }> & {
+  select: (columns: string) => {
+    single: () => Promise<{ data: unknown; error: Error | null }>;
+  };
+};
+
+type WebsiteUpsertChain = PromiseLike<{ data: unknown; error: Error | null }> & {
+  select: (columns: string) => {
+    single: () => Promise<{ data: unknown; error: Error | null }>;
+  };
+};
+
+type WebsiteUpdateChain = {
+  eq: (column: string, value: unknown) => Promise<{ data: unknown; error: Error | null }>;
 };
 
 export type WebsiteFunnelData = {
@@ -219,6 +426,9 @@ export type WebsiteFunnelData = {
     bookingStarts: number;
     schedules: number;
     metaAttributedBookings: number;
+    metaPaidSessions: number;
+    customerLinkedEvents: number;
+    completeTrackingConversions: number;
     discrepancy: number;
   };
   funnel: Array<{
@@ -247,9 +457,14 @@ export type WebsiteFunnelData = {
     metaAttributedBookings: number;
   }>;
   recentEvents: Array<{
+    adId: string | null;
+    adsetId: string | null;
+    campaignId: string | null;
+    customerName: string | null;
     eventName: string;
     eventType: string;
     source: string;
+    sourceType: string | null;
     occurredAt: string;
     pagePath: string | null;
     pageGroup: string | null;
@@ -265,6 +480,30 @@ export type WebsiteConversionReconciliationResult = {
   insertedConversions: number;
   skippedExistingConversions: number;
 };
+
+export type WebsiteAttributionResolution = {
+  bestTouch: AttributionTouch | null;
+  eventSourceUrl?: string;
+  fbc?: string;
+  fbp?: string;
+  firstTouch: AttributionTouch | null;
+  lastPaidTouch: AttributionTouch | null;
+  lastTouch: AttributionTouch | null;
+  ok: boolean;
+  sessionId?: string;
+  sourceType?: string;
+  utm?: Record<string, string>;
+  visitorId?: string;
+};
+
+const attributionResolveSchema = z.object({
+  eventSourceUrl: z.string().trim().url().optional(),
+  fbc: z.string().trim().max(300).optional(),
+  fbp: z.string().trim().max(300).optional(),
+  pageUrl: z.string().trim().url().optional(),
+  sessionId: z.string().trim().min(1).max(200).optional(),
+  visitorId: z.string().trim().min(1).max(200).optional(),
+});
 
 type ReconciledWebsiteConversionInput = WebsiteConversionInput & {
   eventId: string;
@@ -330,6 +569,47 @@ export async function recordServerWebsiteConversion(input: unknown, request: Req
   });
 }
 
+export async function resolveWebsiteAttribution(input: unknown): Promise<WebsiteAttributionResolution> {
+  const parsed = attributionResolveSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, bestTouch: null, firstTouch: null, lastPaidTouch: null, lastTouch: null };
+  }
+
+  const client = createWebsiteClient();
+  const environment = websiteAttributionEnvironment();
+  const visitor = parsed.data.visitorId
+    ? await findVisitor(client, parsed.data.visitorId)
+    : null;
+  const session = parsed.data.sessionId
+    ? await findSession(client, parsed.data.sessionId, environment)
+    : null;
+  const firstTouch = visitor?.first_touch || session?.first_touch || null;
+  const lastTouch = mostRecentTouch(visitor?.last_touch, session?.last_touch);
+  const lastPaidTouch = mostRecentTouch(visitor?.last_paid_touch, session?.last_paid_touch);
+  const bestTouch = lastPaidTouch || lastTouch || firstTouch;
+  const fbc = parsed.data.fbc || bestTouch?.fbc || visitor?.fbc || session?.fbc || undefined;
+  const fbp = parsed.data.fbp || bestTouch?.fbp || visitor?.fbp || session?.fbp || undefined;
+  const eventSourceUrl = attributionEventSourceUrl(
+    parsed.data.eventSourceUrl || parsed.data.pageUrl,
+    bestTouch,
+  );
+
+  return {
+    bestTouch,
+    eventSourceUrl,
+    fbc,
+    fbp,
+    firstTouch,
+    lastPaidTouch,
+    lastTouch,
+    ok: true,
+    sessionId: parsed.data.sessionId,
+    sourceType: bestTouch?.sourceType,
+    utm: bestTouch?.utm,
+    visitorId: parsed.data.visitorId,
+  };
+}
+
 export async function fetchWebsiteFunnelData(input: {
   startDate?: string | null;
   endDate?: string | null;
@@ -357,8 +637,15 @@ export async function fetchWebsiteFunnelData(input: {
           "page_path",
           "page_title",
           "page_group",
+          "source_type",
+          "utm_campaign_id",
+          "utm_adset_id",
+          "utm_ad_id",
           "meta_event_id",
           "acuity_appointment_id",
+          "customer_name",
+          "customer_email",
+          "customer_phone",
           "properties",
         ].join(","),
       )
@@ -387,6 +674,17 @@ export async function fetchWebsiteFunnelData(input: {
       .filter(Boolean),
   );
   const schedules = events.filter(isScheduleEvent);
+  const metaPaidSessions = new Set(
+    events
+      .filter((event) => event.source_type === "paid_meta")
+      .map((event) => event.session_id)
+      .filter(Boolean),
+  );
+  const customerLinkedEvents = events.filter((event) => Boolean(event.customer_email || event.customer_phone)).length;
+  const completeTrackingConversions = schedules.filter((event) => {
+    const completeness = objectRecord(event.properties?.trackingCompleteness);
+    return completeness.complete === true;
+  }).length;
   const metaAttributedBookings = metaRows.reduce((sum, row) => {
     const actionBookings = actionCount(actionArray(row.actions), BOOKING_ACTION_TYPES);
     return sum + Math.max(numberValue(row.bookings), actionBookings);
@@ -414,15 +712,23 @@ export async function fetchWebsiteFunnelData(input: {
       bookingStarts: countEvents(events, "BookingVisitSelected"),
       schedules: schedules.length,
       metaAttributedBookings,
+      metaPaidSessions: metaPaidSessions.size,
+      customerLinkedEvents,
+      completeTrackingConversions,
       discrepancy: schedules.length - metaAttributedBookings,
     },
     funnel: buildFunnel(events, schedules.length),
     pages: buildPages(events),
     trend: buildTrend(events, metaRows, range.start, range.end),
     recentEvents: events.slice(0, 50).map((event) => ({
+      adId: event.utm_ad_id,
+      adsetId: event.utm_adset_id,
+      campaignId: event.utm_campaign_id,
+      customerName: event.customer_name,
       eventName: event.event_name,
       eventType: event.event_type,
       source: event.source,
+      sourceType: event.source_type,
       occurredAt: event.occurred_at,
       pagePath: event.page_path,
       pageGroup: event.page_group,
@@ -588,6 +894,10 @@ export function appointmentEventToWebsiteConversionInput(
   const rawPayload = objectRecord(row.raw_payload);
   const appointment = objectRecord(rawPayload.appointment);
   const appointmentType = trimmedString(appointment.type) || trimmedString(row.visit_type);
+  const firstName = trimmedString(appointment.firstName);
+  const lastName = trimmedString(appointment.lastName);
+  const email = trimmedString(appointment.email);
+  const phone = trimmedString(appointment.phone);
   const appointmentTypeId = primitiveValue(appointment.appointmentTypeID);
   const calendarId = primitiveValue(appointment.calendarID);
   const duration = primitiveValue(appointment.duration);
@@ -627,6 +937,13 @@ export function appointmentEventToWebsiteConversionInput(
     metaEventId: `acuity-${acuityAppointmentId}`,
     acuityAppointmentId,
     appointmentType: appointmentType ? appointmentType.slice(0, 180) : undefined,
+    customer: {
+      email: email || undefined,
+      firstName: firstName || undefined,
+      lastName: lastName || undefined,
+      name: [firstName, lastName].filter(Boolean).join(" ") || undefined,
+      phone: phone || undefined,
+    },
   };
 }
 
@@ -670,6 +987,7 @@ async function recordWebsiteEvent(
   input: z.infer<typeof websiteEventSchema> & Partial<z.infer<typeof conversionEventSchema>>,
   options: { request: Request; source: string },
 ) {
+  const environment = websiteAttributionEnvironment();
   const occurredAt = input.occurredAt || new Date().toISOString();
   const pageUrl = input.pageUrl || null;
   const pagePath = input.pagePath || pathFromUrl(pageUrl);
@@ -680,8 +998,13 @@ async function recordWebsiteEvent(
   const ipHash = hashIpAddress(requestIpAddress(options.request));
   const userAgent = input.userAgent || options.request.headers.get("user-agent") || null;
   const brand = input.brand || "HP";
+  const device = parseDevice(userAgent);
+  const utm = normalizeUtm(input.utm);
+  const sourceType = classifySourceType({ fbc: input.fbc, referrer: input.referrer, utm });
+  const customer = normalizeCustomer(input.customer);
   const row: WebsiteEventRow = {
     event_id: eventId,
+    environment,
     session_id: input.sessionId || null,
     visitor_id: input.visitorId || null,
     brand,
@@ -694,14 +1017,34 @@ async function recordWebsiteEvent(
     page_title: input.pageTitle || null,
     page_group: pageGroup,
     referrer: input.referrer || null,
-    utm_source: input.utm?.source || null,
-    utm_medium: input.utm?.medium || null,
-    utm_campaign: input.utm?.campaign || null,
-    utm_content: input.utm?.content || null,
-    utm_term: input.utm?.term || null,
+    utm_source: utm.source || null,
+    utm_medium: utm.medium || null,
+    utm_campaign: utm.campaign || null,
+    utm_content: utm.content || null,
+    utm_term: utm.term || null,
+    utm_id: utm.id || null,
+    utm_campaign_id: utm.campaignId || null,
+    utm_creative: utm.creative || null,
+    utm_ad: utm.ad || null,
+    utm_ad_id: utm.adId || null,
+    utm_adset: utm.adset || null,
+    utm_adset_id: utm.adsetId || null,
+    utm_placement: utm.placement || null,
+    fbclid: utm.fbclid || null,
+    gclid: utm.gclid || null,
+    msclkid: utm.msclkid || null,
+    ttclid: utm.ttclid || null,
     fbp: input.fbp || null,
     fbc: input.fbc || null,
     user_agent: userAgent,
+    device_category: device.deviceCategory,
+    browser_name: device.browserName,
+    os_name: device.osName,
+    source_type: sourceType,
+    customer_name: customer.name || null,
+    customer_email: customer.email || null,
+    customer_phone: customer.phone || null,
+    conversion_event_id: isConversionEventName(eventName, input.metaEventName) ? eventId : null,
     ip_hash: ipHash,
     meta_event_name: input.metaEventName || (eventName === "Schedule" ? "Schedule" : null),
     meta_event_id: input.metaEventId || null,
@@ -715,31 +1058,31 @@ async function recordWebsiteEvent(
   };
 
   const client = createWebsiteClient();
+  const touch = attributionTouch(row);
+  const visitor = row.visitor_id ? await upsertWebsiteVisitor(client, row, touch) : null;
   if (row.session_id) {
-    const sessionRow: WebsiteSessionRow = {
-      session_id: row.session_id,
-      visitor_id: row.visitor_id,
-      brand,
-      first_seen_at: occurredAt,
-      last_seen_at: occurredAt,
-      first_page_url: pageUrl,
-      last_page_url: pageUrl,
-      first_referrer: row.referrer,
-      utm_source: row.utm_source,
-      utm_medium: row.utm_medium,
-      utm_campaign: row.utm_campaign,
-      utm_content: row.utm_content,
-      utm_term: row.utm_term,
-      fbp: row.fbp,
-      fbc: row.fbc,
-      user_agent: row.user_agent,
-      ip_hash: row.ip_hash,
-      raw_json: { source: options.source },
+    await upsertWebsiteSession(client, row, touch);
+  }
+  const conversionContext = isConversionEventName(eventName, row.meta_event_name)
+    ? {
+        customer,
+        firstTouch: visitor?.first_touch || null,
+        lastTouch: visitor?.last_touch || touch,
+        lastPaidTouch: visitor?.last_paid_touch || (isPaidTouch(touch) ? touch : null),
+        touch,
+        trackingCompleteness: trackingCompletenessReport({
+          customer,
+          firstTouch: visitor?.first_touch || null,
+          lastPaidTouch: visitor?.last_paid_touch || (isPaidTouch(touch) ? touch : null),
+          row,
+        }),
+      }
+    : null;
+  if (conversionContext) {
+    row.properties = {
+      ...row.properties,
+      trackingCompleteness: conversionContext.trackingCompleteness,
     };
-    const { error } = await client.from("website_sessions").upsert(withAdsAnalystEnvironment(sessionRow), {
-      onConflict: adsAnalystOnConflict("session_id"),
-    });
-    if (error) throw error;
   }
 
   const { data, error } = await client
@@ -749,6 +1092,21 @@ async function recordWebsiteEvent(
     .single();
   if (error) throw error;
 
+  if (conversionContext) {
+    await upsertWebsiteConversion(client, row, input, {
+      customer: conversionContext.customer,
+      firstTouch: conversionContext.firstTouch,
+      lastPaidTouch: conversionContext.lastPaidTouch,
+      lastTouch: conversionContext.lastTouch,
+      touch: conversionContext.touch,
+      trackingCompleteness: conversionContext.trackingCompleteness,
+    });
+
+    if (customer.name || customer.email || customer.phone) {
+      await backfillLinkedCustomer(client, row, customer);
+    }
+  }
+
   return {
     eventId,
     id: data,
@@ -756,8 +1114,506 @@ async function recordWebsiteEvent(
   };
 }
 
+function websiteAttributionEnvironment() {
+  return process.env.WEBSITE_ATTRIBUTION_ENVIRONMENT?.trim() || getAdsAnalystEnvironment();
+}
+
 function createWebsiteClient(role: "web" | "worker" | "ingest" = "web") {
   return createAdsAnalystClient(role) as unknown as WebsiteSupabaseClient;
+}
+
+async function findVisitor(client: WebsiteSupabaseClient, visitorId: string) {
+  const { data, error } = await client
+    .from("website_visitors")
+    .select("visitor_id,brand,first_seen_at,last_seen_at,first_page_url,last_page_url,first_referrer,last_referrer,first_touch,last_touch,last_paid_touch,fbp,fbc,user_agent,device_category,browser_name,os_name,customer_name,customer_email,customer_phone,conversion_event_id,ip_hash,raw_json")
+    .eq("visitor_id", visitorId)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+async function findSession(client: WebsiteSupabaseClient, sessionId: string, environment: string) {
+  const { data, error } = await client
+    .from("website_sessions")
+    .select("environment,session_id,visitor_id,brand,first_seen_at,last_seen_at,first_page_url,last_page_url,first_referrer,last_referrer,utm_source,utm_medium,utm_campaign,utm_content,utm_term,utm_id,utm_campaign_id,utm_creative,utm_ad,utm_ad_id,utm_adset,utm_adset_id,utm_placement,fbclid,gclid,msclkid,ttclid,fbp,fbc,user_agent,device_category,browser_name,os_name,first_touch,last_touch,last_paid_touch,customer_name,customer_email,customer_phone,conversion_event_id,ip_hash,raw_json")
+    .eq("environment", environment)
+    .eq("session_id", sessionId)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+async function upsertWebsiteVisitor(
+  client: WebsiteSupabaseClient,
+  row: WebsiteEventRow,
+  touch: AttributionTouch,
+) {
+  if (!row.visitor_id) return null;
+
+  const existing = await findVisitor(client, row.visitor_id);
+  const next: WebsiteVisitorRow = {
+    visitor_id: row.visitor_id,
+    brand: row.brand,
+    first_seen_at: existing?.first_seen_at || row.occurred_at,
+    last_seen_at: row.occurred_at,
+    first_page_url: existing?.first_page_url || row.page_url,
+    last_page_url: row.page_url,
+    first_referrer: existing?.first_referrer || row.referrer,
+    last_referrer: row.referrer,
+    first_touch: existing?.first_touch || touch,
+    last_touch: touch,
+    last_paid_touch: selectLastPaidTouch(existing?.last_paid_touch || null, touch),
+    fbp: row.fbp || existing?.fbp || null,
+    fbc: row.fbc || existing?.fbc || null,
+    user_agent: row.user_agent || existing?.user_agent || null,
+    device_category: row.device_category || existing?.device_category || null,
+    browser_name: row.browser_name || existing?.browser_name || null,
+    os_name: row.os_name || existing?.os_name || null,
+    customer_name: row.customer_name || existing?.customer_name || null,
+    customer_email: row.customer_email || existing?.customer_email || null,
+    customer_phone: row.customer_phone || existing?.customer_phone || null,
+    conversion_event_id: row.conversion_event_id || existing?.conversion_event_id || null,
+    ip_hash: row.ip_hash || existing?.ip_hash || null,
+    raw_json: {
+      ...(existing?.raw_json || {}),
+      latestEventId: row.event_id,
+    },
+  };
+
+  const { error } = await client.from("website_visitors").upsert(next, {
+    onConflict: "visitor_id",
+  });
+  if (error) throw error;
+  return next;
+}
+
+async function upsertWebsiteSession(
+  client: WebsiteSupabaseClient,
+  row: WebsiteEventRow,
+  touch: AttributionTouch,
+) {
+  if (!row.session_id) return null;
+
+  const existing = await findSession(client, row.session_id, row.environment);
+  const next: WebsiteSessionRow = {
+    environment: row.environment,
+    session_id: row.session_id,
+    visitor_id: row.visitor_id || existing?.visitor_id || null,
+    brand: row.brand,
+    first_seen_at: existing?.first_seen_at || row.occurred_at,
+    last_seen_at: row.occurred_at,
+    first_page_url: existing?.first_page_url || row.page_url,
+    last_page_url: row.page_url,
+    first_referrer: existing?.first_referrer || row.referrer,
+    last_referrer: row.referrer,
+    utm_source: row.utm_source || existing?.utm_source || null,
+    utm_medium: row.utm_medium || existing?.utm_medium || null,
+    utm_campaign: row.utm_campaign || existing?.utm_campaign || null,
+    utm_content: row.utm_content || existing?.utm_content || null,
+    utm_term: row.utm_term || existing?.utm_term || null,
+    utm_id: row.utm_id || existing?.utm_id || null,
+    utm_campaign_id: row.utm_campaign_id || existing?.utm_campaign_id || null,
+    utm_creative: row.utm_creative || existing?.utm_creative || null,
+    utm_ad: row.utm_ad || existing?.utm_ad || null,
+    utm_ad_id: row.utm_ad_id || existing?.utm_ad_id || null,
+    utm_adset: row.utm_adset || existing?.utm_adset || null,
+    utm_adset_id: row.utm_adset_id || existing?.utm_adset_id || null,
+    utm_placement: row.utm_placement || existing?.utm_placement || null,
+    fbclid: row.fbclid || existing?.fbclid || null,
+    gclid: row.gclid || existing?.gclid || null,
+    msclkid: row.msclkid || existing?.msclkid || null,
+    ttclid: row.ttclid || existing?.ttclid || null,
+    fbp: row.fbp || existing?.fbp || null,
+    fbc: row.fbc || existing?.fbc || null,
+    user_agent: row.user_agent || existing?.user_agent || null,
+    device_category: row.device_category || existing?.device_category || null,
+    browser_name: row.browser_name || existing?.browser_name || null,
+    os_name: row.os_name || existing?.os_name || null,
+    first_touch: existing?.first_touch || touch,
+    last_touch: touch,
+    last_paid_touch: selectLastPaidTouch(existing?.last_paid_touch || null, touch),
+    customer_name: row.customer_name || existing?.customer_name || null,
+    customer_email: row.customer_email || existing?.customer_email || null,
+    customer_phone: row.customer_phone || existing?.customer_phone || null,
+    conversion_event_id: row.conversion_event_id || existing?.conversion_event_id || null,
+    ip_hash: row.ip_hash || existing?.ip_hash || null,
+    raw_json: {
+      ...(existing?.raw_json || {}),
+      latestEventId: row.event_id,
+    },
+  };
+
+  const { error } = await client.from("website_sessions").upsert(withAdsAnalystEnvironment(next), {
+    onConflict: adsAnalystOnConflict("session_id"),
+  });
+  if (error) throw error;
+  return next;
+}
+
+async function upsertWebsiteConversion(
+  client: WebsiteSupabaseClient,
+  row: WebsiteEventRow,
+  input: Partial<z.infer<typeof conversionEventSchema>>,
+  context: {
+    customer: NormalizedCustomer;
+    firstTouch: AttributionTouch | null;
+    lastPaidTouch: AttributionTouch | null;
+    lastTouch: AttributionTouch | null;
+    touch: AttributionTouch;
+    trackingCompleteness: Record<string, unknown>;
+  },
+) {
+  const conversion: WebsiteConversionRow = {
+    event_id: row.event_id,
+    session_id: row.session_id,
+    visitor_id: row.visitor_id,
+    brand: row.brand,
+    event_name: row.event_name,
+    occurred_at: row.occurred_at,
+    page_url: row.page_url,
+    page_path: row.page_path,
+    referrer: row.referrer,
+    event_source_url: row.page_url,
+    source_type: row.source_type,
+    acuity_appointment_id: row.acuity_appointment_id,
+    appointment_type: row.appointment_type,
+    customer_name: context.customer.name || null,
+    customer_first_name: context.customer.firstName || null,
+    customer_last_name: context.customer.lastName || null,
+    customer_email: context.customer.email || null,
+    customer_phone: context.customer.phone || null,
+    customer_email_hash: context.customer.email ? sha256(normalizeEmail(context.customer.email)) : null,
+    customer_phone_hash: context.customer.phone ? sha256(normalizePhone(context.customer.phone)) : null,
+    customer_first_name_hash: context.customer.firstName ? sha256(normalizeName(context.customer.firstName)) : null,
+    customer_last_name_hash: context.customer.lastName ? sha256(normalizeName(context.customer.lastName)) : null,
+    meta_event_name: row.meta_event_name,
+    meta_event_id: row.meta_event_id,
+    meta_capi_status: input.metaCapiStatus || null,
+    meta_capi_test_mode: input.metaCapiTestMode ?? null,
+    fbp: row.fbp,
+    fbc: row.fbc,
+    user_agent: row.user_agent,
+    device_category: row.device_category,
+    browser_name: row.browser_name,
+    os_name: row.os_name,
+    ip_hash: row.ip_hash,
+    first_touch: context.firstTouch,
+    last_touch: context.lastTouch,
+    last_paid_touch: context.lastPaidTouch,
+    conversion_touch: context.touch,
+    tracking_completeness: context.trackingCompleteness,
+    properties: {
+      ...(input.properties || {}),
+      trackingCompleteness: context.trackingCompleteness,
+    },
+    raw_json: {
+      ...input,
+      receivedFrom: row.source,
+    },
+  };
+
+  const { error } = await client.from("website_conversions").upsert(conversion, {
+    onConflict: "event_id",
+  });
+  if (error) throw error;
+}
+
+async function backfillLinkedCustomer(
+  client: WebsiteSupabaseClient,
+  row: WebsiteEventRow,
+  customer: NormalizedCustomer,
+) {
+  const patch = {
+    customer_name: customer.name || null,
+    customer_email: customer.email || null,
+    customer_phone: customer.phone || null,
+    conversion_event_id: row.event_id,
+  };
+
+  if (row.visitor_id) {
+    const eventUpdate = await client.from("website_events").update(patch).eq("visitor_id", row.visitor_id);
+    if (eventUpdate.error) throw eventUpdate.error;
+    const visitorUpdate = await client.from("website_visitors").update(patch).eq("visitor_id", row.visitor_id);
+    if (visitorUpdate.error) throw visitorUpdate.error;
+  }
+
+  if (row.session_id) {
+    const eventUpdate = await client.from("website_events").update(patch).eq("session_id", row.session_id);
+    if (eventUpdate.error) throw eventUpdate.error;
+    const sessionUpdate = await client.from("website_sessions").update(patch).eq("session_id", row.session_id);
+    if (sessionUpdate.error) throw sessionUpdate.error;
+  }
+}
+
+type NormalizedCustomer = {
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  name?: string;
+  phone?: string;
+};
+
+function normalizeCustomer(value: unknown): NormalizedCustomer {
+  const record = objectRecord(value);
+  const firstName = trimmedString(record.firstName).slice(0, 80) || undefined;
+  const lastName = trimmedString(record.lastName).slice(0, 80) || undefined;
+  const explicitName = trimmedString(record.name).slice(0, 180) || undefined;
+  const name = explicitName || [firstName, lastName].filter(Boolean).join(" ") || undefined;
+  const email = normalizeEmail(trimmedString(record.email)) || undefined;
+  const phone = trimmedString(record.phone).slice(0, 40) || undefined;
+  return { email, firstName, lastName, name, phone };
+}
+
+function normalizeEmail(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function normalizePhone(value: string) {
+  return value.replace(/[^\d]/g, "");
+}
+
+function normalizeName(value: string) {
+  return value.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+function sha256(value: string) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function normalizeUtm(input: z.infer<typeof websiteEventSchema>["utm"]): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(input || {})
+      .map(([key, value]) => [key, typeof value === "string" ? value.trim() : ""])
+      .filter(([, value]) => value),
+  );
+}
+
+function attributionTouch(row: WebsiteEventRow): AttributionTouch {
+  const utm = cleanRecord({
+    ad: row.utm_ad || undefined,
+    adId: row.utm_ad_id || undefined,
+    adset: row.utm_adset || undefined,
+    adsetId: row.utm_adset_id || undefined,
+    campaign: row.utm_campaign || undefined,
+    campaignId: row.utm_campaign_id || undefined,
+    content: row.utm_content || undefined,
+    creative: row.utm_creative || undefined,
+    fbclid: row.fbclid || undefined,
+    gclid: row.gclid || undefined,
+    id: row.utm_id || undefined,
+    medium: row.utm_medium || undefined,
+    msclkid: row.msclkid || undefined,
+    placement: row.utm_placement || undefined,
+    source: row.utm_source || undefined,
+    term: row.utm_term || undefined,
+    ttclid: row.ttclid || undefined,
+  }) as Record<string, string>;
+
+  return {
+    capturedAt: row.occurred_at,
+    eventId: row.event_id,
+    eventName: row.event_name,
+    fbc: row.fbc || undefined,
+    fbp: row.fbp || undefined,
+    pagePath: row.page_path || undefined,
+    pageUrl: row.page_url || undefined,
+    referrer: row.referrer || undefined,
+    source: row.source,
+    sourceType: row.source_type || "direct",
+    userAgent: row.user_agent || undefined,
+    deviceCategory: row.device_category || undefined,
+    browserName: row.browser_name || undefined,
+    osName: row.os_name || undefined,
+    utm: Object.keys(utm).length ? utm : undefined,
+  };
+}
+
+export function isPaidTouch(touch: AttributionTouch | null | undefined) {
+  if (!touch) return false;
+  if (touch.fbc || touch.utm?.fbclid || touch.utm?.adId || touch.utm?.adsetId || touch.utm?.campaignId) {
+    return true;
+  }
+  return touch.sourceType.startsWith("paid_");
+}
+
+export function selectLastPaidTouch(
+  existing: AttributionTouch | null | undefined,
+  touch: AttributionTouch,
+) {
+  if (!isPaidTouch(touch)) return existing || null;
+  if (!existing) return touch;
+  if (hasExplicitPaidAttribution(touch)) return touch;
+  if (!hasExplicitPaidAttribution(existing)) return touch;
+  return existing;
+}
+
+function hasExplicitPaidAttribution(touch: AttributionTouch | null | undefined) {
+  if (!touch?.utm) return false;
+  const medium = (touch.utm.medium || "").toLowerCase();
+  return Boolean(
+    touch.utm.fbclid ||
+      touch.utm.adId ||
+      touch.utm.adsetId ||
+      touch.utm.campaignId ||
+      (medium.includes("paid") && (touch.utm.source || touch.utm.campaign || touch.utm.content || touch.utm.id)),
+  );
+}
+
+function classifySourceType(input: {
+  fbc?: string;
+  referrer?: string;
+  utm: Record<string, string>;
+}) {
+  const source = (input.utm.source || "").toLowerCase();
+  const medium = (input.utm.medium || "").toLowerCase();
+  const referrer = (input.referrer || "").toLowerCase();
+  const hasMeta =
+    Boolean(input.fbc || input.utm.fbclid || input.utm.adId || input.utm.adsetId || input.utm.campaignId) ||
+    source.includes("facebook") ||
+    source.includes("instagram") ||
+    source.includes("meta") ||
+    referrer.includes("facebook.com") ||
+    referrer.includes("instagram.com");
+
+  if (hasMeta && isPaidMedium(medium)) return "paid_meta";
+  if (hasMeta && (input.fbc || input.utm.fbclid || input.utm.adId)) return "paid_meta";
+  if (input.utm.gclid || input.utm.msclkid) return "paid_search";
+  if (isPaidMedium(medium)) return source.includes("social") ? "paid_social" : "paid_other";
+  if (source || referrer) return "referral";
+  return "direct";
+}
+
+function isPaidMedium(value: string) {
+  return ["paid", "paid_social", "cpc", "ppc", "paid-search", "paidsearch", "social_paid"].some((needle) =>
+    value.includes(needle),
+  );
+}
+
+function isConversionEventName(eventName: string, metaEventName?: string | null) {
+  return eventName === "Schedule" || metaEventName === "Schedule";
+}
+
+function trackingCompletenessReport(input: {
+  customer: NormalizedCustomer;
+  firstTouch: AttributionTouch | null;
+  lastPaidTouch: AttributionTouch | null;
+  row: WebsiteEventRow;
+}) {
+  const checks = {
+    adId: Boolean(input.lastPaidTouch?.utm?.adId || input.row.utm_ad_id),
+    adsetId: Boolean(input.lastPaidTouch?.utm?.adsetId || input.row.utm_adset_id),
+    campaignId: Boolean(input.lastPaidTouch?.utm?.campaignId || input.row.utm_campaign_id),
+    customerEmail: Boolean(input.customer.email),
+    customerName: Boolean(input.customer.name),
+    customerPhone: Boolean(input.customer.phone),
+    fbc: Boolean(input.row.fbc || input.lastPaidTouch?.fbc),
+    fbp: Boolean(input.row.fbp || input.lastPaidTouch?.fbp),
+    firstTouch: Boolean(input.firstTouch),
+    lastPaidTouch: Boolean(input.lastPaidTouch),
+    userAgent: Boolean(input.row.user_agent),
+  };
+  const missing = Object.entries(checks)
+    .filter(([, present]) => !present)
+    .map(([key]) => key);
+  return {
+    checks,
+    complete: missing.length === 0,
+    missing,
+    score: Object.keys(checks).length - missing.length,
+    total: Object.keys(checks).length,
+  };
+}
+
+function mostRecentTouch(
+  left: AttributionTouch | null | undefined,
+  right: AttributionTouch | null | undefined,
+) {
+  if (!left) return right || null;
+  if (!right) return left;
+  return Date.parse(right.capturedAt) > Date.parse(left.capturedAt) ? right : left;
+}
+
+function attributionEventSourceUrl(value: string | undefined, touch: AttributionTouch | null) {
+  if (!value) return undefined;
+  if (!touch?.utm) return value;
+
+  try {
+    const url = new URL(value);
+    for (const [key, touchValue] of Object.entries(touch.utm)) {
+      const paramName = utmParamName(key);
+      if (paramName && touchValue && !url.searchParams.has(paramName)) {
+        url.searchParams.set(paramName, touchValue);
+      }
+    }
+    return url.toString();
+  } catch {
+    return value;
+  }
+}
+
+function utmParamName(key: string) {
+  const names: Record<string, string> = {
+    ad: "utm_ad",
+    adId: "utm_ad_id",
+    adset: "utm_adset",
+    adsetId: "utm_adset_id",
+    campaign: "utm_campaign",
+    campaignId: "utm_campaign_id",
+    content: "utm_content",
+    creative: "utm_creative",
+    fbclid: "fbclid",
+    gclid: "gclid",
+    id: "utm_id",
+    medium: "utm_medium",
+    msclkid: "msclkid",
+    placement: "utm_placement",
+    source: "utm_source",
+    term: "utm_term",
+    ttclid: "ttclid",
+  };
+  return names[key];
+}
+
+function parseDevice(userAgent: string | null) {
+  const value = userAgent || "";
+  const lower = value.toLowerCase();
+  const deviceCategory = /ipad|tablet/.test(lower)
+    ? "tablet"
+    : /mobi|iphone|android/.test(lower)
+      ? "mobile"
+      : value
+        ? "desktop"
+        : null;
+  const browserName = lower.includes("edg/")
+    ? "Edge"
+    : lower.includes("chrome/")
+      ? "Chrome"
+      : lower.includes("safari/")
+        ? "Safari"
+        : lower.includes("firefox/")
+          ? "Firefox"
+          : value
+            ? "Other"
+            : null;
+  const osName = lower.includes("iphone") || lower.includes("ipad")
+    ? "iOS"
+    : lower.includes("android")
+      ? "Android"
+      : lower.includes("mac os")
+        ? "macOS"
+        : lower.includes("windows")
+          ? "Windows"
+          : value
+            ? "Other"
+            : null;
+
+  return { browserName, deviceCategory, osName };
+}
+
+function cleanRecord(record: Record<string, unknown>) {
+  return Object.fromEntries(
+    Object.entries(record).filter(([, value]) => value !== undefined && value !== ""),
+  );
 }
 
 function allowedOrigins() {
