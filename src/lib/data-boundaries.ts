@@ -82,8 +82,10 @@ export const ANALYST_OWNED_TABLES = [
   "reply_playbook_entries",
   "social_thread_summaries",
   "sync_runs",
+  "website_conversions",
   "website_events",
   "website_sessions",
+  "website_visitors",
 ] as const;
 
 export const SHARED_REFERENCE_TABLES = [] as const;

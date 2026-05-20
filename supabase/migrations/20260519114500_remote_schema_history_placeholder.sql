@@ -1,7 +1,0 @@
--- Remote migration history placeholder.
---
--- This version is already present in the linked Supabase migration history.
--- The local file exists only so Supabase CLI can compare local and remote
--- migration versions before applying newer forward-only migrations.
---
--- Intentionally no schema or data changes.
