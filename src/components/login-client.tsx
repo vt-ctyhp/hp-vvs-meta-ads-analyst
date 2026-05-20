@@ -37,12 +37,16 @@ export function LoginClient() {
       });
       const payload = (await response.json().catch(() => ({}))) as {
         destination?: string;
-        error?: string;
+        error?: unknown;
       };
 
       if (!response.ok || !payload.destination) {
         await createBrowserClient().auth.signOut();
-        throw new Error(payload.error || "Your account does not have access to this app.");
+        const errorMessage =
+          typeof payload.error === "string" && payload.error.trim()
+            ? payload.error
+            : "Your account does not have access to this app.";
+        throw new Error(errorMessage);
       }
 
       router.replace(payload.destination);

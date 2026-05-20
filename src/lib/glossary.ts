@@ -170,11 +170,20 @@ export function translateError(input: unknown, fallback = "Something went wrong"
     if (!input) return "";
     if (typeof input === "string") return input;
     if (input instanceof Error) return input.message;
-    if (typeof input === "object" && input !== null && "message" in input) {
-      const value = (input as { message: unknown }).message;
-      return typeof value === "string" ? value : "";
+    if (typeof input === "object" && input !== null) {
+      // Prefer a known message-like field rather than coercing the whole
+      // object via String(...), which yields the useless "[object Object]".
+      const obj = input as Record<string, unknown>;
+      for (const key of ["message", "error_description", "msg", "description"]) {
+        const value = obj[key];
+        if (typeof value === "string" && value.trim()) return value;
+      }
+      return "";
     }
-    return String(input);
+    const stringified = String(input);
+    // String coercion of a plain object is the most common source of the
+    // user-visible "[object Object]" bug. Treat it as no message.
+    return stringified === "[object Object]" ? "" : stringified;
   })().trim();
 
   if (!raw) return fallback;
