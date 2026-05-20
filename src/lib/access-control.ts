@@ -13,7 +13,9 @@ export type AppPermission =
   | "view_users"
   | "manage_users"
   | "view_review"
-  | "view_outcomes";
+  | "view_outcomes"
+  | "send_inbox_reply"
+  | "manage_inbox_state";
 
 export type PermissionGroup = {
   key: "admin" | "marketing" | "sales";
@@ -68,6 +70,14 @@ export const APP_PERMISSIONS: Record<AppPermission, { label: string; description
     label: "Outcome Analysis",
     description: "Validated outcomes by creative and umbrella once review data exists.",
   },
+  send_inbox_reply: {
+    label: "Send Reply",
+    description: "Send a human-authored reply to a Facebook/Instagram conversation after explicit approval.",
+  },
+  manage_inbox_state: {
+    label: "Manage Inbox State",
+    description: "Mark conversations read, snooze them, or assign them to a teammate.",
+  },
 };
 
 export const PERMISSION_GROUPS: PermissionGroup[] = [
@@ -88,6 +98,8 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       "manage_users",
       "view_review",
       "view_outcomes",
+      "send_inbox_reply",
+      "manage_inbox_state",
     ],
   },
   {
@@ -101,6 +113,8 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       "view_ai_analysis",
       "view_inbox",
       "view_backfill",
+      "send_inbox_reply",
+      "manage_inbox_state",
     ],
   },
   {
@@ -108,7 +122,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     label: "Sales",
     description: "Inbox-only access for appointment and customer follow-up.",
     roles: ["sales", "client_advisor", "joc"],
-    permissions: ["view_inbox"],
+    permissions: ["view_inbox", "send_inbox_reply", "manage_inbox_state"],
   },
 ];
 
@@ -142,6 +156,8 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   diamond_order_assistant: "Diamond Order Assistant",
   wax_request_admin: "Wax Request Admin",
   read_only: "Read Only",
+  design_3d: "3D Design",
+  manufacturing: "Manufacturing",
 };
 
 export function permissionsForRoles(roles: UserRole[]): AppPermission[] {
@@ -187,7 +203,8 @@ export function permissionsForRoles(roles: UserRole[]): AppPermission[] {
 
     if (role === "sales_lead") {
       // Sales lead validates marketing claims against outcome data; they get the
-      // outcome surface plus full read across analyst depth.
+      // outcome surface plus full read across analyst depth and the inbox
+      // actions that frontline sales has (send reply + manage state).
       [
         "view_dashboard",
         "view_creative_analysis",
@@ -195,6 +212,8 @@ export function permissionsForRoles(roles: UserRole[]): AppPermission[] {
         "view_inbox",
         "view_review",
         "view_outcomes",
+        "send_inbox_reply",
+        "manage_inbox_state",
       ].forEach((permission) => permissions.add(permission as AppPermission));
       continue;
     }

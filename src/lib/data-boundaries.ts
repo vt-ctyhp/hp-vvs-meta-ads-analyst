@@ -55,12 +55,14 @@ export const SALES_ERP_CORE_TABLES = [
 ] as const;
 
 export const ANALYST_OWNED_TABLES = [
+  "ad_notes",
   "ai_analysis_dashboards",
   "ai_analysis_runs",
   "ai_chat_messages",
   "ai_chat_sessions",
   "ai_reply_suggestions",
   "ai_reports",
+  "ai_signals",
   "brand_voice_guidelines",
   "brands",
   "campaign_umbrella_overrides",
@@ -90,7 +92,42 @@ export const ADS_ANALYST_ENVIRONMENTS = ["production", "staging"] as const;
 
 export const DEFAULT_ADS_ANALYST_ENVIRONMENT = "production";
 
-export const ANALYST_ENVIRONMENT_SCOPED_TABLES = ANALYST_OWNED_TABLES;
+/**
+ * Tables that the Phase 3 environment-scope migration added an `environment`
+ * column to. New analyst-owned tables created after Phase 3 (e.g. ai_signals,
+ * ad_notes) declare their `environment` column in their own migration and are
+ * deliberately NOT included here, so the static Phase 3 assertion remains
+ * stable across future analyst-table additions.
+ */
+export const ANALYST_ENVIRONMENT_SCOPED_TABLES = [
+  "ai_analysis_dashboards",
+  "ai_analysis_runs",
+  "ai_chat_messages",
+  "ai_chat_sessions",
+  "ai_reply_suggestions",
+  "ai_reports",
+  "brand_voice_guidelines",
+  "brands",
+  "campaign_umbrella_overrides",
+  "meta_ad_accounts",
+  "meta_ad_sets",
+  "meta_ads",
+  "meta_ads_backfill_chunks",
+  "meta_ads_backfill_jobs",
+  "meta_campaigns",
+  "meta_creatives",
+  "meta_daily_insights",
+  "meta_social_comments",
+  "meta_social_messages",
+  "meta_social_pages",
+  "meta_social_sync_runs",
+  "meta_social_threads",
+  "reply_playbook_entries",
+  "social_thread_summaries",
+  "sync_runs",
+  "website_events",
+  "website_sessions",
+] as const;
 
 export type SalesErpCoreTable = (typeof SALES_ERP_CORE_TABLES)[number];
 export type AnalystOwnedTable = (typeof ANALYST_OWNED_TABLES)[number];

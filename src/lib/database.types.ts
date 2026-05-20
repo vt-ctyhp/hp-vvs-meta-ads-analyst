@@ -39,9 +39,43 @@ export type Database = {
   }
   public: {
     Tables: {
+      ad_notes: {
+        Row: {
+          ad_id: string
+          body: string
+          created_at: string
+          created_by: string | null
+          created_by_email: string | null
+          environment: string
+          id: string
+          meta_account_id: string
+        }
+        Insert: {
+          ad_id: string
+          body: string
+          created_at?: string
+          created_by?: string | null
+          created_by_email?: string | null
+          environment?: string
+          id?: string
+          meta_account_id: string
+        }
+        Update: {
+          ad_id?: string
+          body?: string
+          created_at?: string
+          created_by?: string | null
+          created_by_email?: string | null
+          environment?: string
+          id?: string
+          meta_account_id?: string
+        }
+        Relationships: []
+      }
       ai_analysis_dashboards: {
         Row: {
           created_at: string
+          environment: string
           id: string
           mode: string
           model_analysis: string | null
@@ -54,6 +88,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          environment?: string
           id?: string
           mode?: string
           model_analysis?: string | null
@@ -66,6 +101,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          environment?: string
           id?: string
           mode?: string
           model_analysis?: string | null
@@ -82,6 +118,7 @@ export type Database = {
         Row: {
           created_at: string
           dashboard_id: string | null
+          environment: string
           id: string
           mode: string
           model_analysis: string | null
@@ -94,6 +131,7 @@ export type Database = {
         Insert: {
           created_at?: string
           dashboard_id?: string | null
+          environment?: string
           id?: string
           mode?: string
           model_analysis?: string | null
@@ -106,6 +144,7 @@ export type Database = {
         Update: {
           created_at?: string
           dashboard_id?: string | null
+          environment?: string
           id?: string
           mode?: string
           model_analysis?: string | null
@@ -129,6 +168,7 @@ export type Database = {
         Row: {
           content: string
           created_at: string
+          environment: string
           id: string
           role: string
           session_id: string
@@ -137,6 +177,7 @@ export type Database = {
         Insert: {
           content: string
           created_at?: string
+          environment?: string
           id?: string
           role: string
           session_id: string
@@ -145,6 +186,7 @@ export type Database = {
         Update: {
           content?: string
           created_at?: string
+          environment?: string
           id?: string
           role?: string
           session_id?: string
@@ -163,18 +205,21 @@ export type Database = {
       ai_chat_sessions: {
         Row: {
           created_at: string
+          environment: string
           id: string
           title: string
           updated_at: string
         }
         Insert: {
           created_at?: string
+          environment?: string
           id?: string
           title?: string
           updated_at?: string
         }
         Update: {
           created_at?: string
+          environment?: string
           id?: string
           title?: string
           updated_at?: string
@@ -188,6 +233,7 @@ export type Database = {
           context_used: Json
           created_at: string
           draft: string
+          environment: string
           id: string
           language: string
           model: string
@@ -204,6 +250,7 @@ export type Database = {
           context_used?: Json
           created_at?: string
           draft: string
+          environment?: string
           id?: string
           language: string
           model: string
@@ -220,6 +267,7 @@ export type Database = {
           context_used?: Json
           created_at?: string
           draft?: string
+          environment?: string
           id?: string
           language?: string
           model?: string
@@ -237,6 +285,7 @@ export type Database = {
           ad_account_ids: Json
           content: Json
           created_at: string
+          environment: string
           generated_at: string
           id: string
           model: string
@@ -250,6 +299,7 @@ export type Database = {
           ad_account_ids?: Json
           content: Json
           created_at?: string
+          environment?: string
           generated_at?: string
           id?: string
           model: string
@@ -263,6 +313,7 @@ export type Database = {
           ad_account_ids?: Json
           content?: Json
           created_at?: string
+          environment?: string
           generated_at?: string
           id?: string
           model?: string
@@ -271,6 +322,78 @@ export type Database = {
           source_transparency?: Json
           time_range?: Json
           title?: string
+        }
+        Relationships: []
+      }
+      ai_signals: {
+        Row: {
+          acted_at: string | null
+          acted_by: string | null
+          acted_count: number
+          brand: string | null
+          created_at: string
+          dismissed_at: string | null
+          dismissed_by: string | null
+          entity_id: string | null
+          entity_type: string
+          environment: string
+          expires_at: string | null
+          id: string
+          payload: Json
+          recommendation: string | null
+          room: string
+          score: number
+          severity: string
+          signal_type: string
+          summary: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          acted_at?: string | null
+          acted_by?: string | null
+          acted_count?: number
+          brand?: string | null
+          created_at?: string
+          dismissed_at?: string | null
+          dismissed_by?: string | null
+          entity_id?: string | null
+          entity_type: string
+          environment?: string
+          expires_at?: string | null
+          id?: string
+          payload?: Json
+          recommendation?: string | null
+          room: string
+          score?: number
+          severity: string
+          signal_type: string
+          summary?: string | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          acted_at?: string | null
+          acted_by?: string | null
+          acted_count?: number
+          brand?: string | null
+          created_at?: string
+          dismissed_at?: string | null
+          dismissed_by?: string | null
+          entity_id?: string | null
+          entity_type?: string
+          environment?: string
+          expires_at?: string | null
+          id?: string
+          payload?: Json
+          recommendation?: string | null
+          room?: string
+          score?: number
+          severity?: string
+          signal_type?: string
+          summary?: string | null
+          title?: string
+          updated_at?: string
         }
         Relationships: []
       }
@@ -866,6 +989,7 @@ export type Database = {
           active: boolean
           brand: string
           created_at: string
+          environment: string
           full_guideline: string
           id: string
           language: string
@@ -878,6 +1002,7 @@ export type Database = {
           active?: boolean
           brand: string
           created_at?: string
+          environment?: string
           full_guideline: string
           id?: string
           language: string
@@ -890,6 +1015,7 @@ export type Database = {
           active?: boolean
           brand?: string
           created_at?: string
+          environment?: string
           full_guideline?: string
           id?: string
           language?: string
@@ -904,6 +1030,7 @@ export type Database = {
         Row: {
           code: string
           created_at: string
+          environment: string
           id: string
           name: string
           updated_at: string
@@ -911,6 +1038,7 @@ export type Database = {
         Insert: {
           code: string
           created_at?: string
+          environment?: string
           id?: string
           name: string
           updated_at?: string
@@ -918,6 +1046,7 @@ export type Database = {
         Update: {
           code?: string
           created_at?: string
+          environment?: string
           id?: string
           name?: string
           updated_at?: string
@@ -1078,6 +1207,7 @@ export type Database = {
           created_at: string
           entity_id: string
           entity_type: string
+          environment: string
           id: string
           meta_account_id: string
           reason: string | null
@@ -1088,6 +1218,7 @@ export type Database = {
           created_at?: string
           entity_id: string
           entity_type: string
+          environment?: string
           id?: string
           meta_account_id: string
           reason?: string | null
@@ -1098,6 +1229,7 @@ export type Database = {
           created_at?: string
           entity_id?: string
           entity_type?: string
+          environment?: string
           id?: string
           meta_account_id?: string
           reason?: string | null
@@ -1911,10 +2043,15 @@ export type Database = {
           blur_score: number | null
           created_at: string
           created_by: string | null
+          design_option_number: number | null
+          design_render_role: string | null
+          design_version_id: string | null
           duplicate_of: string | null
           height_px: number | null
           id: string
           included_by_default: boolean
+          is_primary: boolean
+          order_item_id: string | null
           perceptual_hash: string | null
           quality_flags: Json
           root_id: string
@@ -1927,10 +2064,15 @@ export type Database = {
           blur_score?: number | null
           created_at?: string
           created_by?: string | null
+          design_option_number?: number | null
+          design_render_role?: string | null
+          design_version_id?: string | null
           duplicate_of?: string | null
           height_px?: number | null
           id?: string
           included_by_default?: boolean
+          is_primary?: boolean
+          order_item_id?: string | null
           perceptual_hash?: string | null
           quality_flags?: Json
           root_id: string
@@ -1943,10 +2085,15 @@ export type Database = {
           blur_score?: number | null
           created_at?: string
           created_by?: string | null
+          design_option_number?: number | null
+          design_render_role?: string | null
+          design_version_id?: string | null
           duplicate_of?: string | null
           height_px?: number | null
           id?: string
           included_by_default?: boolean
+          is_primary?: boolean
+          order_item_id?: string | null
           perceptual_hash?: string | null
           quality_flags?: Json
           root_id?: string
@@ -1970,10 +2117,24 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "design_assets_design_version_id_fkey"
+            columns: ["design_version_id"]
+            isOneToOne: false
+            referencedRelation: "design_versions"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "design_assets_duplicate_of_fkey"
             columns: ["duplicate_of"]
             isOneToOne: false
             referencedRelation: "design_assets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "design_assets_order_item_id_fkey"
+            columns: ["order_item_id"]
+            isOneToOne: false
+            referencedRelation: "sales_order_items"
             referencedColumns: ["id"]
           },
           {
@@ -2200,6 +2361,328 @@ export type Database = {
           },
           {
             foreignKeyName: "design_decks_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      design_version_assets: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          design_version_id: string
+          id: string
+          is_primary: boolean
+          root_id: string
+          storage_asset_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          design_version_id: string
+          id?: string
+          is_primary?: boolean
+          root_id: string
+          storage_asset_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          design_version_id?: string
+          id?: string
+          is_primary?: boolean
+          root_id?: string
+          storage_asset_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "design_version_assets_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "design_version_assets_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "design_version_assets_design_version_id_fkey"
+            columns: ["design_version_id"]
+            isOneToOne: false
+            referencedRelation: "design_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "design_version_assets_root_id_fkey"
+            columns: ["root_id"]
+            isOneToOne: false
+            referencedRelation: "root_appointments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "design_version_assets_storage_asset_id_fkey"
+            columns: ["storage_asset_id"]
+            isOneToOne: true
+            referencedRelation: "storage_assets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      design_version_messages: {
+        Row: {
+          author_id: string | null
+          body: string
+          created_at: string
+          design_version_id: string
+          id: string
+          root_id: string
+        }
+        Insert: {
+          author_id?: string | null
+          body: string
+          created_at?: string
+          design_version_id: string
+          id?: string
+          root_id: string
+        }
+        Update: {
+          author_id?: string | null
+          body?: string
+          created_at?: string
+          design_version_id?: string
+          id?: string
+          root_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "design_version_messages_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "design_version_messages_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "design_version_messages_design_version_id_fkey"
+            columns: ["design_version_id"]
+            isOneToOne: false
+            referencedRelation: "design_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "design_version_messages_root_id_fkey"
+            columns: ["root_id"]
+            isOneToOne: false
+            referencedRelation: "root_appointments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "design_version_messages_root_match"
+            columns: ["design_version_id", "root_id"]
+            isOneToOne: false
+            referencedRelation: "design_versions"
+            referencedColumns: ["id", "root_id"]
+          },
+        ]
+      }
+      design_versions: {
+        Row: {
+          accent_type: string | null
+          action: string | null
+          approved_at: string | null
+          approved_by: string | null
+          band_width_mm: number | null
+          center_type: string | null
+          created_at: string
+          created_by: string | null
+          deadline: string | null
+          deadline_move_count: number
+          deadline_updated_at: string | null
+          deadline_updated_by: string | null
+          design_notes: string | null
+          design_request: string | null
+          diamond_dimension: string | null
+          id: string
+          metal: string | null
+          mode: string | null
+          order_item_id: string
+          request_kind: string
+          requested_at: string
+          ring_style: string | null
+          root_id: string
+          sales_order_id: string
+          sent_at: string | null
+          shape: string | null
+          source_order_3d_revision_id: string | null
+          status: string
+          updated_at: string
+          updated_by: string | null
+          us_size: number | null
+          version: number
+          version_number: number
+        }
+        Insert: {
+          accent_type?: string | null
+          action?: string | null
+          approved_at?: string | null
+          approved_by?: string | null
+          band_width_mm?: number | null
+          center_type?: string | null
+          created_at?: string
+          created_by?: string | null
+          deadline?: string | null
+          deadline_move_count?: number
+          deadline_updated_at?: string | null
+          deadline_updated_by?: string | null
+          design_notes?: string | null
+          design_request?: string | null
+          diamond_dimension?: string | null
+          id?: string
+          metal?: string | null
+          mode?: string | null
+          order_item_id: string
+          request_kind?: string
+          requested_at?: string
+          ring_style?: string | null
+          root_id: string
+          sales_order_id: string
+          sent_at?: string | null
+          shape?: string | null
+          source_order_3d_revision_id?: string | null
+          status?: string
+          updated_at?: string
+          updated_by?: string | null
+          us_size?: number | null
+          version?: number
+          version_number: number
+        }
+        Update: {
+          accent_type?: string | null
+          action?: string | null
+          approved_at?: string | null
+          approved_by?: string | null
+          band_width_mm?: number | null
+          center_type?: string | null
+          created_at?: string
+          created_by?: string | null
+          deadline?: string | null
+          deadline_move_count?: number
+          deadline_updated_at?: string | null
+          deadline_updated_by?: string | null
+          design_notes?: string | null
+          design_request?: string | null
+          diamond_dimension?: string | null
+          id?: string
+          metal?: string | null
+          mode?: string | null
+          order_item_id?: string
+          request_kind?: string
+          requested_at?: string
+          ring_style?: string | null
+          root_id?: string
+          sales_order_id?: string
+          sent_at?: string | null
+          shape?: string | null
+          source_order_3d_revision_id?: string | null
+          status?: string
+          updated_at?: string
+          updated_by?: string | null
+          us_size?: number | null
+          version?: number
+          version_number?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "design_versions_approved_by_fkey"
+            columns: ["approved_by"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "design_versions_approved_by_fkey"
+            columns: ["approved_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "design_versions_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "design_versions_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "design_versions_deadline_updated_by_fkey"
+            columns: ["deadline_updated_by"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "design_versions_deadline_updated_by_fkey"
+            columns: ["deadline_updated_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "design_versions_order_item_id_fkey"
+            columns: ["order_item_id"]
+            isOneToOne: false
+            referencedRelation: "sales_order_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "design_versions_root_id_fkey"
+            columns: ["root_id"]
+            isOneToOne: false
+            referencedRelation: "root_appointments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "design_versions_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "sales_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "design_versions_source_order_3d_revision_id_fkey"
+            columns: ["source_order_3d_revision_id"]
+            isOneToOne: false
+            referencedRelation: "order_3d_revisions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "design_versions_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "design_versions_updated_by_fkey"
             columns: ["updated_by"]
             isOneToOne: false
             referencedRelation: "users"
@@ -2945,12 +3428,450 @@ export type Database = {
         }
         Relationships: []
       }
+      internal_chat_messages: {
+        Row: {
+          body: string
+          body_search: unknown
+          created_at: string
+          id: string
+          sender_user_id: string
+          sent_at: string
+          thread_id: string
+        }
+        Insert: {
+          body: string
+          body_search?: unknown
+          created_at?: string
+          id?: string
+          sender_user_id: string
+          sent_at?: string
+          thread_id: string
+        }
+        Update: {
+          body?: string
+          body_search?: unknown
+          created_at?: string
+          id?: string
+          sender_user_id?: string
+          sent_at?: string
+          thread_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "internal_chat_messages_sender_user_id_fkey"
+            columns: ["sender_user_id"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "internal_chat_messages_sender_user_id_fkey"
+            columns: ["sender_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "internal_chat_messages_thread_id_fkey"
+            columns: ["thread_id"]
+            isOneToOne: false
+            referencedRelation: "internal_chat_threads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      internal_chat_participants: {
+        Row: {
+          archived_at: string | null
+          created_at: string
+          last_read_at: string | null
+          last_read_message_id: string | null
+          muted_at: string | null
+          thread_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          archived_at?: string | null
+          created_at?: string
+          last_read_at?: string | null
+          last_read_message_id?: string | null
+          muted_at?: string | null
+          thread_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          archived_at?: string | null
+          created_at?: string
+          last_read_at?: string | null
+          last_read_message_id?: string | null
+          muted_at?: string | null
+          thread_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "internal_chat_participants_last_read_message_id_fkey"
+            columns: ["last_read_message_id"]
+            isOneToOne: false
+            referencedRelation: "internal_chat_messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "internal_chat_participants_thread_id_fkey"
+            columns: ["thread_id"]
+            isOneToOne: false
+            referencedRelation: "internal_chat_threads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "internal_chat_participants_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "internal_chat_participants_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      internal_chat_threads: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          last_message_at: string | null
+          last_message_id: string | null
+          last_message_preview: string | null
+          participant_high_user_id: string | null
+          participant_low_user_id: string | null
+          thread_type: string
+          title: string | null
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          last_message_at?: string | null
+          last_message_id?: string | null
+          last_message_preview?: string | null
+          participant_high_user_id?: string | null
+          participant_low_user_id?: string | null
+          thread_type?: string
+          title?: string | null
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          last_message_at?: string | null
+          last_message_id?: string | null
+          last_message_preview?: string | null
+          participant_high_user_id?: string | null
+          participant_low_user_id?: string | null
+          thread_type?: string
+          title?: string | null
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "internal_chat_threads_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "internal_chat_threads_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "internal_chat_threads_last_message_id_fkey"
+            columns: ["last_message_id"]
+            isOneToOne: false
+            referencedRelation: "internal_chat_messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "internal_chat_threads_participant_high_user_id_fkey"
+            columns: ["participant_high_user_id"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "internal_chat_threads_participant_high_user_id_fkey"
+            columns: ["participant_high_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "internal_chat_threads_participant_low_user_id_fkey"
+            columns: ["participant_low_user_id"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "internal_chat_threads_participant_low_user_id_fkey"
+            columns: ["participant_low_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      manufacturing_order_events: {
+        Row: {
+          changed_at: string
+          changed_by: string | null
+          created_at: string
+          id: string
+          manufacturing_order_id: string
+          new_status: string
+          notes: string | null
+          previous_status: string | null
+          root_id: string
+        }
+        Insert: {
+          changed_at?: string
+          changed_by?: string | null
+          created_at?: string
+          id?: string
+          manufacturing_order_id: string
+          new_status: string
+          notes?: string | null
+          previous_status?: string | null
+          root_id: string
+        }
+        Update: {
+          changed_at?: string
+          changed_by?: string | null
+          created_at?: string
+          id?: string
+          manufacturing_order_id?: string
+          new_status?: string
+          notes?: string | null
+          previous_status?: string | null
+          root_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "manufacturing_order_events_changed_by_fkey"
+            columns: ["changed_by"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "manufacturing_order_events_changed_by_fkey"
+            columns: ["changed_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "manufacturing_order_events_manufacturing_order_id_fkey"
+            columns: ["manufacturing_order_id"]
+            isOneToOne: false
+            referencedRelation: "manufacturing_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "manufacturing_order_events_root_id_fkey"
+            columns: ["root_id"]
+            isOneToOne: false
+            referencedRelation: "root_appointments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      manufacturing_orders: {
+        Row: {
+          advisor_done_acknowledged_event_id: string | null
+          approved_design_version_id: string | null
+          approved_for_production_at: string | null
+          completed_at: string | null
+          created_at: string
+          created_by: string | null
+          current_phase_started_at: string
+          deadline: string | null
+          deadline_move_count: number
+          deadline_updated_at: string | null
+          deadline_updated_by: string | null
+          id: string
+          joc_acknowledged_event_id: string | null
+          mo_number: string | null
+          order_item_id: string
+          production_started_at: string | null
+          root_id: string
+          sales_order_id: string
+          status: string
+          status_notes: string | null
+          updated_at: string
+          updated_by: string | null
+          version: number
+        }
+        Insert: {
+          advisor_done_acknowledged_event_id?: string | null
+          approved_design_version_id?: string | null
+          approved_for_production_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          current_phase_started_at?: string
+          deadline?: string | null
+          deadline_move_count?: number
+          deadline_updated_at?: string | null
+          deadline_updated_by?: string | null
+          id?: string
+          joc_acknowledged_event_id?: string | null
+          mo_number?: string | null
+          order_item_id: string
+          production_started_at?: string | null
+          root_id: string
+          sales_order_id: string
+          status?: string
+          status_notes?: string | null
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+        }
+        Update: {
+          advisor_done_acknowledged_event_id?: string | null
+          approved_design_version_id?: string | null
+          approved_for_production_at?: string | null
+          completed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          current_phase_started_at?: string
+          deadline?: string | null
+          deadline_move_count?: number
+          deadline_updated_at?: string | null
+          deadline_updated_by?: string | null
+          id?: string
+          joc_acknowledged_event_id?: string | null
+          mo_number?: string | null
+          order_item_id?: string
+          production_started_at?: string | null
+          root_id?: string
+          sales_order_id?: string
+          status?: string
+          status_notes?: string | null
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "manufacturing_orders_advisor_ack_event_fkey"
+            columns: ["advisor_done_acknowledged_event_id"]
+            isOneToOne: false
+            referencedRelation: "manufacturing_order_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "manufacturing_orders_approved_design_version_id_fkey"
+            columns: ["approved_design_version_id"]
+            isOneToOne: false
+            referencedRelation: "design_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "manufacturing_orders_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "manufacturing_orders_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "manufacturing_orders_deadline_updated_by_fkey"
+            columns: ["deadline_updated_by"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "manufacturing_orders_deadline_updated_by_fkey"
+            columns: ["deadline_updated_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "manufacturing_orders_joc_ack_event_fkey"
+            columns: ["joc_acknowledged_event_id"]
+            isOneToOne: false
+            referencedRelation: "manufacturing_order_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "manufacturing_orders_order_item_id_fkey"
+            columns: ["order_item_id"]
+            isOneToOne: false
+            referencedRelation: "sales_order_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "manufacturing_orders_root_id_fkey"
+            columns: ["root_id"]
+            isOneToOne: false
+            referencedRelation: "root_appointments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "manufacturing_orders_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "sales_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "manufacturing_orders_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "manufacturing_orders_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       meta_ad_accounts: {
         Row: {
           account_status: number | null
           brand_id: string | null
           created_at: string
           currency: string | null
+          environment: string
           id: string
           last_synced_at: string | null
           meta_account_id: string
@@ -2964,6 +3885,7 @@ export type Database = {
           brand_id?: string | null
           created_at?: string
           currency?: string | null
+          environment?: string
           id?: string
           last_synced_at?: string | null
           meta_account_id: string
@@ -2977,6 +3899,7 @@ export type Database = {
           brand_id?: string | null
           created_at?: string
           currency?: string | null
+          environment?: string
           id?: string
           last_synced_at?: string | null
           meta_account_id?: string
@@ -3013,6 +3936,7 @@ export type Database = {
           daily_budget: number | null
           effective_status: string | null
           end_time: string | null
+          environment: string
           id: string
           last_synced_at: string | null
           lifetime_budget: number | null
@@ -3043,6 +3967,7 @@ export type Database = {
           daily_budget?: number | null
           effective_status?: string | null
           end_time?: string | null
+          environment?: string
           id?: string
           last_synced_at?: string | null
           lifetime_budget?: number | null
@@ -3073,6 +3998,7 @@ export type Database = {
           daily_budget?: number | null
           effective_status?: string | null
           end_time?: string | null
+          environment?: string
           id?: string
           last_synced_at?: string | null
           lifetime_budget?: number | null
@@ -3128,6 +4054,7 @@ export type Database = {
           creative_id: string | null
           creative_ref_id: string | null
           effective_status: string | null
+          environment: string
           id: string
           last_synced_at: string | null
           meta_account_id: string
@@ -3157,6 +4084,7 @@ export type Database = {
           creative_id?: string | null
           creative_ref_id?: string | null
           effective_status?: string | null
+          environment?: string
           id?: string
           last_synced_at?: string | null
           meta_account_id: string
@@ -3186,6 +4114,7 @@ export type Database = {
           creative_id?: string | null
           creative_ref_id?: string | null
           effective_status?: string | null
+          environment?: string
           id?: string
           last_synced_at?: string | null
           meta_account_id?: string
@@ -3243,6 +4172,7 @@ export type Database = {
           completed_at: string | null
           created_at: string
           end_date: string
+          environment: string
           error: string | null
           id: string
           insight_rows: number
@@ -3260,6 +4190,7 @@ export type Database = {
           completed_at?: string | null
           created_at?: string
           end_date: string
+          environment?: string
           error?: string | null
           id?: string
           insight_rows?: number
@@ -3277,6 +4208,7 @@ export type Database = {
           completed_at?: string | null
           created_at?: string
           end_date?: string
+          environment?: string
           error?: string | null
           id?: string
           insight_rows?: number
@@ -3305,6 +4237,7 @@ export type Database = {
           completed_at: string | null
           completed_chunks: number
           created_at: string
+          environment: string
           errors: Json
           failed_chunks: number
           id: string
@@ -3323,6 +4256,7 @@ export type Database = {
           completed_at?: string | null
           completed_chunks?: number
           created_at?: string
+          environment?: string
           errors?: Json
           failed_chunks?: number
           id?: string
@@ -3341,6 +4275,7 @@ export type Database = {
           completed_at?: string | null
           completed_chunks?: number
           created_at?: string
+          environment?: string
           errors?: Json
           failed_chunks?: number
           id?: string
@@ -3368,6 +4303,7 @@ export type Database = {
           created_at: string
           created_time: string | null
           effective_status: string | null
+          environment: string
           id: string
           last_synced_at: string | null
           meta_account_id: string
@@ -3392,6 +4328,7 @@ export type Database = {
           created_at?: string
           created_time?: string | null
           effective_status?: string | null
+          environment?: string
           id?: string
           last_synced_at?: string | null
           meta_account_id: string
@@ -3416,6 +4353,7 @@ export type Database = {
           created_at?: string
           created_time?: string | null
           effective_status?: string | null
+          environment?: string
           id?: string
           last_synced_at?: string | null
           meta_account_id?: string
@@ -3456,6 +4394,7 @@ export type Database = {
           created_at: string
           creative_id: string
           effective_object_story_id: string | null
+          environment: string
           id: string
           image_url: string | null
           last_preview_refresh_at: string | null
@@ -3484,6 +4423,7 @@ export type Database = {
           created_at?: string
           creative_id: string
           effective_object_story_id?: string | null
+          environment?: string
           id?: string
           image_url?: string | null
           last_preview_refresh_at?: string | null
@@ -3512,6 +4452,7 @@ export type Database = {
           created_at?: string
           creative_id?: string
           effective_object_story_id?: string | null
+          environment?: string
           id?: string
           image_url?: string | null
           last_preview_refresh_at?: string | null
@@ -3581,6 +4522,7 @@ export type Database = {
           date_start: string
           date_stop: string
           engagement_rate_ranking: string | null
+          environment: string
           frequency: number
           id: string
           impressions: number
@@ -3633,6 +4575,7 @@ export type Database = {
           date_start: string
           date_stop: string
           engagement_rate_ranking?: string | null
+          environment?: string
           frequency?: number
           id?: string
           impressions?: number
@@ -3685,6 +4628,7 @@ export type Database = {
           date_start?: string
           date_stop?: string
           engagement_rate_ranking?: string | null
+          environment?: string
           frequency?: number
           id?: string
           impressions?: number
@@ -3751,6 +4695,9 @@ export type Database = {
       }
       meta_social_comments: {
         Row: {
+          assigned_at: string | null
+          assigned_by: string | null
+          assigned_to: string | null
           author_id: string | null
           author_name: string | null
           body: string | null
@@ -3759,6 +4706,7 @@ export type Database = {
           content_permalink: string | null
           created_at: string
           created_time: string | null
+          environment: string
           hidden: boolean | null
           id: string
           ig_user_id: string | null
@@ -3768,10 +4716,17 @@ export type Database = {
           parent_comment_id: string | null
           platform: string
           raw_json: Json
+          read_at: string | null
+          read_by: string | null
           reply_count: number
+          snoozed_reason: string | null
+          snoozed_until: string | null
           updated_at: string
         }
         Insert: {
+          assigned_at?: string | null
+          assigned_by?: string | null
+          assigned_to?: string | null
           author_id?: string | null
           author_name?: string | null
           body?: string | null
@@ -3780,6 +4735,7 @@ export type Database = {
           content_permalink?: string | null
           created_at?: string
           created_time?: string | null
+          environment?: string
           hidden?: boolean | null
           id?: string
           ig_user_id?: string | null
@@ -3789,10 +4745,17 @@ export type Database = {
           parent_comment_id?: string | null
           platform: string
           raw_json?: Json
+          read_at?: string | null
+          read_by?: string | null
           reply_count?: number
+          snoozed_reason?: string | null
+          snoozed_until?: string | null
           updated_at?: string
         }
         Update: {
+          assigned_at?: string | null
+          assigned_by?: string | null
+          assigned_to?: string | null
           author_id?: string | null
           author_name?: string | null
           body?: string | null
@@ -3801,6 +4764,7 @@ export type Database = {
           content_permalink?: string | null
           created_at?: string
           created_time?: string | null
+          environment?: string
           hidden?: boolean | null
           id?: string
           ig_user_id?: string | null
@@ -3810,7 +4774,11 @@ export type Database = {
           parent_comment_id?: string | null
           platform?: string
           raw_json?: Json
+          read_at?: string | null
+          read_by?: string | null
           reply_count?: number
+          snoozed_reason?: string | null
+          snoozed_until?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -3821,6 +4789,7 @@ export type Database = {
           body: string | null
           created_at: string
           direction: string
+          environment: string
           id: string
           message_id: string
           platform: string
@@ -3838,6 +4807,7 @@ export type Database = {
           body?: string | null
           created_at?: string
           direction?: string
+          environment?: string
           id?: string
           message_id: string
           platform: string
@@ -3855,6 +4825,7 @@ export type Database = {
           body?: string | null
           created_at?: string
           direction?: string
+          environment?: string
           id?: string
           message_id?: string
           platform?: string
@@ -3880,6 +4851,7 @@ export type Database = {
       meta_social_pages: {
         Row: {
           created_at: string
+          environment: string
           id: string
           ig_user_id: string | null
           ig_username: string | null
@@ -3891,6 +4863,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          environment?: string
           id?: string
           ig_user_id?: string | null
           ig_username?: string | null
@@ -3902,6 +4875,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          environment?: string
           id?: string
           ig_user_id?: string | null
           ig_username?: string | null
@@ -3917,6 +4891,7 @@ export type Database = {
         Row: {
           completed_at: string | null
           created_at: string
+          environment: string
           errors: Json
           id: string
           metrics: Json
@@ -3928,6 +4903,7 @@ export type Database = {
         Insert: {
           completed_at?: string | null
           created_at?: string
+          environment?: string
           errors?: Json
           id?: string
           metrics?: Json
@@ -3939,6 +4915,7 @@ export type Database = {
         Update: {
           completed_at?: string | null
           created_at?: string
+          environment?: string
           errors?: Json
           id?: string
           metrics?: Json
@@ -3951,7 +4928,11 @@ export type Database = {
       }
       meta_social_threads: {
         Row: {
+          assigned_at: string | null
+          assigned_by: string | null
+          assigned_to: string | null
           created_at: string
+          environment: string
           id: string
           ig_user_id: string | null
           last_message_at: string | null
@@ -3962,14 +4943,22 @@ export type Database = {
           participant_name: string | null
           platform: string
           raw_json: Json
+          read_at: string | null
+          read_by: string | null
           snippet: string | null
+          snoozed_reason: string | null
+          snoozed_until: string | null
           thread_id: string
           thread_type: string
           unread_count: number
           updated_at: string
         }
         Insert: {
+          assigned_at?: string | null
+          assigned_by?: string | null
+          assigned_to?: string | null
           created_at?: string
+          environment?: string
           id?: string
           ig_user_id?: string | null
           last_message_at?: string | null
@@ -3980,14 +4969,22 @@ export type Database = {
           participant_name?: string | null
           platform: string
           raw_json?: Json
+          read_at?: string | null
+          read_by?: string | null
           snippet?: string | null
+          snoozed_reason?: string | null
+          snoozed_until?: string | null
           thread_id: string
           thread_type?: string
           unread_count?: number
           updated_at?: string
         }
         Update: {
+          assigned_at?: string | null
+          assigned_by?: string | null
+          assigned_to?: string | null
           created_at?: string
+          environment?: string
           id?: string
           ig_user_id?: string | null
           last_message_at?: string | null
@@ -3998,13 +4995,71 @@ export type Database = {
           participant_name?: string | null
           platform?: string
           raw_json?: Json
+          read_at?: string | null
+          read_by?: string | null
           snippet?: string | null
+          snoozed_reason?: string | null
+          snoozed_until?: string | null
           thread_id?: string
           thread_type?: string
           unread_count?: number
           updated_at?: string
         }
         Relationships: []
+      }
+      native_recorder_push_devices: {
+        Row: {
+          created_at: string
+          device_id: string | null
+          device_token: string
+          environment: string
+          id: string
+          last_registered_at: string
+          platform: string
+          revoked_at: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          device_id?: string | null
+          device_token: string
+          environment?: string
+          id?: string
+          last_registered_at?: string
+          platform?: string
+          revoked_at?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          device_id?: string | null
+          device_token?: string
+          environment?: string
+          id?: string
+          last_registered_at?: string
+          platform?: string
+          revoked_at?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "native_recorder_push_devices_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "native_recorder_push_devices_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       ops_log: {
         Row: {
@@ -4454,6 +5509,7 @@ export type Database = {
           created_at: string
           design_status: string | null
           id: string
+          inspiration_links: string | null
           internal_notes: string | null
           logistics_status: string | null
           lost_lead_notes: string | null
@@ -4473,6 +5529,7 @@ export type Database = {
           created_at?: string
           design_status?: string | null
           id?: string
+          inspiration_links?: string | null
           internal_notes?: string | null
           logistics_status?: string | null
           lost_lead_notes?: string | null
@@ -4492,6 +5549,7 @@ export type Database = {
           created_at?: string
           design_status?: string | null
           id?: string
+          inspiration_links?: string | null
           internal_notes?: string | null
           logistics_status?: string | null
           lost_lead_notes?: string | null
@@ -4897,6 +5955,7 @@ export type Database = {
           brand: string
           category: string
           created_at: string
+          environment: string
           id: string
           language: string
           source: string | null
@@ -4909,6 +5968,7 @@ export type Database = {
           brand: string
           category: string
           created_at?: string
+          environment?: string
           id?: string
           language: string
           source?: string | null
@@ -4921,6 +5981,7 @@ export type Database = {
           brand?: string
           category?: string
           created_at?: string
+          environment?: string
           id?: string
           language?: string
           source?: string | null
@@ -5068,6 +6129,182 @@ export type Database = {
           },
         ]
       }
+      sales_order_items: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          description: string | null
+          id: string
+          item_name: string | null
+          item_number: number
+          root_id: string
+          sales_order_id: string
+          status: string
+          updated_at: string
+          updated_by: string | null
+          version: number
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          item_name?: string | null
+          item_number?: number
+          root_id: string
+          sales_order_id: string
+          status?: string
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          item_name?: string | null
+          item_number?: number
+          root_id?: string
+          sales_order_id?: string
+          status?: string
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_order_items_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "sales_order_items_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_order_items_root_id_fkey"
+            columns: ["root_id"]
+            isOneToOne: false
+            referencedRelation: "root_appointments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_order_items_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "sales_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_order_items_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "sales_order_items_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sales_orders: {
+        Row: {
+          brand: Database["public"]["Enums"]["brand"]
+          created_at: string
+          created_by: string | null
+          id: string
+          odoo_url: string | null
+          root_id: string
+          so_number: string | null
+          source_order_3d_id: string | null
+          status: string
+          updated_at: string
+          updated_by: string | null
+          version: number
+        }
+        Insert: {
+          brand: Database["public"]["Enums"]["brand"]
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          odoo_url?: string | null
+          root_id: string
+          so_number?: string | null
+          source_order_3d_id?: string | null
+          status?: string
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+        }
+        Update: {
+          brand?: Database["public"]["Enums"]["brand"]
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          odoo_url?: string | null
+          root_id?: string
+          so_number?: string | null
+          source_order_3d_id?: string | null
+          status?: string
+          updated_at?: string
+          updated_by?: string | null
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_orders_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "sales_orders_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_orders_root_id_fkey"
+            columns: ["root_id"]
+            isOneToOne: false
+            referencedRelation: "root_appointments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_orders_source_order_3d_id_fkey"
+            columns: ["source_order_3d_id"]
+            isOneToOne: false
+            referencedRelation: "order_3d"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_orders_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "user_inbox_unread_count"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "sales_orders_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       schedule_changes: {
         Row: {
           available_from: string | null
@@ -5136,6 +6373,7 @@ export type Database = {
       social_thread_summaries: {
         Row: {
           created_at: string
+          environment: string
           id: string
           language: string
           last_message_at: string | null
@@ -5149,6 +6387,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          environment?: string
           id?: string
           language?: string
           last_message_at?: string | null
@@ -5162,6 +6401,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          environment?: string
           id?: string
           language?: string
           last_message_at?: string | null
@@ -5599,6 +6839,7 @@ export type Database = {
           ad_account_ids: Json
           completed_at: string | null
           created_at: string
+          environment: string
           errors: Json
           id: string
           metrics: Json
@@ -5610,6 +6851,7 @@ export type Database = {
           ad_account_ids?: Json
           completed_at?: string | null
           created_at?: string
+          environment?: string
           errors?: Json
           id?: string
           metrics?: Json
@@ -5621,6 +6863,7 @@ export type Database = {
           ad_account_ids?: Json
           completed_at?: string | null
           created_at?: string
+          environment?: string
           errors?: Json
           id?: string
           metrics?: Json
@@ -6023,36 +7266,51 @@ export type Database = {
           active: boolean
           auth_user_id: string
           created_at: string
+          dashboard_tour_completed_at: string | null
+          dashboard_tour_skipped_at: string | null
+          diamond_admin_tour_completed_at: string | null
+          diamond_admin_tour_skipped_at: string | null
           email: string
           full_name: string
           id: string
           initials: string | null
           notes: string | null
           updated_at: string
+          user_last_visit_at: string | null
           version: number
         }
         Insert: {
           active?: boolean
           auth_user_id: string
           created_at?: string
+          dashboard_tour_completed_at?: string | null
+          dashboard_tour_skipped_at?: string | null
+          diamond_admin_tour_completed_at?: string | null
+          diamond_admin_tour_skipped_at?: string | null
           email: string
           full_name: string
           id?: string
           initials?: string | null
           notes?: string | null
           updated_at?: string
+          user_last_visit_at?: string | null
           version?: number
         }
         Update: {
           active?: boolean
           auth_user_id?: string
           created_at?: string
+          dashboard_tour_completed_at?: string | null
+          dashboard_tour_skipped_at?: string | null
+          diamond_admin_tour_completed_at?: string | null
+          diamond_admin_tour_skipped_at?: string | null
           email?: string
           full_name?: string
           id?: string
           initials?: string | null
           notes?: string | null
           updated_at?: string
+          user_last_visit_at?: string | null
           version?: number
         }
         Relationships: []
@@ -6156,6 +7414,549 @@ export type Database = {
           },
         ]
       }
+      website_conversions: {
+        Row: {
+          acuity_appointment_id: string | null
+          anonymized_at: string | null
+          appointment_type: string | null
+          brand: string
+          browser_name: string | null
+          conversion_touch: Json | null
+          created_at: string
+          customer_email: string | null
+          customer_email_hash: string | null
+          customer_first_name: string | null
+          customer_first_name_hash: string | null
+          customer_last_name: string | null
+          customer_last_name_hash: string | null
+          customer_name: string | null
+          customer_phone: string | null
+          customer_phone_hash: string | null
+          device_category: string | null
+          event_id: string
+          event_name: string
+          event_source_url: string | null
+          fbc: string | null
+          fbp: string | null
+          first_touch: Json | null
+          id: string
+          ip_hash: string | null
+          last_paid_touch: Json | null
+          last_touch: Json | null
+          meta_capi_status: string | null
+          meta_capi_test_mode: boolean | null
+          meta_event_id: string | null
+          meta_event_name: string | null
+          occurred_at: string
+          os_name: string | null
+          page_path: string | null
+          page_url: string | null
+          properties: Json
+          raw_json: Json
+          received_at: string
+          referrer: string | null
+          session_id: string | null
+          source_type: string | null
+          tracking_completeness: Json
+          updated_at: string
+          user_agent: string | null
+          visitor_id: string | null
+        }
+        Insert: {
+          acuity_appointment_id?: string | null
+          anonymized_at?: string | null
+          appointment_type?: string | null
+          brand?: string
+          browser_name?: string | null
+          conversion_touch?: Json | null
+          created_at?: string
+          customer_email?: string | null
+          customer_email_hash?: string | null
+          customer_first_name?: string | null
+          customer_first_name_hash?: string | null
+          customer_last_name?: string | null
+          customer_last_name_hash?: string | null
+          customer_name?: string | null
+          customer_phone?: string | null
+          customer_phone_hash?: string | null
+          device_category?: string | null
+          event_id: string
+          event_name?: string
+          event_source_url?: string | null
+          fbc?: string | null
+          fbp?: string | null
+          first_touch?: Json | null
+          id?: string
+          ip_hash?: string | null
+          last_paid_touch?: Json | null
+          last_touch?: Json | null
+          meta_capi_status?: string | null
+          meta_capi_test_mode?: boolean | null
+          meta_event_id?: string | null
+          meta_event_name?: string | null
+          occurred_at: string
+          os_name?: string | null
+          page_path?: string | null
+          page_url?: string | null
+          properties?: Json
+          raw_json?: Json
+          received_at?: string
+          referrer?: string | null
+          session_id?: string | null
+          source_type?: string | null
+          tracking_completeness?: Json
+          updated_at?: string
+          user_agent?: string | null
+          visitor_id?: string | null
+        }
+        Update: {
+          acuity_appointment_id?: string | null
+          anonymized_at?: string | null
+          appointment_type?: string | null
+          brand?: string
+          browser_name?: string | null
+          conversion_touch?: Json | null
+          created_at?: string
+          customer_email?: string | null
+          customer_email_hash?: string | null
+          customer_first_name?: string | null
+          customer_first_name_hash?: string | null
+          customer_last_name?: string | null
+          customer_last_name_hash?: string | null
+          customer_name?: string | null
+          customer_phone?: string | null
+          customer_phone_hash?: string | null
+          device_category?: string | null
+          event_id?: string
+          event_name?: string
+          event_source_url?: string | null
+          fbc?: string | null
+          fbp?: string | null
+          first_touch?: Json | null
+          id?: string
+          ip_hash?: string | null
+          last_paid_touch?: Json | null
+          last_touch?: Json | null
+          meta_capi_status?: string | null
+          meta_capi_test_mode?: boolean | null
+          meta_event_id?: string | null
+          meta_event_name?: string | null
+          occurred_at?: string
+          os_name?: string | null
+          page_path?: string | null
+          page_url?: string | null
+          properties?: Json
+          raw_json?: Json
+          received_at?: string
+          referrer?: string | null
+          session_id?: string | null
+          source_type?: string | null
+          tracking_completeness?: Json
+          updated_at?: string
+          user_agent?: string | null
+          visitor_id?: string | null
+        }
+        Relationships: []
+      }
+      website_events: {
+        Row: {
+          acuity_appointment_id: string | null
+          appointment_type: string | null
+          brand: string
+          browser_name: string | null
+          conversion_event_id: string | null
+          created_at: string
+          customer_email: string | null
+          customer_name: string | null
+          customer_phone: string | null
+          device_category: string | null
+          environment: string
+          event_id: string
+          event_name: string
+          event_type: string
+          fbc: string | null
+          fbclid: string | null
+          fbp: string | null
+          gclid: string | null
+          id: string
+          ip_hash: string | null
+          meta_event_id: string | null
+          meta_event_name: string | null
+          msclkid: string | null
+          occurred_at: string
+          os_name: string | null
+          page_group: string | null
+          page_path: string | null
+          page_title: string | null
+          page_url: string | null
+          properties: Json
+          raw_json: Json
+          received_at: string
+          referrer: string | null
+          session_id: string | null
+          source: string
+          source_type: string | null
+          ttclid: string | null
+          updated_at: string
+          user_agent: string | null
+          utm_ad: string | null
+          utm_ad_id: string | null
+          utm_adset: string | null
+          utm_adset_id: string | null
+          utm_campaign: string | null
+          utm_campaign_id: string | null
+          utm_content: string | null
+          utm_creative: string | null
+          utm_id: string | null
+          utm_medium: string | null
+          utm_placement: string | null
+          utm_source: string | null
+          utm_term: string | null
+          visitor_id: string | null
+        }
+        Insert: {
+          acuity_appointment_id?: string | null
+          appointment_type?: string | null
+          brand?: string
+          browser_name?: string | null
+          conversion_event_id?: string | null
+          created_at?: string
+          customer_email?: string | null
+          customer_name?: string | null
+          customer_phone?: string | null
+          device_category?: string | null
+          environment?: string
+          event_id: string
+          event_name: string
+          event_type: string
+          fbc?: string | null
+          fbclid?: string | null
+          fbp?: string | null
+          gclid?: string | null
+          id?: string
+          ip_hash?: string | null
+          meta_event_id?: string | null
+          meta_event_name?: string | null
+          msclkid?: string | null
+          occurred_at: string
+          os_name?: string | null
+          page_group?: string | null
+          page_path?: string | null
+          page_title?: string | null
+          page_url?: string | null
+          properties?: Json
+          raw_json?: Json
+          received_at?: string
+          referrer?: string | null
+          session_id?: string | null
+          source: string
+          source_type?: string | null
+          ttclid?: string | null
+          updated_at?: string
+          user_agent?: string | null
+          utm_ad?: string | null
+          utm_ad_id?: string | null
+          utm_adset?: string | null
+          utm_adset_id?: string | null
+          utm_campaign?: string | null
+          utm_campaign_id?: string | null
+          utm_content?: string | null
+          utm_creative?: string | null
+          utm_id?: string | null
+          utm_medium?: string | null
+          utm_placement?: string | null
+          utm_source?: string | null
+          utm_term?: string | null
+          visitor_id?: string | null
+        }
+        Update: {
+          acuity_appointment_id?: string | null
+          appointment_type?: string | null
+          brand?: string
+          browser_name?: string | null
+          conversion_event_id?: string | null
+          created_at?: string
+          customer_email?: string | null
+          customer_name?: string | null
+          customer_phone?: string | null
+          device_category?: string | null
+          environment?: string
+          event_id?: string
+          event_name?: string
+          event_type?: string
+          fbc?: string | null
+          fbclid?: string | null
+          fbp?: string | null
+          gclid?: string | null
+          id?: string
+          ip_hash?: string | null
+          meta_event_id?: string | null
+          meta_event_name?: string | null
+          msclkid?: string | null
+          occurred_at?: string
+          os_name?: string | null
+          page_group?: string | null
+          page_path?: string | null
+          page_title?: string | null
+          page_url?: string | null
+          properties?: Json
+          raw_json?: Json
+          received_at?: string
+          referrer?: string | null
+          session_id?: string | null
+          source?: string
+          source_type?: string | null
+          ttclid?: string | null
+          updated_at?: string
+          user_agent?: string | null
+          utm_ad?: string | null
+          utm_ad_id?: string | null
+          utm_adset?: string | null
+          utm_adset_id?: string | null
+          utm_campaign?: string | null
+          utm_campaign_id?: string | null
+          utm_content?: string | null
+          utm_creative?: string | null
+          utm_id?: string | null
+          utm_medium?: string | null
+          utm_placement?: string | null
+          utm_source?: string | null
+          utm_term?: string | null
+          visitor_id?: string | null
+        }
+        Relationships: []
+      }
+      website_sessions: {
+        Row: {
+          brand: string
+          browser_name: string | null
+          conversion_event_id: string | null
+          created_at: string
+          customer_email: string | null
+          customer_name: string | null
+          customer_phone: string | null
+          device_category: string | null
+          environment: string
+          fbc: string | null
+          fbclid: string | null
+          fbp: string | null
+          first_page_url: string | null
+          first_referrer: string | null
+          first_seen_at: string
+          first_touch: Json | null
+          gclid: string | null
+          id: string
+          ip_hash: string | null
+          last_page_url: string | null
+          last_paid_touch: Json | null
+          last_referrer: string | null
+          last_seen_at: string
+          last_touch: Json | null
+          msclkid: string | null
+          os_name: string | null
+          raw_json: Json
+          session_id: string
+          ttclid: string | null
+          updated_at: string
+          user_agent: string | null
+          utm_ad: string | null
+          utm_ad_id: string | null
+          utm_adset: string | null
+          utm_adset_id: string | null
+          utm_campaign: string | null
+          utm_campaign_id: string | null
+          utm_content: string | null
+          utm_creative: string | null
+          utm_id: string | null
+          utm_medium: string | null
+          utm_placement: string | null
+          utm_source: string | null
+          utm_term: string | null
+          visitor_id: string | null
+        }
+        Insert: {
+          brand?: string
+          browser_name?: string | null
+          conversion_event_id?: string | null
+          created_at?: string
+          customer_email?: string | null
+          customer_name?: string | null
+          customer_phone?: string | null
+          device_category?: string | null
+          environment?: string
+          fbc?: string | null
+          fbclid?: string | null
+          fbp?: string | null
+          first_page_url?: string | null
+          first_referrer?: string | null
+          first_seen_at?: string
+          first_touch?: Json | null
+          gclid?: string | null
+          id?: string
+          ip_hash?: string | null
+          last_page_url?: string | null
+          last_paid_touch?: Json | null
+          last_referrer?: string | null
+          last_seen_at?: string
+          last_touch?: Json | null
+          msclkid?: string | null
+          os_name?: string | null
+          raw_json?: Json
+          session_id: string
+          ttclid?: string | null
+          updated_at?: string
+          user_agent?: string | null
+          utm_ad?: string | null
+          utm_ad_id?: string | null
+          utm_adset?: string | null
+          utm_adset_id?: string | null
+          utm_campaign?: string | null
+          utm_campaign_id?: string | null
+          utm_content?: string | null
+          utm_creative?: string | null
+          utm_id?: string | null
+          utm_medium?: string | null
+          utm_placement?: string | null
+          utm_source?: string | null
+          utm_term?: string | null
+          visitor_id?: string | null
+        }
+        Update: {
+          brand?: string
+          browser_name?: string | null
+          conversion_event_id?: string | null
+          created_at?: string
+          customer_email?: string | null
+          customer_name?: string | null
+          customer_phone?: string | null
+          device_category?: string | null
+          environment?: string
+          fbc?: string | null
+          fbclid?: string | null
+          fbp?: string | null
+          first_page_url?: string | null
+          first_referrer?: string | null
+          first_seen_at?: string
+          first_touch?: Json | null
+          gclid?: string | null
+          id?: string
+          ip_hash?: string | null
+          last_page_url?: string | null
+          last_paid_touch?: Json | null
+          last_referrer?: string | null
+          last_seen_at?: string
+          last_touch?: Json | null
+          msclkid?: string | null
+          os_name?: string | null
+          raw_json?: Json
+          session_id?: string
+          ttclid?: string | null
+          updated_at?: string
+          user_agent?: string | null
+          utm_ad?: string | null
+          utm_ad_id?: string | null
+          utm_adset?: string | null
+          utm_adset_id?: string | null
+          utm_campaign?: string | null
+          utm_campaign_id?: string | null
+          utm_content?: string | null
+          utm_creative?: string | null
+          utm_id?: string | null
+          utm_medium?: string | null
+          utm_placement?: string | null
+          utm_source?: string | null
+          utm_term?: string | null
+          visitor_id?: string | null
+        }
+        Relationships: []
+      }
+      website_visitors: {
+        Row: {
+          brand: string
+          browser_name: string | null
+          conversion_event_id: string | null
+          created_at: string
+          customer_email: string | null
+          customer_name: string | null
+          customer_phone: string | null
+          device_category: string | null
+          fbc: string | null
+          fbp: string | null
+          first_page_url: string | null
+          first_referrer: string | null
+          first_seen_at: string
+          first_touch: Json | null
+          id: string
+          ip_hash: string | null
+          last_page_url: string | null
+          last_paid_touch: Json | null
+          last_referrer: string | null
+          last_seen_at: string
+          last_touch: Json | null
+          os_name: string | null
+          raw_json: Json
+          updated_at: string
+          user_agent: string | null
+          visitor_id: string
+        }
+        Insert: {
+          brand?: string
+          browser_name?: string | null
+          conversion_event_id?: string | null
+          created_at?: string
+          customer_email?: string | null
+          customer_name?: string | null
+          customer_phone?: string | null
+          device_category?: string | null
+          fbc?: string | null
+          fbp?: string | null
+          first_page_url?: string | null
+          first_referrer?: string | null
+          first_seen_at?: string
+          first_touch?: Json | null
+          id?: string
+          ip_hash?: string | null
+          last_page_url?: string | null
+          last_paid_touch?: Json | null
+          last_referrer?: string | null
+          last_seen_at?: string
+          last_touch?: Json | null
+          os_name?: string | null
+          raw_json?: Json
+          updated_at?: string
+          user_agent?: string | null
+          visitor_id: string
+        }
+        Update: {
+          brand?: string
+          browser_name?: string | null
+          conversion_event_id?: string | null
+          created_at?: string
+          customer_email?: string | null
+          customer_name?: string | null
+          customer_phone?: string | null
+          device_category?: string | null
+          fbc?: string | null
+          fbp?: string | null
+          first_page_url?: string | null
+          first_referrer?: string | null
+          first_seen_at?: string
+          first_touch?: Json | null
+          id?: string
+          ip_hash?: string | null
+          last_page_url?: string | null
+          last_paid_touch?: Json | null
+          last_referrer?: string | null
+          last_seen_at?: string
+          last_touch?: Json | null
+          os_name?: string | null
+          raw_json?: Json
+          updated_at?: string
+          user_agent?: string | null
+          visitor_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       user_inbox_unread_count: {
@@ -6249,6 +8050,15 @@ export type Database = {
           week: string
         }[]
       }
+      anonymize_expired_website_attribution: {
+        Args: { p_cutoff?: string }
+        Returns: {
+          conversions_anonymized: number
+          events_anonymized: number
+          sessions_anonymized: number
+          visitors_anonymized: number
+        }[]
+      }
       apply_appointment_read_model_import: {
         Args: { p_import_batch_id?: string }
         Returns: {
@@ -6280,6 +8090,10 @@ export type Database = {
       blocked_vendor_term: { Args: never; Returns: string }
       can_operate_task: { Args: { p_task_id: string }; Returns: boolean }
       can_read_broadcast: { Args: { p_broadcast_id: string }; Returns: boolean }
+      can_read_internal_chat_thread: {
+        Args: { p_thread_id: string }
+        Returns: boolean
+      }
       can_read_root: { Args: { p_root_id: string }; Returns: boolean }
       can_write_root: { Args: { p_root_id: string }; Returns: boolean }
       claim_meta_ads_backfill_chunks: {
@@ -6290,6 +8104,7 @@ export type Database = {
           completed_at: string | null
           created_at: string
           end_date: string
+          environment: string
           error: string | null
           id: string
           insight_rows: number
@@ -6307,6 +8122,10 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      create_internal_group_chat: {
+        Args: { p_participant_user_ids: string[]; p_title: string }
+        Returns: string
       }
       create_payment_document_with_ledger: {
         Args: {
@@ -6333,6 +8152,7 @@ export type Database = {
         Returns: Json
       }
       current_app_user_id: { Args: never; Returns: string }
+      current_user_can_send_internal_chat: { Args: never; Returns: boolean }
       current_user_has_any_role: {
         Args: { p_roles: Database["public"]["Enums"]["user_role"][] }
         Returns: boolean
@@ -6356,6 +8176,23 @@ export type Database = {
           p_reason: string
         }
         Returns: Json
+      }
+      get_or_create_internal_direct_chat: {
+        Args: { p_target_user_id: string }
+        Returns: string
+      }
+      list_internal_chat_users: {
+        Args: never
+        Returns: {
+          email: string
+          full_name: string
+          id: string
+          initials: string
+        }[]
+      }
+      mark_internal_chat_thread_read: {
+        Args: { p_thread_id: string }
+        Returns: undefined
       }
       meta_ads_history_coverage: {
         Args: { p_end?: string; p_start?: string }
@@ -6437,6 +8274,18 @@ export type Database = {
       }
       scrub_blocked_vendor_jsonb: { Args: { p_value: Json }; Returns: Json }
       scrub_blocked_vendor_text: { Args: { p_value: string }; Returns: string }
+      send_internal_chat_message: {
+        Args: { p_body: string; p_thread_id: string }
+        Returns: string
+      }
+      set_dashboard_tour_state: {
+        Args: { p_disposition: string }
+        Returns: undefined
+      }
+      set_diamond_admin_tour_state: {
+        Args: { p_disposition: string }
+        Returns: undefined
+      }
       void_payment_document_and_recalculate_status: {
         Args: { p_document_id: string; p_reason: string; p_voided_by: string }
         Returns: {
@@ -6558,6 +8407,7 @@ export type Database = {
         | "consultation_recap_recording"
         | "diamond_viewing_recap_recording"
         | "general_recording"
+        | "design_version_submission"
       task_owner_kind: "user" | "role"
       task_status: "pending" | "snoozed" | "completed" | "blocked" | "canceled"
       user_role:
@@ -6570,6 +8420,8 @@ export type Database = {
         | "wax_request_admin"
         | "marketing"
         | "sales"
+        | "design_3d"
+        | "manufacturing"
         | "executive"
         | "sales_appointment_reviewer"
         | "sales_creative_reviewer"
@@ -6797,6 +8649,7 @@ export const Constants = {
         "consultation_recap_recording",
         "diamond_viewing_recap_recording",
         "general_recording",
+        "design_version_submission",
       ],
       task_owner_kind: ["user", "role"],
       task_status: ["pending", "snoozed", "completed", "blocked", "canceled"],
@@ -6810,6 +8663,8 @@ export const Constants = {
         "wax_request_admin",
         "marketing",
         "sales",
+        "design_3d",
+        "manufacturing",
         "executive",
         "sales_appointment_reviewer",
         "sales_creative_reviewer",
