@@ -57,7 +57,20 @@ export function TopNavigation() {
   const [health, setHealth] = useState<SystemHealthSnapshot | null>(null);
   const [openMenu, setOpenMenu] = useState<"health" | "identity" | null>(null);
   const closeMenu = () => setOpenMenu(null);
-  const isPublicAuthPath = pathname === "/login" || pathname === "/no-access";
+  const isPublicAuthPath =
+    pathname === "/login" || pathname === "/sign-in" || pathname === "/no-access";
+  // The 3-room workspace IA (v2) renders its own shell. Hide the legacy nav on
+  // those routes so we don't show double chrome. The sales mobile shell is
+  // also self-contained.
+  const isV2Path =
+    pathname === "/optimize" ||
+    pathname.startsWith("/optimize/") ||
+    pathname === "/convert" ||
+    pathname.startsWith("/convert/") ||
+    pathname === "/operate" ||
+    pathname.startsWith("/operate/") ||
+    pathname.startsWith("/m/");
+  if (isV2Path) return null;
 
   useEffect(() => {
     let mounted = true;
