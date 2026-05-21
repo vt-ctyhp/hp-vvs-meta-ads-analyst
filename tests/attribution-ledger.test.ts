@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  buildAttributionLedgerDetailData,
   buildAttributionLedgerRows,
   type AttributionLedgerConversionRow,
   type AttributionLedgerEventRow,
@@ -244,6 +245,97 @@ describe("attribution ledger row merging", () => {
   });
 });
 
+describe("attribution ledger detail data", () => {
+  it("builds a sanitized booking timeline with credited and return touches", () => {
+    const detail = buildAttributionLedgerDetailData({
+      acuityAppointmentId: "1708622080",
+      conversions: [
+        conversionRow({
+          acuity_appointment_id: "1708622080",
+          event_id: "acuity-1708622080",
+          last_paid_touch: linkInBioTouch("2026-05-20T23:49:18.756Z"),
+          meta_capi_status: "sent",
+          meta_capi_test_mode: false,
+          meta_event_id: "acuity-1708622080",
+          occurred_at: "2026-05-20T23:49:18.756Z",
+          received_at: "2026-05-20T23:49:18.907Z",
+          session_id: "session-1",
+          properties: {
+            attribution: {
+              capturedAt: "2026-05-20T22:59:07.892Z",
+              landingPageUrl:
+                "https://www.hungphatusa.com/pages/book-an-appointment?utm_source=ig&fbclid=original-click",
+              referrer: "https://www.instagram.com/",
+              utm: {
+                adId: "120244031602180650",
+                adsetId: "120242517363420650",
+                campaignId: "120234691669940650",
+                content: "DM_IG_HeyBeyArea",
+                fbclid: "original-click",
+                medium: "paid_social",
+                placement: "Instagram_Stories",
+                source: "ig",
+              },
+            },
+          },
+        }),
+      ],
+      events: [
+        eventRow({
+          event_id: "hp_evt-page",
+          event_name: "PageView",
+          occurred_at: "2026-05-20T23:48:27.772Z",
+          page_url:
+            "https://www.hungphatusa.com/pages/book-an-appointment?utm_source=ig&utm_medium=social&utm_content=link_in_bio&fbclid=link-in-bio-click",
+          referrer: "https://l.instagram.com/",
+        }),
+        eventRow({
+          event_id: "hp_evt-submit",
+          event_name: "BookingSubmitAttempt",
+          event_type: "booking",
+          occurred_at: "2026-05-20T23:49:17.152Z",
+        }),
+        eventRow({
+          event_id: "acuity-1708622080",
+          event_name: "Schedule",
+          event_type: "conversion",
+          occurred_at: "2026-05-20T23:49:18.756Z",
+        }),
+      ],
+      sessions: [sessionRow({ session_id: "session-1" })],
+      visitor: visitorRow({
+        visitor_id: "hp_vid-cf42ea5f-f15d-4649-add8-b06d66d70351",
+      }),
+    });
+
+    assert.equal(detail.visitorId, "hp_vid-cf42ea5f-f15d-4649-add8-b06d66d70351");
+    assert.equal(detail.acuityAppointmentId, "1708622080");
+    assert.equal(detail.creditedTouch?.campaignId, "120234691669940650");
+    assert.equal(detail.creditedTouch?.adsetId, "120242517363420650");
+    assert.equal(detail.creditedTouch?.adId, "120244031602180650");
+    assert.equal(detail.creditedTouch?.fbclidPresent, true);
+    assert.equal(detail.creditedTouch?.pageUrl?.includes("original-click"), false);
+    assert.equal(detail.returnTouch?.content, "link_in_bio");
+    assert.equal(detail.returnTouch?.pageUrl?.includes("link-in-bio-click"), false);
+    assert.equal(detail.capi.status, "sent");
+    assert.equal(detail.capi.testMode, false);
+    assert.equal(detail.confidence.level, "browser_session");
+    assert.match(detail.confidence.explanation, /browser-level attribution/);
+    assert.match(detail.summary || "", /Paid attribution captured/);
+    assert.match(detail.summary || "", /returned from link_in_bio/);
+    assert.deepEqual(
+      detail.timeline.map((event) => event.label),
+      [
+        "Paid ad attribution captured",
+        "Returned from Instagram/social URL",
+        "Booking submitted",
+        "Acuity booking created",
+        "Meta CAPI sent",
+      ],
+    );
+  });
+});
+
 function linkInBioTouch(capturedAt: string) {
   return {
     capturedAt,
@@ -338,11 +430,15 @@ function conversionRow(
     last_paid_touch: null,
     last_touch: null,
     meta_capi_status: null,
+    meta_capi_test_mode: null,
     meta_event_id: null,
     occurred_at: "2026-05-19T18:30:00.000Z",
     os_name: "iOS",
+    page_url: "https://www.hungphatusa.com/pages/book-an-appointment",
     properties: {},
     raw_json: {},
+    received_at: "2026-05-19T18:30:01.000Z",
+    referrer: "https://l.instagram.com/",
     session_id: null,
     source_type: "paid_meta",
     user_agent: "Mozilla/5.0",
