@@ -10,6 +10,7 @@ type Props = {
   brand?: string | null;
   group?: string | null;
   defaultDelivery?: string;
+  focus?: string | null;
 };
 
 type SortKey =
@@ -50,6 +51,7 @@ export function CreativesPanel({
   brand = "all",
   group = "all",
   defaultDelivery = "all",
+  focus = null,
 }: Props) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
@@ -59,7 +61,14 @@ export function CreativesPanel({
   const [minSpend, setMinSpend] = useState("");
   const [sort, setSort] = useState<SortKey>("score");
   const [hideFinancials, setHideFinancials] = useState(false);
-  const [selected, setSelected] = useState<CreativeAnalysisRow | null>(null);
+  const [selectedTarget, setSelectedTarget] = useState<string | null>(focus);
+  const selected = useMemo(
+    () =>
+      selectedTarget
+        ? data.rows.find((row) => matchesFocus(row, selectedTarget)) ?? null
+        : null,
+    [data.rows, selectedTarget],
+  );
 
   const statusOptions = useMemo(
     () => unique(data.rows.map((row) => row.status)).sort(),
@@ -221,7 +230,7 @@ export function CreativesPanel({
                   <tr
                     key={row.id}
                     className="cursor-pointer hover:bg-stone-50"
-                    onClick={() => setSelected(row)}
+                    onClick={() => setSelectedTarget(row.id)}
                   >
                     <td className="px-3 py-2">
                       <div className="flex min-w-0 items-center gap-3">
@@ -307,7 +316,7 @@ export function CreativesPanel({
         <CreativeDiagnosticsDrawer
           row={selected}
           hideFinancials={hideFinancials}
-          onClose={() => setSelected(null)}
+          onClose={() => setSelectedTarget(null)}
         />
       ) : null}
     </section>
@@ -723,6 +732,10 @@ function unique(values: Array<string | null | undefined>) {
 
 function normalizeDeliveryFilter(value: string) {
   return value === "live" || value === "paused" || value === "off" ? value : "all";
+}
+
+function matchesFocus(row: CreativeAnalysisRow, focus: string) {
+  return row.id === focus || row.creativeId === focus || row.adId === focus;
 }
 
 function compareRows(a: CreativeAnalysisRow, b: CreativeAnalysisRow, sort: SortKey) {

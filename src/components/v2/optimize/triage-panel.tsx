@@ -34,6 +34,8 @@ const BUCKETS: Array<{
   },
 ];
 
+const TRIAGE_BUCKET_LIMIT = 10;
+
 export function TriagePanel({ data, brand = "all", group = "all" }: Props) {
   const items = data.actionQueue.filter((item) => {
     if (brand !== "all" && item.brandCode !== brand) return false;
@@ -64,7 +66,7 @@ export function TriagePanel({ data, brand = "all", group = "all" }: Props) {
           <ActionBucketColumn
             key={bucket.key}
             bucket={bucket}
-            items={grouped[bucket.key]}
+            group={grouped[bucket.key]}
           />
         ))}
       </div>
@@ -74,11 +76,13 @@ export function TriagePanel({ data, brand = "all", group = "all" }: Props) {
 
 function ActionBucketColumn({
   bucket,
-  items,
+  group,
 }: {
   bucket: (typeof BUCKETS)[number];
-  items: ActionItem[];
+  group: GroupedActionItems[ActionBucket];
 }) {
+  const hiddenCount = group.total - group.items.length;
+
   return (
     <section className="overflow-hidden rounded-xl border border-stone-200 bg-white">
       <header className="border-b border-stone-200 px-4 py-3">
@@ -86,15 +90,15 @@ function ActionBucketColumn({
           <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-900">
             {bucket.label}
           </h3>
-          <span className="text-xs tabular-nums text-stone-500">{items.length}</span>
+          <span className="text-xs tabular-nums text-stone-500">{group.total}</span>
         </div>
         <p className="pt-1 text-xs leading-5 text-stone-500">{bucket.description}</p>
       </header>
-      {items.length === 0 ? (
+      {group.items.length === 0 ? (
         <p className="px-4 py-6 text-sm text-stone-500">No items in this range.</p>
       ) : (
         <ul className="divide-y divide-stone-100">
-          {items.map((item) => (
+          {group.items.map((item) => (
             <li key={item.id}>
               <Link
                 href={`/optimize?tab=creatives&focus=${encodeURIComponent(item.entityId)}`}
@@ -123,21 +127,31 @@ function ActionBucketColumn({
               </Link>
             </li>
           ))}
+          {hiddenCount > 0 ? (
+            <li className="px-4 py-3 text-xs text-stone-500">
+              {hiddenCount} more signal{hiddenCount === 1 ? "" : "s"} hidden.
+              Refine filters to narrow this bucket.
+            </li>
+          ) : null}
         </ul>
       )}
     </section>
   );
 }
 
+type GroupedActionItems = Record<ActionBucket, { items: ActionItem[]; total: number }>;
+
 function groupActionItems(items: ActionItem[]) {
-  const grouped: Record<ActionBucket, ActionItem[]> = {
-    scale: [],
-    fix: [],
-    watch: [],
+  const grouped: GroupedActionItems = {
+    scale: { items: [], total: 0 },
+    fix: { items: [], total: 0 },
+    watch: { items: [], total: 0 },
   };
 
   for (const item of items) {
-    if (grouped[item.bucket].length < 6) grouped[item.bucket].push(item);
+    const group = grouped[item.bucket];
+    group.total += 1;
+    if (group.items.length < TRIAGE_BUCKET_LIMIT) group.items.push(item);
   }
 
   return grouped;

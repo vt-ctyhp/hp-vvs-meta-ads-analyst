@@ -56,6 +56,7 @@ export default async function OptimizePage({
   const activeTab = normalizeOptimizeTab(params.tab);
   const startDate = firstParam(params.start) ?? null;
   const endDate = firstParam(params.end) ?? null;
+  const focus = firstParam(params.focus) ?? null;
   const days = numberParam(params.days) || 30;
 
   // Filter-bar inputs. Status defaults to "live" so the operator lands on
@@ -253,7 +254,11 @@ export default async function OptimizePage({
       ) : null}
 
       <section aria-label="Optimize filters" className="overflow-hidden rounded-xl border border-stone-200 bg-white">
-        <OptimizeFilterBar brands={brandOptions} groups={groupOptions} />
+        <OptimizeFilterBar
+          activeTab={activeTab}
+          brands={brandOptions}
+          groups={groupOptions}
+        />
       </section>
 
       <OptimizeTabs active={activeTab} params={params} />
@@ -274,10 +279,12 @@ export default async function OptimizePage({
       {activeTab === "creatives" ? (
         canViewCreatives && creativeData ? (
           <CreativesPanel
+            key={focus ?? "creatives"}
             data={creativeData}
             brand={brandFilter}
             group={groupFilter}
             defaultDelivery={statusFilter}
+            focus={focus}
           />
         ) : (
           <PermissionPanel label="Creative diagnostics" />
