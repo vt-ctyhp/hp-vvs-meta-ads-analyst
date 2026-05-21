@@ -115,18 +115,6 @@ export default async function OptimizePage({
     summaryPromise,
     pivotPromise,
   ]);
-  // Diagnostic logging visible in Vercel function logs.
-  const { getMissingRequiredEnv } = await import("@/lib/env");
-  console.log("[optimize] lean payload sizes", {
-    configured: summary.configured,
-    payloadMissingEnv: summary.missingEnv,
-    currentMissingEnv: getMissingRequiredEnv(),
-    creatives: summary.creativeCount,
-    brandOptions: summary.brandOptions.length,
-    dailyTrend: summary.dailyTrend.length,
-    generatedAt: summary.generatedAt,
-    fetchError,
-  });
 
   // Build filter option lists from the data so the bar always offers brands
   // that actually have rows in the selected date range.
