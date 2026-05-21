@@ -1,4 +1,5 @@
 import { RunSyncButton } from "@/components/v2/optimize/sync-button";
+import { formatCaliforniaDateTime } from "@/lib/california-time";
 import { tokens } from "@/lib/design-tokens";
 import type { MetaAdsBackfillChunk, MetaAdsBackfillJob } from "@/lib/meta-backfill";
 
@@ -28,13 +29,6 @@ type Props = {
  */
 
 const RELATIVE = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
-const FULL_DATE = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-});
-
 export function PipelinesPanel({
   canRunSync,
   syncRuns,
@@ -49,12 +43,23 @@ export function PipelinesPanel({
             <div>
               <h2 className="text-sm font-semibold text-stone-900">Manual Meta sync</h2>
               <p className="text-xs text-stone-600">
-                Fetches campaigns, ads, creatives, and the last 35 days of insights from Meta.
-                Writes land as <code className="rounded bg-stone-100 px-1">environment=staging</code>{" "}
-                in this build.
+                Refreshes the recent insight window from Meta without walking the full ad
+                and creative catalog. Writes land as{" "}
+                <code className="rounded bg-stone-100 px-1">environment=staging</code> in
+                this build.
               </p>
             </div>
-            <RunSyncButton size="sm" />
+            <div className="flex flex-col items-end gap-2 sm:flex-row">
+              <RunSyncButton size="sm" />
+              <RunSyncButton
+                size="sm"
+                mode="catalog"
+                label="Refresh catalog"
+                runningLabel="Refreshing…"
+                variant="secondary"
+                confirmMessage="Refresh the full Meta ad and creative catalog? Use this only when ads or creatives are missing; it can take several minutes."
+              />
+            </div>
           </div>
         </section>
       ) : null}
@@ -90,7 +95,11 @@ export function PipelinesPanel({
                 <tr key={run.id} className="border-b border-stone-100">
                   <Td>
                     <div className="flex flex-col">
-                      <span>{run.startedAt ? FULL_DATE.format(new Date(run.startedAt)) : "—"}</span>
+                      {run.startedAt ? (
+                        <time dateTime={run.startedAt}>{formatCaliforniaDateTime(run.startedAt)}</time>
+                      ) : (
+                        <span>—</span>
+                      )}
                       <span className="text-[10px] text-stone-500">
                         {run.startedAt ? relativeTime(run.startedAt) : ""}
                       </span>
@@ -166,8 +175,24 @@ export function PipelinesPanel({
                       ) : null}
                     </span>
                   </Td>
-                  <Td>{job.startedAt ? FULL_DATE.format(new Date(job.startedAt)) : "—"}</Td>
-                  <Td>{job.completedAt ? FULL_DATE.format(new Date(job.completedAt)) : "—"}</Td>
+                  <Td>
+                    {job.startedAt ? (
+                      <time dateTime={job.startedAt}>
+                        {formatCaliforniaDateTime(job.startedAt)}
+                      </time>
+                    ) : (
+                      "—"
+                    )}
+                  </Td>
+                  <Td>
+                    {job.completedAt ? (
+                      <time dateTime={job.completedAt}>
+                        {formatCaliforniaDateTime(job.completedAt)}
+                      </time>
+                    ) : (
+                      "—"
+                    )}
+                  </Td>
                 </tr>
               ))}
             </tbody>
