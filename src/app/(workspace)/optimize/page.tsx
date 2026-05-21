@@ -1,4 +1,4 @@
-import { CreativeGrid } from "@/components/v2/optimize/creative-grid";
+import { CreativeGridWithDrawer } from "@/components/v2/optimize/creative-grid-with-drawer";
 import { OptimizeFilterBar } from "@/components/v2/optimize/filter-bar";
 import { RunSyncButton } from "@/components/v2/optimize/sync-button";
 import { TimeSeriesChart } from "@/components/v2/optimize/time-series-chart";
@@ -168,7 +168,7 @@ export default async function OptimizePage({
 
       <TimeSeriesChart data={dashboard.dailyTrend} />
 
-      <CreativeGrid rows={filteredCreatives} />
+      <CreativeGridWithDrawer rows={filteredCreatives} />
     </div>
   );
 }
