@@ -113,7 +113,7 @@ export function OptimizeFilterBar({ brands, groups }: Props) {
   return (
     <div
       aria-label="Optimize filters"
-      className="flex flex-wrap items-center gap-2 rounded-xl border border-stone-200 bg-white px-3 py-2"
+      className="flex flex-wrap items-center gap-2 px-3 py-2"
     >
       <Select
         label="Brand"

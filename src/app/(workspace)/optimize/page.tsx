@@ -1,4 +1,3 @@
-import { CreativeGridWithDrawer } from "@/components/v2/optimize/creative-grid-with-drawer";
 import { OptimizeFilterBar } from "@/components/v2/optimize/filter-bar";
 import { PeriodControls } from "@/components/v2/optimize/period-controls";
 import { RunSyncButton } from "@/components/v2/optimize/sync-button";
@@ -145,27 +144,21 @@ export default async function OptimizePage({
     label: u,
   }));
 
-  // Apply UI-side filters on top of what the server already aggregated.
-  // Brand + group + status all map onto the legacy creative grid here;
-  // brand + group also re-flow server-side into both fetchDashboardData
-  // and fetchPeriodPivot via the URL params above. Status only filters
-  // client-side because the RPC doesn't carry an ad-status field.
-  const filteredCreatives = dashboard.creatives.filter((row) => {
+  // Filter the daily trend client-side by brand + group so the historical
+  // chart reflects the same filters the rest of the page uses. The
+  // dailyTrend bundle is grouped by (date, brand, campaign_umbrella) so
+  // both filters are safe to apply. (Range is already applied server-side
+  // via the date params passed to fetchDashboardData.)
+  const filteredDailyTrend = dashboard.dailyTrend.filter((row) => {
     if (brandFilter !== "all" && row.brandCode !== brandFilter) return false;
     if (groupFilter !== "all" && row.campaignUmbrella !== groupFilter) return false;
-    if (statusFilter !== "all") {
-      const eff = (row.effectiveStatus ?? row.status ?? "").toLowerCase();
-      if (statusFilter === "live" && !eff.includes("active")) return false;
-      if (statusFilter === "paused" && !eff.includes("paused")) return false;
-      if (
-        statusFilter === "off" &&
-        !["delete", "archived", "disapproved"].some((k) => eff.includes(k))
-      ) {
-        return false;
-      }
-    }
     return true;
   });
+  // statusFilter intentionally left unused for chart + pivot — the RPC
+  // doesn't carry an ad-status field, and "current status" doesn't
+  // meaningfully apply to historical daily aggregates anyway. Status
+  // becomes meaningful again when ad-level enrichment lands in v2.
+  void statusFilter;
 
   // Status-sentence inputs.
   const winnersCount = dashboard.actionQueue.filter((a) => a.bucket === "scale").length;
@@ -235,23 +228,21 @@ export default async function OptimizePage({
         </section>
       ) : null}
 
-      <OptimizeFilterBar brands={brandOptions} groups={groupOptions} />
+      <TimeSeriesChart data={filteredDailyTrend} />
 
-      <TimeSeriesChart data={dashboard.dailyTrend} />
-
-      <PeriodControls periods={periodCount} frequency={frequency} metric={metric} />
+      {/* Consolidated filter + period-control bar. Two rows in one
+          container so the operator reads "filters + grouping" as one
+          coordinated control surface. */}
+      <section
+        aria-label="Optimize filters and period grouping"
+        className="overflow-hidden rounded-xl border border-stone-200 bg-white"
+      >
+        <OptimizeFilterBar brands={brandOptions} groups={groupOptions} />
+        <div className="border-t border-stone-200" />
+        <PeriodControls periods={periodCount} frequency={frequency} metric={metric} />
+      </section>
 
       <TreeTable payload={pivot} />
-
-      <details className="rounded-xl border border-stone-200 bg-white">
-        <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-stone-700">
-          Legacy creative grid (flat view — for spot-checking until tree
-          table replaces it in v2 polish)
-        </summary>
-        <div className="border-t border-stone-200 p-3">
-          <CreativeGridWithDrawer rows={filteredCreatives} />
-        </div>
-      </details>
     </div>
   );
 }

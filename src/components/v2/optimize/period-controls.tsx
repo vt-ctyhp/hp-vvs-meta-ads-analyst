@@ -76,7 +76,7 @@ export function PeriodControls({ periods, frequency, metric }: Props) {
   return (
     <section
       aria-label="Period controls"
-      className="flex flex-wrap items-center gap-x-6 gap-y-3 rounded-xl border border-stone-200 bg-white p-3"
+      className="flex flex-wrap items-center gap-x-6 gap-y-3 px-3 py-2"
     >
       <Segment label="Periods">
         {PERIODS.map((opt) => (
