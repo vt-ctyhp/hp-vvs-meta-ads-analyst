@@ -5,11 +5,16 @@ import { TimeSeriesChart } from "@/components/v2/optimize/time-series-chart";
 import { TreeTable } from "@/components/v2/optimize/tree-table";
 import { SignalStrip } from "@/components/v2/signal-strip";
 import { StatusSentence } from "@/components/v2/status-sentence";
-import { fetchDashboardData } from "@/lib/analytics";
 import { CAMPAIGN_UMBRELLAS } from "@/lib/campaign-umbrellas";
 import { hasPermission } from "@/lib/access-control";
 import {
+  emptyOptimizeSummaryPayload,
+  fetchOptimizeSummaryData,
+} from "@/lib/optimize-page-data";
+import {
   fetchPeriodPivot,
+  isPeriodMetric,
+  normalizePeriodCount,
   type PeriodMetric,
   type PeriodPivotPayload,
 } from "@/lib/period-pivot-data";
@@ -31,16 +36,6 @@ type SearchParams = {
   freq?: string;
   metric?: string;
 };
-
-const ALLOWED_PERIODS = new Set([1, 4, 8, 12]);
-const ALLOWED_METRICS: PeriodMetric[] = [
-  "spend",
-  "primary_results",
-  "cost_per_primary_results",
-  "ctr",
-  "impressions",
-  "cpc",
-];
 
 export default async function OptimizePage({
   searchParams,
@@ -68,28 +63,27 @@ export default async function OptimizePage({
       : new Date();
 
   // Period-pivot controls — defaults: 4 weeks of Primary KPI.
-  const requestedPeriods = Number(params.periods);
-  const periodCount = ALLOWED_PERIODS.has(requestedPeriods) ? requestedPeriods : 4;
+  const periodCount = normalizePeriodCount(params.periods);
   const frequency: Frequency = isFrequency(params.freq) ? params.freq : "week";
-  const metric: PeriodMetric =
-    ALLOWED_METRICS.includes(params.metric as PeriodMetric)
-      ? (params.metric as PeriodMetric)
-      : "primary_results";
+  const metric: PeriodMetric = isPeriodMetric(params.metric)
+    ? params.metric
+    : "primary_results";
 
-  const dashboardPromise = fetchDashboardData({
+  const summaryPromise = fetchOptimizeSummaryData({
     days,
     startDate: params.start ?? null,
     endDate: params.end ?? null,
+    brand: brandFilter !== "all" ? brandFilter : null,
+    group: groupFilter !== "all" ? groupFilter : null,
   })
-    .then((dashboard) => ({
-      dashboard,
+    .then((summary) => ({
+      summary,
       fetchError: null as string | null,
     }))
-    .catch(async (e) => {
-      console.error("[optimize] fetchDashboardData threw:", e);
-      const { emptyDashboardPayload } = await import("@/lib/analytics");
+    .catch((e) => {
+      console.error("[optimize] fetchOptimizeSummaryData threw:", e);
       return {
-        dashboard: emptyDashboardPayload([]),
+        summary: emptyOptimizeSummaryPayload([]),
         fetchError: e instanceof Error ? e.message : String(e),
       };
     });
@@ -109,6 +103,7 @@ export default async function OptimizePage({
       missingEnv: [],
       periods: lastNPeriods(pivotAnchor, periodCount, frequency),
       metric,
+      query: null,
       campaigns: [],
       adSets: [],
       creatives: [],
@@ -116,47 +111,34 @@ export default async function OptimizePage({
     };
   });
 
-  const [{ dashboard, fetchError }, pivot] = await Promise.all([
-    dashboardPromise,
+  const [{ summary, fetchError }, pivot] = await Promise.all([
+    summaryPromise,
     pivotPromise,
   ]);
   // Diagnostic logging visible in Vercel function logs.
   const { getMissingRequiredEnv } = await import("@/lib/env");
-  console.log("[optimize] dashboard payload sizes", {
-    configured: dashboard.configured,
-    payloadMissingEnv: dashboard.missingEnv,
+  console.log("[optimize] lean payload sizes", {
+    configured: summary.configured,
+    payloadMissingEnv: summary.missingEnv,
     currentMissingEnv: getMissingRequiredEnv(),
-    creatives: dashboard.creatives.length,
-    campaigns: dashboard.campaigns.length,
-    adSets: dashboard.adSets.length,
-    byBrand: dashboard.byBrand.length,
-    byUmbrella: dashboard.byUmbrella.length,
-    dailyTrend: dashboard.dailyTrend.length,
-    generatedAt: dashboard.generatedAt,
+    creatives: summary.creativeCount,
+    brandOptions: summary.brandOptions.length,
+    dailyTrend: summary.dailyTrend.length,
+    generatedAt: summary.generatedAt,
     fetchError,
   });
 
-  // Build filter option lists from the data so the bar always offers the
-  // brands/groups that actually have rows in scope.
-  const brandOptions = dashboard.byBrand.map((b) => ({
-    value: b.brandCode,
-    label: b.name || b.brandCode,
-  }));
+  // Build filter option lists from the data so the bar always offers brands
+  // that actually have rows in the selected date range.
+  const brandOptions = summary.brandOptions;
   const groupOptions = CAMPAIGN_UMBRELLAS.map((u) => ({
     value: u,
     label: u,
   }));
 
-  // Filter the daily trend client-side by brand + group so the historical
-  // chart reflects the same filters the rest of the page uses. The
-  // dailyTrend bundle is grouped by (date, brand, campaign_umbrella) so
-  // both filters are safe to apply. (Range is already applied server-side
-  // via the date params passed to fetchDashboardData.)
-  const filteredDailyTrend = dashboard.dailyTrend.filter((row) => {
-    if (brandFilter !== "all" && row.brandCode !== brandFilter) return false;
-    if (groupFilter !== "all" && row.campaignUmbrella !== groupFilter) return false;
-    return true;
-  });
+  // The Optimize summary fetch applies brand/group/date filters server-side,
+  // so the chart and headline stats no longer need the full dashboard payload.
+  const filteredDailyTrend = summary.dailyTrend;
   // statusFilter intentionally left unused for chart + pivot — the RPC
   // doesn't carry an ad-status field, and "current status" doesn't
   // meaningfully apply to historical daily aggregates anyway. Status
@@ -164,11 +146,10 @@ export default async function OptimizePage({
   void statusFilter;
 
   // Status-sentence inputs.
-  const winnersCount = dashboard.actionQueue.filter((a) => a.bucket === "scale").length;
-  const criticalCount =
-    dashboard.actionQueue.filter((a) => a.bucket === "fix" || a.bucket === "watch").length;
-  const spend7d = recentSpend(dashboard.dailyTrend, 7);
-  const spend7dPrior = recentSpend(dashboard.dailyTrend, 7, 7);
+  const winnersCount = summary.winnersCount;
+  const criticalCount = summary.criticalCount;
+  const spend7d = recentSpend(summary.dailyTrend, 7);
+  const spend7dPrior = recentSpend(summary.dailyTrend, 7, 7);
   const spendDelta = spend7dPrior > 0 ? (spend7d - spend7dPrior) / spend7dPrior : null;
 
   const sentence = buildSentence({
@@ -185,7 +166,7 @@ export default async function OptimizePage({
     notation: "compact",
   });
 
-  const isEmpty = dashboard.creatives.length === 0 && spend7d === 0;
+  const isEmpty = summary.creativeCount === 0 && spend7d === 0;
 
   return (
     <div className="space-y-6">
@@ -201,7 +182,7 @@ export default async function OptimizePage({
           },
           {
             label: "Creatives",
-            value: String(dashboard.creatives.length),
+            value: String(summary.creativeCount),
           },
           {
             label: "Winners",

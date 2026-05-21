@@ -8,7 +8,10 @@ import {
   type CampaignUmbrellaClassification,
 } from "./campaign-umbrellas";
 import { ConfigurationError, getMissingDashboardEnv } from "./env";
-import { aggregateMetaInsights, type MetaInsightAggregateRow } from "./meta-insight-aggregates";
+import {
+  cachedAggregateMetaInsights as aggregateMetaInsights,
+  type MetaInsightAggregateRow,
+} from "./meta-insight-aggregates";
 import { createAdsAnalystClient } from "./ads-analyst-db";
 
 export type MetricSummary = {

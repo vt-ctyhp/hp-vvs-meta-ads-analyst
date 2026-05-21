@@ -1,3 +1,5 @@
+import { unstable_cache } from "next/cache.js";
+
 import { createAdsAnalystClient } from "./ads-analyst-db.ts";
 
 export type MetaInsightDimension =
@@ -54,7 +56,7 @@ export type MetaInsightAggregateRow = {
   source_rows: number;
 };
 
-type AggregateInput = {
+export type AggregateInput = {
   start: string;
   end: string;
   dimensions: MetaInsightDimension[];
@@ -65,6 +67,36 @@ type AggregateInput = {
 };
 
 export async function aggregateMetaInsights(input: AggregateInput) {
+  return aggregateMetaInsightsUncached(normalizeAggregateInput(input));
+}
+
+export const META_INSIGHT_AGGREGATES_CACHE_TAG = "meta-insight-aggregates";
+export const META_INSIGHT_AGGREGATES_REVALIDATE_SECONDS = 60;
+
+export async function cachedAggregateMetaInsights(input: AggregateInput) {
+  return cachedAggregateMetaInsightsImpl(normalizeAggregateInput(input));
+}
+
+type NormalizedAggregateInput = {
+  start: string;
+  end: string;
+  dimensions: MetaInsightDimension[];
+  filters: MetaInsightFilter[];
+  sortField: string;
+  sortDirection: "asc" | "desc";
+  limit: number;
+};
+
+const cachedAggregateMetaInsightsImpl = unstable_cache(
+  async (input: NormalizedAggregateInput) => aggregateMetaInsightsUncached(input),
+  ["meta-insight-aggregates-v1"],
+  {
+    revalidate: META_INSIGHT_AGGREGATES_REVALIDATE_SECONDS,
+    tags: [META_INSIGHT_AGGREGATES_CACHE_TAG],
+  },
+);
+
+async function aggregateMetaInsightsUncached(input: NormalizedAggregateInput) {
   const supabase = createAdsAnalystClient("web") as unknown as {
     rpc: (
       name: string,
@@ -75,14 +107,32 @@ export async function aggregateMetaInsights(input: AggregateInput) {
     p_start: input.start,
     p_end: input.end,
     p_dimensions: input.dimensions,
-    p_filters: input.filters || [],
-    p_sort_field: input.sortField || "spend",
-    p_sort_direction: input.sortDirection || "desc",
-    p_limit: input.limit || 100,
+    p_filters: input.filters,
+    p_sort_field: input.sortField,
+    p_sort_direction: input.sortDirection,
+    p_limit: input.limit,
   });
 
   if (error) throw error;
   return rows(data).map(mapAggregateRow);
+}
+
+export function normalizeAggregateInput(input: AggregateInput): NormalizedAggregateInput {
+  return {
+    start: input.start,
+    end: input.end,
+    dimensions: [...input.dimensions],
+    filters: [...(input.filters || [])].sort(compareFilters),
+    sortField: input.sortField || "spend",
+    sortDirection: input.sortDirection || "desc",
+    limit: input.limit || 100,
+  };
+}
+
+function compareFilters(a: MetaInsightFilter, b: MetaInsightFilter) {
+  return `${a.field}\0${a.operator}\0${a.value}`.localeCompare(
+    `${b.field}\0${b.operator}\0${b.value}`,
+  );
 }
 
 export function mapAggregateRow(row: Record<string, unknown>): MetaInsightAggregateRow {

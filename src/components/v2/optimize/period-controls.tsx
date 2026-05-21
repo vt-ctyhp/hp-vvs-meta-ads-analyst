@@ -80,7 +80,11 @@ export function PeriodControls({ periods, frequency, metric }: Props) {
   return (
     <section
       aria-label="Period controls"
-      className="flex flex-wrap items-center gap-x-6 gap-y-3 px-3 py-2"
+      aria-busy={pending}
+      className={[
+        "flex flex-wrap items-center gap-x-6 gap-y-3 px-3 py-2 transition-colors",
+        pending ? "bg-stone-50/70" : "",
+      ].join(" ")}
     >
       <Segment label="Periods">
         {PERIODS.map((opt) => (
@@ -134,6 +138,15 @@ export function PeriodControls({ periods, frequency, metric }: Props) {
           the selected metric.
         </div>
       )}
+      {pending ? (
+        <span
+          className="ml-auto inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-2.5 py-1 text-[11px] font-medium uppercase tracking-wider text-stone-500"
+          aria-live="polite"
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shadow-[0_0_0_3px_rgba(245,158,11,0.18)]" />
+          Updating table
+        </span>
+      ) : null}
     </section>
   );
 }
