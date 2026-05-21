@@ -10,31 +10,14 @@ import {
 } from "@tanstack/react-table";
 import { useMemo, useState } from "react";
 
+import type { CustomerLedgerRow } from "@/lib/convert-customer-ledger";
+
 /**
  * Customer ledger for the Convert room.
  *
- * Each row = one website_conversion. Columns: customer, source, paid touch,
- * CAPI status, booking time. Sortable by every column. Click row to expand
- * details (drawer wired in a follow-up commit).
- *
- * Source: website_conversions table via the limited web client. Limited mode
- * RLS restricts visible rows to environment='staging' on the preview, so the
- * ledger doubles as a staging-data correctness check.
+ * Each row = one customer journey from the shared website attribution read
+ * model. Conversion fields are present only when the visitor has a booking.
  */
-
-export type CustomerLedgerRow = {
-  eventId: string;
-  occurredAt: string;
-  customerName: string | null;
-  customerEmail: string | null;
-  brand: string | null;
-  sourceType: string | null;
-  paidTouchSource: string | null;
-  paidTouchCampaign: string | null;
-  capiStatus: string | null;
-  acuityAppointmentId: string | null;
-  appointmentType: string | null;
-};
 
 type Props = {
   rows: CustomerLedgerRow[];
@@ -73,7 +56,7 @@ export function CustomerLedger({ rows }: Props) {
       },
       {
         accessorKey: "occurredAt",
-        header: "Booking",
+        header: "Activity",
         size: 130,
         cell: ({ getValue }) => (
           <span className="text-xs tabular-nums">
@@ -96,6 +79,7 @@ export function CustomerLedger({ rows }: Props) {
         cell: ({ row }) => (
           <SourceChip
             type={row.original.sourceType ?? null}
+            source={row.original.paidTouchSource}
             campaign={row.original.paidTouchCampaign}
           />
         ),
@@ -104,7 +88,12 @@ export function CustomerLedger({ rows }: Props) {
         accessorKey: "capiStatus",
         header: "CAPI",
         size: 90,
-        cell: ({ getValue }) => <CapiChip status={getValue<string>() ?? null} />,
+        cell: ({ row }) => (
+          <CapiChip
+            hasConversion={row.original.hasConversion}
+            status={row.original.capiStatus}
+          />
+        ),
       },
       {
         accessorKey: "appointmentType",
@@ -132,7 +121,7 @@ export function CustomerLedger({ rows }: Props) {
   if (rows.length === 0) {
     return (
       <div className="rounded-xl border border-stone-200 bg-white px-4 py-10 text-center text-sm text-stone-600">
-        No conversions in this range yet.
+        No customer journeys in this range yet.
       </div>
     );
   }
@@ -172,7 +161,7 @@ export function CustomerLedger({ rows }: Props) {
           </thead>
           <tbody>
             {table.getRowModel().rows.map((row) => (
-              <tr key={row.id} className="border-b border-stone-100 hover:bg-stone-50">
+              <tr key={row.original.rowId} className="border-b border-stone-100 hover:bg-stone-50">
                 {row.getVisibleCells().map((cell) => (
                   <td
                     key={cell.id}
@@ -194,11 +183,16 @@ export function CustomerLedger({ rows }: Props) {
 function SourceChip({
   type,
   campaign,
+  source,
 }: {
   type: string | null;
   campaign: string | null;
+  source: string | null;
 }) {
   if (!type) {
+    if (source) {
+      return <span className="line-clamp-1 text-xs text-stone-600">{source}</span>;
+    }
     return <span className="text-xs text-stone-400">Direct / unattributed</span>;
   }
   const label =
@@ -225,12 +219,27 @@ function SourceChip({
       </span>
       {campaign ? (
         <span className="line-clamp-1 text-[10px] text-stone-500">{campaign}</span>
+      ) : source ? (
+        <span className="line-clamp-1 text-[10px] text-stone-500">{source}</span>
       ) : null}
     </div>
   );
 }
 
-function CapiChip({ status }: { status: string | null }) {
+function CapiChip({
+  hasConversion,
+  status,
+}: {
+  hasConversion: boolean;
+  status: string | null;
+}) {
+  if (!hasConversion) {
+    return (
+      <span className="inline-flex h-5 items-center rounded-full border border-stone-200 bg-stone-50 px-2 text-[10px] text-stone-500">
+        no booking
+      </span>
+    );
+  }
   if (!status)
     return (
       <span className="inline-flex h-5 items-center rounded-full border border-stone-200 bg-stone-50 px-2 text-[10px] text-stone-600">

@@ -3,12 +3,19 @@ import {
 } from "@/components/v2/convert/conversation-queue";
 import {
   CustomerLedger,
-  type CustomerLedgerRow,
 } from "@/components/v2/convert/customer-ledger";
 import { FunnelViz } from "@/components/v2/convert/funnel-viz";
 import { SignalStrip } from "@/components/v2/signal-strip";
 import { StatusSentence } from "@/components/v2/status-sentence";
-import { createAdsAnalystClient } from "@/lib/ads-analyst-db";
+import {
+  buildCustomerLedgerStatusSentence,
+  countCustomerLedgerCapiGaps,
+  countUnreadThreads,
+  customerJourneyLedgerRequestFromSearchParams,
+  customerLedgerRowsFromJourneys,
+  type CustomerLedgerRow,
+} from "@/lib/convert-customer-ledger";
+import { fetchCustomerJourneyLedgerData } from "@/lib/customer-journey-ledger";
 import { requirePagePermission } from "@/lib/server-route-auth";
 import {
   getSocialInboxData,
@@ -49,13 +56,19 @@ export default async function ConvertPage({
       console.error("[convert] getSocialInboxData failed:", e);
       return emptyInbox;
     }),
-    fetchLedger().catch((e) => {
+    fetchLedger(params).catch((e) => {
       console.error("[convert] fetchLedger failed:", e);
       return [] as CustomerLedgerRow[];
     }),
   ]);
 
-  const sentence = buildSentence({ funnel, inbox, ledger });
+  const unread = countUnreadThreads(inbox.threads);
+  const sentence = buildCustomerLedgerStatusSentence({
+    bookings: funnel.overview.schedules,
+    rows: ledger,
+    sessions: funnel.overview.sessions,
+    unreadConversations: unread,
+  });
 
   return (
     <div className="space-y-6">
@@ -72,11 +85,11 @@ export default async function ConvertPage({
           },
           {
             label: "Unread conversations",
-            value: String(unreadCount(inbox)),
+            value: String(unread),
           },
           {
             label: "CAPI gaps",
-            value: String(capiGap(ledger)),
+            value: String(countCustomerLedgerCapiGaps(ledger)),
           },
         ]}
       />
@@ -99,48 +112,11 @@ export default async function ConvertPage({
 
 // ── data fetchers ──────────────────────────────────────────────────────────
 
-async function fetchLedger(limit = 100): Promise<CustomerLedgerRow[]> {
-  const supabase = createAdsAnalystClient("web") as unknown as {
-    from: (t: string) => {
-      select: (cols: string) => {
-        order: (
-          col: string,
-          opts: { ascending: boolean; nullsFirst?: boolean },
-        ) => {
-          limit: (n: number) => Promise<{ data: unknown; error: Error | null }>;
-        };
-      };
-    };
-  };
-
-  const { data, error } = await supabase
-    .from("website_conversions")
-    .select(
-      "event_id, occurred_at, customer_name, customer_email, brand, source_type, meta_capi_status, acuity_appointment_id, appointment_type, last_paid_touch",
-    )
-    .order("occurred_at", { ascending: false, nullsFirst: false })
-    .limit(limit);
-
-  if (error) throw error;
-  const rows = Array.isArray(data) ? (data as Record<string, unknown>[]) : [];
-  return rows.map((row) => {
-    const paid = (row.last_paid_touch ?? null) as Record<string, unknown> | null;
-    return {
-      eventId: String(row.event_id ?? ""),
-      occurredAt: String(row.occurred_at ?? new Date().toISOString()),
-      customerName: (row.customer_name as string | null) ?? null,
-      customerEmail: (row.customer_email as string | null) ?? null,
-      brand: (row.brand as string | null) ?? null,
-      sourceType: (row.source_type as string | null) ?? null,
-      paidTouchSource:
-        paid && typeof paid.utm_source === "string" ? paid.utm_source : null,
-      paidTouchCampaign:
-        paid && typeof paid.utm_campaign === "string" ? paid.utm_campaign : null,
-      capiStatus: (row.meta_capi_status as string | null) ?? null,
-      acuityAppointmentId: (row.acuity_appointment_id as string | null) ?? null,
-      appointmentType: (row.appointment_type as string | null) ?? null,
-    };
-  });
+async function fetchLedger(params: SearchParams): Promise<CustomerLedgerRow[]> {
+  const data = await fetchCustomerJourneyLedgerData(
+    customerJourneyLedgerRequestFromSearchParams(params),
+  );
+  return customerLedgerRowsFromJourneys(data.rows);
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -178,50 +154,4 @@ function emptyFunnel(days: number): WebsiteFunnelData {
     trend: [],
     recentEvents: [],
   };
-}
-
-function unreadCount(inbox: SocialInboxData): number {
-  return inbox.threads.reduce((sum, t) => sum + (t.unread_count || 0), 0);
-}
-
-function capiGap(rows: CustomerLedgerRow[]): number {
-  return rows.filter((r) => {
-    const status = (r.capiStatus ?? "").toLowerCase();
-    return status === "failed" || status === "error" || !r.capiStatus;
-  }).length;
-}
-
-function buildSentence(args: {
-  funnel: WebsiteFunnelData;
-  inbox: SocialInboxData;
-  ledger: CustomerLedgerRow[];
-}): string {
-  const { funnel, inbox, ledger } = args;
-  const sessions = funnel.overview.sessions;
-  const bookings = funnel.overview.schedules;
-  const unread = unreadCount(inbox);
-  const gaps = capiGap(ledger);
-
-  if (sessions === 0 && bookings === 0 && unread === 0 && ledger.length === 0) {
-    return "No customer activity in this range yet. Once the booking pixel + inbox sync are live, traffic + bookings + conversations land here.";
-  }
-
-  const pieces: string[] = [];
-  if (sessions > 0 || bookings > 0) {
-    const rate = sessions > 0 ? ((bookings / sessions) * 100).toFixed(1) : null;
-    pieces.push(
-      `${sessions.toLocaleString()} customers → ${bookings} booking${
-        bookings === 1 ? "" : "s"
-      }${rate ? ` (${rate}%)` : ""}.`,
-    );
-  }
-  if (unread > 0) {
-    pieces.push(`${unread} conversation${unread === 1 ? "" : "s"} waiting.`);
-  }
-  if (gaps > 0) {
-    pieces.push(
-      `${gaps} attribution / CAPI gap${gaps === 1 ? "" : "s"} to clear.`,
-    );
-  }
-  return pieces.join(" ");
 }

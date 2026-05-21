@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  buildAttributionLedgerData,
   buildAttributionLedgerDetailData,
   buildAttributionLedgerRows,
   type AttributionLedgerConversionRow,
@@ -9,6 +10,7 @@ import {
   type AttributionLedgerSessionRow,
   type AttributionLedgerVisitorRow,
 } from "../src/lib/attribution-ledger.ts";
+import { normalizeCustomerJourneyLedgerDateRange } from "../src/lib/customer-journey-ledger.ts";
 
 describe("attribution ledger row merging", () => {
   it("uses latest conversion booking, customer, and CAPI fields", () => {
@@ -84,6 +86,63 @@ describe("attribution ledger row merging", () => {
     assert.equal(rows[0].customerPhone, "555-0199");
     assert.equal(rows[0].firstPage, "https://www.hungphatusa.com/pages/book-an-appointment");
     assert.equal(rows[0].hasConversion, false);
+  });
+
+  it("summarizes journey rows without counting null CAPI statuses", () => {
+    const data = buildAttributionLedgerData({
+      conversions: [
+        conversionRow({
+          meta_capi_status: "sent",
+          visitor_id: "visitor-1",
+        }),
+        conversionRow({
+          event_id: "conversion-2",
+          meta_capi_status: null,
+          properties: null,
+          raw_json: null,
+          source_type: null,
+          visitor_id: "visitor-2",
+        }),
+      ],
+      events: [],
+      range: { days: 7, end: "2026-05-21", start: "2026-05-15" },
+      sessions: [],
+      visitors: [
+        visitorRow({ visitor_id: "visitor-1" }),
+        visitorRow({ last_paid_touch: null, visitor_id: "visitor-2" }),
+        visitorRow({
+          customer_email: null,
+          customer_name: null,
+          last_paid_touch: null,
+          last_seen_at: "2026-05-19T19:00:00.000Z",
+          visitor_id: "visitor-3",
+        }),
+      ],
+    });
+
+    assert.equal(data.rows.length, 3);
+    assert.equal(data.summary.visitorsShown, 3);
+    assert.equal(data.summary.visitorsWithConversions, 2);
+    assert.equal(data.summary.visitorsWithPaidTouch, 1);
+    assert.deepEqual(data.summary.capiStatuses, [{ count: 1, status: "sent" }]);
+  });
+
+  it("normalizes shared ledger date ranges from days or explicit dates", () => {
+    assert.deepEqual(
+      normalizeCustomerJourneyLedgerDateRange({
+        days: 7,
+        endDate: "2026-05-21",
+      }),
+      { days: 7, end: "2026-05-21", start: "2026-05-15" },
+    );
+
+    assert.deepEqual(
+      normalizeCustomerJourneyLedgerDateRange({
+        endDate: "2026-05-21",
+        startDate: "2026-05-01",
+      }),
+      { days: 21, end: "2026-05-21", start: "2026-05-01" },
+    );
   });
 
   it("resolves paid ad IDs from fallback touch JSON", () => {
@@ -529,6 +588,7 @@ function conversionRow(
   return {
     acuity_appointment_id: null,
     appointment_type: null,
+    brand: null,
     browser_name: "Mobile Safari",
     conversion_touch: null,
     customer_email: null,
