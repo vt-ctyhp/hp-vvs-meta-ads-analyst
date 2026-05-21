@@ -736,11 +736,34 @@ async function syncAccount(
   );
   const adSetByMetaId = new Map(adSetRows.map((row) => [String(row.ad_set_id), row]));
 
+  // Restrict /ads to the slice of inventory a dashboard cares about. By
+  // default Meta returns EVERY ad ever attached to the account — including
+  // ARCHIVED + DELETED + DISAPPROVED entries from years of rotation, which
+  // for HP comes to 10,000+ rows and trips META_SYNC_MAX_AD_PAGES.
+  //
+  // The included statuses cover anything that can still spend or be
+  // re-activated. Insights for old archived/deleted ads remain intact in
+  // meta_daily_insights — they're fetched via the /insights endpoint which
+  // doesn't honor this filter. The backfill flow is unaffected.
   const ads = refreshAdCatalog
     ? await graphPages<JsonRecord>(`${metaAccountId}/ads`, {
         fields:
           "id,name,campaign_id,adset_id,status,effective_status,created_time,updated_time,creative{id,name,title,body,thumbnail_url,image_url,image_hash,object_type,object_story_id,effective_object_story_id,object_story_spec,asset_feed_spec,call_to_action_type,video_id}",
         limit: "50",
+        filtering: JSON.stringify([
+          {
+            field: "effective_status",
+            operator: "IN",
+            value: [
+              "ACTIVE",
+              "PAUSED",
+              "PENDING_REVIEW",
+              "WITH_ISSUES",
+              "CAMPAIGN_PAUSED",
+              "ADSET_PAUSED",
+            ],
+          },
+        ]),
       }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_PAGES", 100) })
     : [];
   const storedAdRows = refreshAdCatalog ? [] : await fetchStoredAdRows(metaAccountId);
