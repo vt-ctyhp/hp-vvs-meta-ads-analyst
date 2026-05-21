@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import type { CreativeAsset, PeriodMetric } from "@/lib/period-pivot-data";
 import type { PeriodWindow } from "@/lib/period-windows";
@@ -106,18 +106,8 @@ export function CreativeDetailDrawer({
         </header>
 
         <div className="space-y-4 p-4">
-          {previewSrc ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={previewSrc}
-              alt=""
-              className="aspect-square w-full rounded-lg border border-stone-200 object-cover"
-            />
-          ) : (
-            <div className="flex aspect-square w-full items-center justify-center rounded-lg border border-dashed border-stone-300 text-xs text-stone-400">
-              No preview available
-            </div>
-          )}
+          <PreviewWithFallback src={previewSrc} />
+
 
           <section>
             <h3 className="pb-2 text-[10px] uppercase tracking-wider text-stone-500">
@@ -181,6 +171,32 @@ export function CreativeDetailDrawer({
         </div>
       </aside>
     </div>
+  );
+}
+
+/**
+ * Drawer preview with onError fallback. Same reason as the tree-table's
+ * ThumbnailWithFallback — the Meta CDN URL can be expired before the
+ * cache cron has populated supabase_thumbnail_url, and we'd rather show
+ * a clean "No preview" tile than Chrome's torn-photo icon.
+ */
+function PreviewWithFallback({ src }: { src: string | null }) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) {
+    return (
+      <div className="flex aspect-square w-full items-center justify-center rounded-lg border border-dashed border-stone-300 text-xs text-stone-400">
+        No preview available
+      </div>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src}
+      alt=""
+      className="aspect-square w-full rounded-lg border border-stone-200 object-cover"
+      onError={() => setFailed(true)}
+    />
   );
 }
 

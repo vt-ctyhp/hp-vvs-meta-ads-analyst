@@ -294,22 +294,7 @@ function NameCell({
         <span className="inline-block w-5 shrink-0" aria-hidden />
       )}
       {isCreative ? (
-        thumb ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={thumb}
-            alt=""
-            className="h-8 w-8 shrink-0 rounded border border-stone-200 object-cover"
-            loading="lazy"
-          />
-        ) : (
-          <span
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border border-dashed border-stone-300 text-[9px] text-stone-400"
-            aria-hidden
-          >
-            no img
-          </span>
-        )
+        <ThumbnailWithFallback src={thumb ?? null} />
       ) : (
         <span
           className="inline-flex h-5 shrink-0 items-center text-[10px] uppercase tracking-wider text-stone-400"
@@ -341,6 +326,39 @@ const LEVEL_BADGE: Record<TreeRow["level"], string> = {
   ad_set: "AS",
   creative: "Cr",
 };
+
+/**
+ * Small img-with-fallback so a broken Meta CDN URL (expired signed link)
+ * renders the dashed placeholder instead of Chrome's torn-photo icon.
+ *
+ * Meta thumbnails expire ~24-48h after sync; the /api/cron/cache-thumbnails
+ * job copies them into Supabase Storage so they stop expiring, but until
+ * the cron has caught up to a given creative we still try the Meta URL.
+ * onError swaps cleanly to the placeholder so the row never looks broken.
+ */
+function ThumbnailWithFallback({ src }: { src: string | null }) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) {
+    return (
+      <span
+        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border border-dashed border-stone-300 text-[9px] text-stone-400"
+        aria-hidden
+      >
+        no img
+      </span>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src}
+      alt=""
+      className="h-8 w-8 shrink-0 rounded border border-stone-200 object-cover"
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
+  );
+}
 
 /**
  * Stitch the three flat arrays into a tree. PivotedRow.parentIds carries
