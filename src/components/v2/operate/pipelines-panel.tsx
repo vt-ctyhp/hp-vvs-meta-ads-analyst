@@ -2,6 +2,7 @@ import { RunSyncButton } from "@/components/v2/optimize/sync-button";
 import { formatCaliforniaDateTime } from "@/lib/california-time";
 import { tokens } from "@/lib/design-tokens";
 import type { MetaAdsBackfillChunk, MetaAdsBackfillJob } from "@/lib/meta-backfill";
+import { incrementalSyncDays } from "@/lib/meta-backfill-utils";
 
 export type SyncRunRow = {
   id: string;
@@ -35,6 +36,8 @@ export function PipelinesPanel({
   backfillJobs,
   backfillChunks,
 }: Props) {
+  const syncDays = incrementalSyncDays();
+
   return (
     <div className="space-y-6">
       {canRunSync ? (
@@ -43,8 +46,10 @@ export function PipelinesPanel({
             <div>
               <h2 className="text-sm font-semibold text-stone-900">Manual Meta sync</h2>
               <p className="text-xs text-stone-600">
-                Refreshes the recent insight window from Meta without walking the full ad
-                and creative catalog. Writes land as{" "}
+                Updates account, campaign, and ad set metadata, then refreshes the last{" "}
+                {syncDays} days of insights. Normal sync skips the full ad and creative
+                catalog; use Refresh catalog only when ads or creatives are missing. Writes
+                land as{" "}
                 <code className="rounded bg-stone-100 px-1">environment=staging</code> in
                 this build.
               </p>
