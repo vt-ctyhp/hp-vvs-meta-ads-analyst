@@ -37,6 +37,22 @@ describe("meta insight rollup migration", () => {
     );
     assert.match(ROLLUP_MIGRATION, /cross join env\s*where r\.environment = env\.environment/s);
   });
+
+  it("upserts refreshed rows when concurrent rollup refreshes collide", () => {
+    assert.match(
+      ROLLUP_MIGRATION,
+      /on conflict \(insight_id\) do update set\s*environment = excluded\.environment/s,
+    );
+    assert.match(ROLLUP_MIGRATION, /monthly_budget = excluded\.monthly_budget/);
+    assert.match(ROLLUP_MIGRATION, /secondary_results = excluded\.secondary_results/);
+  });
+
+  it("coerces rollup health ok status to false instead of null", () => {
+    assert.match(
+      ROLLUP_MIGRATION,
+      /coalesce\(\s*stats\.raw_rows = stats\.rollup_rows\s*and stats\.missing_rollups = 0\s*and stats\.stale_rollups = 0\s*and stats\.orphan_rollups = 0,\s*false\s*\) as ok/s,
+    );
+  });
 });
 
 describe("refreshMetaInsightRollupsRpcArgs", () => {

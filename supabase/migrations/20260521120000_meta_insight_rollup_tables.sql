@@ -141,6 +141,7 @@ begin
     and (p_end is null or r.date_start <= p_end)
     and (p_meta_account_id is null or r.meta_account_id = p_meta_account_id);
 
+  -- Keep refreshes idempotent when cron and sync jobs overlap on the same insight rows.
   insert into public.meta_daily_insight_rollups (
     insight_id,
     environment,
@@ -285,7 +286,51 @@ begin
   where i.environment = v_environment
     and (p_start is null or i.date_start >= p_start)
     and (p_end is null or i.date_start <= p_end)
-    and (p_meta_account_id is null or i.meta_account_id = p_meta_account_id);
+    and (p_meta_account_id is null or i.meta_account_id = p_meta_account_id)
+  on conflict (insight_id) do update set
+    environment = excluded.environment,
+    brand_id = excluded.brand_id,
+    meta_account_id = excluded.meta_account_id,
+    date_start = excluded.date_start,
+    date_stop = excluded.date_stop,
+    week_start = excluded.week_start,
+    month_start = excluded.month_start,
+    quarter_start = excluded.quarter_start,
+    date_key = excluded.date_key,
+    week_key = excluded.week_key,
+    month_key = excluded.month_key,
+    quarter_key = excluded.quarter_key,
+    brand = excluded.brand,
+    campaign_umbrella = excluded.campaign_umbrella,
+    campaign_umbrella_raw = excluded.campaign_umbrella_raw,
+    campaign_filter_text = excluded.campaign_filter_text,
+    campaign = excluded.campaign,
+    campaign_id = excluded.campaign_id,
+    ad_set_filter_text = excluded.ad_set_filter_text,
+    ad_set = excluded.ad_set,
+    ad_set_id = excluded.ad_set_id,
+    ad_filter_text = excluded.ad_filter_text,
+    ad = excluded.ad,
+    ad_id = excluded.ad_id,
+    creative_filter_text = excluded.creative_filter_text,
+    search_filter_text = excluded.search_filter_text,
+    creative = excluded.creative,
+    creative_id = excluded.creative_id,
+    daily_budget = excluded.daily_budget,
+    days_in_month = excluded.days_in_month,
+    monthly_budget = excluded.monthly_budget,
+    spend = excluded.spend,
+    impressions = excluded.impressions,
+    reach = excluded.reach,
+    clicks = excluded.clicks,
+    leads = excluded.leads,
+    bookings = excluded.bookings,
+    conversions = excluded.conversions,
+    website_bookings = excluded.website_bookings,
+    messaging_contacts = excluded.messaging_contacts,
+    new_messaging_contacts = excluded.new_messaging_contacts,
+    primary_results = excluded.primary_results,
+    secondary_results = excluded.secondary_results;
 
   get diagnostics v_inserted = row_count;
   return v_inserted;
@@ -419,10 +464,13 @@ as $$
     repair_chunk.oldest_problem_date,
     repair_chunk.meta_account_id as repair_meta_account_id,
     to_char(repair_chunk.month_start, 'YYYY-MM') as repair_month,
-    stats.raw_rows = stats.rollup_rows
-      and stats.missing_rollups = 0
-      and stats.stale_rollups = 0
-      and stats.orphan_rollups = 0 as ok
+    coalesce(
+      stats.raw_rows = stats.rollup_rows
+        and stats.missing_rollups = 0
+        and stats.stale_rollups = 0
+        and stats.orphan_rollups = 0,
+      false
+    ) as ok
   from stats
   left join repair_chunk on true;
 $$;
