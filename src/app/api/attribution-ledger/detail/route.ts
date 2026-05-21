@@ -11,16 +11,18 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const visitorId = url.searchParams.get("visitorId")?.trim();
     const acuityAppointmentId = url.searchParams.get("acuityAppointmentId")?.trim();
+    const eventId = url.searchParams.get("eventId")?.trim();
 
-    if (!visitorId) {
+    if (!visitorId && !acuityAppointmentId && !eventId) {
       return Response.json(
-        { error: "visitorId is required." },
+        { error: "visitorId, acuityAppointmentId, or eventId is required." },
         { status: 400 },
       );
     }
 
     const detail = await fetchAttributionLedgerDetail({
       acuityAppointmentId,
+      eventId,
       visitorId,
     });
 

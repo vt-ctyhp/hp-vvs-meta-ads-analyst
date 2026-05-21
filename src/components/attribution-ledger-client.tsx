@@ -52,10 +52,7 @@ export function AttributionLedgerClient({ initialData }: Props) {
     if (!selectedRow) return;
 
     const controller = new AbortController();
-    const params = new URLSearchParams({ visitorId: selectedRow.visitorId });
-    if (selectedRow.acuityAppointmentId) {
-      params.set("acuityAppointmentId", selectedRow.acuityAppointmentId);
-    }
+    const params = detailParamsForRow(selectedRow);
 
     fetch(`/api/attribution-ledger/detail?${params.toString()}`, {
       signal: controller.signal,
@@ -283,7 +280,7 @@ export function AttributionLedgerClient({ initialData }: Props) {
                 <tbody>
                   {data.rows.map((row) => (
                     <AttributionLedgerTableRow
-                      key={row.visitorId}
+                      key={row.conversionEventId || row.visitorId || row.acuityAppointmentId || row.lastSeen}
                       row={row}
                       onSelect={() => openDetailDrawer(row)}
                     />
@@ -921,6 +918,7 @@ function confidenceLabel(level: AttributionLedgerDetailData["confidence"]["level
   const labels: Record<AttributionLedgerDetailData["confidence"]["level"], string> = {
     browser_session: "Same browser session",
     browser_visitor: "Same browser visitor",
+    conversion_only: "Booking only",
     unmatched: "Unmatched",
   };
   return labels[level];
@@ -961,24 +959,26 @@ function timelineRowFromCurrentUrl(rows: AttributionLedgerRow[]) {
   const params = new URLSearchParams(window.location.search);
   const visitorId = params.get("visitorId")?.trim() || null;
   const acuityAppointmentId = params.get("acuityAppointmentId")?.trim() || null;
+  const eventId = params.get("eventId")?.trim() || null;
 
-  if (!visitorId && !acuityAppointmentId) return null;
+  if (!visitorId && !acuityAppointmentId && !eventId) return null;
 
   const exactMatch = rows.find((row) => {
     if (visitorId && row.visitorId !== visitorId) return false;
     if (acuityAppointmentId && row.acuityAppointmentId !== acuityAppointmentId) return false;
+    if (eventId && row.conversionEventId !== eventId) return false;
     return true;
   });
 
   if (exactMatch) return exactMatch;
-  if (!visitorId) return null;
 
-  return emptyTimelineRow(visitorId, acuityAppointmentId);
+  return emptyTimelineRow(visitorId, acuityAppointmentId, eventId);
 }
 
 function emptyTimelineRow(
-  visitorId: string,
+  visitorId: string | null,
   acuityAppointmentId: string | null,
+  eventId: string | null,
 ): AttributionLedgerRow {
   return {
     adId: null,
@@ -990,7 +990,7 @@ function emptyTimelineRow(
     browserName: null,
     campaignId: null,
     capiStatus: null,
-    conversionEventId: null,
+    conversionEventId: eventId,
     customerEmail: null,
     customerName: null,
     customerPhone: null,
@@ -999,7 +999,7 @@ function emptyTimelineRow(
     fbc: null,
     fbp: null,
     firstPage: null,
-    hasConversion: Boolean(acuityAppointmentId),
+    hasConversion: Boolean(acuityAppointmentId || eventId),
     hasPaidTouch: false,
     lastPaidSource: null,
     lastPaidSourceType: null,
@@ -1026,11 +1026,20 @@ function currentTimelineUrl(row: AttributionLedgerRow) {
 function currentTimelineUrlObject(row: AttributionLedgerRow) {
   if (typeof window === "undefined") return null;
   const url = new URL(window.location.href);
-  url.searchParams.set("visitorId", row.visitorId);
+  if (row.visitorId) {
+    url.searchParams.set("visitorId", row.visitorId);
+  } else {
+    url.searchParams.delete("visitorId");
+  }
   if (row.acuityAppointmentId) {
     url.searchParams.set("acuityAppointmentId", row.acuityAppointmentId);
+    url.searchParams.delete("eventId");
+  } else if (row.conversionEventId) {
+    url.searchParams.delete("acuityAppointmentId");
+    url.searchParams.set("eventId", row.conversionEventId);
   } else {
     url.searchParams.delete("acuityAppointmentId");
+    url.searchParams.delete("eventId");
   }
   return url;
 }
@@ -1040,7 +1049,19 @@ function clearTimelineUrl() {
   const url = new URL(window.location.href);
   url.searchParams.delete("visitorId");
   url.searchParams.delete("acuityAppointmentId");
+  url.searchParams.delete("eventId");
   window.history.replaceState(null, "", url.toString());
+}
+
+function detailParamsForRow(row: AttributionLedgerRow) {
+  const params = new URLSearchParams();
+  if (row.visitorId) params.set("visitorId", row.visitorId);
+  if (row.acuityAppointmentId) {
+    params.set("acuityAppointmentId", row.acuityAppointmentId);
+  } else if (row.conversionEventId) {
+    params.set("eventId", row.conversionEventId);
+  }
+  return params;
 }
 
 function formatCapiSummary(statuses: AttributionLedgerData["summary"]["capiStatuses"]) {

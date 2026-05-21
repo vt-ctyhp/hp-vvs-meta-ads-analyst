@@ -14,7 +14,7 @@ export async function GET(request: Request) {
 
     if (!identity.data) {
       return Response.json(
-        { error: identity.error || "visitorId is required." },
+        { error: identity.error || "visitorId, acuityAppointmentId, or eventId is required." },
         { status: 400 },
       );
     }

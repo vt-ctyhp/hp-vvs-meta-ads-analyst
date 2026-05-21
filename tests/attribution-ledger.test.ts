@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   buildAttributionLedgerData,
+  buildAttributionLedgerConversionOnlyDetailData,
   buildAttributionLedgerDetailData,
   buildAttributionLedgerRows,
   type AttributionLedgerConversionRow,
@@ -54,6 +55,39 @@ describe("attribution ledger row merging", () => {
     assert.equal(rows[0].metaEventId, "meta-event-1");
     assert.equal(rows[0].capiStatus, "sent");
     assert.equal(rows[0].hasConversion, true);
+  });
+
+  it("appends conversion-only bookings that have no visitor record", () => {
+    const rows = buildAttributionLedgerRows({
+      conversions: [
+        conversionRow({
+          acuity_appointment_id: "1709178617",
+          appointment_type: "In-Person Custom Design Consultation",
+          customer_email: "racelle@example.com",
+          customer_name: "Racelle Hong",
+          customer_phone: "555-0117",
+          event_id: "acuity-1709178617",
+          occurred_at: "2026-05-21T22:03:33.000Z",
+          page_url: "https://www.hungphatusa.com/pages/book-an-appointment",
+          source_type: "direct",
+          visitor_id: null,
+        }),
+      ],
+      events: [],
+      sessions: [],
+      visitors: [],
+    });
+
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].visitorId, null);
+    assert.equal(rows[0].sessionId, null);
+    assert.equal(rows[0].conversionEventId, "acuity-1709178617");
+    assert.equal(rows[0].acuityAppointmentId, "1709178617");
+    assert.equal(rows[0].customerName, "Racelle Hong");
+    assert.equal(rows[0].firstPage, "https://www.hungphatusa.com/pages/book-an-appointment");
+    assert.equal(rows[0].hasConversion, true);
+    assert.equal(rows[0].hasPaidTouch, false);
+    assert.equal(rows[0].lastPaidSource, "direct");
   });
 
   it("keeps visitors without conversions and uses session context", () => {
@@ -396,6 +430,30 @@ describe("attribution ledger row merging", () => {
 });
 
 describe("attribution ledger detail data", () => {
+  it("builds booking-only detail when no visitor or session was captured", () => {
+    const detail = buildAttributionLedgerConversionOnlyDetailData({
+      conversion: conversionRow({
+        acuity_appointment_id: "1709178617",
+        appointment_type: "In-Person Custom Design Consultation",
+        customer_name: "Racelle Hong",
+        event_id: "acuity-1709178617",
+        occurred_at: "2026-05-21T22:03:33.000Z",
+        source_type: "direct",
+        visitor_id: null,
+      }),
+    });
+
+    assert.equal(detail.visitorId, null);
+    assert.equal(detail.acuityAppointmentId, "1709178617");
+    assert.equal(detail.booking?.eventId, "acuity-1709178617");
+    assert.equal(detail.confidence.level, "conversion_only");
+    assert.match(detail.summary || "", /no browser visitor\/session ID/i);
+    assert.deepEqual(
+      detail.timeline.map((event) => event.label),
+      ["Acuity booking created"],
+    );
+  });
+
   it("builds a sanitized booking timeline with credited and return touches", () => {
     const detail = buildAttributionLedgerDetailData({
       acuityAppointmentId: "1708622080",

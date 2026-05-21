@@ -445,7 +445,7 @@ function TimelineSection({ events }: { events: CustomerJourneyLedgerTimelineEven
         </ol>
       ) : (
         <p className="mt-4 rounded-md border border-stone-200 bg-stone-50 p-4 text-sm text-stone-500">
-          No curated timeline events were found for this visitor.
+          No curated timeline events were found for this journey.
         </p>
       )}
     </section>
@@ -635,6 +635,7 @@ function confidenceLabel(level: CustomerJourneyLedgerDetailData["confidence"]["l
   const labels: Record<CustomerJourneyLedgerDetailData["confidence"]["level"], string> = {
     browser_session: "Same session",
     browser_visitor: "Same visitor",
+    conversion_only: "Booking only",
     unmatched: "Unmatched",
   };
   return labels[level];

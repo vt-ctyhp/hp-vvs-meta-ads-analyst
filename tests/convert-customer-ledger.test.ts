@@ -153,6 +153,7 @@ describe("Convert customer ledger adapter", () => {
     assert.deepEqual(parsed, {
       data: {
         acuityAppointmentId: "1708622080",
+        eventId: null,
         visitorId: "visitor-1",
       },
       error: null,
@@ -166,12 +167,42 @@ describe("Convert customer ledger adapter", () => {
     );
   });
 
-  it("rejects Convert detail identity params without a visitor ID", () => {
+  it("supports appointment-only Convert detail identity params", () => {
+    const parsed = customerLedgerDetailIdentityFromSearchParams(
+      new URLSearchParams({
+        acuityAppointmentId: " 1709178617 ",
+      }),
+    );
+
+    assert.deepEqual(parsed, {
+      data: {
+        acuityAppointmentId: "1709178617",
+        eventId: null,
+        visitorId: null,
+      },
+      error: null,
+    });
+
+    assert.equal(
+      customerLedgerDetailUrl(
+        customerLedgerRowsFromJourneys([
+          journeyRow({
+            acuityAppointmentId: "1709178617",
+            conversionEventId: "acuity-1709178617",
+            visitorId: null,
+          }),
+        ])[0],
+      ),
+      "/api/convert/customer-ledger/detail?acuityAppointmentId=1709178617",
+    );
+  });
+
+  it("rejects Convert detail identity params without any row identity", () => {
     assert.deepEqual(
       customerLedgerDetailIdentityFromSearchParams(new URLSearchParams()),
       {
         data: null,
-        error: "visitorId is required.",
+        error: "visitorId, acuityAppointmentId, or eventId is required.",
       },
     );
   });

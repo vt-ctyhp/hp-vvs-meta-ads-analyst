@@ -1,5 +1,6 @@
 export {
   buildCustomerJourneyLedgerData as buildAttributionLedgerData,
+  buildCustomerJourneyLedgerConversionOnlyDetailData as buildAttributionLedgerConversionOnlyDetailData,
   buildCustomerJourneyLedgerDetailData as buildAttributionLedgerDetailData,
   buildCustomerJourneyLedgerRows as buildAttributionLedgerRows,
   fetchCustomerJourneyLedgerData as fetchAttributionLedgerData,
