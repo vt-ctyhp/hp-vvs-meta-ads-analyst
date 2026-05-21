@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import {
@@ -13,6 +14,22 @@ import {
   type MetaInsightRollupHealthRpcArgs,
   type RefreshMetaInsightRollupsRpcArgs,
 } from "../src/lib/meta-insight-rollups.ts";
+
+const ROLLUP_MIGRATION = readFileSync(
+  new URL("../supabase/migrations/20260521120000_meta_insight_rollup_tables.sql", import.meta.url),
+  "utf8",
+);
+
+describe("meta insight rollup migration", () => {
+  it("marks rollups stale when ad-set budget sources change", () => {
+    assert.match(ROLLUP_MIGRATION, /left join public\.meta_ad_sets s/);
+    assert.match(
+      ROLLUP_MIGRATION,
+      /greatest\(i\.updated_at, coalesce\(s\.updated_at, i\.updated_at\)\) as source_updated_at/,
+    );
+    assert.match(ROLLUP_MIGRATION, /source_updated_at > rollup_updated_at/);
+  });
+});
 
 describe("refreshMetaInsightRollupsRpcArgs", () => {
   it("maps affected insight ranges to the database refresh RPC shape", () => {

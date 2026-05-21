@@ -331,9 +331,13 @@ as $$
       i.id,
       i.meta_account_id,
       i.date_start,
-      i.updated_at
+      greatest(i.updated_at, coalesce(s.updated_at, i.updated_at)) as source_updated_at
     from public.meta_daily_insights i
     cross join environment_scope e
+    left join public.meta_ad_sets s
+      on s.environment = e.environment
+     and s.meta_account_id = i.meta_account_id
+     and s.ad_set_id = i.ad_set_id
     where i.environment = e.environment
       and (p_start is null or i.date_start >= p_start)
       and (p_end is null or i.date_start <= p_end)
@@ -356,7 +360,7 @@ as $$
       raw.id,
       raw.meta_account_id,
       raw.date_start,
-      raw.updated_at as raw_updated_at,
+      raw.source_updated_at,
       rollups.id as rollup_id,
       rollups.updated_at as rollup_updated_at
     from raw
@@ -376,7 +380,7 @@ as $$
       meta_account_id
     from raw_with_rollups
     where rollup_id is null
-       or raw_updated_at > rollup_updated_at
+       or source_updated_at > rollup_updated_at
     union all
     select
       date_start,
@@ -399,9 +403,9 @@ as $$
       (select count(*) from raw) as raw_rows,
       (select count(*) from rollups) as rollup_rows,
       (select count(*) from raw_with_rollups where rollup_id is null) as missing_rollups,
-      (select count(*) from raw_with_rollups where raw_updated_at > rollup_updated_at) as stale_rollups,
+      (select count(*) from raw_with_rollups where source_updated_at > rollup_updated_at) as stale_rollups,
       (select count(*) from orphan_rollup_rows) as orphan_rollups,
-      (select max(updated_at) from raw) as newest_raw_update,
+      (select max(source_updated_at) from raw) as newest_raw_update,
       (select max(updated_at) from rollups) as newest_rollup_update
   )
   select
@@ -424,7 +428,7 @@ as $$
 $$;
 
 comment on function public.meta_insight_rollup_health(date, date, text) is
-  'Compares raw Meta daily insight rows with precomputed rollups and returns the next account-month chunk that should be repaired.';
+  'Compares raw Meta daily insight rows and ad-set budget sources with precomputed rollups, then returns the next account-month chunk that should be repaired.';
 
 grant execute on function public.meta_insight_rollup_health(date, date, text)
   to ads_analyst_web, ads_analyst_worker, ads_analyst_ingest;
