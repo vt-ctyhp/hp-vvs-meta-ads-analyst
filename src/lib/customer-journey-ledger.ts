@@ -945,7 +945,11 @@ function timelineCategory(event: CustomerJourneyLedgerEventRow): CustomerJourney
 }
 
 function timelineLabel(event: CustomerJourneyLedgerEventRow, returnEvent: CustomerJourneyLedgerEventRow | null) {
-  if (returnEvent?.event_id === event.event_id) return "Returned from Instagram/social URL";
+  if (returnEvent?.event_id === event.event_id) {
+    return isPaidMetaLandingEvent(event)
+      ? "Meta ad landing page viewed"
+      : "Meta/social landing page viewed";
+  }
   const labels: Record<string, string> = {
     BookingClientConfirmed: "Booking confirmed in browser",
     BookingContactStarted: "Contact form started",
@@ -958,6 +962,46 @@ function timelineLabel(event: CustomerJourneyLedgerEventRow, returnEvent: Custom
     ViewContent: "Booking page content viewed",
   };
   return labels[event.event_name] || event.event_name;
+}
+
+function isPaidMetaLandingEvent(event: CustomerJourneyLedgerEventRow) {
+  const utm = mergeUtmRecords(
+    utmFromUrl(event.page_url),
+    normalizedUtmRecord({
+      ad: event.utm_ad,
+      adId: event.utm_ad_id,
+      adset: event.utm_adset,
+      adsetId: event.utm_adset_id,
+      campaign: event.utm_campaign,
+      campaignId: event.utm_campaign_id,
+      content: event.utm_content,
+      creative: event.utm_creative,
+      fbclid: event.fbclid,
+      id: event.utm_id,
+      medium: event.utm_medium,
+      placement: event.utm_placement,
+      source: event.utm_source,
+      term: event.utm_term,
+    }),
+  );
+  const medium = (utm?.medium || "").toLowerCase();
+  const source = (utm?.source || "").toLowerCase();
+  const referrer = (event.referrer || "").toLowerCase();
+  const hasMetaSource =
+    event.source_type === "paid_meta" ||
+    source.includes("facebook") ||
+    source.includes("instagram") ||
+    source === "fb" ||
+    source === "ig" ||
+    source === "an" ||
+    referrer.includes("facebook.com") ||
+    referrer.includes("instagram.com");
+  const hasMetaAdIdentifier = Boolean(utm?.adId || utm?.adsetId || utm?.campaignId);
+  return hasMetaSource && (isPaidMediumValue(medium) || hasMetaAdIdentifier);
+}
+
+function isPaidMediumValue(value: string) {
+  return ["paid", "paid_social", "cpc", "ppc", "social_paid"].some((needle) => value.includes(needle));
 }
 
 function dedupeTimeline(events: CustomerJourneyLedgerTimelineEvent[]) {

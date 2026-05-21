@@ -37,25 +37,28 @@ export type ThumbnailBatchResult = {
 };
 
 type Row = {
+  asset_metadata: Record<string, unknown> | null;
   creative_id: string;
   thumbnail_url: string | null;
   image_url: string | null;
   video_thumbnail_url: string | null;
-  image_hash: string | null;
   supabase_thumbnail_url: string | null;
   supabase_image_url: string | null;
 };
 
-type CreativesQuery = {
+type OrderedCreativeQuery = {
+  order: (
+    col: string,
+    opts: { ascending: boolean; nullsFirst?: boolean },
+  ) => OrderedCreativeQuery;
+  limit: (n: number) => Promise<{ data: unknown; error: Error | null }>;
+};
+
+export type CreativeThumbnailBatchClient = {
   from: (table: "meta_creatives") => {
     select: (cols: string) => {
       or: (filter: string) => {
-        order: (
-          col: string,
-          opts: { ascending: boolean; nullsFirst?: boolean },
-        ) => {
-          limit: (n: number) => Promise<{ data: unknown; error: Error | null }>;
-        };
+        order: OrderedCreativeQuery["order"];
       };
     };
     update: (
@@ -66,20 +69,30 @@ type CreativesQuery = {
   };
 };
 
+type CacheCreative = typeof cacheCreativeThumbnail;
+
 export async function cacheThumbnailBatch(
-  options: { limit?: number } = {},
+  options: {
+    cacheCreative?: CacheCreative;
+    client?: CreativeThumbnailBatchClient;
+    limit?: number;
+  } = {},
 ): Promise<ThumbnailBatchResult> {
   const limit = Math.max(1, Math.min(options.limit ?? DEFAULT_LIMIT, 200));
-  const supabase = createAdsAnalystClient("worker") as unknown as CreativesQuery;
+  const supabase =
+    options.client ||
+    (createAdsAnalystClient("worker") as unknown as CreativeThumbnailBatchClient);
+  const cacheCreative = options.cacheCreative || cacheCreativeThumbnail;
 
   // PostgREST `.or()` filter — selects rows missing EITHER cache column.
-  // Order by created_at desc so a backlog of new creatives caches first.
+  // Order by last_synced_at desc so active, recently-refreshed creatives cache first.
   const { data, error } = await supabase
     .from("meta_creatives")
     .select(
-      "creative_id,thumbnail_url,image_url,video_thumbnail_url,image_hash,supabase_thumbnail_url,supabase_image_url",
+      "creative_id,thumbnail_url,image_url,video_thumbnail_url,asset_metadata,supabase_thumbnail_url,supabase_image_url",
     )
     .or("supabase_thumbnail_url.is.null,supabase_image_url.is.null")
+    .order("last_synced_at", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false, nullsFirst: false })
     .limit(limit);
 
@@ -99,16 +112,17 @@ export async function cacheThumbnailBatch(
 
   for (const row of rows) {
     const updates: Record<string, string> = {};
+    const imageHash = imageHashFromMetadata(row.asset_metadata);
 
     // ── thumbnail slot ────────────────────────────────────────────────
     if (!row.supabase_thumbnail_url) {
       const sourceUrl =
         row.thumbnail_url || row.image_url || row.video_thumbnail_url;
       if (sourceUrl) {
-        const result = await cacheCreativeThumbnail({
+        const result = await cacheCreative({
           creativeId: row.creative_id,
           sourceUrl,
-          imageHash: row.image_hash,
+          imageHash,
           kind: "thumbnail",
         });
         if (result.status === "cached") {
@@ -137,10 +151,10 @@ export async function cacheThumbnailBatch(
       const sourceUrl =
         row.image_url || row.video_thumbnail_url || row.thumbnail_url;
       if (sourceUrl) {
-        const result = await cacheCreativeThumbnail({
+        const result = await cacheCreative({
           creativeId: row.creative_id,
           sourceUrl,
-          imageHash: row.image_hash,
+          imageHash,
           kind: "image",
         });
         if (result.status === "cached") {
@@ -179,4 +193,11 @@ export async function cacheThumbnailBatch(
   }
 
   return summary;
+}
+
+function imageHashFromMetadata(value: Record<string, unknown> | null) {
+  const imageHash = value?.image_hash;
+  if (typeof imageHash !== "string") return null;
+  const trimmed = imageHash.trim();
+  return trimmed || null;
 }
