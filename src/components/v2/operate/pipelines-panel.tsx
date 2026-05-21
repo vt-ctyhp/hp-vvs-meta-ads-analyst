@@ -54,7 +54,6 @@ export function PipelinesPanel({
                 label="Refresh catalog"
                 runningLabel="Refreshing…"
                 variant="secondary"
-                confirmMessage="Refresh the full Meta ad and creative catalog? Use this only when ads or creatives are missing; it can take several minutes."
               />
             </div>
           </div>
