@@ -25,4 +25,11 @@ describe("syncOptionsForTrigger", () => {
       includeCreativeDiagnostics: true,
     });
   });
+
+  it("runs cron_catalog with the same heavy options as manual_catalog", () => {
+    assert.deepEqual(
+      syncOptionsForTrigger("cron_catalog"),
+      syncOptionsForTrigger("manual_catalog"),
+    );
+  });
 });
