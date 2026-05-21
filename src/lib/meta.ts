@@ -10,6 +10,7 @@ import {
   finalizedInsightCutoffDate,
   incrementalDatePreset,
   incrementalSyncDays,
+  todayString,
   type InsightDateRange,
 } from "./meta-backfill-utils";
 import { resolveMetaKpi } from "./meta-kpi";
@@ -1880,7 +1881,7 @@ function getSyncDatePreset() {
 }
 
 function getSyncInsightDateRange(): InsightDateRange {
-  const until = toGraphDateString(new Date());
+  const until = todayString();
   const sinceDate = new Date(`${until}T00:00:00Z`);
   sinceDate.setUTCDate(sinceDate.getUTCDate() - incrementalSyncDays() + 1);
 

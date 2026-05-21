@@ -2,6 +2,7 @@ import { RunSyncButton } from "@/components/v2/optimize/sync-button";
 import { formatCaliforniaDateTime } from "@/lib/california-time";
 import { tokens } from "@/lib/design-tokens";
 import type { MetaAdsBackfillChunk, MetaAdsBackfillJob } from "@/lib/meta-backfill";
+import { incrementalSyncDays } from "@/lib/meta-backfill-utils";
 
 export type SyncRunRow = {
   id: string;
@@ -35,19 +36,15 @@ export function PipelinesPanel({
   backfillJobs,
   backfillChunks,
 }: Props) {
+  const syncDays = incrementalSyncDays();
+
   return (
     <div className="space-y-6">
       {canRunSync ? (
         <section className="flex flex-col items-start gap-3 rounded-xl border border-stone-200 bg-white p-4">
-          <div className="flex w-full items-center justify-between">
+          <div className="flex w-full flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h2 className="text-sm font-semibold text-stone-900">Manual Meta sync</h2>
-              <p className="text-xs text-stone-600">
-                Refreshes the recent insight window from Meta without walking the full ad
-                and creative catalog. Writes land as{" "}
-                <code className="rounded bg-stone-100 px-1">environment=staging</code> in
-                this build.
-              </p>
             </div>
             <div className="flex flex-col items-end gap-2 sm:flex-row">
               <RunSyncButton size="sm" />
@@ -61,6 +58,25 @@ export function PipelinesPanel({
               />
             </div>
           </div>
+          <div className="grid w-full gap-3 border-t border-stone-100 pt-3 text-xs text-stone-700 sm:grid-cols-2">
+            <div className="border-l-2 border-pink-400 pl-3">
+              <h3 className="font-semibold text-stone-900">Run Meta sync now</h3>
+              <p className="mt-1">
+                Use this most of the time. It updates the dashboard numbers for the last{" "}
+                {syncDays} California days and is the faster, lighter sync.
+              </p>
+            </div>
+            <div className="border-l-2 border-stone-300 pl-3">
+              <h3 className="font-semibold text-stone-900">Refresh catalog</h3>
+              <p className="mt-1">
+                Use this only when an ad, creative, thumbnail, or preview looks missing
+                or wrong. It reloads the full Meta ad and creative list, so it can take longer.
+              </p>
+            </div>
+          </div>
+          <p className="text-xs font-medium text-stone-700">
+            If you are not sure, choose Run Meta sync now.
+          </p>
         </section>
       ) : null}
 

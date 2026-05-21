@@ -7,6 +7,7 @@ import {
   incrementalDatePreset,
   monthDateRange,
   monthlyDateChunks,
+  todayString,
 } from "../src/lib/meta-backfill-utils.ts";
 
 describe("monthlyDateChunks", () => {
@@ -52,8 +53,8 @@ describe("Meta insight date params", () => {
     );
   });
 
-  it("defaults incremental sync to the attribution settlement window and honors overrides", () => {
-    assert.equal(incrementalDatePreset({}), "last_90d");
+  it("defaults incremental sync to Meta's finalization window and honors overrides", () => {
+    assert.equal(incrementalDatePreset({}), "last_28d");
     assert.equal(incrementalDatePreset({ META_INCREMENTAL_SYNC_DAYS: "14" }), "last_14d");
     assert.equal(
       incrementalDatePreset({
@@ -65,11 +66,16 @@ describe("Meta insight date params", () => {
   });
 
   it("calculates the finalized insight cutoff from the refresh window", () => {
-    assert.equal(finalizedInsightCutoffDate({}, new Date("2026-05-14T12:00:00Z")), "2026-04-10");
+    assert.equal(finalizedInsightCutoffDate({}, new Date("2026-05-14T12:00:00Z")), "2026-04-17");
+    assert.equal(finalizedInsightCutoffDate({}, new Date("2026-05-14T02:00:00Z")), "2026-04-16");
     assert.equal(
       finalizedInsightCutoffDate({ META_INCREMENTAL_SYNC_DAYS: "14" }, new Date("2026-05-14T12:00:00Z")),
       "2026-05-01",
     );
+  });
+
+  it("uses California calendar days for Meta sync dates", () => {
+    assert.equal(todayString(new Date("2026-05-14T02:00:00Z")), "2026-05-13");
   });
 
   it("resolves a month input into its full calendar date range", () => {
