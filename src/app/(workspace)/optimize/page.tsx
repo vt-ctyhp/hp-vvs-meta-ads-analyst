@@ -1,12 +1,20 @@
 import { CreativeGridWithDrawer } from "@/components/v2/optimize/creative-grid-with-drawer";
 import { OptimizeFilterBar } from "@/components/v2/optimize/filter-bar";
+import { PeriodControls } from "@/components/v2/optimize/period-controls";
 import { RunSyncButton } from "@/components/v2/optimize/sync-button";
 import { TimeSeriesChart } from "@/components/v2/optimize/time-series-chart";
+import { TreeTable } from "@/components/v2/optimize/tree-table";
 import { SignalStrip } from "@/components/v2/signal-strip";
 import { StatusSentence } from "@/components/v2/status-sentence";
 import { fetchDashboardData } from "@/lib/analytics";
 import { CAMPAIGN_UMBRELLAS } from "@/lib/campaign-umbrellas";
 import { hasPermission } from "@/lib/access-control";
+import {
+  fetchPeriodPivot,
+  type PeriodMetric,
+  type PeriodPivotPayload,
+} from "@/lib/period-pivot-data";
+import { isFrequency, type Frequency } from "@/lib/period-windows";
 import { requirePagePermission } from "@/lib/server-route-auth";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +27,21 @@ type SearchParams = {
   end?: string;
   status?: string;
   minSpend?: string;
+  /** Period-pivot table state — defaults to 4 / week / primary_results. */
+  periods?: string;
+  freq?: string;
+  metric?: string;
 };
+
+const ALLOWED_PERIODS = new Set([1, 4, 8, 12]);
+const ALLOWED_METRICS: PeriodMetric[] = [
+  "spend",
+  "primary_results",
+  "cost_per_primary_results",
+  "ctr",
+  "impressions",
+  "cpc",
+];
 
 export default async function OptimizePage({
   searchParams,
@@ -31,6 +53,16 @@ export default async function OptimizePage({
 
   const params = await searchParams;
   const days = Number.isFinite(Number(params.days)) ? Number(params.days) : 30;
+
+  // Period-pivot controls — defaults: 4 weeks of Primary KPI.
+  const requestedPeriods = Number(params.periods);
+  const periodCount = ALLOWED_PERIODS.has(requestedPeriods) ? requestedPeriods : 4;
+  const frequency: Frequency = isFrequency(params.freq) ? params.freq : "week";
+  const metric: PeriodMetric =
+    ALLOWED_METRICS.includes(params.metric as PeriodMetric)
+      ? (params.metric as PeriodMetric)
+      : "primary_results";
+
   let dashboard: Awaited<ReturnType<typeof fetchDashboardData>>;
   let fetchError: string | null = null;
   try {
@@ -44,6 +76,30 @@ export default async function OptimizePage({
     console.error("[optimize] fetchDashboardData threw:", e);
     const { emptyDashboardPayload } = await import("@/lib/analytics");
     dashboard = emptyDashboardPayload([]);
+  }
+
+  // Period-pivot fetch runs alongside the legacy dashboard fetch. Failure
+  // here renders an empty payload — the rest of /optimize still works.
+  let pivot: PeriodPivotPayload;
+  try {
+    pivot = await fetchPeriodPivot({
+      periodCount,
+      frequency,
+      metric,
+      brand: params.brand && params.brand !== "all" ? params.brand : null,
+    });
+  } catch (e) {
+    console.error("[optimize] fetchPeriodPivot threw:", e);
+    const { lastNPeriods } = await import("@/lib/period-windows");
+    pivot = {
+      configured: false,
+      missingEnv: [],
+      periods: lastNPeriods(new Date(), periodCount, frequency),
+      metric,
+      campaigns: [],
+      adSets: [],
+      creatives: [],
+    };
   }
   // Diagnostic logging visible in Vercel function logs.
   const { getMissingRequiredEnv } = await import("@/lib/env");
@@ -168,7 +224,19 @@ export default async function OptimizePage({
 
       <TimeSeriesChart data={dashboard.dailyTrend} />
 
-      <CreativeGridWithDrawer rows={filteredCreatives} />
+      <PeriodControls periods={periodCount} frequency={frequency} metric={metric} />
+
+      <TreeTable payload={pivot} />
+
+      <details className="rounded-xl border border-stone-200 bg-white">
+        <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-stone-700">
+          Legacy creative grid (flat view — for spot-checking until tree
+          table replaces it in v2 polish)
+        </summary>
+        <div className="border-t border-stone-200 p-3">
+          <CreativeGridWithDrawer rows={filteredCreatives} />
+        </div>
+      </details>
     </div>
   );
 }
