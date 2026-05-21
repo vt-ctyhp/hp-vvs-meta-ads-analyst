@@ -50,7 +50,7 @@ export function OptimizeFilterBar({ brands, groups }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
-  const [, startTransition] = useTransition();
+  const [pending, startTransition] = useTransition();
 
   const current = useMemo(() => {
     const brand = params.get("brand") ?? "all";
@@ -92,13 +92,13 @@ export function OptimizeFilterBar({ brands, groups }: Props) {
       const changesServerData = Object.keys(patch).some((key) =>
         SERVER_DATA_KEYS.has(key),
       );
-      startTransition(() => {
-        if (changesServerData) {
+      if (changesServerData) {
+        startTransition(() => {
           router.replace(href, { scroll: false });
-        } else {
-          window.history.replaceState(null, "", href);
-        }
-      });
+        });
+      } else {
+        window.history.replaceState(null, "", href);
+      }
     },
     [params, pathname, router, startTransition],
   );
@@ -135,24 +135,31 @@ export function OptimizeFilterBar({ brands, groups }: Props) {
   return (
     <div
       aria-label="Optimize filters"
-      className="flex flex-wrap items-center gap-2 px-3 py-2"
+      aria-busy={pending}
+      className={[
+        "flex flex-wrap items-center gap-2 px-3 py-2 transition-colors",
+        pending ? "bg-stone-50/70" : "",
+      ].join(" ")}
     >
       <Select
         label="Brand"
         value={current.brand}
         options={brandOptions}
+        disabled={pending}
         onChange={(value) => update({ brand: value === "all" ? null : value })}
       />
       <Select
         label="Group"
         value={current.group}
         options={groupOptions}
+        disabled={pending}
         onChange={(value) => update({ group: value === "all" ? null : value })}
       />
       <Select
         label="Range"
         value={rangeValue}
         options={DATE_PRESETS}
+        disabled={pending}
         onChange={onRangeChange}
       />
       {customMode ? (
@@ -160,6 +167,7 @@ export function OptimizeFilterBar({ brands, groups }: Props) {
           <input
             type="date"
             value={customStart}
+            disabled={pending}
             onChange={(e) => {
               const nextStart = e.target.value;
               setCustomStart(nextStart);
@@ -167,19 +175,20 @@ export function OptimizeFilterBar({ brands, groups }: Props) {
               // operator a click on a separate Apply button.
               commitCustomRange(nextStart, customEnd);
             }}
-            className="h-9 rounded-md border border-stone-300 bg-white px-2 text-sm text-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-400"
+            className="h-9 rounded-md border border-stone-300 bg-white px-2 text-sm text-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-400 disabled:cursor-wait disabled:bg-stone-50 disabled:text-stone-500"
             aria-label="Custom start date"
           />
           <span className="text-stone-400">→</span>
           <input
             type="date"
             value={customEnd}
+            disabled={pending}
             onChange={(e) => {
               const nextEnd = e.target.value;
               setCustomEnd(nextEnd);
               commitCustomRange(customStart, nextEnd);
             }}
-            className="h-9 rounded-md border border-stone-300 bg-white px-2 text-sm text-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-400"
+            className="h-9 rounded-md border border-stone-300 bg-white px-2 text-sm text-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-400 disabled:cursor-wait disabled:bg-stone-50 disabled:text-stone-500"
             aria-label="Custom end date"
           />
         </span>
@@ -188,10 +197,21 @@ export function OptimizeFilterBar({ brands, groups }: Props) {
         label="Status"
         value={current.status}
         options={STATUS_OPTIONS}
+        disabled={pending}
         onChange={(value) => update({ status: value === "all" ? null : value })}
       />
+      {pending ? (
+        <span
+          className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-2.5 py-1 text-[11px] font-medium uppercase tracking-wider text-stone-500"
+          aria-live="polite"
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shadow-[0_0_0_3px_rgba(245,158,11,0.18)]" />
+          Updating data
+        </span>
+      ) : null}
       <button
         type="button"
+        disabled={pending}
         onClick={() => {
           setCustomMode(false);
           setCustomStart("");
@@ -205,7 +225,7 @@ export function OptimizeFilterBar({ brands, groups }: Props) {
             status: null,
           });
         }}
-        className="ml-auto text-xs text-stone-500 underline hover:text-stone-900"
+        className="ml-auto text-xs text-stone-500 underline hover:text-stone-900 disabled:cursor-wait disabled:text-stone-300"
       >
         Reset
       </button>
@@ -217,11 +237,13 @@ function Select({
   label,
   value,
   options,
+  disabled,
   onChange,
 }: {
   label: string;
   value: string;
   options: Option[];
+  disabled?: boolean;
   onChange: (value: string) => void;
 }) {
   return (
@@ -231,8 +253,9 @@ function Select({
       </span>
       <select
         value={value}
+        disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
-        className="h-9 rounded-md border border-stone-300 bg-white px-2 text-sm font-medium text-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-400"
+        className="h-9 rounded-md border border-stone-300 bg-white px-2 text-sm font-medium text-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-400 disabled:cursor-wait disabled:bg-stone-50 disabled:text-stone-500"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>

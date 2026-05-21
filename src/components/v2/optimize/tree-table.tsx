@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   flexRender,
   getCoreRowModel,
@@ -66,6 +66,7 @@ export function TreeTable({ payload }: Props) {
     row: TreeRow;
     asset: CreativeAsset | undefined;
   } | null>(null);
+  const hasLoadingChildren = useMemo(() => treeHasLoadingChildren(data), [data]);
 
   useEffect(() => {
     setData(buildTree(payload));
@@ -244,6 +245,8 @@ export function TreeTable({ payload }: Props) {
     getSubRows: (row) => row.subRows,
     getRowCanExpand: (row) => Boolean(row.original.canHaveChildren),
   });
+  const periodColumnCount =
+    payload.periods.length + (payload.periods.length > 1 ? 1 : 0);
 
   if (!payload.configured) {
     return (
@@ -270,6 +273,7 @@ export function TreeTable({ payload }: Props) {
     <>
       <section
         aria-label="Campaign → Ad Set → Creative tree, pivoted by period"
+        aria-busy={hasLoadingChildren}
         className="overflow-hidden rounded-xl border border-stone-200 bg-white"
       >
         <div className="overflow-x-auto">
@@ -291,22 +295,30 @@ export function TreeTable({ payload }: Props) {
             </thead>
             <tbody>
               {table.getRowModel().rows.map((row) => (
-                <tr
-                  key={row.id}
-                  className={[
-                    "border-b border-stone-100 last:border-b-0",
-                    row.depth === 0 ? "bg-white" : "bg-stone-50/60",
-                  ].join(" ")}
-                >
-                  {row.getVisibleCells().map((cell) => (
-                    <td
-                      key={cell.id}
-                      className="px-3 py-2 align-top first:sticky first:left-0 first:bg-inherit"
-                    >
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </td>
-                  ))}
-                </tr>
+                <Fragment key={row.id}>
+                  <tr
+                    className={[
+                      "border-b border-stone-100 last:border-b-0",
+                      row.depth === 0 ? "bg-white" : "bg-stone-50/60",
+                    ].join(" ")}
+                  >
+                    {row.getVisibleCells().map((cell) => (
+                      <td
+                        key={cell.id}
+                        className="px-3 py-2 align-top first:sticky first:left-0 first:bg-inherit"
+                      >
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </td>
+                    ))}
+                  </tr>
+                  {row.original.childrenLoading && row.getIsExpanded() ? (
+                    <TreeLoadingRows
+                      depth={row.depth + 1}
+                      periodColumnCount={periodColumnCount}
+                      count={row.original.level === "campaign" ? 3 : 2}
+                    />
+                  ) : null}
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -326,6 +338,64 @@ export function TreeTable({ payload }: Props) {
         metric={payload.metric}
       />
     </>
+  );
+}
+
+function TreeLoadingRows({
+  depth,
+  periodColumnCount,
+  count,
+}: {
+  depth: number;
+  periodColumnCount: number;
+  count: number;
+}) {
+  return (
+    <>
+      {Array.from({ length: count }).map((_, rowIndex) => (
+        <tr key={`loading-${depth}-${rowIndex}`} className="border-b border-stone-100 bg-stone-50/50">
+          <td className="px-3 py-2 align-top first:sticky first:left-0 first:bg-inherit">
+            <div
+              className="flex items-center gap-2"
+              style={{ paddingLeft: depth * 16 }}
+              aria-hidden
+            >
+              <SkeletonBlock className="h-5 w-5" />
+              <SkeletonBlock className="h-5 w-7" />
+              <SkeletonBlock
+                className={[
+                  "h-4",
+                  rowIndex % 3 === 0
+                    ? "w-56"
+                    : rowIndex % 3 === 1
+                      ? "w-44"
+                      : "w-64",
+                ].join(" ")}
+              />
+            </div>
+          </td>
+          {Array.from({ length: periodColumnCount }).map((_, cellIndex) => (
+            <td key={cellIndex} className="px-3 py-2 align-top">
+              <SkeletonBlock
+                className={[
+                  "ml-auto h-4",
+                  cellIndex % 2 === 0 ? "w-16" : "w-12",
+                ].join(" ")}
+              />
+            </td>
+          ))}
+        </tr>
+      ))}
+    </>
+  );
+}
+
+function SkeletonBlock({ className }: { className: string }) {
+  return (
+    <span
+      aria-hidden
+      className={["block animate-pulse rounded bg-stone-200/80", className].join(" ")}
+    />
   );
 }
 
@@ -539,6 +609,14 @@ function updateTreeRow(
       subRows: updateTreeRow(nextRow.subRows, level, entityId, update),
     };
   });
+}
+
+function treeHasLoadingChildren(rows: TreeRow[]): boolean {
+  return rows.some(
+    (row) =>
+      Boolean(row.childrenLoading) ||
+      (row.subRows ? treeHasLoadingChildren(row.subRows) : false),
+  );
 }
 
 function buildChildrenUrl(
