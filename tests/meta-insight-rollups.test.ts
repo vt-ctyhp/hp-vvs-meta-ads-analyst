@@ -29,6 +29,14 @@ describe("meta insight rollup migration", () => {
     );
     assert.match(ROLLUP_MIGRATION, /source_updated_at > rollup_updated_at/);
   });
+
+  it("scopes aggregate reads to the current Ads Analyst environment", () => {
+    assert.match(
+      ROLLUP_MIGRATION,
+      /with env as \(\s*select analytics\.current_ads_analyst_environment\(\) as environment\s*\),\s*filtered as/s,
+    );
+    assert.match(ROLLUP_MIGRATION, /cross join env\s*where r\.environment = env\.environment/s);
+  });
 });
 
 describe("refreshMetaInsightRollupsRpcArgs", () => {

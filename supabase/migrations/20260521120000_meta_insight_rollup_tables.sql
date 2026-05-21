@@ -496,10 +496,15 @@ language sql
 stable
 set search_path = public
 as $$
-  with filtered as (
+  with env as (
+    select analytics.current_ads_analyst_environment() as environment
+  ),
+  filtered as (
     select r.*
     from public.meta_daily_insight_rollups r
-    where r.date_start >= p_start
+    cross join env
+    where r.environment = env.environment
+      and r.date_start >= p_start
       and r.date_start <= p_end
       and not exists (
         select 1

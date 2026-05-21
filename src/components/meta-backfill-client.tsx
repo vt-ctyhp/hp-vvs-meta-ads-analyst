@@ -22,6 +22,7 @@ import type { ButtonHTMLAttributes, ComponentType } from "react";
 import { useEffect, useMemo, useState } from "react";
 
 import type { AppPermission } from "@/lib/access-control";
+import type { MetaInsightRollupHealth } from "@/lib/meta-insight-rollups";
 import {
   formatBackfillChunkStatus,
   formatBackfillJobStatus,
@@ -116,19 +117,7 @@ type DataHealth = {
   };
   rollups: {
     available: boolean;
-    health: {
-      rawRows: number;
-      rollupRows: number;
-      missingRollups: number;
-      staleRollups: number;
-      orphanRollups: number;
-      newestRawUpdate: string | null;
-      newestRollupUpdate: string | null;
-      oldestProblemDate: string | null;
-      repairMetaAccountId: string | null;
-      repairMonth: string | null;
-      ok: boolean;
-    } | null;
+    health: MetaInsightRollupHealth | null;
     summary: string | null;
     error: string | null;
   };
