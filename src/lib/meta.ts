@@ -1837,8 +1837,11 @@ async function graphPages<T>(
   }
 
   if (nextUrl && options.maxPages && page >= options.maxPages) {
+    const limitHint = path.includes("/insights")
+      ? "increase the page limit or reduce the requested date range"
+      : "increase the page limit or skip full catalog refresh for this run";
     throw new MetaGraphError(
-      `Meta Graph API pagination limit reached for ${path}; increase the page limit or reduce the requested date range.`,
+      `Meta Graph API pagination limit reached for ${path}; ${limitHint}.`,
     );
   }
 

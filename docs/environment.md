@@ -24,8 +24,8 @@ Optional:
 | `OPENAI_DEEP_MODEL` | `gpt-5.5` | Deep model for optional ad-hoc analysis interpretation. |
 | `META_API_VERSION` | `v24.0` | Meta Graph API version. |
 | `META_VVS_AD_ACCOUNT_ID` | unset | Optional VVS ad account id, with or without `act_`. Add when VVS access is ready. |
-| `META_INCREMENTAL_SYNC_DAYS` | `90` | Recent history refreshed by the daily Meta Ads sync. Produces a Meta `last_Nd` date preset unless `META_SYNC_DATE_PRESET` is set. |
-| `META_SYNC_DATE_PRESET` | unset | Explicit Meta `date_preset` override for the regular daily sync. |
+| `META_INCREMENTAL_SYNC_DAYS` | `35` | Recent insight window refreshed by regular Meta Ads sync. Older stored history remains in Supabase unless an explicit backfill or month re-sync runs. |
+| `META_SYNC_DATE_PRESET` | unset | Legacy preset override for code paths that still opt into Meta `date_preset`; regular sync now uses an explicit recent `time_range`. |
 | `META_BACKFILL_START_DATE` | `2007-01-01` | Default start date for all-available historical backfill jobs. |
 | `META_BACKFILL_CHUNKS_PER_RUN` | `1` | Number of monthly account chunks processed by each `/api/cron/meta-backfill` run. Keep small for Vercel's function timeout. |
 | `META_SOCIAL_SYNC_CONVERSATION_LIMIT` | `25` | Max recent conversations pulled per Page/platform during manual inbox sync. |
