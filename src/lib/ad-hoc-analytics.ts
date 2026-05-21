@@ -7,7 +7,6 @@ import {
   type AnalysisMode,
   ConfigurationError,
   getMissingDashboardEnv,
-  getMissingRequiredEnv,
   getOpenAIAnalysisModel,
 } from "./env.ts";
 import { aggregateMetaInsights, type MetaInsightAggregateRow } from "./meta-insight-aggregates.ts";

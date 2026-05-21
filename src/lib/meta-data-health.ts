@@ -9,6 +9,11 @@ import {
   type MetaAccountInsightTotals,
 } from "./meta";
 import { createAdsAnalystClient } from "./ads-analyst-db";
+import {
+  formatMetaInsightRollupHealth,
+  getMetaInsightRollupHealth,
+  type MetaInsightRollupHealth,
+} from "./meta-insight-rollups";
 
 type JsonRecord = Record<string, unknown>;
 type SupabaseSelectChain = PromiseLike<{ data: unknown; error: Error | null }> & {
@@ -60,9 +65,16 @@ type SpendAlert = {
   spendDeltaPct: number;
 };
 
+type RollupDiagnostic = {
+  available: boolean;
+  health: MetaInsightRollupHealth | null;
+  summary: string | null;
+  error: string | null;
+};
+
 export async function getMetaDataHealth(input: { compareMonth?: string | null } = {}) {
   const cutoff = finalizedInsightCutoffDate();
-  const [accounts, insightRows, syncRuns] = await Promise.all([
+  const [accounts, insightRows, syncRuns, rollups] = await Promise.all([
     fetchAll("meta_ad_accounts", "meta_account_id,name,last_synced_at,updated_at", [
       { column: "meta_account_id" },
     ]),
@@ -77,6 +89,7 @@ export async function getMetaDataHealth(input: { compareMonth?: string | null } 
       ],
     ),
     fetchRecentSyncRuns(),
+    fetchRollupDiagnostic(),
   ]);
   const duplicateSummary = summarizeDuplicateKeys(insightRows);
   const monthlyTotals = summarizeMonthlyTotals(insightRows, cutoff);
@@ -116,6 +129,7 @@ export async function getMetaDataHealth(input: { compareMonth?: string | null } 
     incompleteMonths,
     monthlyUmbrella: monthlyUmbrella.slice(-120),
     spendAlerts,
+    rollups,
     warnings: buildHealthWarnings({
       duplicateKeyCount: duplicateSummary.duplicateKeyCount,
       nullKeyRows: duplicateSummary.nullKeyRows,
@@ -123,6 +137,7 @@ export async function getMetaDataHealth(input: { compareMonth?: string | null } 
       incompleteMonths,
       spendAlerts,
       recentAuditWarnings,
+      rollupWarnings: rollupDiagnosticWarnings(rollups),
     }),
     recentSyncRuns: syncRuns,
     metaComparison: compareMonth
@@ -135,8 +150,28 @@ export async function getMetaDataHealth(input: { compareMonth?: string | null } 
       monthlyCoverageOk: incompleteMonths.length === 0,
       spendJumpsOk: spendAlerts.length === 0,
       recentSyncWarningsOk: recentAuditWarnings.length === 0,
+      rollupsOk: rollups.health?.ok === true,
     },
   };
+}
+
+async function fetchRollupDiagnostic(): Promise<RollupDiagnostic> {
+  try {
+    const health = await getMetaInsightRollupHealth();
+    return {
+      available: true,
+      health,
+      summary: formatMetaInsightRollupHealth(health),
+      error: null,
+    };
+  } catch (error) {
+    return {
+      available: false,
+      health: null,
+      summary: null,
+      error: errorToMessage(error),
+    };
+  }
 }
 
 async function fetchRecentSyncRuns() {
@@ -469,6 +504,7 @@ function buildHealthWarnings(input: {
   }>;
   spendAlerts: SpendAlert[];
   recentAuditWarnings: string[];
+  rollupWarnings: string[];
 }) {
   const warnings: string[] = [];
   if (input.duplicateKeyCount) {
@@ -494,7 +530,19 @@ function buildHealthWarnings(input: {
     );
   });
   warnings.push(...input.recentAuditWarnings.slice(0, 6));
+  warnings.push(...input.rollupWarnings.slice(0, 6));
   return warnings;
+}
+
+function rollupDiagnosticWarnings(rollups: RollupDiagnostic) {
+  if (!rollups.available) {
+    return [`Meta insight rollup health is unavailable: ${rollups.error || "unknown error"}.`];
+  }
+  if (!rollups.health || rollups.health.ok) return [];
+
+  return [
+    `Meta insight rollups need repair (${formatMetaInsightRollupHealth(rollups.health)}).`,
+  ];
 }
 
 function mapLastSync(run: Awaited<ReturnType<typeof fetchRecentSyncRuns>>[number] | undefined) {

@@ -71,12 +71,11 @@ export function TopNavigation() {
     pathname === "/operate" ||
     pathname.startsWith("/operate/") ||
     pathname.startsWith("/m/");
-  if (isV2Path) return null;
 
   useEffect(() => {
     let mounted = true;
 
-    if (isPublicAuthPath) {
+    if (isV2Path || isPublicAuthPath) {
       return () => {
         mounted = false;
       };
@@ -104,10 +103,10 @@ export function TopNavigation() {
       mounted = false;
       subscription.data.subscription.unsubscribe();
     };
-  }, [isPublicAuthPath]);
+  }, [isPublicAuthPath, isV2Path]);
 
   useEffect(() => {
-    if (!profile?.authenticated) return;
+    if (isV2Path || !profile?.authenticated) return;
     let mounted = true;
     async function load() {
       try {
@@ -125,7 +124,7 @@ export function TopNavigation() {
       mounted = false;
       window.clearInterval(interval);
     };
-  }, [profile?.authenticated]);
+  }, [isV2Path, profile?.authenticated]);
 
   useEffect(() => {
     if (!openMenu) return;
@@ -152,7 +151,7 @@ export function TopNavigation() {
     window.location.assign("/login");
   }
 
-  if (isPublicAuthPath || !profile?.authenticated) {
+  if (isV2Path || isPublicAuthPath || !profile?.authenticated) {
     return null;
   }
 
