@@ -11,7 +11,7 @@
    - ad accounts
    - campaigns
    - ad sets
-   - ads and creatives when the run requests catalog refresh
+   - ads and creatives only for explicit catalog refresh runs
    - daily ad-level insights
    - sync run status and metrics
 
@@ -42,7 +42,9 @@ Meta preview/image URLs can expire, so previews are treated as refreshable metad
 
 ## Manual Sync
 
-The dashboard sync button calls `POST /api/sync` and records a `sync_runs` entry with trigger `manual`. Manual sync uses the same insight refresh window as cron, but it also turns on full ad catalog, creative preview, and ranking-diagnostic refresh so an empty environment can bootstrap its catalog. Cron is the cheaper incremental path: it skips ads, creatives, previews, and ranking diagnostics, and writes recent insight rows against the stored catalog.
+The dashboard sync button calls `POST /api/sync`. The default button uses the same cheap incremental path as cron, records trigger `manual`, and refreshes only the recent insight window against the stored Supabase catalog. This preserves locked historical rows and avoids walking Meta's large `/ads` and creative edges during normal dashboard operation.
+
+Operate also exposes an explicit catalog refresh action for admin repair work. That action calls the same route with `mode=catalog`, records trigger `manual_catalog`, and refreshes ads, creatives, previews, and ranking diagnostics in addition to recent insights. Use it when ads or creatives are missing, not as the normal data-refresh path.
 
 Regular sync does not pull historical insight ranges. Stored historical rows remain in Supabase and dashboard reads use `aggregate_meta_daily_insights`. Rows before the finalized cutoff are not replaced by regular sync; explicit backfill or month re-sync jobs are the historical repair paths.
 

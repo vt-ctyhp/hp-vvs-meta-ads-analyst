@@ -43,12 +43,23 @@ export function PipelinesPanel({
             <div>
               <h2 className="text-sm font-semibold text-stone-900">Manual Meta sync</h2>
               <p className="text-xs text-stone-600">
-                Fetches campaigns, ads, creatives, and the last 35 days of insights from Meta.
-                Writes land as <code className="rounded bg-stone-100 px-1">environment=staging</code>{" "}
-                in this build.
+                Refreshes the recent insight window from Meta without walking the full ad
+                and creative catalog. Writes land as{" "}
+                <code className="rounded bg-stone-100 px-1">environment=staging</code> in
+                this build.
               </p>
             </div>
-            <RunSyncButton size="sm" />
+            <div className="flex flex-col items-end gap-2 sm:flex-row">
+              <RunSyncButton size="sm" />
+              <RunSyncButton
+                size="sm"
+                mode="catalog"
+                label="Refresh catalog"
+                runningLabel="Refreshing…"
+                variant="secondary"
+                confirmMessage="Refresh the full Meta ad and creative catalog? Use this only when ads or creatives are missing; it can take several minutes."
+              />
+            </div>
           </div>
         </section>
       ) : null}
