@@ -945,7 +945,11 @@ function timelineCategory(event: CustomerJourneyLedgerEventRow): CustomerJourney
 }
 
 function timelineLabel(event: CustomerJourneyLedgerEventRow, returnEvent: CustomerJourneyLedgerEventRow | null) {
-  if (returnEvent?.event_id === event.event_id) return "Returned from Instagram/social URL";
+  if (returnEvent?.event_id === event.event_id) {
+    return isPaidMetaLandingEvent(event)
+      ? "Meta ad landing page viewed"
+      : "Meta/social landing page viewed";
+  }
   const labels: Record<string, string> = {
     BookingClientConfirmed: "Booking confirmed in browser",
     BookingContactStarted: "Contact form started",
@@ -958,6 +962,20 @@ function timelineLabel(event: CustomerJourneyLedgerEventRow, returnEvent: Custom
     ViewContent: "Booking page content viewed",
   };
   return labels[event.event_name] || event.event_name;
+}
+
+function isPaidMetaLandingEvent(event: CustomerJourneyLedgerEventRow) {
+  if (event.source_type === "paid_meta") return true;
+  if (event.fbc || event.fbclid || event.utm_ad_id) return true;
+  const medium = (event.utm_medium || "").toLowerCase();
+  const source = (event.utm_source || event.source || "").toLowerCase();
+  return medium.includes("paid") && (
+    source.includes("facebook") ||
+    source.includes("instagram") ||
+    source === "fb" ||
+    source === "ig" ||
+    source === "an"
+  );
 }
 
 function dedupeTimeline(events: CustomerJourneyLedgerTimelineEvent[]) {

@@ -505,7 +505,7 @@ describe("attribution ledger detail data", () => {
       [
         "Paid ad attribution captured",
         "Page viewed",
-        "Returned from Instagram/social URL",
+        "Meta ad landing page viewed",
         "Booking submitted",
         "Acuity booking created",
         "Meta CAPI sent",
@@ -526,10 +526,13 @@ describe("attribution ledger detail data", () => {
         eventRow({
           event_id: "hp_evt-only-page",
           event_name: "PageView",
-          fbclid: "single-click",
+          fbc: null,
+          fbp: null,
+          fbclid: null,
           occurred_at: "2026-05-20T18:29:00.000Z",
           page_url:
             "https://www.hungphatusa.com/pages/book-an-appointment?utm_source=ig&utm_medium=social&utm_content=only_visit&fbclid=single-click",
+          source_type: "referral",
           utm_content: "only_visit",
         }),
       ],
@@ -538,7 +541,7 @@ describe("attribution ledger detail data", () => {
     });
 
     assert.equal(detail.returnTouch?.content, "only_visit");
-    assert.equal(detail.timeline.find((event) => event.eventId === "hp_evt-only-page")?.label, "Returned from Instagram/social URL");
+    assert.equal(detail.timeline.find((event) => event.eventId === "hp_evt-only-page")?.label, "Meta/social landing page viewed");
   });
 
   it("fills missing ad IDs from the touch page URL", () => {
