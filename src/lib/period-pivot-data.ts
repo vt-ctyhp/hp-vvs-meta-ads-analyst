@@ -114,6 +114,17 @@ export type CreativeAsset = {
   previewUrl: string | null;
 };
 
+/**
+ * In snapshot mode (`periodCount === 1`) the tree-table renders one column
+ * per metric instead of one column per period. We carry the full metric
+ * breakdown per entity so the table doesn't have to re-fetch.
+ *
+ * Spend, Primary KPI, $/Primary KPI, and CTR are the four canonical
+ * snapshot columns per PRD §6. The remaining metrics are included so
+ * future column toggles can read them without another round-trip.
+ */
+export type SnapshotMetrics = Record<PeriodMetric, number>;
+
 export type PeriodPivotPayload = {
   configured: boolean;
   missingEnv: string[];
@@ -132,6 +143,14 @@ export type PeriodPivotPayload = {
    * payloads only populate this when creative children are fetched.
    */
   creativeAssets: Record<string, CreativeAsset>;
+  /**
+   * Populated only when `periodCount === 1` — keyed by entityId
+   * (campaign_id at the top level, ad_set_id or creative_id at children).
+   * Tree-table reads this in snapshot mode to render multiple metric
+   * columns; in multi-period mode it is `{}` and tree-table reads
+   * `periodValues` instead.
+   */
+  snapshotByEntity: Record<string, SnapshotMetrics>;
 };
 
 export type PeriodPivotChildrenPayload = {
@@ -142,6 +161,8 @@ export type PeriodPivotChildrenPayload = {
   level: "ad_set" | "creative";
   rows: PivotedRow[];
   creativeAssets: Record<string, CreativeAsset>;
+  /** Same shape + role as PeriodPivotPayload.snapshotByEntity. */
+  snapshotByEntity: Record<string, SnapshotMetrics>;
 };
 
 const EMPTY_PIVOT_PAYLOAD: Omit<PeriodPivotPayload, "missingEnv" | "periods" | "metric"> = {
@@ -151,6 +172,7 @@ const EMPTY_PIVOT_PAYLOAD: Omit<PeriodPivotPayload, "missingEnv" | "periods" | "
   adSets: [],
   creatives: [],
   creativeAssets: {},
+  snapshotByEntity: {},
 };
 
 /**
@@ -181,7 +203,7 @@ export async function fetchPeriodPivot(
     return empty;
   }
 
-  const campaigns = await fetchCampaignPivotRows(context);
+  const { pivoted: campaigns, snapshotByEntity } = await fetchCampaignPivotRows(context);
 
   return {
     configured: true,
@@ -193,6 +215,7 @@ export async function fetchPeriodPivot(
     adSets: [],
     creatives: [],
     creativeAssets: {},
+    snapshotByEntity,
   };
 }
 
@@ -208,28 +231,37 @@ export async function fetchPeriodPivotChildren(
     level: input.parentLevel === "campaign" ? "ad_set" : "creative",
     rows: [],
     creativeAssets: {},
+    snapshotByEntity: {},
   };
 
   if (context.missingEnv.length) return empty;
 
   if (input.parentLevel === "campaign") {
-    const rows = await fetchAdSetPivotRows(context, input.parentId);
+    const { pivoted, snapshotByEntity } = await fetchAdSetPivotRows(
+      context,
+      input.parentId,
+    );
     return {
       ...empty,
       configured: true,
       missingEnv: [],
-      rows,
+      rows: pivoted,
+      snapshotByEntity,
     };
   }
 
-  const rows = await fetchCreativePivotRows(context, input.parentId);
-  const creativeAssets = await fetchCreativeAssets(rows.map((row) => row.entityId));
+  const { pivoted, snapshotByEntity } = await fetchCreativePivotRows(
+    context,
+    input.parentId,
+  );
+  const creativeAssets = await fetchCreativeAssets(pivoted.map((row) => row.entityId));
   return {
     ...empty,
     configured: true,
     missingEnv: [],
-    rows,
+    rows: pivoted,
     creativeAssets,
+    snapshotByEntity,
   };
 }
 
@@ -297,13 +329,17 @@ async function fetchCampaignPivotRows(context: PeriodPivotContext) {
     limit: 5000,
   });
 
-  return pivotByPeriod(rowsWithMetric(rows, context.metric), {
+  const pivoted = pivotByPeriod(rowsWithMetric(rows, context.metric), {
     periods: context.periods,
     entityIdField: "campaign_id",
     displayField: "campaign",
     periodKeyField: context.periodDim as keyof MetaInsightAggregateRow,
     valueField: "metricValue",
   });
+  const snapshotByEntity = context.periods.length === 1
+    ? buildSnapshotByEntity(rows, "campaign_id")
+    : {};
+  return { pivoted, snapshotByEntity };
 }
 
 async function fetchAdSetPivotRows(context: PeriodPivotContext, campaignId: string) {
@@ -320,7 +356,7 @@ async function fetchAdSetPivotRows(context: PeriodPivotContext, campaignId: stri
     limit: 10000,
   });
 
-  return pivotByPeriod(rowsWithMetric(rows, context.metric), {
+  const pivoted = pivotByPeriod(rowsWithMetric(rows, context.metric), {
     periods: context.periods,
     entityIdField: "ad_set_id",
     displayField: "ad_set",
@@ -328,6 +364,10 @@ async function fetchAdSetPivotRows(context: PeriodPivotContext, campaignId: stri
     valueField: "metricValue",
     parentIdFields: ["campaign_id"],
   });
+  const snapshotByEntity = context.periods.length === 1
+    ? buildSnapshotByEntity(rows, "ad_set_id")
+    : {};
+  return { pivoted, snapshotByEntity };
 }
 
 async function fetchCreativePivotRows(context: PeriodPivotContext, adSetId: string) {
@@ -344,7 +384,7 @@ async function fetchCreativePivotRows(context: PeriodPivotContext, adSetId: stri
     limit: 10000,
   });
 
-  return pivotByPeriod(rowsWithMetric(rows, context.metric), {
+  const pivoted = pivotByPeriod(rowsWithMetric(rows, context.metric), {
     periods: context.periods,
     entityIdField: "creative_id",
     displayField: "creative",
@@ -352,6 +392,10 @@ async function fetchCreativePivotRows(context: PeriodPivotContext, adSetId: stri
     valueField: "metricValue",
     parentIdFields: ["campaign_id", "ad_set_id"],
   });
+  const snapshotByEntity = context.periods.length === 1
+    ? buildSnapshotByEntity(rows, "creative_id")
+    : {};
+  return { pivoted, snapshotByEntity };
 }
 
 type DynamicCreativesClient = {
@@ -450,4 +494,57 @@ function resolveMetric(row: MetaInsightAggregateRow, metric: PeriodMetric): numb
       throw new Error(`Unknown metric: ${String(exhaustive)}`);
     }
   }
+}
+
+/**
+ * Roll up the aggregate rows by entity and compute a full metric breakdown
+ * per entity. Used in snapshot mode (`periodCount === 1`) so the tree-table
+ * can render one column per metric.
+ *
+ * `entityField` is the column name on MetaInsightAggregateRow that holds
+ * the entity id ("campaign_id" / "ad_set_id" / "creative_id"). All rows
+ * sharing the same entity id are summed; cost/CTR derivations are then
+ * computed from the totals (the right level of arithmetic — averaging
+ * pre-computed CTRs would be incorrect when impressions vary).
+ */
+export function buildSnapshotByEntity(
+  rows: MetaInsightAggregateRow[],
+  entityField: keyof MetaInsightAggregateRow,
+): Record<string, SnapshotMetrics> {
+  type Totals = {
+    spend: number;
+    impressions: number;
+    clicks: number;
+    primary_results: number;
+  };
+  const totals = new Map<string, Totals>();
+  for (const row of rows) {
+    const id = row[entityField];
+    if (typeof id !== "string" || !id) continue;
+    const acc = totals.get(id) ?? {
+      spend: 0,
+      impressions: 0,
+      clicks: 0,
+      primary_results: 0,
+    };
+    acc.spend += row.spend ?? 0;
+    acc.impressions += row.impressions ?? 0;
+    acc.clicks += row.clicks ?? 0;
+    acc.primary_results += row.primary_results ?? 0;
+    totals.set(id, acc);
+  }
+
+  const out: Record<string, SnapshotMetrics> = {};
+  for (const [id, t] of totals.entries()) {
+    out[id] = {
+      spend: t.spend,
+      primary_results: t.primary_results,
+      cost_per_primary_results:
+        t.primary_results > 0 ? t.spend / t.primary_results : 0,
+      ctr: t.impressions > 0 ? t.clicks / t.impressions : 0,
+      impressions: t.impressions,
+      cpc: t.clicks > 0 ? t.spend / t.clicks : 0,
+    };
+  }
+  return out;
 }

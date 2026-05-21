@@ -15,11 +15,24 @@ import type {
   PeriodPivotChildrenPayload,
   PeriodPivotParentLevel,
   PeriodPivotPayload,
+  SnapshotMetrics,
 } from "@/lib/period-pivot-data";
 import type { PivotedRow } from "@/lib/pivot-by-period";
 
 import { CreativeDetailDrawer } from "./creative-detail-drawer";
 import { formatDelta, formatMetric } from "./metric-format";
+
+/**
+ * Snapshot mode columns: when periods=1, the table renders these four
+ * metric columns instead of one column per period. Order matches PRD §6
+ * Convert/Optimize scoreboard.
+ */
+const SNAPSHOT_COLUMNS = [
+  { metric: "spend" as const, label: "Spend" },
+  { metric: "primary_results" as const, label: "Primary KPI" },
+  { metric: "cost_per_primary_results" as const, label: "$/Primary KPI" },
+  { metric: "ctr" as const, label: "CTR" },
+];
 
 /**
  * The hierarchy + period-pivot table for /optimize.
@@ -66,12 +79,21 @@ export function TreeTable({ payload }: Props) {
     row: TreeRow;
     asset: CreativeAsset | undefined;
   } | null>(null);
+  // In snapshot mode (periods=1) the table renders one column per metric
+  // and reads values from this map by entityId. We merge in child payloads
+  // as the operator expands campaigns / ad-sets so the new rows get their
+  // own metric breakdowns without re-fetching the whole payload.
+  const [snapshotMap, setSnapshotMap] = useState<Record<string, SnapshotMetrics>>(
+    () => payload.snapshotByEntity ?? {},
+  );
   const hasLoadingChildren = useMemo(() => treeHasLoadingChildren(data), [data]);
+  const snapshotMode = payload.periods.length === 1;
 
   useEffect(() => {
     setData(buildTree(payload));
     setExpanded({});
     setSelectedCreative(null);
+    setSnapshotMap(payload.snapshotByEntity ?? {});
   }, [payload]);
 
   const loadChildren = useCallback(
@@ -112,6 +134,16 @@ export function TreeTable({ payload }: Props) {
             subRows: childRows,
           })),
         );
+        // In snapshot mode, fold the child entities' metric breakdown into
+        // the running map so the new rows render their Spend / KPI / etc.
+        // columns immediately. Multi-period mode leaves snapshotByEntity
+        // empty server-side, so this is effectively a no-op there.
+        if (childPayload.snapshotByEntity) {
+          setSnapshotMap((prev) => ({
+            ...prev,
+            ...childPayload.snapshotByEntity,
+          }));
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         setData((current) =>
@@ -178,61 +210,95 @@ export function TreeTable({ payload }: Props) {
       },
     ];
 
-    for (const period of payload.periods) {
-      cols.push({
-        id: `period_${period.key}`,
-        header: () => (
-          <span className="block whitespace-nowrap text-right" title={`${period.start} → ${period.end}`}>
-            {period.label}
-            {period.isCurrent ? (
-              <span className="ml-1 align-top text-[9px] uppercase tracking-wider text-amber-700">so far</span>
-            ) : null}
-          </span>
-        ),
-        cell: ({ row }) => (
-          <span className="block tabular-nums text-right">
-            {row.original.periodValues[period.key] === undefined
-              ? "—"
-              : formatMetric(row.original.periodValues[period.key], payload.metric)}
-          </span>
-        ),
-        size: 110,
-      });
-    }
-
-    if (payload.periods.length > 1) {
-      const firstKey = payload.periods[0].key;
-      const lastKey = payload.periods[payload.periods.length - 1].key;
-      cols.push({
-        id: "delta",
-        header: () => (
-          <span className="block whitespace-nowrap text-right" title={`${firstKey} → ${lastKey}`}>
-            Δ P1→P{payload.periods.length}
-          </span>
-        ),
-        cell: ({ row }) => {
-          const delta = formatDelta(
-            row.original.periodValues[lastKey],
-            row.original.periodValues[firstKey],
-          );
-          if (!delta) return <span className="block text-right text-stone-400">—</span>;
-          return (
-            <span
-              className={[
-                "block tabular-nums text-right text-xs font-medium",
-                delta.positive ? "text-emerald-700" : "text-rose-700",
-              ].join(" ")}
-            >
-              {delta.text}
+    if (snapshotMode) {
+      // Single-period mode: surface a 4-metric scoreboard instead of one
+      // column for the selected metric. The window label sits in the
+      // header tooltip so the operator can still see which range
+      // generated the totals.
+      const window = payload.periods[0];
+      const windowTitle = window ? `${window.start} → ${window.end}` : undefined;
+      for (const { metric, label } of SNAPSHOT_COLUMNS) {
+        cols.push({
+          id: `metric_${metric}`,
+          header: () => (
+            <span className="block whitespace-nowrap text-right" title={windowTitle}>
+              {label}
+              {window?.isCurrent ? (
+                <span className="ml-1 align-top text-[9px] uppercase tracking-wider text-amber-700">
+                  so far
+                </span>
+              ) : null}
             </span>
-          );
-        },
-        size: 90,
-      });
+          ),
+          cell: ({ row }) => {
+            const totals = snapshotMap[row.original.entityId];
+            const value = totals ? totals[metric] : undefined;
+            return (
+              <span className="block tabular-nums text-right">
+                {value === undefined ? "—" : formatMetric(value, metric)}
+              </span>
+            );
+          },
+          size: 110,
+        });
+      }
+    } else {
+      for (const period of payload.periods) {
+        cols.push({
+          id: `period_${period.key}`,
+          header: () => (
+            <span className="block whitespace-nowrap text-right" title={`${period.start} → ${period.end}`}>
+              {period.label}
+              {period.isCurrent ? (
+                <span className="ml-1 align-top text-[9px] uppercase tracking-wider text-amber-700">so far</span>
+              ) : null}
+            </span>
+          ),
+          cell: ({ row }) => (
+            <span className="block tabular-nums text-right">
+              {row.original.periodValues[period.key] === undefined
+                ? "—"
+                : formatMetric(row.original.periodValues[period.key], payload.metric)}
+            </span>
+          ),
+          size: 110,
+        });
+      }
+
+      if (payload.periods.length > 1) {
+        const firstKey = payload.periods[0].key;
+        const lastKey = payload.periods[payload.periods.length - 1].key;
+        cols.push({
+          id: "delta",
+          header: () => (
+            <span className="block whitespace-nowrap text-right" title={`${firstKey} → ${lastKey}`}>
+              Δ P1→P{payload.periods.length}
+            </span>
+          ),
+          cell: ({ row }) => {
+            const delta = formatDelta(
+              row.original.periodValues[lastKey],
+              row.original.periodValues[firstKey],
+            );
+            if (!delta) return <span className="block text-right text-stone-400">—</span>;
+            return (
+              <span
+                className={[
+                  "block tabular-nums text-right text-xs font-medium",
+                  delta.positive ? "text-emerald-700" : "text-rose-700",
+                ].join(" ")}
+              >
+                {delta.text}
+              </span>
+            );
+          },
+          size: 90,
+        });
+      }
     }
 
     return cols;
-  }, [handleToggle, payload.metric, payload.periods]);
+  }, [handleToggle, payload.metric, payload.periods, snapshotMap, snapshotMode]);
 
   // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
@@ -245,8 +311,12 @@ export function TreeTable({ payload }: Props) {
     getSubRows: (row) => row.subRows,
     getRowCanExpand: (row) => Boolean(row.original.canHaveChildren),
   });
-  const periodColumnCount =
-    payload.periods.length + (payload.periods.length > 1 ? 1 : 0);
+  // Width used for colspan when filling out the "loading children" row.
+  // Snapshot mode emits 4 metric columns; multi-period mode emits N period
+  // columns + an optional Δ column.
+  const periodColumnCount = snapshotMode
+    ? SNAPSHOT_COLUMNS.length
+    : payload.periods.length + (payload.periods.length > 1 ? 1 : 0);
 
   if (!payload.configured) {
     return (

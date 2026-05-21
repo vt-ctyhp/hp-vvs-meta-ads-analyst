@@ -133,9 +133,12 @@ export function PeriodControls({ periods, frequency, metric }: Props) {
           </select>
         </div>
       ) : (
+        // Snapshot mode (periods=1) renders Spend / Primary KPI / $/Primary KPI /
+        // CTR as separate columns — the Metric picker is hidden because the
+        // table no longer pivots on a single metric. The header above already
+        // shows the time window.
         <div className="text-[11px] italic text-stone-500">
-          Snapshot mode lands in v2 — for now the table renders 1 period of
-          the selected metric.
+          Showing Spend, Primary KPI, $/Primary KPI, and CTR for the selected window.
         </div>
       )}
       {pending ? (

@@ -108,6 +108,7 @@ export default async function OptimizePage({
       adSets: [],
       creatives: [],
       creativeAssets: {},
+      snapshotByEntity: {},
     };
   });
 
