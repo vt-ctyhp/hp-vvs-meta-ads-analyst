@@ -197,5 +197,7 @@ export async function cacheThumbnailBatch(
 
 function imageHashFromMetadata(value: Record<string, unknown> | null) {
   const imageHash = value?.image_hash;
-  return typeof imageHash === "string" && imageHash.trim() ? imageHash.trim() : null;
+  if (typeof imageHash !== "string") return null;
+  const trimmed = imageHash.trim();
+  return trimmed || null;
 }

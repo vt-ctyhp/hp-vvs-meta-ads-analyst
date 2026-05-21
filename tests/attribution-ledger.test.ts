@@ -505,7 +505,7 @@ describe("attribution ledger detail data", () => {
       [
         "Paid ad attribution captured",
         "Page viewed",
-        "Meta ad landing page viewed",
+        "Meta/social landing page viewed",
         "Booking submitted",
         "Acuity booking created",
         "Meta CAPI sent",
@@ -542,6 +542,42 @@ describe("attribution ledger detail data", () => {
 
     assert.equal(detail.returnTouch?.content, "only_visit");
     assert.equal(detail.timeline.find((event) => event.eventId === "hp_evt-only-page")?.label, "Meta/social landing page viewed");
+  });
+
+  it("does not label persisted fbc-only returns as paid Meta ad landings", () => {
+    const detail = buildAttributionLedgerDetailData({
+      acuityAppointmentId: "fbc-only-return",
+      conversions: [
+        conversionRow({
+          acuity_appointment_id: "fbc-only-return",
+          event_id: "acuity-fbc-only-return",
+          occurred_at: "2026-05-20T18:30:00.000Z",
+          session_id: "session-1",
+        }),
+      ],
+      events: [
+        eventRow({
+          event_id: "hp_evt-fbc-only-return",
+          event_name: "PageView",
+          fbc: "fb.1.1779200000000.original-click",
+          fbclid: null,
+          occurred_at: "2026-05-20T18:29:00.000Z",
+          page_url:
+            "https://www.hungphatusa.com/pages/book-an-appointment?utm_source=ig&utm_medium=social&utm_content=profile",
+          source_type: "paid_meta",
+          utm_content: "profile",
+          utm_medium: "social",
+          utm_source: "ig",
+        }),
+      ],
+      sessions: [sessionRow({ session_id: "session-1" })],
+      visitor: visitorRow(),
+    });
+
+    assert.equal(
+      detail.timeline.find((event) => event.eventId === "hp_evt-fbc-only-return")?.label,
+      "Meta/social landing page viewed",
+    );
   });
 
   it("fills missing ad IDs from the touch page URL", () => {
