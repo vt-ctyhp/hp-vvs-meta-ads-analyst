@@ -70,6 +70,40 @@ type AttributionTouch = {
   utm?: Record<string, string>;
 };
 
+export type AttributionLedgerEventRow = {
+  browser_name: string | null;
+  device_category: string | null;
+  event_id: string;
+  event_name: string;
+  event_type: string;
+  fbc: string | null;
+  fbp: string | null;
+  fbclid: string | null;
+  occurred_at: string;
+  os_name: string | null;
+  page_url: string | null;
+  properties: JsonRecord | null;
+  raw_json: JsonRecord | null;
+  referrer: string | null;
+  session_id: string | null;
+  source: string | null;
+  source_type: string | null;
+  utm_ad: string | null;
+  utm_ad_id: string | null;
+  utm_adset: string | null;
+  utm_adset_id: string | null;
+  utm_campaign: string | null;
+  utm_campaign_id: string | null;
+  utm_content: string | null;
+  utm_creative: string | null;
+  utm_id: string | null;
+  utm_medium: string | null;
+  utm_placement: string | null;
+  utm_source: string | null;
+  utm_term: string | null;
+  visitor_id: string | null;
+};
+
 export type AttributionLedgerVisitorRow = {
   browser_name: string | null;
   conversion_event_id: string | null;
@@ -129,6 +163,8 @@ export type AttributionLedgerConversionRow = {
   meta_event_id: string | null;
   occurred_at: string;
   os_name: string | null;
+  properties: JsonRecord | null;
+  raw_json: JsonRecord | null;
   session_id: string | null;
   source_type: string | null;
   user_agent: string | null;
@@ -142,6 +178,10 @@ type AttributionLedgerClient = {
 } & {
   from: (table: "website_sessions") => {
     select: (columns: string) => LedgerSelectChain<AttributionLedgerSessionRow[]>;
+  };
+} & {
+  from: (table: "website_events") => {
+    select: (columns: string) => LedgerSelectChain<AttributionLedgerEventRow[]>;
   };
 } & {
   from: (table: "website_conversions") => {
@@ -205,13 +245,14 @@ export async function fetchAttributionLedgerData(input: {
   if (!visitorIds.length) {
     return buildAttributionLedgerData({
       conversions: [],
+      events: [],
       range,
       sessions: [],
       visitors,
     });
   }
 
-  const [sessionsResult, conversionsResult] = await Promise.all([
+  const [sessionsResult, eventsResult, conversionsResult] = await Promise.all([
     client
       .from("website_sessions")
       .select(
@@ -236,6 +277,45 @@ export async function fetchAttributionLedgerData(input: {
       )
       .in("visitor_id", visitorIds)
       .order("last_seen_at", { ascending: false })
+      .limit(MAX_RELATED_ROWS),
+    client
+      .from("website_events")
+      .select(
+        [
+          "event_id",
+          "session_id",
+          "visitor_id",
+          "source",
+          "event_name",
+          "event_type",
+          "occurred_at",
+          "page_url",
+          "referrer",
+          "utm_source",
+          "utm_medium",
+          "utm_campaign",
+          "utm_content",
+          "utm_term",
+          "utm_id",
+          "utm_creative",
+          "utm_ad",
+          "utm_ad_id",
+          "utm_adset",
+          "utm_adset_id",
+          "utm_placement",
+          "fbclid",
+          "fbp",
+          "fbc",
+          "device_category",
+          "browser_name",
+          "os_name",
+          "source_type",
+          "properties",
+          "raw_json",
+        ].join(","),
+      )
+      .in("visitor_id", visitorIds)
+      .order("occurred_at", { ascending: false })
       .limit(MAX_RELATED_ROWS),
     client
       .from("website_conversions")
@@ -263,6 +343,8 @@ export async function fetchAttributionLedgerData(input: {
           "last_touch",
           "last_paid_touch",
           "conversion_touch",
+          "properties",
+          "raw_json",
         ].join(","),
       )
       .in("visitor_id", visitorIds)
@@ -271,10 +353,12 @@ export async function fetchAttributionLedgerData(input: {
   ]);
 
   if (sessionsResult.error) throw sessionsResult.error;
+  if (eventsResult.error) throw eventsResult.error;
   if (conversionsResult.error) throw conversionsResult.error;
 
   return buildAttributionLedgerData({
     conversions: conversionsResult.data || [],
+    events: eventsResult.data || [],
     range,
     sessions: sessionsResult.data || [],
     visitors,
@@ -283,6 +367,7 @@ export async function fetchAttributionLedgerData(input: {
 
 export function buildAttributionLedgerData(input: {
   conversions: AttributionLedgerConversionRow[];
+  events?: AttributionLedgerEventRow[];
   range: AttributionLedgerData["timeRange"];
   sessions: AttributionLedgerSessionRow[];
   visitors: AttributionLedgerVisitorRow[];
@@ -311,23 +396,28 @@ export function buildAttributionLedgerData(input: {
 
 export function buildAttributionLedgerRows(input: {
   conversions: AttributionLedgerConversionRow[];
+  events?: AttributionLedgerEventRow[];
   sessions: AttributionLedgerSessionRow[];
   visitors: AttributionLedgerVisitorRow[];
 }): AttributionLedgerRow[] {
   const sessionsByVisitor = latestByVisitor(input.sessions, "last_seen_at");
   const conversionsByVisitor = latestByVisitor(input.conversions, "occurred_at");
+  const eventsByVisitor = groupByVisitor(input.events || []);
 
   return [...input.visitors]
     .sort((a, b) => timestampValue(b.last_seen_at) - timestampValue(a.last_seen_at))
     .map((visitor) => {
       const session = sessionsByVisitor.get(visitor.visitor_id) || null;
       const conversion = conversionsByVisitor.get(visitor.visitor_id) || null;
+      const eventTouches = (eventsByVisitor.get(visitor.visitor_id) || []).flatMap(eventAttributionTouches);
       const paidTouch = selectBestPaidTouch(
         [
           attributionTouch(visitor.last_paid_touch),
           attributionTouch(conversion?.last_paid_touch),
           attributionTouch(conversion?.conversion_touch),
           attributionTouch(session?.last_paid_touch),
+          ...conversionAttributionTouches(conversion),
+          ...eventTouches,
         ],
         { maxCapturedAt: conversion?.occurred_at },
       );
@@ -404,11 +494,112 @@ function latestByVisitor<Row extends { visitor_id: string | null }>(
   return latest;
 }
 
+function groupByVisitor<Row extends { visitor_id: string | null }>(rows: Row[]) {
+  const groups = new Map<string, Row[]>();
+
+  for (const row of rows) {
+    if (!row.visitor_id) continue;
+    groups.set(row.visitor_id, [...(groups.get(row.visitor_id) || []), row]);
+  }
+
+  return groups;
+}
+
+function conversionAttributionTouches(conversion: AttributionLedgerConversionRow | null) {
+  if (!conversion) return [];
+  return [
+    ...storedAttributionTouches(conversion.properties, conversion.occurred_at, conversion.source_type),
+    ...storedAttributionTouches(conversion.raw_json, conversion.occurred_at, conversion.source_type),
+  ];
+}
+
+function eventAttributionTouches(row: AttributionLedgerEventRow) {
+  return [
+    eventRowTouch(row),
+    ...storedAttributionTouches(row.properties, row.occurred_at, row.source_type, row.source),
+    ...storedAttributionTouches(row.raw_json, row.occurred_at, row.source_type, row.source),
+  ].filter((touch): touch is AttributionTouch => Boolean(touch));
+}
+
+function eventRowTouch(row: AttributionLedgerEventRow): AttributionTouch | null {
+  return attributionPayloadTouch(
+    {
+      browserName: row.browser_name,
+      capturedAt: row.occurred_at,
+      deviceCategory: row.device_category,
+      fbc: row.fbc,
+      fbp: row.fbp,
+      osName: row.os_name,
+      source: row.source,
+      sourceType: row.source_type,
+      utm: {
+        ad: row.utm_ad,
+        adId: row.utm_ad_id,
+        adset: row.utm_adset,
+        adsetId: row.utm_adset_id,
+        campaign: row.utm_campaign,
+        campaignId: row.utm_campaign_id,
+        content: row.utm_content,
+        creative: row.utm_creative,
+        fbclid: row.fbclid,
+        id: row.utm_id,
+        medium: row.utm_medium,
+        placement: row.utm_placement,
+        source: row.utm_source,
+        term: row.utm_term,
+      },
+    },
+    row.occurred_at,
+    row.source_type,
+    row.source,
+  );
+}
+
+function storedAttributionTouches(
+  value: unknown,
+  fallbackCapturedAt?: string | null,
+  fallbackSourceType?: string | null,
+  fallbackSource?: string | null,
+) {
+  const record = objectRecord(value);
+  if (!record) return [];
+
+  const tracking = objectRecord(record.tracking);
+  return [
+    attributionPayloadTouch(record.attribution, fallbackCapturedAt, fallbackSourceType, fallbackSource),
+    attributionPayloadTouch(tracking?.attribution, fallbackCapturedAt, fallbackSourceType, fallbackSource),
+    attributionPayloadTouch(tracking, fallbackCapturedAt, fallbackSourceType, fallbackSource),
+    attributionPayloadTouch(record, fallbackCapturedAt, fallbackSourceType, fallbackSource),
+  ].filter((touch): touch is AttributionTouch => Boolean(touch));
+}
+
+function attributionPayloadTouch(
+  value: unknown,
+  fallbackCapturedAt?: string | null,
+  fallbackSourceType?: string | null,
+  fallbackSource?: string | null,
+): AttributionTouch | null {
+  const record = objectRecord(value);
+  if (!record) return null;
+  const utm = normalizedUtmRecord(record.utm);
+  const touch: AttributionTouch = {
+    browserName: stringValue(record.browserName),
+    capturedAt: stringValue(record.capturedAt) || stringValue(fallbackCapturedAt),
+    deviceCategory: stringValue(record.deviceCategory),
+    fbc: stringValue(record.fbc),
+    fbp: stringValue(record.fbp),
+    osName: stringValue(record.osName),
+    source: stringValue(record.source) || stringValue(fallbackSource),
+    sourceType: stringValue(record.sourceType) || stringValue(fallbackSourceType),
+    utm,
+  };
+
+  return hasTouchSignal(touch) ? touch : null;
+}
+
 function attributionTouch(value: unknown): AttributionTouch | null {
   const record = objectRecord(value);
   if (!record) return null;
-  const utmRecord = objectRecord(record.utm);
-  const utm = utmRecord ? stringRecord(utmRecord) : undefined;
   const touch: AttributionTouch = {
     browserName: stringValue(record.browserName),
     capturedAt: stringValue(record.capturedAt),
@@ -418,23 +609,23 @@ function attributionTouch(value: unknown): AttributionTouch | null {
     osName: stringValue(record.osName),
     source: stringValue(record.source),
     sourceType: stringValue(record.sourceType),
-    utm: utm && Object.keys(utm).length ? utm : undefined,
+    utm: normalizedUtmRecord(record.utm),
   };
 
-  if (
-    touch.fbc ||
-    touch.fbp ||
-    touch.source ||
-    touch.sourceType ||
-    touch.utm ||
-    touch.deviceCategory ||
-    touch.browserName ||
-    touch.osName
-  ) {
-    return touch;
-  }
+  return hasTouchSignal(touch) ? touch : null;
+}
 
-  return null;
+function hasTouchSignal(touch: AttributionTouch) {
+  return Boolean(
+    touch.fbc ||
+      touch.fbp ||
+      touch.source ||
+      touch.sourceType ||
+      touch.utm ||
+      touch.deviceCategory ||
+      touch.browserName ||
+      touch.osName,
+  );
 }
 
 function normalizeLedgerDateRange(input: {
@@ -463,12 +654,45 @@ function objectRecord(value: unknown): JsonRecord | null {
   return value as JsonRecord;
 }
 
-function stringRecord(value: JsonRecord) {
-  return Object.fromEntries(
-    Object.entries(value)
-      .map(([key, item]) => [key, stringValue(item)])
-      .filter((entry): entry is [string, string] => Boolean(entry[1])),
-  );
+function normalizedUtmRecord(value: unknown) {
+  const record = objectRecord(value);
+  if (!record) return undefined;
+  const aliases: Record<string, string[]> = {
+    ad: ["ad", "utm_ad"],
+    adId: ["adId", "ad_id", "utm_ad_id"],
+    adset: ["adset", "utm_adset"],
+    adsetId: ["adsetId", "adset_id", "utm_adset_id"],
+    campaign: ["campaign", "utm_campaign"],
+    campaignId: ["campaignId", "campaign_id", "utm_campaign_id"],
+    content: ["content", "utm_content"],
+    creative: ["creative", "utm_creative"],
+    fbclid: ["fbclid"],
+    gclid: ["gclid"],
+    id: ["id", "utm_id"],
+    medium: ["medium", "utm_medium"],
+    msclkid: ["msclkid"],
+    placement: ["placement", "utm_placement"],
+    source: ["source", "utm_source"],
+    term: ["term", "utm_term"],
+    ttclid: ["ttclid"],
+  };
+  const normalized: Record<string, string> = {};
+
+  for (const [key, candidates] of Object.entries(aliases)) {
+    const value = firstStringValue(...candidates.map((candidate) => record[candidate]));
+    if (value) normalized[key] = value;
+  }
+
+  return Object.keys(normalized).length ? normalized : undefined;
+}
+
+function firstStringValue(...values: unknown[]) {
+  for (const value of values) {
+    const text = stringValue(value);
+    if (text) return text;
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return undefined;
 }
 
 function stringValue(value: unknown) {

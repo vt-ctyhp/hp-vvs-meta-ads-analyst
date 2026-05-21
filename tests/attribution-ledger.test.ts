@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   buildAttributionLedgerRows,
   type AttributionLedgerConversionRow,
+  type AttributionLedgerEventRow,
   type AttributionLedgerSessionRow,
   type AttributionLedgerVisitorRow,
 } from "../src/lib/attribution-ledger.ts";
@@ -160,7 +161,103 @@ describe("attribution ledger row merging", () => {
     assert.equal(rows[0].placement, "Instagram_Stories");
     assert.equal(rows[0].lastPaidSource, "ig");
   });
+
+  it("resolves paid ad IDs from nested conversion attribution JSON", () => {
+    const rows = buildAttributionLedgerRows({
+      conversions: [
+        conversionRow({
+          acuity_appointment_id: "1708622080",
+          last_paid_touch: linkInBioTouch("2026-05-20T23:49:18.756Z"),
+          occurred_at: "2026-05-20T23:49:18.756Z",
+          properties: {
+            attribution: {
+              capturedAt: "2026-05-20T22:59:07.892Z",
+              fbc: "fb.1.1779317947891.original-click",
+              fbp: "fb.1.1779317947891.123",
+              utm: {
+                adId: "120244031602180650",
+                adsetId: "120242517363420650",
+                campaignId: "120234691669940650",
+                content: "DM_IG_HeyBeyArea",
+                medium: "paid_social",
+                placement: "Instagram_Stories",
+                source: "ig",
+              },
+            },
+          },
+        }),
+      ],
+      sessions: [],
+      visitors: [
+        visitorRow({
+          last_paid_touch: linkInBioTouch("2026-05-20T23:49:27.795Z"),
+        }),
+      ],
+    });
+
+    assert.equal(rows[0].campaignId, "120234691669940650");
+    assert.equal(rows[0].adsetId, "120242517363420650");
+    assert.equal(rows[0].adId, "120244031602180650");
+    assert.equal(rows[0].placement, "Instagram_Stories");
+  });
+
+  it("resolves paid ad IDs from event raw attribution JSON", () => {
+    const rows = buildAttributionLedgerRows({
+      conversions: [
+        conversionRow({
+          acuity_appointment_id: "1708622080",
+          last_paid_touch: linkInBioTouch("2026-05-20T23:49:18.756Z"),
+          occurred_at: "2026-05-20T23:49:18.756Z",
+        }),
+      ],
+      events: [
+        eventRow({
+          event_id: "hp_evt-paid",
+          occurred_at: "2026-05-20T23:48:27.772Z",
+          raw_json: {
+            attribution: {
+              capturedAt: "2026-05-20T22:59:07.892Z",
+              utm: {
+                adId: "120244031602180650",
+                adsetId: "120242517363420650",
+                campaignId: "120234691669940650",
+                medium: "paid_social",
+                placement: "Instagram_Stories",
+                source: "ig",
+              },
+            },
+          },
+        }),
+      ],
+      sessions: [],
+      visitors: [
+        visitorRow({
+          last_paid_touch: linkInBioTouch("2026-05-20T23:49:27.795Z"),
+        }),
+      ],
+    });
+
+    assert.equal(rows[0].campaignId, "120234691669940650");
+    assert.equal(rows[0].adsetId, "120242517363420650");
+    assert.equal(rows[0].adId, "120244031602180650");
+    assert.equal(rows[0].placement, "Instagram_Stories");
+  });
 });
+
+function linkInBioTouch(capturedAt: string) {
+  return {
+    capturedAt,
+    eventName: "PageView",
+    source: "shopify_browser",
+    sourceType: "paid_meta",
+    utm: {
+      content: "link_in_bio",
+      fbclid: "link-in-bio-click",
+      medium: "social",
+      source: "ig",
+    },
+  };
+}
 
 function visitorRow(
   overrides: Partial<AttributionLedgerVisitorRow> = {},
@@ -244,9 +341,48 @@ function conversionRow(
     meta_event_id: null,
     occurred_at: "2026-05-19T18:30:00.000Z",
     os_name: "iOS",
+    properties: {},
+    raw_json: {},
     session_id: null,
     source_type: "paid_meta",
     user_agent: "Mozilla/5.0",
+    visitor_id: "visitor-1",
+    ...overrides,
+  };
+}
+
+function eventRow(overrides: Partial<AttributionLedgerEventRow> = {}): AttributionLedgerEventRow {
+  return {
+    browser_name: "Mobile Safari",
+    device_category: "mobile",
+    event_id: "hp_evt-1",
+    event_name: "PageView",
+    event_type: "page",
+    fbc: "fb.1.1.click",
+    fbp: "fb.1.1.browser",
+    fbclid: "link-in-bio-click",
+    occurred_at: "2026-05-20T23:48:27.772Z",
+    os_name: "iOS",
+    page_url: "https://www.hungphatusa.com/pages/book-an-appointment",
+    properties: {},
+    raw_json: {},
+    referrer: "https://l.instagram.com/",
+    session_id: "session-1",
+    source: "shopify_browser",
+    source_type: "paid_meta",
+    utm_ad: null,
+    utm_ad_id: null,
+    utm_adset: null,
+    utm_adset_id: null,
+    utm_campaign: null,
+    utm_campaign_id: null,
+    utm_content: "link_in_bio",
+    utm_creative: null,
+    utm_id: null,
+    utm_medium: "social",
+    utm_placement: null,
+    utm_source: "ig",
+    utm_term: null,
     visitor_id: "visitor-1",
     ...overrides,
   };
