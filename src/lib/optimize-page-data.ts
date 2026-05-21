@@ -2,7 +2,11 @@ import { differenceInCalendarDays, subDays } from "date-fns";
 
 import { isCampaignUmbrella, type CampaignUmbrella } from "./campaign-umbrellas.ts";
 import { ConfigurationError, getMissingDashboardEnv } from "./env.ts";
-import { aggregateMetaInsights, type MetaInsightAggregateRow, type MetaInsightFilter } from "./meta-insight-aggregates.ts";
+import {
+  cachedAggregateMetaInsights as aggregateMetaInsights,
+  type MetaInsightAggregateRow,
+  type MetaInsightFilter,
+} from "./meta-insight-aggregates.ts";
 import type { DailyTrendRow, MetricSummary } from "./analytics.ts";
 
 export type OptimizeSummaryInput = {

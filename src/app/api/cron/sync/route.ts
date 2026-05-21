@@ -1,4 +1,7 @@
+import { revalidateTag } from "next/cache";
+
 import { jsonError, isAuthorizedCronRequest } from "@/lib/http";
+import { META_INSIGHT_AGGREGATES_CACHE_TAG } from "@/lib/meta-insight-aggregates";
 import { syncMetaAds } from "@/lib/meta";
 
 export const runtime = "nodejs";
@@ -12,6 +15,7 @@ export async function GET(request: Request) {
 
   try {
     const result = await syncMetaAds("cron");
+    revalidateTag(META_INSIGHT_AGGREGATES_CACHE_TAG, { expire: 0 });
     return Response.json(result);
   } catch (error) {
     return jsonError(error);

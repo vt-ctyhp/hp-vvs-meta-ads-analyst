@@ -18,7 +18,7 @@
 import { createAdsAnalystClient } from "./ads-analyst-db.ts";
 import { getMissingDashboardEnv } from "./env.ts";
 import {
-  aggregateMetaInsights,
+  cachedAggregateMetaInsights as aggregateMetaInsights,
   type MetaInsightAggregateRow,
   type MetaInsightDimension,
   type MetaInsightFilter,
