@@ -390,6 +390,62 @@ describe("attribution ledger detail data", () => {
     assert.equal(detail.returnTouch?.content, "only_visit");
     assert.equal(detail.timeline.find((event) => event.eventId === "hp_evt-only-page")?.label, "Returned from Instagram/social URL");
   });
+
+  it("fills missing ad IDs from the touch page URL", () => {
+    const pageUrl =
+      "https://www.hungphatusa.com/pages/book-an-appointment?utm_source=fb&utm_medium=paid_social&utm_campaign=CBI_Evergreen_Schedueled_Test_BookAppointment_Prospecting_US_2025+%28AI%29&utm_campaign_id=120234691669940650&utm_adset=%28Acuity%29+Testing+%7C+Broad+%7C+New+Creatives+%7C+Apr+17&utm_adset_id=120242517363420650&utm_content=DM+%7C+Testing+%7C+Creative+%23+9+%7C+Apr+30&utm_ad_id=120243240059500650&utm_placement=Facebook_Desktop_Feed&fbclid=paid-click";
+    const detail = buildAttributionLedgerDetailData({
+      acuityAppointmentId: "1708409464",
+      conversions: [
+        conversionRow({
+          acuity_appointment_id: "1708409464",
+          event_id: "acuity-1708409464",
+          last_paid_touch: {
+            capturedAt: "2026-05-20T18:20:46.546Z",
+            fbc: "fb.1.1778893223711.paid-click",
+            fbp: "fb.1.1769114051828.browser",
+            pageUrl,
+            source: "shopify_browser",
+            sourceType: "paid_meta",
+            utm: {
+              campaign: "CBI_Evergreen_Schedueled_Test_BookAppointment_Prospecting_US_2025 (AI)",
+              content: "DM | Testing | Creative # 9 | Apr 30",
+              medium: "paid_social",
+              source: "fb",
+            },
+          },
+          occurred_at: "2026-05-20T18:20:47.762Z",
+          session_id: "session-1",
+        }),
+      ],
+      events: [
+        eventRow({
+          event_id: "hp_evt-return-page",
+          event_name: "PageView",
+          fbclid: null,
+          occurred_at: "2026-05-20T18:19:04.000Z",
+          page_url: pageUrl,
+          referrer: "https://l.facebook.com/",
+          source_type: "paid_meta",
+          utm_campaign: "CBI_Evergreen_Schedueled_Test_BookAppointment_Prospecting_US_2025 (AI)",
+          utm_content: "DM | Testing | Creative # 9 | Apr 30",
+          utm_medium: "paid_social",
+          utm_source: "fb",
+        }),
+      ],
+      sessions: [sessionRow({ session_id: "session-1" })],
+      visitor: visitorRow(),
+    });
+
+    assert.equal(detail.creditedTouch?.campaignId, "120234691669940650");
+    assert.equal(detail.creditedTouch?.adsetId, "120242517363420650");
+    assert.equal(detail.creditedTouch?.adId, "120243240059500650");
+    assert.equal(detail.returnTouch?.campaignId, "120234691669940650");
+    assert.equal(detail.returnTouch?.adsetId, "120242517363420650");
+    assert.equal(detail.returnTouch?.adId, "120243240059500650");
+    assert.equal(detail.returnTouch?.placement, "Facebook_Desktop_Feed");
+    assert.equal(detail.returnTouch?.fbclidPresent, true);
+  });
 });
 
 function linkInBioTouch(capturedAt: string) {

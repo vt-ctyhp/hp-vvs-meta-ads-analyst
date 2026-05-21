@@ -1140,7 +1140,8 @@ function attributionPayloadTouch(
 ): AttributionTouch | null {
   const record = objectRecord(value);
   if (!record) return null;
-  const utm = normalizedUtmRecord(record.utm);
+  const pageUrl = firstStringValue(record.pageUrl, record.landingPageUrl, record.eventSourceUrl, record.event_source_url);
+  const utm = mergeUtmRecords(utmFromUrl(pageUrl), normalizedUtmRecord(record.utm));
   const touch: AttributionTouch = {
     browserName: stringValue(record.browserName),
     capturedAt: stringValue(record.capturedAt) || stringValue(fallbackCapturedAt),
@@ -1148,7 +1149,7 @@ function attributionPayloadTouch(
     fbc: stringValue(record.fbc),
     fbp: stringValue(record.fbp),
     osName: stringValue(record.osName),
-    pageUrl: firstStringValue(record.pageUrl, record.landingPageUrl),
+    pageUrl,
     referrer: stringValue(record.referrer),
     source: stringValue(record.source) || stringValue(fallbackSource),
     sourceType: stringValue(record.sourceType) || stringValue(fallbackSourceType),
@@ -1161,6 +1162,7 @@ function attributionPayloadTouch(
 function attributionTouch(value: unknown): AttributionTouch | null {
   const record = objectRecord(value);
   if (!record) return null;
+  const pageUrl = firstStringValue(record.pageUrl, record.landingPageUrl, record.eventSourceUrl, record.event_source_url);
   const touch: AttributionTouch = {
     browserName: stringValue(record.browserName),
     capturedAt: stringValue(record.capturedAt),
@@ -1168,11 +1170,11 @@ function attributionTouch(value: unknown): AttributionTouch | null {
     fbc: stringValue(record.fbc),
     fbp: stringValue(record.fbp),
     osName: stringValue(record.osName),
-    pageUrl: stringValue(record.pageUrl),
+    pageUrl,
     referrer: stringValue(record.referrer),
     source: stringValue(record.source),
     sourceType: stringValue(record.sourceType),
-    utm: normalizedUtmRecord(record.utm),
+    utm: mergeUtmRecords(utmFromUrl(pageUrl), normalizedUtmRecord(record.utm)),
   };
 
   return hasTouchSignal(touch) ? touch : null;
@@ -1247,6 +1249,25 @@ function normalizedUtmRecord(value: unknown) {
   }
 
   return Object.keys(normalized).length ? normalized : undefined;
+}
+
+function mergeUtmRecords(...values: Array<Record<string, string> | undefined>) {
+  const merged: Record<string, string> = {};
+  for (const value of values) {
+    if (value) Object.assign(merged, value);
+  }
+  return Object.keys(merged).length ? merged : undefined;
+}
+
+function utmFromUrl(value: unknown) {
+  const urlValue = stringValue(value);
+  if (!urlValue) return undefined;
+
+  try {
+    return normalizedUtmRecord(Object.fromEntries(new URL(urlValue).searchParams));
+  } catch {
+    return undefined;
+  }
 }
 
 function firstStringValue(...values: unknown[]) {

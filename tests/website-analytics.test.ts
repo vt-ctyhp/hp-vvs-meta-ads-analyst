@@ -382,6 +382,50 @@ describe("website analytics appointment reconciliation", () => {
     assert.equal(attribution.visitorId, "hp_vid-visitor");
   });
 
+  it("fills missing tracking IDs from booking URL query params", () => {
+    const pageUrl =
+      "https://www.hungphatusa.com/pages/book-an-appointment?utm_source=fb&utm_medium=paid_social&utm_campaign=Campaign+Name&utm_campaign_id=url-campaign&utm_adset_id=url-adset&utm_content=Creative&utm_ad_id=url-ad&utm_placement=Facebook_Feed&fbclid=paid-click";
+    const conversion = normalizeBookingConversionPayload({
+      appointment: {
+        id: 1708409464,
+        type: "Virtual Custom Design Consultation",
+      },
+      email: "customer@example.com",
+      firstName: "Adrian",
+      lastName: "Test",
+      source: { pageUrl },
+      tracking: {
+        eventSourceUrl: pageUrl,
+        sessionId: "hp_sid-session",
+        utm: {
+          adId: "explicit-ad",
+          campaign: "Campaign Name",
+          content: "Creative",
+          medium: "paid_social",
+          source: "fb",
+        },
+        visitorId: "hp_vid-visitor",
+      },
+    }) as Record<string, unknown>;
+
+    assert.deepEqual(conversion.utm, {
+      adId: "explicit-ad",
+      adsetId: "url-adset",
+      campaign: "Campaign Name",
+      campaignId: "url-campaign",
+      content: "Creative",
+      fbclid: "paid-click",
+      medium: "paid_social",
+      placement: "Facebook_Feed",
+      source: "fb",
+    });
+
+    const eventSourceUrl = new URL(String(conversion.eventSourceUrl));
+    assert.equal(eventSourceUrl.searchParams.get("utm_campaign_id"), "url-campaign");
+    assert.equal(eventSourceUrl.searchParams.get("utm_adset_id"), "url-adset");
+    assert.equal(eventSourceUrl.searchParams.get("utm_ad_id"), "url-ad");
+  });
+
   it("keeps the raw customer-linked event retention window at 24 months", async () => {
     const migration = await readFile(
       new URL("../supabase/migrations/20260519091500_attribution_ledger.sql", import.meta.url),
