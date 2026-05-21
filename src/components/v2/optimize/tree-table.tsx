@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   flexRender,
   getCoreRowModel,
@@ -12,6 +12,8 @@ import {
 
 import type {
   CreativeAsset,
+  PeriodPivotChildrenPayload,
+  PeriodPivotParentLevel,
   PeriodPivotPayload,
 } from "@/lib/period-pivot-data";
 import type { PivotedRow } from "@/lib/pivot-by-period";
@@ -22,8 +24,9 @@ import { formatDelta, formatMetric } from "./metric-format";
 /**
  * The hierarchy + period-pivot table for /optimize.
  *
- * Builds a 3-level tree (Campaign → Ad Set → Creative) by joining the
- * three flat arrays the server returns through parent FK references.
+ * Builds a 3-level tree (Campaign → Ad Set → Creative). Campaigns are in
+ * the first server payload; ad sets and creatives/assets are fetched when
+ * their parent row is expanded.
  * Renders one row per entity with one column per period plus a Δ
  * column comparing the first → last period.
  *
@@ -33,12 +36,11 @@ import { formatDelta, formatMetric } from "./metric-format";
  *
  * v1 scope:
  *   - 3 levels (skip the "ad" envelope; analysts care about creatives).
- *   - Eager-loaded (all three levels arrive in the payload).
+ *   - Lazy-loaded children on expand.
  *   - Sort: spend-desc inherited from the server.
  *   - Δ is always first → last period, not user-configurable.
  *
  * v2:
- *   - Lazy fetch on expand for large accounts.
  *   - Sparkline cell next to the Δ.
  *   - Sort by clicking any column header.
  */
@@ -46,6 +48,10 @@ import { formatDelta, formatMetric } from "./metric-format";
 type TreeRow = PivotedRow & {
   level: "campaign" | "ad_set" | "creative";
   asset?: CreativeAsset;
+  canHaveChildren?: boolean;
+  childrenLoaded?: boolean;
+  childrenLoading?: boolean;
+  childError?: string | null;
   subRows?: TreeRow[];
 };
 
@@ -54,11 +60,86 @@ type Props = {
 };
 
 export function TreeTable({ payload }: Props) {
-  const data = useMemo(() => buildTree(payload), [payload]);
+  const [data, setData] = useState<TreeRow[]>(() => buildTree(payload));
+  const [expanded, setExpanded] = useState<ExpandedState>({});
   const [selectedCreative, setSelectedCreative] = useState<{
     row: TreeRow;
     asset: CreativeAsset | undefined;
   } | null>(null);
+  const hasLoadingChildren = useMemo(() => treeHasLoadingChildren(data), [data]);
+
+  useEffect(() => {
+    setData(buildTree(payload));
+    setExpanded({});
+    setSelectedCreative(null);
+  }, [payload]);
+
+  const loadChildren = useCallback(
+    async (row: TreeRow) => {
+      if (!payload.query || row.level === "creative") return;
+
+      const parentLevel: PeriodPivotParentLevel =
+        row.level === "campaign" ? "campaign" : "ad_set";
+      setData((current) =>
+        updateTreeRow(current, row.level, row.entityId, (target) => ({
+          ...target,
+          childrenLoading: true,
+          childError: null,
+        })),
+      );
+
+      try {
+        const url = buildChildrenUrl(payload, parentLevel, row.entityId);
+        const response = await fetch(url, { credentials: "same-origin" });
+        if (!response.ok) {
+          throw new Error(`Child fetch failed with ${response.status}`);
+        }
+        const childPayload = (await response.json()) as PeriodPivotChildrenPayload;
+        if (!childPayload.configured) {
+          throw new Error(
+            `Missing module credentials: ${childPayload.missingEnv.join(", ") || "unknown"}`,
+          );
+        }
+
+        const childRows = toTreeRows(childPayload);
+        setData((current) =>
+          updateTreeRow(current, row.level, row.entityId, (target) => ({
+            ...target,
+            canHaveChildren: childRows.length > 0,
+            childrenLoaded: true,
+            childrenLoading: false,
+            childError: null,
+            subRows: childRows,
+          })),
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setData((current) =>
+          updateTreeRow(current, row.level, row.entityId, (target) => ({
+            ...target,
+            childrenLoading: false,
+            childError: message,
+          })),
+        );
+      }
+    },
+    [payload],
+  );
+
+  const handleToggle = useCallback(
+    (row: TreeRow, isExpanded: boolean, toggle: () => void) => {
+      toggle();
+      if (
+        !isExpanded &&
+        row.canHaveChildren &&
+        !row.childrenLoaded &&
+        !row.childrenLoading
+      ) {
+        void loadChildren(row);
+      }
+    },
+    [loadChildren],
+  );
 
   const columns = useMemo<ColumnDef<TreeRow>[]>(() => {
     const cols: ColumnDef<TreeRow>[] = [
@@ -71,10 +152,18 @@ export function TreeTable({ payload }: Props) {
             depth={row.depth}
             canExpand={row.getCanExpand()}
             isExpanded={row.getIsExpanded()}
-            onToggle={row.getToggleExpandedHandler()}
+            onToggle={() =>
+              handleToggle(
+                row.original,
+                row.getIsExpanded(),
+                row.getToggleExpandedHandler(),
+              )
+            }
             level={row.original.level}
             label={row.original.displayName}
             asset={row.original.asset}
+            loading={row.original.childrenLoading}
+            error={row.original.childError}
             onCreativeClick={
               row.original.level === "creative"
                 ? () =>
@@ -143,10 +232,9 @@ export function TreeTable({ payload }: Props) {
     }
 
     return cols;
-  }, [payload.metric, payload.periods]);
+  }, [handleToggle, payload.metric, payload.periods]);
 
-  const [expanded, setExpanded] = useState<ExpandedState>({});
-
+  // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
     data,
     columns,
@@ -155,7 +243,10 @@ export function TreeTable({ payload }: Props) {
     getCoreRowModel: getCoreRowModel(),
     getExpandedRowModel: getExpandedRowModel(),
     getSubRows: (row) => row.subRows,
+    getRowCanExpand: (row) => Boolean(row.original.canHaveChildren),
   });
+  const periodColumnCount =
+    payload.periods.length + (payload.periods.length > 1 ? 1 : 0);
 
   if (!payload.configured) {
     return (
@@ -182,6 +273,7 @@ export function TreeTable({ payload }: Props) {
     <>
       <section
         aria-label="Campaign → Ad Set → Creative tree, pivoted by period"
+        aria-busy={hasLoadingChildren}
         className="overflow-hidden rounded-xl border border-stone-200 bg-white"
       >
         <div className="overflow-x-auto">
@@ -203,22 +295,30 @@ export function TreeTable({ payload }: Props) {
             </thead>
             <tbody>
               {table.getRowModel().rows.map((row) => (
-                <tr
-                  key={row.id}
-                  className={[
-                    "border-b border-stone-100 last:border-b-0",
-                    row.depth === 0 ? "bg-white" : "bg-stone-50/60",
-                  ].join(" ")}
-                >
-                  {row.getVisibleCells().map((cell) => (
-                    <td
-                      key={cell.id}
-                      className="px-3 py-2 align-top first:sticky first:left-0 first:bg-inherit"
-                    >
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </td>
-                  ))}
-                </tr>
+                <Fragment key={row.id}>
+                  <tr
+                    className={[
+                      "border-b border-stone-100 last:border-b-0",
+                      row.depth === 0 ? "bg-white" : "bg-stone-50/60",
+                    ].join(" ")}
+                  >
+                    {row.getVisibleCells().map((cell) => (
+                      <td
+                        key={cell.id}
+                        className="px-3 py-2 align-top first:sticky first:left-0 first:bg-inherit"
+                      >
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </td>
+                    ))}
+                  </tr>
+                  {row.original.childrenLoading && row.getIsExpanded() ? (
+                    <TreeLoadingRows
+                      depth={row.depth + 1}
+                      periodColumnCount={periodColumnCount}
+                      count={row.original.level === "campaign" ? 3 : 2}
+                    />
+                  ) : null}
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -241,6 +341,64 @@ export function TreeTable({ payload }: Props) {
   );
 }
 
+function TreeLoadingRows({
+  depth,
+  periodColumnCount,
+  count,
+}: {
+  depth: number;
+  periodColumnCount: number;
+  count: number;
+}) {
+  return (
+    <>
+      {Array.from({ length: count }).map((_, rowIndex) => (
+        <tr key={`loading-${depth}-${rowIndex}`} className="border-b border-stone-100 bg-stone-50/50">
+          <td className="px-3 py-2 align-top first:sticky first:left-0 first:bg-inherit">
+            <div
+              className="flex items-center gap-2"
+              style={{ paddingLeft: depth * 16 }}
+              aria-hidden
+            >
+              <SkeletonBlock className="h-5 w-5" />
+              <SkeletonBlock className="h-5 w-7" />
+              <SkeletonBlock
+                className={[
+                  "h-4",
+                  rowIndex % 3 === 0
+                    ? "w-56"
+                    : rowIndex % 3 === 1
+                      ? "w-44"
+                      : "w-64",
+                ].join(" ")}
+              />
+            </div>
+          </td>
+          {Array.from({ length: periodColumnCount }).map((_, cellIndex) => (
+            <td key={cellIndex} className="px-3 py-2 align-top">
+              <SkeletonBlock
+                className={[
+                  "ml-auto h-4",
+                  cellIndex % 2 === 0 ? "w-16" : "w-12",
+                ].join(" ")}
+              />
+            </td>
+          ))}
+        </tr>
+      ))}
+    </>
+  );
+}
+
+function SkeletonBlock({ className }: { className: string }) {
+  return (
+    <span
+      aria-hidden
+      className={["block animate-pulse rounded bg-stone-200/80", className].join(" ")}
+    />
+  );
+}
+
 function NameCell({
   depth,
   canExpand,
@@ -249,6 +407,8 @@ function NameCell({
   level,
   label,
   asset,
+  loading,
+  error,
   onCreativeClick,
 }: {
   depth: number;
@@ -258,6 +418,8 @@ function NameCell({
   level: TreeRow["level"];
   label: string;
   asset?: CreativeAsset;
+  loading?: boolean;
+  error?: string | null;
   onCreativeClick?: () => void;
 }) {
   const pad = depth * 16;
@@ -317,6 +479,14 @@ function NameCell({
           {renderedLabel}
         </span>
       )}
+      {loading ? (
+        <span className="shrink-0 text-[11px] text-stone-400">Loading...</span>
+      ) : null}
+      {error ? (
+        <span className="shrink-0 text-[11px] text-rose-600" title={error}>
+          Could not load
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -374,6 +544,8 @@ function buildTree(payload: PeriodPivotPayload): TreeRow[] {
       ...creative,
       level: "creative",
       asset: payload.creativeAssets[creative.entityId],
+      childrenLoaded: true,
+      canHaveChildren: false,
     });
     creativesByAdSet.set(parentId, arr);
   }
@@ -386,6 +558,8 @@ function buildTree(payload: PeriodPivotPayload): TreeRow[] {
     arr.push({
       ...adSet,
       level: "ad_set",
+      canHaveChildren: true,
+      childrenLoaded: payload.creatives.length > 0,
       subRows: creativesByAdSet.get(adSet.entityId) ?? undefined,
     });
     adSetsByCampaign.set(parentId, arr);
@@ -394,6 +568,73 @@ function buildTree(payload: PeriodPivotPayload): TreeRow[] {
   return payload.campaigns.map((campaign) => ({
     ...campaign,
     level: "campaign",
+    canHaveChildren: true,
+    childrenLoaded: payload.adSets.length > 0,
     subRows: adSetsByCampaign.get(campaign.entityId) ?? undefined,
   }));
+}
+
+function toTreeRows(payload: PeriodPivotChildrenPayload): TreeRow[] {
+  if (payload.level === "ad_set") {
+    return payload.rows.map((row) => ({
+      ...row,
+      level: "ad_set",
+      canHaveChildren: true,
+      childrenLoaded: false,
+      subRows: undefined,
+    }));
+  }
+
+  return payload.rows.map((row) => ({
+    ...row,
+    level: "creative",
+    asset: payload.creativeAssets[row.entityId],
+    canHaveChildren: false,
+    childrenLoaded: true,
+  }));
+}
+
+function updateTreeRow(
+  rows: TreeRow[],
+  level: TreeRow["level"],
+  entityId: string,
+  update: (row: TreeRow) => TreeRow,
+): TreeRow[] {
+  return rows.map((row) => {
+    const nextRow =
+      row.level === level && row.entityId === entityId ? update(row) : row;
+    if (!nextRow.subRows) return nextRow;
+    return {
+      ...nextRow,
+      subRows: updateTreeRow(nextRow.subRows, level, entityId, update),
+    };
+  });
+}
+
+function treeHasLoadingChildren(rows: TreeRow[]): boolean {
+  return rows.some(
+    (row) =>
+      Boolean(row.childrenLoading) ||
+      (row.subRows ? treeHasLoadingChildren(row.subRows) : false),
+  );
+}
+
+function buildChildrenUrl(
+  payload: PeriodPivotPayload,
+  parentLevel: PeriodPivotParentLevel,
+  parentId: string,
+) {
+  const params = new URLSearchParams();
+  const query = payload.query;
+  if (!query) return "/api/optimize/pivot-children";
+
+  params.set("parentLevel", parentLevel);
+  params.set("parentId", parentId);
+  params.set("anchor", query.anchor);
+  params.set("periodCount", String(query.periodCount));
+  params.set("frequency", query.frequency);
+  params.set("metric", query.metric);
+  if (query.brand) params.set("brand", query.brand);
+  if (query.group) params.set("group", query.group);
+  return `/api/optimize/pivot-children?${params.toString()}`;
 }
