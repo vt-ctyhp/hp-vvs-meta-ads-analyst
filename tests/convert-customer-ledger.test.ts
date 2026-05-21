@@ -5,6 +5,8 @@ import {
   buildCustomerLedgerStatusSentence,
   countCustomerLedgerCapiGaps,
   countUnreadThreads,
+  customerLedgerDetailIdentityFromSearchParams,
+  customerLedgerDetailUrl,
   customerJourneyLedgerRequestFromSearchParams,
   customerLedgerRowsFromJourneys,
 } from "../src/lib/convert-customer-ledger.ts";
@@ -30,19 +32,28 @@ describe("Convert customer ledger adapter", () => {
 
     assert.equal(rows.length, 1);
     assert.deepEqual(rows[0], {
+      adId: "ad-1",
+      adsetId: "adset-1",
       acuityAppointmentId: "1708622080",
       appointmentType: "General Meeting",
       brand: "HP",
       capiStatus: "sent",
+      campaignId: "campaign-1",
+      creativePreview: null,
       customerEmail: "customer@example.com",
       customerName: "Conversion Customer",
+      customerPhone: "555-0100",
+      deviceBrowser: "mobile / Mobile Safari / iOS",
       eventId: "conversion-1",
+      firstPage: "https://www.hungphatusa.com/",
       hasConversion: true,
       hasPaidTouch: true,
       occurredAt: "2026-05-20T23:49:18.756Z",
       paidTouchCampaign: "campaign-1",
       paidTouchSource: "ig",
+      placement: "Instagram_Stories",
       rowId: "conversion-1",
+      sessionId: "session-1",
       sourceType: "paid_meta",
       visitorId: "visitor-1",
     });
@@ -66,9 +77,32 @@ describe("Convert customer ledger adapter", () => {
     ]);
 
     assert.equal(rows[0].eventId, null);
+    assert.equal(rows[0].firstPage, "https://www.hungphatusa.com/");
     assert.equal(rows[0].occurredAt, "2026-05-20T20:00:00.000Z");
     assert.equal(rows[0].rowId, "visitor-1");
+    assert.equal(rows[0].creativePreview, null);
     assert.equal(countCustomerLedgerCapiGaps(rows), 0);
+  });
+
+  it("keeps rows without paid touch valid and leaves ad context empty", () => {
+    const rows = customerLedgerRowsFromJourneys([
+      journeyRow({
+        adId: null,
+        adsetId: null,
+        campaignId: null,
+        hasPaidTouch: false,
+        lastPaidSource: null,
+        lastPaidSourceType: null,
+        placement: null,
+      }),
+    ]);
+
+    assert.equal(rows[0].adId, null);
+    assert.equal(rows[0].adsetId, null);
+    assert.equal(rows[0].campaignId, null);
+    assert.equal(rows[0].placement, null);
+    assert.equal(rows[0].creativePreview, null);
+    assert.equal(rows[0].hasPaidTouch, false);
   });
 
   it("counts CAPI gaps only for conversion rows with missing or failed statuses", () => {
@@ -105,6 +139,40 @@ describe("Convert customer ledger adapter", () => {
         start: "2026-05-01",
       }),
       { days: undefined, endDate: "2026-05-21", startDate: "2026-05-01" },
+    );
+  });
+
+  it("parses Convert detail identity params and builds drawer URLs", () => {
+    const parsed = customerLedgerDetailIdentityFromSearchParams(
+      new URLSearchParams({
+        acuityAppointmentId: " 1708622080 ",
+        visitorId: " visitor-1 ",
+      }),
+    );
+
+    assert.deepEqual(parsed, {
+      data: {
+        acuityAppointmentId: "1708622080",
+        visitorId: "visitor-1",
+      },
+      error: null,
+    });
+
+    assert.equal(
+      customerLedgerDetailUrl(
+        customerLedgerRowsFromJourneys([journeyRow()])[0],
+      ),
+      "/api/convert/customer-ledger/detail?visitorId=visitor-1&acuityAppointmentId=1708622080",
+    );
+  });
+
+  it("rejects Convert detail identity params without a visitor ID", () => {
+    assert.deepEqual(
+      customerLedgerDetailIdentityFromSearchParams(new URLSearchParams()),
+      {
+        data: null,
+        error: "visitorId is required.",
+      },
     );
   });
 

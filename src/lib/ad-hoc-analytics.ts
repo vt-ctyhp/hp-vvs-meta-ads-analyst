@@ -232,6 +232,12 @@ export type SavedAnalysisDashboard = {
   updatedAt: string;
 };
 
+export type DefaultAnalysisDateRange = {
+  days?: number;
+  startDate?: string | null;
+  endDate?: string | null;
+};
+
 type AccountRow = { meta_account_id: string; name: string | null };
 type AnalysisDashboardRecord = {
   id: string;
@@ -510,6 +516,7 @@ export async function createAdHocAnalysis(input: {
   prompt: string;
   mode: AnalysisMode;
   runtimeContext?: AnalysisRuntimeContext;
+  defaultDateRange?: DefaultAnalysisDateRange;
 }): Promise<AnalysisResult> {
   const prompt = input.prompt.trim();
   if (!prompt) {
@@ -517,13 +524,20 @@ export async function createAdHocAnalysis(input: {
   }
 
   const planModel = getOpenAIAnalysisModel("fast");
-  const preflightSpec = normalizeSpec(fallbackSpec(prompt), prompt);
-  const preflightValidation = validateAnalysisSpec(prompt, preflightSpec);
+  const defaultDateRange = normalizeDefaultAnalysisDateRange(input.defaultDateRange);
+  const preflightSpec = applyDefaultDateRange(
+    normalizeSpec(fallbackSpec(prompt), prompt),
+    prompt,
+    defaultDateRange,
+  );
+  const preflightResolvedSpec = applyRuntimeContext(preflightSpec, input.runtimeContext);
+  const preflightValidation = validateAnalysisSpec(prompt, preflightResolvedSpec);
   if (preflightValidation.status === "unsupported") {
     return nonExecutableResult({
       prompt,
       mode: input.mode,
       spec: preflightSpec,
+      resolvedSpec: preflightResolvedSpec,
       dashboardId: null,
       planModel,
       analysisModel: null,
@@ -533,7 +547,8 @@ export async function createAdHocAnalysis(input: {
     });
   }
 
-  const { spec, usage: planUsage } = await createSpecWithAI(prompt, planModel);
+  const { spec: generatedSpec, usage: planUsage } = await createSpecWithAI(prompt, planModel);
+  const spec = applyDefaultDateRange(generatedSpec, prompt, defaultDateRange);
   const resolvedSpec = applyRuntimeContext(spec, input.runtimeContext);
   const baseTokenEstimate = {
     ...emptyTokenEstimate(),
@@ -1213,12 +1228,55 @@ function normalizeSpec(value: unknown, prompt: string): AnalysisSpec {
   };
 }
 
-export function normalizeAnalysisSpecForPrompt(value: unknown, prompt: string): AnalysisSpec {
-  return normalizeSpec(value, prompt);
+function applyDefaultDateRange(
+  spec: AnalysisSpec,
+  prompt: string,
+  defaultDateRange?: AnalysisSpec["dateRange"],
+): AnalysisSpec {
+  if (!defaultDateRange || inferDateRangeFromPrompt(prompt)) return spec;
+  return { ...spec, dateRange: defaultDateRange };
 }
 
-export function buildAnalysisPlanForPrompt(value: unknown, prompt: string) {
-  const spec = normalizeSpec(value, prompt);
+function normalizeDefaultAnalysisDateRange(
+  input?: DefaultAnalysisDateRange,
+): AnalysisSpec["dateRange"] | undefined {
+  if (!input) return undefined;
+  const start = isDateString(input.startDate) ? input.startDate : undefined;
+  const end = isDateString(input.endDate) ? input.endDate : undefined;
+  const days = Number.isFinite(input.days)
+    ? Math.min(Math.max(Math.floor(Number(input.days)), 1), MAX_DAYS)
+    : undefined;
+
+  if (start || end) {
+    return {
+      preset: "custom",
+      ...(start ? { start } : {}),
+      ...(end ? { end } : {}),
+      ...(days ? { days } : {}),
+    };
+  }
+
+  return days ? { days } : undefined;
+}
+
+export function normalizeAnalysisSpecForPrompt(
+  value: unknown,
+  prompt: string,
+  options: { defaultDateRange?: DefaultAnalysisDateRange } = {},
+): AnalysisSpec {
+  return applyDefaultDateRange(
+    normalizeSpec(value, prompt),
+    prompt,
+    normalizeDefaultAnalysisDateRange(options.defaultDateRange),
+  );
+}
+
+export function buildAnalysisPlanForPrompt(
+  value: unknown,
+  prompt: string,
+  options: { defaultDateRange?: DefaultAnalysisDateRange } = {},
+) {
+  const spec = normalizeAnalysisSpecForPrompt(value, prompt, options);
   const validation = validateAnalysisSpec(prompt, spec);
   return {
     spec,

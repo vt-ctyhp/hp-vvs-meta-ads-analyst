@@ -6,6 +6,7 @@ import {
   renameSavedAnalysisDashboard,
   runSavedAdHocAnalysis,
   type AnalysisRuntimeContext,
+  type DefaultAnalysisDateRange,
 } from "@/lib/ad-hoc-analytics";
 import { requirePermissionFromRequest } from "@/lib/app-auth";
 import type { AnalysisMode } from "@/lib/env";
@@ -44,10 +45,15 @@ export async function POST(request: Request) {
       currentPrompt?: string | null;
       currentSpec?: unknown;
       runtimeContext?: AnalysisRuntimeContext;
+      defaultDateRange?: DefaultAnalysisDateRange;
     };
 
     if (body.dashboardId && !body.prompt?.trim()) {
-      return Response.json(await runSavedAdHocAnalysis(body.dashboardId, body.runtimeContext));
+      return Response.json(
+        body.runtimeContext
+          ? await runSavedAdHocAnalysis(body.dashboardId, body.runtimeContext)
+          : await runSavedAdHocAnalysis(body.dashboardId),
+      );
     }
 
     const prompt = body.prompt?.trim();
@@ -70,7 +76,12 @@ export async function POST(request: Request) {
     }
 
     return Response.json(
-      await createAdHocAnalysis({ prompt, mode, runtimeContext: body.runtimeContext }),
+      await createAdHocAnalysis({
+        prompt,
+        mode,
+        runtimeContext: body.runtimeContext,
+        defaultDateRange: body.defaultDateRange,
+      }),
     );
   } catch (error) {
     return jsonError(error);

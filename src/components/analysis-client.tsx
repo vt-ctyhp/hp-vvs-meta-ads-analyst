@@ -452,7 +452,7 @@ function runtimeQuery(runtimeContext: Props["runtimeContext"]) {
   return query ? `&${query}` : "";
 }
 
-function CurrentDashboardPanel({
+export function CurrentDashboardPanel({
   result,
   titleDraft,
   editPrompt,
@@ -589,7 +589,7 @@ function ModeSwitch({
   );
 }
 
-function AnalysisOutput({
+export function AnalysisOutput({
   result,
   hideDiagnostics = false,
 }: {
