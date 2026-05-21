@@ -21,6 +21,10 @@ import {
   getSocialInboxData,
   type SocialInboxData,
 } from "@/lib/social-inbox";
+import {
+  fetchWebsiteFunnelData,
+  type WebsiteFunnelData,
+} from "@/lib/website-analytics";
 
 const emptyInbox: SocialInboxData = {
   threads: [],
@@ -28,10 +32,6 @@ const emptyInbox: SocialInboxData = {
   comments: [],
   syncRuns: [],
 };
-import {
-  fetchWebsiteFunnelData,
-  type WebsiteFunnelData,
-} from "@/lib/website-analytics";
 
 export const dynamic = "force-dynamic";
 

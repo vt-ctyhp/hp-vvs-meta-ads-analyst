@@ -88,6 +88,97 @@ describe("attribution ledger row merging", () => {
     assert.equal(rows[0].hasConversion, false);
   });
 
+  it("uses the conversion session before a later visitor session for paid touch context", () => {
+    const rows = buildAttributionLedgerRows({
+      conversions: [
+        conversionRow({
+          conversion_touch: null,
+          last_paid_touch: null,
+          properties: null,
+          raw_json: null,
+          session_id: "booking-session",
+          source_type: null,
+        }),
+      ],
+      sessions: [
+        sessionRow({
+          last_paid_touch: {
+            source: "shopify_browser",
+            sourceType: "paid_meta",
+            utm: {
+              campaignId: "booking-campaign",
+              source: "facebook",
+            },
+          },
+          last_seen_at: "2026-05-19T18:20:00.000Z",
+          session_id: "booking-session",
+        }),
+        sessionRow({
+          last_paid_touch: {
+            source: "shopify_browser",
+            sourceType: "paid_meta",
+            utm: {
+              campaignId: "post-booking-campaign",
+              source: "instagram",
+            },
+          },
+          last_seen_at: "2026-05-20T18:00:00.000Z",
+          session_id: "post-booking-session",
+        }),
+      ],
+      visitors: [visitorRow({ last_paid_touch: null })],
+    });
+
+    assert.equal(rows[0].sessionId, "booking-session");
+    assert.equal(rows[0].campaignId, "booking-campaign");
+    assert.equal(rows[0].lastPaidSource, "facebook");
+    assert.equal(rows[0].hasPaidTouch, true);
+  });
+
+  it("does not treat device-only event rows as paid touch candidates", () => {
+    const rows = buildAttributionLedgerRows({
+      conversions: [],
+      events: [
+        eventRow({
+          event_id: "hp_evt-device-only",
+          fbc: null,
+          fbp: null,
+          fbclid: null,
+          page_url: "https://www.hungphatusa.com/pages/book-an-appointment",
+          properties: null,
+          raw_json: null,
+          referrer: null,
+          source: null,
+          source_type: null,
+          utm_ad: null,
+          utm_ad_id: null,
+          utm_adset: null,
+          utm_adset_id: null,
+          utm_campaign: null,
+          utm_campaign_id: null,
+          utm_content: null,
+          utm_creative: null,
+          utm_id: null,
+          utm_medium: null,
+          utm_placement: null,
+          utm_source: null,
+          utm_term: null,
+        }),
+      ],
+      sessions: [],
+      visitors: [
+        visitorRow({
+          fbc: null,
+          fbp: null,
+          last_paid_touch: null,
+        }),
+      ],
+    });
+
+    assert.equal(rows[0].hasPaidTouch, false);
+    assert.equal(rows[0].lastPaidSource, null);
+  });
+
   it("summarizes journey rows without counting null CAPI statuses", () => {
     const data = buildAttributionLedgerData({
       conversions: [

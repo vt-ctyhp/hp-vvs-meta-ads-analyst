@@ -614,7 +614,12 @@ export function buildCustomerJourneyLedgerDetailData(input: {
 }): CustomerJourneyLedgerDetailData {
   const conversion = selectDetailConversion(input.conversions, input.acuityAppointmentId);
   const sessionsByVisitor = latestByVisitor(input.sessions, "last_seen_at");
-  const session = sessionsByVisitor.get(input.visitor.visitor_id) || null;
+  const sessionsByVisitorAndId = groupSessionsByVisitorAndId(input.sessions);
+  const session = selectSessionForConversion({
+    conversion,
+    latestSession: sessionsByVisitor.get(input.visitor.visitor_id) || null,
+    sessionsById: sessionsByVisitorAndId.get(input.visitor.visitor_id),
+  });
   const eventTouches = input.events.flatMap(eventAttributionTouches);
   const creditedTouch = selectBestPaidTouch(
     [
@@ -698,14 +703,19 @@ export function buildCustomerJourneyLedgerRows(input: {
   visitors: CustomerJourneyLedgerVisitorRow[];
 }): CustomerJourneyLedgerRow[] {
   const sessionsByVisitor = latestByVisitor(input.sessions, "last_seen_at");
+  const sessionsByVisitorAndId = groupSessionsByVisitorAndId(input.sessions);
   const conversionsByVisitor = latestByVisitor(input.conversions, "occurred_at");
   const eventsByVisitor = groupByVisitor(input.events || []);
 
   return [...input.visitors]
     .sort((a, b) => timestampValue(b.last_seen_at) - timestampValue(a.last_seen_at))
     .map((visitor) => {
-      const session = sessionsByVisitor.get(visitor.visitor_id) || null;
       const conversion = conversionsByVisitor.get(visitor.visitor_id) || null;
+      const session = selectSessionForConversion({
+        conversion,
+        latestSession: sessionsByVisitor.get(visitor.visitor_id) || null,
+        sessionsById: sessionsByVisitorAndId.get(visitor.visitor_id),
+      });
       const eventTouches = (eventsByVisitor.get(visitor.visitor_id) || []).flatMap(eventAttributionTouches);
       const paidTouch = selectBestPaidTouch(
         [
@@ -1071,6 +1081,35 @@ function groupByVisitor<Row extends { visitor_id: string | null }>(rows: Row[]) 
   return groups;
 }
 
+function groupSessionsByVisitorAndId(rows: CustomerJourneyLedgerSessionRow[]) {
+  const groups = new Map<string, Map<string, CustomerJourneyLedgerSessionRow>>();
+
+  for (const row of rows) {
+    if (!row.visitor_id) continue;
+    const sessions = groups.get(row.visitor_id) || new Map<string, CustomerJourneyLedgerSessionRow>();
+    sessions.set(row.session_id, row);
+    groups.set(row.visitor_id, sessions);
+  }
+
+  return groups;
+}
+
+function selectSessionForConversion({
+  conversion,
+  latestSession,
+  sessionsById,
+}: {
+  conversion: CustomerJourneyLedgerConversionRow | null;
+  latestSession: CustomerJourneyLedgerSessionRow | null;
+  sessionsById?: Map<string, CustomerJourneyLedgerSessionRow>;
+}) {
+  if (conversion?.session_id) {
+    return sessionsById?.get(conversion.session_id) || latestSession;
+  }
+
+  return latestSession;
+}
+
 function conversionAttributionTouches(conversion: CustomerJourneyLedgerConversionRow | null) {
   if (!conversion) return [];
   return [
@@ -1195,10 +1234,7 @@ function hasTouchSignal(touch: AttributionTouch) {
       touch.fbp ||
       touch.source ||
       touch.sourceType ||
-      touch.utm ||
-      touch.deviceCategory ||
-      touch.browserName ||
-      touch.osName,
+      touch.utm,
   );
 }
 
