@@ -61,6 +61,12 @@ export function OptimizeFilterBar({ brands, groups }: Props) {
     return { brand, group, days, start, end, status };
   }, [params]);
 
+  const hasCustomUrl = Boolean(current.start && current.end);
+  // Local UI state — tracks whether the operator picked "Custom range…"
+  // in the dropdown. We can't derive this from URL params alone because
+  // they want to see the date inputs the moment they pick Custom, before
+  // they've filled either field in.
+  const [customMode, setCustomMode] = useState<boolean>(hasCustomUrl);
   const [customStart, setCustomStart] = useState(current.start);
   const [customEnd, setCustomEnd] = useState(current.end);
 
@@ -90,24 +96,24 @@ export function OptimizeFilterBar({ brands, groups }: Props) {
     [groups],
   );
 
-  const rangeValue =
-    current.start && current.end ? "custom" : current.days;
+  const rangeValue = customMode ? "custom" : current.days;
 
   function onRangeChange(value: string) {
     if (value === "custom") {
-      // Switching to custom: preserve any existing dates, but DON'T fire a
-      // URL update until the user supplies both start and end. Local state
-      // tracks the half-typed input.
+      // Reveal the date inputs. We don't touch the URL yet because the
+      // operator hasn't picked dates; the inputs stay editable until both
+      // are filled, at which point we commit.
+      setCustomMode(true);
       return;
     }
-    // Preset: clear custom dates, set `days`.
+    setCustomMode(false);
     update({ days: value, start: null, end: null });
   }
 
-  function commitCustomRange() {
-    if (!customStart || !customEnd) return;
-    if (customEnd < customStart) return;
-    update({ start: customStart, end: customEnd, days: null });
+  function commitCustomRange(nextStart: string, nextEnd: string) {
+    if (!nextStart || !nextEnd) return;
+    if (nextEnd < nextStart) return;
+    update({ start: nextStart, end: nextEnd, days: null });
   }
 
   return (
@@ -133,13 +139,18 @@ export function OptimizeFilterBar({ brands, groups }: Props) {
         options={DATE_PRESETS}
         onChange={onRangeChange}
       />
-      {rangeValue === "custom" ? (
+      {customMode ? (
         <span className="inline-flex items-center gap-1 text-xs text-stone-700">
           <input
             type="date"
             value={customStart}
-            onChange={(e) => setCustomStart(e.target.value)}
-            onBlur={commitCustomRange}
+            onChange={(e) => {
+              const nextStart = e.target.value;
+              setCustomStart(nextStart);
+              // Auto-commit the moment both inputs are valid — saves the
+              // operator a click on a separate Apply button.
+              commitCustomRange(nextStart, customEnd);
+            }}
             className="h-9 rounded-md border border-stone-300 bg-white px-2 text-sm text-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-400"
             aria-label="Custom start date"
           />
@@ -147,8 +158,11 @@ export function OptimizeFilterBar({ brands, groups }: Props) {
           <input
             type="date"
             value={customEnd}
-            onChange={(e) => setCustomEnd(e.target.value)}
-            onBlur={commitCustomRange}
+            onChange={(e) => {
+              const nextEnd = e.target.value;
+              setCustomEnd(nextEnd);
+              commitCustomRange(customStart, nextEnd);
+            }}
             className="h-9 rounded-md border border-stone-300 bg-white px-2 text-sm text-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-400"
             aria-label="Custom end date"
           />
@@ -163,6 +177,7 @@ export function OptimizeFilterBar({ brands, groups }: Props) {
       <button
         type="button"
         onClick={() => {
+          setCustomMode(false);
           setCustomStart("");
           setCustomEnd("");
           update({
