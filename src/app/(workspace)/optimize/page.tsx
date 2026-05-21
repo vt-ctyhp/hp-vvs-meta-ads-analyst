@@ -10,7 +10,6 @@ import { RunSyncButton } from "@/components/v2/optimize/sync-button";
 import { TimeSeriesChart } from "@/components/v2/optimize/time-series-chart";
 import { TreeTable } from "@/components/v2/optimize/tree-table";
 import { TriagePanel } from "@/components/v2/optimize/triage-panel";
-import { SignalStrip } from "@/components/v2/signal-strip";
 import { StatusSentence } from "@/components/v2/status-sentence";
 import { fetchSavedAnalysisDashboards } from "@/lib/ad-hoc-analytics";
 import { hasPermission } from "@/lib/access-control";
@@ -229,8 +228,6 @@ export default async function OptimizePage({
           },
         ]}
       />
-
-      <SignalStrip room="optimize" />
 
       {fetchError ? (
         <section className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
