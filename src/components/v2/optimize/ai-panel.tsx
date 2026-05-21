@@ -1,15 +1,30 @@
 "use client";
 
-import { Bot, FileText, Loader2, MessageSquare, Send } from "lucide-react";
+import {
+  BarChart3,
+  Bot,
+  Check,
+  ChevronDown,
+  HelpCircle,
+  History,
+  Loader2,
+  Pencil,
+  Send,
+  Sparkles,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useCallback, useState } from "react";
 
-import { AnalysisClient } from "@/components/analysis-client";
-import type { SavedAnalysisDashboard } from "@/lib/ad-hoc-analytics";
+import { AnalysisOutput } from "@/components/analysis-client";
+import type { AnalysisResult, SavedAnalysisDashboard } from "@/lib/ad-hoc-analytics";
+import type { AnalysisMode } from "@/lib/env";
 import { translateError } from "@/lib/glossary";
 
 type ChatMessage = {
   role: "user" | "assistant";
   content: string;
+  rangeLabel: string;
 };
 
 type Props = {
@@ -27,19 +42,41 @@ export function OptimizeAiPanel({
   canUseAdHocAnalysis,
   dateRange,
 }: Props) {
-  const [chatInput, setChatInput] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const [mode, setMode] = useState<AnalysisMode>("fast");
+  const [showModeHelp, setShowModeHelp] = useState(false);
+
   const [chatSessionId, setChatSessionId] = useState<string | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [isChatting, setIsChatting] = useState(false);
-  const [isReporting, setIsReporting] = useState(false);
-  const [reportStatus, setReportStatus] = useState("");
+
+  const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
+  const [saved, setSaved] = useState(initialSaved);
+  const [isBuilding, setIsBuilding] = useState(false);
+  const [isDashboardLoading, setIsDashboardLoading] = useState(false);
+  const [analysisStatus, setAnalysisStatus] = useState("");
+  const [analysisActionStatus, setAnalysisActionStatus] = useState("");
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+
+  const requestedRangeLabel = formatRequestedRange(dateRange);
+
+  const refreshSaved = useCallback(async function refreshSaved() {
+    const response = await fetch("/api/analysis");
+    if (!response.ok) return;
+    const payload = await response.json();
+    if (Array.isArray(payload.dashboards)) setSaved(payload.dashboards);
+  }, []);
 
   const sendChatMessage = useCallback(async function sendChatMessage() {
-    const message = chatInput.trim();
+    const message = prompt.trim();
     if (!message) return;
 
-    setChatInput("");
-    setChatMessages((messages) => [...messages, { role: "user", content: message }]);
+    setPrompt("");
+    setChatMessages((messages) => [
+      ...messages,
+      { role: "user", content: message, rangeLabel: requestedRangeLabel },
+    ]);
     setIsChatting(true);
 
     try {
@@ -59,40 +96,148 @@ export function OptimizeAiPanel({
       setChatSessionId(payload.sessionId ?? null);
       setChatMessages((messages) => [
         ...messages,
-        { role: "assistant", content: payload.answer },
+        {
+          role: "assistant",
+          content: payload.answer,
+          rangeLabel: formatSourceRange(payload.sourceTransparency, requestedRangeLabel),
+        },
       ]);
     } catch (error) {
       setChatMessages((messages) => [
         ...messages,
-        { role: "assistant", content: translateError(error) },
+        {
+          role: "assistant",
+          content: translateError(error),
+          rangeLabel: requestedRangeLabel,
+        },
       ]);
     } finally {
       setIsChatting(false);
     }
-  }, [chatInput, chatSessionId, dateRange.days, dateRange.endDate, dateRange.startDate]);
+  }, [
+    chatSessionId,
+    dateRange.days,
+    dateRange.endDate,
+    dateRange.startDate,
+    prompt,
+    requestedRangeLabel,
+  ]);
 
-  const generateReport = useCallback(async function generateReport() {
-    setIsReporting(true);
-    setReportStatus("");
+  const buildAnalysis = useCallback(async function buildAnalysis() {
+    const nextPrompt = prompt.trim();
+    if (!nextPrompt) return;
+
+    setPrompt("");
+    setIsBuilding(true);
+    setAnalysisStatus("");
+    setAnalysisActionStatus("");
+    setAnalysisResult(null);
+
     try {
-      const response = await fetch("/api/reports", {
+      const response = await fetch("/api/analysis", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          days: dateRange.days,
-          startDate: dateRange.startDate,
-          endDate: dateRange.endDate,
+          prompt: nextPrompt,
+          mode,
+          defaultDateRange: {
+            days: dateRange.days,
+            startDate: dateRange.startDate,
+            endDate: dateRange.endDate,
+          },
         }),
       });
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Report generation failed");
-      setReportStatus(`Report generated: ${payload.title}`);
+      if (!response.ok) throw new Error(payload.error || "Analysis failed");
+      setAnalysisResult(payload);
+      setAnalysisActionStatus(payload.dashboardId ? "Dashboard saved automatically." : "");
+      await refreshSaved();
     } catch (error) {
-      setReportStatus(translateError(error));
+      setAnalysisStatus(translateError(error));
     } finally {
-      setIsReporting(false);
+      setIsBuilding(false);
     }
-  }, [dateRange.days, dateRange.endDate, dateRange.startDate]);
+  }, [dateRange.days, dateRange.endDate, dateRange.startDate, mode, prompt, refreshSaved]);
+
+  async function loadSavedDashboard(dashboardId: string) {
+    setIsDashboardLoading(true);
+    setAnalysisStatus("");
+    setAnalysisActionStatus("");
+    try {
+      const response = await fetch(`/api/analysis?dashboardId=${encodeURIComponent(dashboardId)}`);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Could not load saved dashboard");
+      setAnalysisResult(payload);
+      setMode(payload.mode || "fast");
+    } catch (error) {
+      setAnalysisStatus(translateError(error));
+    } finally {
+      setIsDashboardLoading(false);
+    }
+  }
+
+  async function renameDashboard(dashboardId: string, title: string) {
+    const nextTitle = title.trim();
+    if (!nextTitle) return;
+
+    setIsDashboardLoading(true);
+    setAnalysisStatus("");
+    setAnalysisActionStatus("");
+    try {
+      const response = await fetch("/api/analysis", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ dashboardId, title: nextTitle }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Rename failed");
+      setSaved((dashboards) =>
+        dashboards.map((dashboard) =>
+          dashboard.id === dashboardId ? { ...dashboard, ...payload } : dashboard,
+        ),
+      );
+      setAnalysisResult((current) =>
+        current?.dashboardId === dashboardId
+          ? {
+              ...current,
+              title: payload.title,
+              spec: { ...current.spec, title: payload.title },
+            }
+          : current,
+      );
+      setRenamingId(null);
+      setRenameDraft("");
+      setAnalysisActionStatus("Dashboard renamed.");
+    } catch (error) {
+      setAnalysisStatus(translateError(error));
+    } finally {
+      setIsDashboardLoading(false);
+    }
+  }
+
+  async function deleteDashboard(dashboardId: string) {
+    if (!window.confirm("Delete this saved ad-hoc dashboard?")) return;
+
+    setIsDashboardLoading(true);
+    setAnalysisStatus("");
+    setAnalysisActionStatus("");
+    try {
+      const response = await fetch(`/api/analysis?dashboardId=${encodeURIComponent(dashboardId)}`, {
+        method: "DELETE",
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Delete failed");
+      setSaved((dashboards) => dashboards.filter((dashboard) => dashboard.id !== dashboardId));
+      if (analysisResult?.dashboardId === payload.id) {
+        setAnalysisResult(null);
+      }
+      setAnalysisActionStatus("Dashboard deleted.");
+    } catch (error) {
+      setAnalysisStatus(translateError(error));
+    } finally {
+      setIsDashboardLoading(false);
+    }
+  }
 
   if (!canUseAdHocAnalysis) {
     return (
@@ -104,80 +249,335 @@ export function OptimizeAiPanel({
 
   return (
     <section className="space-y-5">
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <section className="rounded-xl border border-stone-200 bg-white p-4">
-          <div className="mb-4 flex items-center gap-2 text-stone-950">
-            <MessageSquare size={18} />
-            <h2 className="text-sm font-semibold">Ask AI</h2>
+      <section className="rounded-xl border border-stone-200 bg-white p-4">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 flex-1">
+            <div className="mb-3 flex items-center gap-2 text-stone-950">
+              <Bot size={18} />
+              <h2 className="text-sm font-semibold">Decision copilot</h2>
+            </div>
+            <textarea
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+              rows={4}
+              className="w-full resize-none rounded-md border border-stone-300 bg-white px-3 py-2 text-sm leading-6 outline-none focus:ring-2 focus:ring-stone-400"
+              placeholder="Ask a question or describe the analysis to build"
+            />
           </div>
-          <div className="max-h-80 min-h-40 space-y-3 overflow-y-auto border-y border-stone-200 py-4">
-            {chatMessages.length ? (
-              chatMessages.map((message, index) => (
-                <div
-                  key={`${message.role}-${index}`}
+
+          <div className="w-full space-y-3 lg:w-80">
+            <RangeBadge label={requestedRangeLabel} />
+            <div className="relative rounded-lg border border-stone-200 p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.14em] text-stone-500">
+                  <Sparkles size={15} />
+                  Build depth
+                </div>
+                <button
+                  type="button"
+                  aria-expanded={showModeHelp}
+                  aria-label="Show mode help"
+                  onClick={() => setShowModeHelp((value) => !value)}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md text-stone-500 hover:bg-stone-100 hover:text-stone-950"
+                >
+                  <HelpCircle size={15} />
+                </button>
+              </div>
+              <div className="grid grid-cols-2 overflow-hidden rounded-md border border-stone-200">
+                <button
+                  type="button"
+                  onClick={() => setMode("fast")}
                   className={[
-                    "text-sm leading-6 [overflow-wrap:anywhere]",
-                    message.role === "user" ? "text-stone-950" : "text-stone-700",
+                    "h-9 text-sm font-medium transition-colors",
+                    mode === "fast"
+                      ? "bg-stone-900 text-stone-50"
+                      : "bg-white text-stone-700 hover:bg-stone-100",
                   ].join(" ")}
                 >
-                  <span className="mr-2 text-[10px] uppercase tracking-wider text-stone-400">
-                    {message.role}
-                  </span>
-                  {message.content}
+                  Fast
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode("deep")}
+                  className={[
+                    "h-9 border-l border-stone-200 text-sm font-medium transition-colors",
+                    mode === "deep"
+                      ? "bg-stone-900 text-stone-50"
+                      : "bg-white text-stone-700 hover:bg-stone-100",
+                  ].join(" ")}
+                >
+                  Deep
+                </button>
+              </div>
+              {showModeHelp ? (
+                <div className="absolute right-3 top-10 z-10 w-72 rounded-lg border border-stone-200 bg-white p-3 text-xs leading-5 text-stone-600 shadow-lg">
+                  <p>
+                    <span className="font-medium text-stone-950">Fast</span> is for simple cuts,
+                    quick comparisons, and normal dashboard builds.
+                  </p>
+                  <p className="mt-2">
+                    <span className="font-medium text-stone-950">Deep</span> is for
+                    interpretation-heavy or multi-step analysis.
+                  </p>
                 </div>
-              ))
-            ) : (
-              <p className="text-sm text-stone-500">
-                Ask about spend, fatigue, winners, risks, or what to inspect next.
-              </p>
-            )}
+              ) : null}
+            </div>
           </div>
-          <div className="mt-4 flex gap-2">
-            <input
-              value={chatInput}
-              onChange={(event) => setChatInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") void sendChatMessage();
-              }}
-              className="min-w-0 flex-1 rounded-md border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-stone-400"
-              placeholder="Ask an executive question"
-            />
-            <button
-              type="button"
-              onClick={() => void sendChatMessage()}
-              disabled={isChatting || !chatInput.trim()}
-              title="Send"
-              className="inline-flex h-10 w-10 items-center justify-center rounded-md bg-stone-900 text-stone-50 hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
-            >
-              {isChatting ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-            </button>
-          </div>
-        </section>
+        </div>
 
-        <section className="rounded-xl border border-stone-200 bg-white p-4">
-          <div className="mb-4 flex items-center gap-2 text-stone-950">
-            <FileText size={18} />
-            <h2 className="text-sm font-semibold">Report</h2>
-          </div>
-          <p className="text-sm leading-6 text-stone-600">
-            Generate the current executive report for the selected date range.
-          </p>
+        <div className="mt-4 flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={() => void generateReport()}
-            disabled={isReporting}
-            className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-stone-900 px-3 text-sm font-medium text-stone-900 hover:bg-stone-900 hover:text-stone-50 disabled:cursor-not-allowed disabled:border-stone-300 disabled:text-stone-400"
+            onClick={() => void sendChatMessage()}
+            disabled={isChatting || !prompt.trim()}
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-stone-900 px-4 text-sm font-medium text-stone-50 hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
           >
-            {isReporting ? <Loader2 size={16} className="animate-spin" /> : <Bot size={16} />}
-            Generate report
+            {isChatting ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+            Ask
           </button>
-          {reportStatus ? (
-            <p className="mt-3 text-sm leading-6 text-stone-600">{reportStatus}</p>
-          ) : null}
-        </section>
-      </div>
+          <button
+            type="button"
+            onClick={() => void buildAnalysis()}
+            disabled={isBuilding || !prompt.trim()}
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-stone-900 px-4 text-sm font-medium text-stone-900 hover:bg-stone-900 hover:text-stone-50 disabled:cursor-not-allowed disabled:border-stone-300 disabled:text-stone-400 disabled:hover:bg-white"
+          >
+            {isBuilding ? <Loader2 size={16} className="animate-spin" /> : <BarChart3 size={16} />}
+            Build analysis
+          </button>
+        </div>
+      </section>
 
-      <AnalysisClient initialSaved={initialSaved} surface="panel" />
+      <SavedAnalysisDrawer
+        saved={saved}
+        isLoading={isDashboardLoading}
+        renamingId={renamingId}
+        renameDraft={renameDraft}
+        onLoad={(dashboardId) => void loadSavedDashboard(dashboardId)}
+        onStartRename={(dashboard) => {
+          setRenamingId(dashboard.id);
+          setRenameDraft(dashboard.title);
+        }}
+        onRenameDraftChange={setRenameDraft}
+        onSaveRename={(dashboardId) => void renameDashboard(dashboardId, renameDraft)}
+        onCancelRename={() => {
+          setRenamingId(null);
+          setRenameDraft("");
+        }}
+        onDelete={(dashboardId) => void deleteDashboard(dashboardId)}
+      />
+
+      {chatMessages.length ? (
+        <section className="rounded-xl border border-stone-200 bg-white p-4">
+          <div className="mb-4 flex items-center gap-2 text-stone-950">
+            <Bot size={18} />
+            <h2 className="text-sm font-semibold">Ask AI</h2>
+          </div>
+          <div className="space-y-3">
+            {chatMessages.map((message, index) => (
+              <article
+                key={`${message.role}-${index}`}
+                className={[
+                  "rounded-lg border p-3 text-sm leading-6 [overflow-wrap:anywhere]",
+                  message.role === "user"
+                    ? "border-stone-200 bg-stone-50 text-stone-950"
+                    : "border-stone-200 bg-white text-stone-700",
+                ].join(" ")}
+              >
+                <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-wider text-stone-400">
+                  <span>{message.role}</span>
+                  <span className="h-1 w-1 rounded-full bg-stone-300" />
+                  <span>{message.rangeLabel}</span>
+                </div>
+                {message.content}
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {analysisActionStatus || analysisStatus ? (
+        <section
+          className={[
+            "rounded-xl border p-4 text-sm",
+            analysisStatus
+              ? "border-rose-200 bg-rose-50 text-rose-900"
+              : "border-emerald-200 bg-emerald-50 text-emerald-900",
+          ].join(" ")}
+        >
+          {analysisStatus || analysisActionStatus}
+        </section>
+      ) : null}
+
+      {analysisResult ? (
+        <section className="space-y-5">
+          <section className="rounded-xl border border-stone-200 bg-white p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-stone-950">Built analysis</h2>
+                <p className="mt-1 text-xs text-stone-500">
+                  Data range: {formatAnalysisRange(analysisResult)}
+                </p>
+              </div>
+              <div className="rounded-full border border-stone-200 px-3 py-1 text-xs uppercase tracking-[0.14em] text-stone-500">
+                {analysisResult.mode}
+              </div>
+            </div>
+          </section>
+          <AnalysisOutput result={analysisResult} hideDiagnostics />
+        </section>
+      ) : null}
     </section>
   );
+}
+
+function SavedAnalysisDrawer({
+  saved,
+  isLoading,
+  renamingId,
+  renameDraft,
+  onLoad,
+  onStartRename,
+  onRenameDraftChange,
+  onSaveRename,
+  onCancelRename,
+  onDelete,
+}: {
+  saved: SavedAnalysisDashboard[];
+  isLoading: boolean;
+  renamingId: string | null;
+  renameDraft: string;
+  onLoad: (dashboardId: string) => void;
+  onStartRename: (dashboard: SavedAnalysisDashboard) => void;
+  onRenameDraftChange: (value: string) => void;
+  onSaveRename: (dashboardId: string) => void;
+  onCancelRename: () => void;
+  onDelete: (dashboardId: string) => void;
+}) {
+  return (
+    <details className="group rounded-xl border border-stone-200 bg-white">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
+        <div className="flex items-center gap-2 text-stone-950">
+          <History size={18} />
+          <span className="text-sm font-semibold">Saved analyses</span>
+          <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-500">
+            {saved.length}
+          </span>
+        </div>
+        <ChevronDown
+          size={17}
+          className="text-stone-500 transition-transform group-open:rotate-180"
+        />
+      </summary>
+      <div className="border-t border-stone-200 p-4">
+        {saved.length ? (
+          <div className="grid gap-3 lg:grid-cols-2">
+            {saved.map((dashboard) => (
+              <article key={dashboard.id} className="rounded-lg border border-stone-200 p-3">
+                <button
+                  type="button"
+                  onClick={() => onLoad(dashboard.id)}
+                  disabled={isLoading}
+                  className="block w-full text-left disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <div className="line-clamp-2 text-sm font-medium text-stone-950">
+                    {dashboard.title}
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-stone-500">
+                    <span>{dashboard.mode}</span>
+                    <span>{new Date(dashboard.updatedAt).toLocaleDateString()}</span>
+                  </div>
+                </button>
+                {renamingId === dashboard.id ? (
+                  <div className="mt-3 flex gap-2">
+                    <input
+                      value={renameDraft}
+                      onChange={(event) => onRenameDraftChange(event.target.value)}
+                      className="min-w-0 flex-1 rounded-md border border-stone-300 px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-stone-400"
+                      aria-label="Rename saved dashboard"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => onSaveRename(dashboard.id)}
+                      disabled={isLoading || !renameDraft.trim()}
+                      title="Save name"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-stone-900 text-stone-900 hover:bg-stone-900 hover:text-stone-50 disabled:cursor-not-allowed disabled:border-stone-300 disabled:text-stone-400"
+                    >
+                      <Check size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onCancelRename}
+                      title="Cancel rename"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-600 hover:border-stone-900 hover:text-stone-950"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onStartRename(dashboard)}
+                      className="inline-flex h-8 flex-1 items-center justify-center gap-2 rounded-md border border-stone-200 text-xs text-stone-600 hover:border-stone-900 hover:text-stone-950"
+                    >
+                      <Pencil size={13} />
+                      Rename
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onDelete(dashboard.id)}
+                      className="inline-flex h-8 flex-1 items-center justify-center gap-2 rounded-md border border-stone-200 text-xs text-rose-700 hover:border-rose-300 hover:bg-rose-50"
+                    >
+                      <Trash2 size={13} />
+                      Delete
+                    </button>
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-stone-500">No saved analyses yet.</p>
+        )}
+      </div>
+    </details>
+  );
+}
+
+function RangeBadge({ label }: { label: string }) {
+  return (
+    <div className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-600">
+      <span className="font-medium text-stone-950">Selected data range:</span> {label}
+    </div>
+  );
+}
+
+function formatRequestedRange(dateRange: Props["dateRange"]) {
+  if (dateRange.startDate || dateRange.endDate) {
+    return `${dateRange.startDate || "earliest"} to ${dateRange.endDate || "latest"}`;
+  }
+  return `Last ${dateRange.days} days`;
+}
+
+function formatSourceRange(source: unknown, fallback: string) {
+  const range = sourceTransparencyRange(source);
+  if (!range?.start && !range?.end) return fallback;
+  const days = range.days ? ` (${range.days} days)` : "";
+  return `${range.start || "earliest"} to ${range.end || "latest"}${days}`;
+}
+
+function formatAnalysisRange(result: AnalysisResult) {
+  return formatSourceRange(result.sourceTransparency, "Range unavailable");
+}
+
+function sourceTransparencyRange(source: unknown) {
+  if (!source || typeof source !== "object") return null;
+  const maybeRange = (source as { timeRange?: unknown }).timeRange;
+  if (!maybeRange || typeof maybeRange !== "object") return null;
+  const range = maybeRange as { start?: unknown; end?: unknown; days?: unknown };
+  return {
+    start: typeof range.start === "string" ? range.start : null,
+    end: typeof range.end === "string" ? range.end : null,
+    days: typeof range.days === "number" ? range.days : null,
+  };
 }

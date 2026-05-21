@@ -40,6 +40,11 @@ export async function POST(request: Request) {
       dashboardId?: string;
       currentPrompt?: string | null;
       currentSpec?: unknown;
+      defaultDateRange?: {
+        days?: number;
+        startDate?: string | null;
+        endDate?: string | null;
+      };
     };
 
     if (body.dashboardId && !body.prompt?.trim()) {
@@ -64,7 +69,13 @@ export async function POST(request: Request) {
       );
     }
 
-    return Response.json(await createAdHocAnalysis({ prompt, mode }));
+    return Response.json(
+      await createAdHocAnalysis({
+        prompt,
+        mode,
+        defaultDateRange: body.defaultDateRange,
+      }),
+    );
   } catch (error) {
     return jsonError(error);
   }
