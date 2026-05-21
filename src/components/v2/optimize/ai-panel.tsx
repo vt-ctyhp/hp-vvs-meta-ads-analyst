@@ -62,10 +62,14 @@ export function OptimizeAiPanel({
   const requestedRangeLabel = formatRequestedRange(dateRange);
 
   const refreshSaved = useCallback(async function refreshSaved() {
-    const response = await fetch("/api/analysis");
-    if (!response.ok) return;
-    const payload = await response.json();
-    if (Array.isArray(payload.dashboards)) setSaved(payload.dashboards);
+    try {
+      const response = await fetch("/api/analysis");
+      if (!response.ok) return;
+      const payload = await response.json();
+      if (Array.isArray(payload.dashboards)) setSaved(payload.dashboards);
+    } catch {
+      // Saved-list refreshes are best-effort after a successful build.
+    }
   }, []);
 
   const sendChatMessage = useCallback(async function sendChatMessage() {
