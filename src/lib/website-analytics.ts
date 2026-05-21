@@ -9,6 +9,11 @@ import {
   usesLimitedAdsAnalystDbAccess,
   withAdsAnalystEnvironment,
 } from "./ads-analyst-db.ts";
+import {
+  isPaidAttributionTouch,
+  selectBestPaidTouch,
+  selectLastPaidTouch as selectBestLastPaidTouch,
+} from "./attribution-touch-selection.ts";
 import { BOOKING_ACTION_TYPES, actionArray, actionCount } from "./meta-kpi.ts";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -36,6 +41,54 @@ const eventTypeSchema = z.enum([
   "custom",
 ]);
 
+const utmSchema = z.object({
+  ad: z.string().trim().max(180).optional(),
+  adId: z.string().trim().max(120).optional(),
+  adset: z.string().trim().max(180).optional(),
+  adsetId: z.string().trim().max(120).optional(),
+  source: z.string().trim().max(120).optional(),
+  medium: z.string().trim().max(120).optional(),
+  campaign: z.string().trim().max(180).optional(),
+  campaignId: z.string().trim().max(120).optional(),
+  content: z.string().trim().max(180).optional(),
+  creative: z.string().trim().max(180).optional(),
+  fbclid: z.string().trim().max(500).optional(),
+  gclid: z.string().trim().max(500).optional(),
+  id: z.string().trim().max(120).optional(),
+  msclkid: z.string().trim().max(500).optional(),
+  placement: z.string().trim().max(120).optional(),
+  term: z.string().trim().max(180).optional(),
+  ttclid: z.string().trim().max(500).optional(),
+});
+
+const bookingSourceSchema = z
+  .object({
+    pageUrl: z.string().trim().url().optional(),
+    userAgent: z.string().trim().max(600).optional(),
+  })
+  .passthrough()
+  .optional();
+
+const bookingTrackingSchema = z
+  .object({
+    attribution: jsonObjectSchema.optional(),
+    eventId: z.string().trim().min(1).max(200).optional(),
+    eventSourceUrl: z.string().trim().url().optional(),
+    fbc: z.string().trim().max(300).optional(),
+    fbp: z.string().trim().max(300).optional(),
+    pageGroup: z.string().trim().max(80).optional(),
+    pagePath: z.string().trim().max(300).optional(),
+    pageTitle: z.string().trim().max(250).optional(),
+    pageUrl: z.string().trim().url().optional(),
+    referrer: z.string().trim().max(1000).optional(),
+    sessionId: z.string().trim().min(1).max(200).optional(),
+    userAgent: z.string().trim().max(600).optional(),
+    utm: utmSchema.optional(),
+    visitorId: z.string().trim().min(1).max(200).optional(),
+  })
+  .passthrough()
+  .optional();
+
 const websiteEventSchema = z.object({
   eventId: z.string().trim().min(1).max(200).optional(),
   eventName: z.string().trim().min(1).max(80),
@@ -49,27 +102,7 @@ const websiteEventSchema = z.object({
   pageTitle: z.string().trim().max(250).optional(),
   pageGroup: z.string().trim().max(80).optional(),
   referrer: z.string().trim().max(1000).optional(),
-  utm: z
-    .object({
-      ad: z.string().trim().max(180).optional(),
-      adId: z.string().trim().max(120).optional(),
-      adset: z.string().trim().max(180).optional(),
-      adsetId: z.string().trim().max(120).optional(),
-      source: z.string().trim().max(120).optional(),
-      medium: z.string().trim().max(120).optional(),
-      campaign: z.string().trim().max(180).optional(),
-      campaignId: z.string().trim().max(120).optional(),
-      content: z.string().trim().max(180).optional(),
-      creative: z.string().trim().max(180).optional(),
-      fbclid: z.string().trim().max(500).optional(),
-      gclid: z.string().trim().max(500).optional(),
-      id: z.string().trim().max(120).optional(),
-      msclkid: z.string().trim().max(500).optional(),
-      placement: z.string().trim().max(120).optional(),
-      term: z.string().trim().max(180).optional(),
-      ttclid: z.string().trim().max(500).optional(),
-    })
-    .optional(),
+  utm: utmSchema.optional(),
   attribution: jsonObjectSchema.optional(),
   fbp: z.string().trim().max(300).optional(),
   fbc: z.string().trim().max(300).optional(),
@@ -94,9 +127,12 @@ const conversionEventSchema = websiteEventSchema.extend({
   metaEventId: z.string().trim().max(200).optional(),
   metaCapiStatus: z.string().trim().max(40).optional(),
   metaCapiTestMode: z.boolean().optional(),
+  eventSourceUrl: z.string().trim().url().optional(),
   acuityAppointmentId: z.string().trim().max(80).optional(),
   appointmentType: z.string().trim().max(180).optional(),
   customer: customerSchema,
+  source: bookingSourceSchema,
+  tracking: bookingTrackingSchema,
 });
 
 export type WebsiteEventInput = z.input<typeof websiteEventSchema>;
@@ -502,6 +538,7 @@ const attributionResolveSchema = z.object({
   fbp: z.string().trim().max(300).optional(),
   pageUrl: z.string().trim().url().optional(),
   sessionId: z.string().trim().min(1).max(200).optional(),
+  utm: utmSchema.optional(),
   visitorId: z.string().trim().min(1).max(200).optional(),
 });
 
@@ -558,7 +595,7 @@ export async function recordBrowserWebsiteEvent(input: unknown, request: Request
 }
 
 export async function recordServerWebsiteConversion(input: unknown, request: Request) {
-  const parsed = conversionEventSchema.safeParse(input);
+  const parsed = conversionEventSchema.safeParse(normalizeBookingConversionPayload(input));
   if (!parsed.success) {
     return { ok: false as const, error: "Invalid website conversion payload." };
   }
@@ -570,7 +607,7 @@ export async function recordServerWebsiteConversion(input: unknown, request: Req
 }
 
 export async function resolveWebsiteAttribution(input: unknown): Promise<WebsiteAttributionResolution> {
-  const parsed = attributionResolveSchema.safeParse(input);
+  const parsed = attributionResolveSchema.safeParse(normalizeBookingAttributionPayload(input));
   if (!parsed.success) {
     return { ok: false, bestTouch: null, firstTouch: null, lastPaidTouch: null, lastTouch: null };
   }
@@ -583,31 +620,157 @@ export async function resolveWebsiteAttribution(input: unknown): Promise<Website
   const session = parsed.data.sessionId
     ? await findSession(client, parsed.data.sessionId, environment)
     : null;
-  const firstTouch = visitor?.first_touch || session?.first_touch || null;
-  const lastTouch = mostRecentTouch(visitor?.last_touch, session?.last_touch);
-  const lastPaidTouch = mostRecentTouch(visitor?.last_paid_touch, session?.last_paid_touch);
+  const firstTouch = touchWithUrlUtmFallback(visitor?.first_touch) || touchWithUrlUtmFallback(session?.first_touch);
+  const lastTouch = mostRecentTouch(
+    touchWithUrlUtmFallback(visitor?.last_touch),
+    touchWithUrlUtmFallback(session?.last_touch),
+  );
+  const lastPaidTouch = selectBestPaidTouch([
+    touchWithUrlUtmFallback(visitor?.last_paid_touch),
+    touchWithUrlUtmFallback(session?.last_paid_touch),
+  ]);
   const bestTouch = lastPaidTouch || lastTouch || firstTouch;
   const fbc = parsed.data.fbc || bestTouch?.fbc || visitor?.fbc || session?.fbc || undefined;
   const fbp = parsed.data.fbp || bestTouch?.fbp || visitor?.fbp || session?.fbp || undefined;
-  const eventSourceUrl = attributionEventSourceUrl(
+  const resolvedUtm =
+    mergeUtmRecords(
+      normalizeUtm(parsed.data.utm, parsed.data.pageUrl, parsed.data.eventSourceUrl),
+      utmFromUrl(bestTouch?.pageUrl),
+      bestTouch?.utm,
+    ) || {};
+  const bestTouchWithResolvedUtm =
+    bestTouch && Object.keys(resolvedUtm).length ? { ...bestTouch, utm: resolvedUtm } : bestTouch;
+  const eventSourceUrl = eventSourceUrlWithUtm(
     parsed.data.eventSourceUrl || parsed.data.pageUrl,
-    bestTouch,
+    resolvedUtm,
   );
 
   return {
-    bestTouch,
+    bestTouch: bestTouchWithResolvedUtm,
     eventSourceUrl,
     fbc,
     fbp,
     firstTouch,
-    lastPaidTouch,
+    lastPaidTouch: lastPaidTouch === bestTouch ? bestTouchWithResolvedUtm : lastPaidTouch,
     lastTouch,
     ok: true,
     sessionId: parsed.data.sessionId,
-    sourceType: bestTouch?.sourceType,
-    utm: bestTouch?.utm,
+    sourceType:
+      bestTouchWithResolvedUtm?.sourceType ||
+      (fbc || Object.keys(resolvedUtm).length ? classifySourceType({ fbc, utm: resolvedUtm }) : undefined),
+    utm: Object.keys(resolvedUtm).length ? resolvedUtm : undefined,
     visitorId: parsed.data.visitorId,
   };
+}
+
+export function normalizeBookingAttributionPayload(input: unknown) {
+  const record = objectRecord(input);
+  if (!Object.keys(record).length) return input;
+
+  const tracking = objectRecord(record.tracking);
+  const source = objectRecord(record.source);
+  const attribution = objectRecord(tracking.attribution || record.attribution);
+  const pageUrl = firstStringValue(
+    record.pageUrl,
+    tracking.pageUrl,
+    tracking.eventSourceUrl,
+    source.pageUrl,
+    attribution.landingPageUrl,
+  );
+  const eventSourceUrl = firstStringValue(record.eventSourceUrl, tracking.eventSourceUrl, pageUrl);
+  const utm = mergeUtmRecords(utmFromUrl(pageUrl), utmFromUrl(eventSourceUrl), attribution.utm, tracking.utm, record.utm);
+
+  return cleanRecord({
+    ...record,
+    eventSourceUrl: eventSourceUrlWithUtm(eventSourceUrl, utm),
+    fbc: firstStringValue(record.fbc, tracking.fbc, attribution.fbc),
+    fbp: firstStringValue(record.fbp, tracking.fbp, attribution.fbp),
+    pageUrl,
+    sessionId: firstStringValue(record.sessionId, tracking.sessionId),
+    utm,
+    visitorId: firstStringValue(record.visitorId, tracking.visitorId),
+  });
+}
+
+export function normalizeBookingConversionPayload(input: unknown) {
+  const record = objectRecord(input);
+  if (!Object.keys(record).length) return input;
+
+  const appointment = objectRecord(record.appointment);
+  const tracking = objectRecord(record.tracking);
+  const source = objectRecord(record.source);
+  const attribution = objectRecord(tracking.attribution || record.attribution);
+  const pageUrl = firstStringValue(
+    record.pageUrl,
+    tracking.pageUrl,
+    tracking.eventSourceUrl,
+    source.pageUrl,
+    attribution.landingPageUrl,
+  );
+  const pagePath = firstStringValue(record.pagePath, tracking.pagePath, attribution.landingPagePath);
+  const sourceUrl = firstStringValue(record.eventSourceUrl, tracking.eventSourceUrl, pageUrl);
+  const utm = mergeUtmRecords(utmFromUrl(pageUrl), utmFromUrl(sourceUrl), attribution.utm, tracking.utm, record.utm);
+  const eventSourceUrl = eventSourceUrlWithUtm(
+    sourceUrl,
+    utm,
+  );
+  const acuityAppointmentId = firstStringValue(
+    record.acuityAppointmentId,
+    record.acuity_appointment_id,
+    record.appointmentId,
+    record.appointmentID,
+    appointment.id,
+  );
+  const eventId =
+    firstStringValue(record.eventId, record.event_id, tracking.eventId, tracking.event_id) ||
+    (acuityAppointmentId ? `acuity-${acuityAppointmentId}` : "");
+  const customer = cleanRecord({
+    ...objectRecord(record.customer),
+    email: firstStringValue(recordString(record.customer, "email"), record.email, appointment.email),
+    firstName: firstStringValue(
+      recordString(record.customer, "firstName"),
+      record.firstName,
+      appointment.firstName,
+    ),
+    lastName: firstStringValue(
+      recordString(record.customer, "lastName"),
+      record.lastName,
+      appointment.lastName,
+    ),
+    name: firstStringValue(recordString(record.customer, "name"), record.name, appointment.name),
+    phone: firstStringValue(recordString(record.customer, "phone"), record.phone, appointment.phone),
+  });
+  const trackingRecord = Object.keys(tracking).length ? tracking : undefined;
+  const sourceRecord = Object.keys(source).length ? source : undefined;
+
+  return cleanRecord({
+    ...record,
+    acuityAppointmentId,
+    appointmentType: firstStringValue(
+      record.appointmentType,
+      record.appointment_type,
+      appointment.type,
+      appointment.appointmentType,
+    ),
+    customer: Object.keys(customer).length ? customer : undefined,
+    eventId,
+    eventSourceUrl,
+    fbc: firstStringValue(record.fbc, tracking.fbc, attribution.fbc),
+    fbp: firstStringValue(record.fbp, tracking.fbp, attribution.fbp),
+    metaEventId: firstStringValue(record.metaEventId, record.meta_event_id) || eventId,
+    metaEventName: firstStringValue(record.metaEventName, record.meta_event_name) || "Schedule",
+    pageGroup: firstStringValue(record.pageGroup, tracking.pageGroup) || classifyPagePath(pagePath || pathFromUrl(pageUrl)),
+    pagePath,
+    pageTitle: firstStringValue(record.pageTitle, tracking.pageTitle),
+    pageUrl,
+    referrer: firstStringValue(record.referrer, tracking.referrer, attribution.referrer),
+    sessionId: firstStringValue(record.sessionId, tracking.sessionId),
+    source: sourceRecord,
+    tracking: trackingRecord,
+    userAgent: firstStringValue(record.userAgent, tracking.userAgent, source.userAgent),
+    utm,
+    visitorId: firstStringValue(record.visitorId, tracking.visitorId),
+  });
 }
 
 export async function fetchWebsiteFunnelData(input: {
@@ -790,13 +953,36 @@ async function reconcileAppointmentConversionsForRange(range: {
 
   if (existingResult.error) throw existingResult.error;
 
+  const existingAcuityIdsResult = await client
+    .from("website_events")
+    .select("event_id,acuity_appointment_id")
+    .in(
+      "acuity_appointment_id",
+      conversions
+        .map((conversion) => conversion.acuityAppointmentId)
+        .filter((id): id is string => Boolean(id)),
+    )
+    .limit(conversions.length);
+
+  if (existingAcuityIdsResult.error) throw existingAcuityIdsResult.error;
+
   const existingEventIds = new Set(
     (existingResult.data || []).map((event) => event.event_id),
+  );
+  const existingAcuityIds = new Set(
+    (existingAcuityIdsResult.data || [])
+      .map((event) => event.acuity_appointment_id)
+      .filter(Boolean),
   );
   let insertedConversions = 0;
 
   for (const conversion of conversions) {
-    if (existingEventIds.has(conversion.eventId)) continue;
+    if (
+      existingEventIds.has(conversion.eventId) ||
+      (conversion.acuityAppointmentId && existingAcuityIds.has(conversion.acuityAppointmentId))
+    ) {
+      continue;
+    }
     await recordWebsiteEvent(conversion, {
       request: new Request("https://hp-vvs-meta-ads-analyst.internal/appointment-reconciliation"),
       source: "booking_api",
@@ -999,7 +1185,7 @@ async function recordWebsiteEvent(
   const userAgent = input.userAgent || options.request.headers.get("user-agent") || null;
   const brand = input.brand || "HP";
   const device = parseDevice(userAgent);
-  const utm = normalizeUtm(input.utm);
+  const utm = normalizeUtm(input.utm, pageUrl, input.eventSourceUrl);
   const sourceType = classifySourceType({ fbc: input.fbc, referrer: input.referrer, utm });
   const customer = normalizeCustomer(input.customer);
   const row: WebsiteEventRow = {
@@ -1047,7 +1233,7 @@ async function recordWebsiteEvent(
     conversion_event_id: isConversionEventName(eventName, input.metaEventName) ? eventId : null,
     ip_hash: ipHash,
     meta_event_name: input.metaEventName || (eventName === "Schedule" ? "Schedule" : null),
-    meta_event_id: input.metaEventId || null,
+    meta_event_id: input.metaEventId || (isConversionEventName(eventName, input.metaEventName) ? eventId : null),
     acuity_appointment_id: input.acuityAppointmentId || null,
     appointment_type: input.appointmentType || null,
     properties: input.properties || {},
@@ -1063,17 +1249,22 @@ async function recordWebsiteEvent(
   if (row.session_id) {
     await upsertWebsiteSession(client, row, touch);
   }
+  const lastPaidTouch = selectBestPaidTouch([touchWithUrlUtmFallback(visitor?.last_paid_touch), touch], {
+    maxCapturedAt: row.occurred_at,
+  });
+  const firstTouch = touchWithUrlUtmFallback(visitor?.first_touch);
+  const lastTouch = touchWithUrlUtmFallback(visitor?.last_touch) || touch;
   const conversionContext = isConversionEventName(eventName, row.meta_event_name)
     ? {
         customer,
-        firstTouch: visitor?.first_touch || null,
-        lastTouch: visitor?.last_touch || touch,
-        lastPaidTouch: visitor?.last_paid_touch || (isPaidTouch(touch) ? touch : null),
+        firstTouch,
+        lastTouch,
+        lastPaidTouch,
         touch,
         trackingCompleteness: trackingCompletenessReport({
           customer,
-          firstTouch: visitor?.first_touch || null,
-          lastPaidTouch: visitor?.last_paid_touch || (isPaidTouch(touch) ? touch : null),
+          firstTouch,
+          lastPaidTouch,
           row,
         }),
       }
@@ -1160,9 +1351,9 @@ async function upsertWebsiteVisitor(
     last_page_url: row.page_url,
     first_referrer: existing?.first_referrer || row.referrer,
     last_referrer: row.referrer,
-    first_touch: existing?.first_touch || touch,
+    first_touch: touchWithUrlUtmFallback(existing?.first_touch) || touch,
     last_touch: touch,
-    last_paid_touch: selectLastPaidTouch(existing?.last_paid_touch || null, touch),
+    last_paid_touch: selectLastPaidTouch(touchWithUrlUtmFallback(existing?.last_paid_touch), touch),
     fbp: row.fbp || existing?.fbp || null,
     fbc: row.fbc || existing?.fbc || null,
     user_agent: row.user_agent || existing?.user_agent || null,
@@ -1229,9 +1420,9 @@ async function upsertWebsiteSession(
     device_category: row.device_category || existing?.device_category || null,
     browser_name: row.browser_name || existing?.browser_name || null,
     os_name: row.os_name || existing?.os_name || null,
-    first_touch: existing?.first_touch || touch,
+    first_touch: touchWithUrlUtmFallback(existing?.first_touch) || touch,
     last_touch: touch,
-    last_paid_touch: selectLastPaidTouch(existing?.last_paid_touch || null, touch),
+    last_paid_touch: selectLastPaidTouch(touchWithUrlUtmFallback(existing?.last_paid_touch), touch),
     customer_name: row.customer_name || existing?.customer_name || null,
     customer_email: row.customer_email || existing?.customer_email || null,
     customer_phone: row.customer_phone || existing?.customer_phone || null,
@@ -1273,7 +1464,10 @@ async function upsertWebsiteConversion(
     page_url: row.page_url,
     page_path: row.page_path,
     referrer: row.referrer,
-    event_source_url: row.page_url,
+    event_source_url:
+      input.eventSourceUrl ||
+      attributionEventSourceUrl(row.page_url || undefined, context.lastPaidTouch) ||
+      row.page_url,
     source_type: row.source_type,
     acuity_appointment_id: row.acuity_appointment_id,
     appointment_type: row.appointment_type,
@@ -1380,34 +1574,34 @@ function sha256(value: string) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function normalizeUtm(input: z.infer<typeof websiteEventSchema>["utm"]): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(input || {})
-      .map(([key, value]) => [key, typeof value === "string" ? value.trim() : ""])
-      .filter(([, value]) => value),
-  );
+function normalizeUtm(input: z.infer<typeof websiteEventSchema>["utm"], ...urlValues: unknown[]): Record<string, string> {
+  return mergeUtmRecords(...urlValues.map(utmFromUrl), input) || {};
 }
 
 function attributionTouch(row: WebsiteEventRow): AttributionTouch {
-  const utm = cleanRecord({
-    ad: row.utm_ad || undefined,
-    adId: row.utm_ad_id || undefined,
-    adset: row.utm_adset || undefined,
-    adsetId: row.utm_adset_id || undefined,
-    campaign: row.utm_campaign || undefined,
-    campaignId: row.utm_campaign_id || undefined,
-    content: row.utm_content || undefined,
-    creative: row.utm_creative || undefined,
-    fbclid: row.fbclid || undefined,
-    gclid: row.gclid || undefined,
-    id: row.utm_id || undefined,
-    medium: row.utm_medium || undefined,
-    msclkid: row.msclkid || undefined,
-    placement: row.utm_placement || undefined,
-    source: row.utm_source || undefined,
-    term: row.utm_term || undefined,
-    ttclid: row.ttclid || undefined,
-  }) as Record<string, string>;
+  const utm =
+    mergeUtmRecords(
+      utmFromUrl(row.page_url),
+      cleanRecord({
+        ad: row.utm_ad || undefined,
+        adId: row.utm_ad_id || undefined,
+        adset: row.utm_adset || undefined,
+        adsetId: row.utm_adset_id || undefined,
+        campaign: row.utm_campaign || undefined,
+        campaignId: row.utm_campaign_id || undefined,
+        content: row.utm_content || undefined,
+        creative: row.utm_creative || undefined,
+        fbclid: row.fbclid || undefined,
+        gclid: row.gclid || undefined,
+        id: row.utm_id || undefined,
+        medium: row.utm_medium || undefined,
+        msclkid: row.msclkid || undefined,
+        placement: row.utm_placement || undefined,
+        source: row.utm_source || undefined,
+        term: row.utm_term || undefined,
+        ttclid: row.ttclid || undefined,
+      }),
+    ) || {};
 
   return {
     capturedAt: row.occurred_at,
@@ -1428,35 +1622,21 @@ function attributionTouch(row: WebsiteEventRow): AttributionTouch {
   };
 }
 
+function touchWithUrlUtmFallback(touch: AttributionTouch | null | undefined): AttributionTouch | null {
+  if (!touch) return null;
+  const utm = mergeUtmRecords(utmFromUrl(touch.pageUrl), touch.utm);
+  return utm ? { ...touch, utm } : touch;
+}
+
 export function isPaidTouch(touch: AttributionTouch | null | undefined) {
-  if (!touch) return false;
-  if (touch.fbc || touch.utm?.fbclid || touch.utm?.adId || touch.utm?.adsetId || touch.utm?.campaignId) {
-    return true;
-  }
-  return touch.sourceType.startsWith("paid_");
+  return isPaidAttributionTouch(touch);
 }
 
 export function selectLastPaidTouch(
   existing: AttributionTouch | null | undefined,
   touch: AttributionTouch,
 ) {
-  if (!isPaidTouch(touch)) return existing || null;
-  if (!existing) return touch;
-  if (hasExplicitPaidAttribution(touch)) return touch;
-  if (!hasExplicitPaidAttribution(existing)) return touch;
-  return existing;
-}
-
-function hasExplicitPaidAttribution(touch: AttributionTouch | null | undefined) {
-  if (!touch?.utm) return false;
-  const medium = (touch.utm.medium || "").toLowerCase();
-  return Boolean(
-    touch.utm.fbclid ||
-      touch.utm.adId ||
-      touch.utm.adsetId ||
-      touch.utm.campaignId ||
-      (medium.includes("paid") && (touch.utm.source || touch.utm.campaign || touch.utm.content || touch.utm.id)),
-  );
+  return selectBestLastPaidTouch(existing, touch);
 }
 
 function classifySourceType(input: {
@@ -1534,12 +1714,16 @@ function mostRecentTouch(
 }
 
 function attributionEventSourceUrl(value: string | undefined, touch: AttributionTouch | null) {
+  return eventSourceUrlWithUtm(value, touch?.utm);
+}
+
+function eventSourceUrlWithUtm(value: string | undefined, utm: Record<string, string> | undefined) {
   if (!value) return undefined;
-  if (!touch?.utm) return value;
+  if (!utm || !Object.keys(utm).length) return value;
 
   try {
     const url = new URL(value);
-    for (const [key, touchValue] of Object.entries(touch.utm)) {
+    for (const [key, touchValue] of Object.entries(utm)) {
       const paramName = utmParamName(key);
       if (paramName && touchValue && !url.searchParams.has(paramName)) {
         url.searchParams.set(paramName, touchValue);
@@ -1851,6 +2035,69 @@ function buildTrend(events: WebsiteEventRow[], metaRows: MetaInsightRow[], start
   }
 
   return Array.from(rows.values());
+}
+
+function firstStringValue(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    const text = trimmedString(value);
+    if (text) return text;
+  }
+  return "";
+}
+
+function recordString(value: unknown, key: string) {
+  return trimmedString(objectRecord(value)[key]);
+}
+
+function mergeUtmRecords(...values: unknown[]) {
+  const merged: Record<string, string> = {};
+  for (const value of values) {
+    Object.assign(merged, normalizedUtmRecord(value));
+  }
+  return Object.keys(merged).length ? merged : undefined;
+}
+
+function normalizedUtmRecord(value: unknown) {
+  const record = objectRecord(value);
+  const aliases: Record<string, string[]> = {
+    ad: ["ad", "utm_ad"],
+    adId: ["adId", "ad_id", "utm_ad_id"],
+    adset: ["adset", "utm_adset"],
+    adsetId: ["adsetId", "adset_id", "utm_adset_id"],
+    campaign: ["campaign", "utm_campaign"],
+    campaignId: ["campaignId", "campaign_id", "utm_campaign_id"],
+    content: ["content", "utm_content"],
+    creative: ["creative", "utm_creative"],
+    fbclid: ["fbclid"],
+    gclid: ["gclid"],
+    id: ["id", "utm_id"],
+    medium: ["medium", "utm_medium"],
+    msclkid: ["msclkid"],
+    placement: ["placement", "utm_placement"],
+    source: ["source", "utm_source"],
+    term: ["term", "utm_term"],
+    ttclid: ["ttclid"],
+  };
+  const normalized: Record<string, string> = {};
+
+  for (const [key, candidates] of Object.entries(aliases)) {
+    const value = firstStringValue(...candidates.map((candidate) => record[candidate]));
+    if (value) normalized[key] = value;
+  }
+
+  return normalized;
+}
+
+function utmFromUrl(value: unknown) {
+  const urlValue = trimmedString(value);
+  if (!urlValue) return undefined;
+
+  try {
+    return normalizedUtmRecord(Object.fromEntries(new URL(urlValue).searchParams));
+  } catch {
+    return undefined;
+  }
 }
 
 function objectRecord(value: unknown): Record<string, unknown> {
