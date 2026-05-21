@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useState, useTransition } from "react";
 
 /**
@@ -46,6 +46,7 @@ const DATE_PRESETS: Array<{ value: string; label: string }> = [
 
 export function OptimizeFilterBar({ brands, groups }: Props) {
   const router = useRouter();
+  const pathname = usePathname();
   const params = useSearchParams();
   const [, startTransition] = useTransition();
 
@@ -80,11 +81,18 @@ export function OptimizeFilterBar({ brands, groups }: Props) {
           next.set(key, value);
         }
       }
+      const qs = next.toString();
+      const href = qs ? `${pathname}?${qs}` : pathname;
       startTransition(() => {
-        router.replace(`?${next.toString()}`, { scroll: false });
+        router.replace(href, { scroll: false });
+        // Force the server component tree to re-fetch with the new
+        // searchParams. Without this, App Router can serve a cached RSC
+        // payload and the chart + tree-table stay on the previous data
+        // even though the URL has updated.
+        router.refresh();
       });
     },
-    [params, router, startTransition],
+    [params, pathname, router, startTransition],
   );
 
   const brandOptions = useMemo(

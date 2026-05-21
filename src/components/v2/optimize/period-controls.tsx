@@ -66,6 +66,9 @@ export function PeriodControls({ periods, frequency, metric }: Props) {
       // Sensible defaults stay in the URL so the back button works.
       startTransition(() => {
         router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+        // App Router can serve a cached RSC payload after a soft nav;
+        // refresh() forces the page to re-render with the new searchParams.
+        router.refresh();
       });
     },
     [pathname, router, searchParams],
