@@ -112,7 +112,7 @@ export default async function OptimizePage({
     };
   });
 
-  const [{ summary, fetchError }, pivot] = await Promise.all([
+  const [{ summary }, pivot] = await Promise.all([
     summaryPromise,
     pivotPromise,
   ]);

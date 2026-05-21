@@ -8,9 +8,16 @@ import {
   type ColumnDef,
   type SortingState,
 } from "@tanstack/react-table";
-import { useMemo, useState } from "react";
+import { ImageIcon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { CustomerLedgerRow } from "@/lib/convert-customer-ledger";
+import {
+  customerLedgerDetailUrl,
+  type CustomerLedgerRow,
+} from "@/lib/convert-customer-ledger";
+import type { CustomerJourneyLedgerDetailData } from "@/lib/customer-journey-ledger";
+
+import { CustomerJourneyDrawer } from "./customer-journey-drawer";
 
 /**
  * Customer ledger for the Convert room.
@@ -34,9 +41,121 @@ export function CustomerLedger({ rows }: Props) {
   const [sorting, setSorting] = useState<SortingState>([
     { id: "occurredAt", desc: true },
   ]);
+  const [selectedRow, setSelectedRow] = useState<CustomerLedgerRow | null>(null);
+  const [detail, setDetail] = useState<CustomerJourneyLedgerDetailData | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [isLoadingDetail, setIsLoadingDetail] = useState(false);
+  const [timelineLink, setTimelineLink] = useState<string | null>(null);
+  const [isTimelineLinkCopied, setIsTimelineLinkCopied] = useState(false);
+  const [hasOpenedInitialTimelineLink, setHasOpenedInitialTimelineLink] = useState(false);
+
+  const openJourneyDrawer = useCallback(
+    (row: CustomerLedgerRow, options?: { syncUrl?: boolean }) => {
+      const link =
+        options?.syncUrl === false ? currentJourneyUrl(row) : writeJourneyUrl(row);
+      setDetail(null);
+      setDetailError(null);
+      setIsLoadingDetail(true);
+      setTimelineLink(link);
+      setIsTimelineLinkCopied(false);
+      setSelectedRow(row);
+    },
+    [],
+  );
+
+  const closeJourneyDrawer = useCallback(() => {
+    clearJourneyUrl();
+    setSelectedRow(null);
+    setDetail(null);
+    setDetailError(null);
+    setIsLoadingDetail(false);
+    setTimelineLink(null);
+    setIsTimelineLinkCopied(false);
+  }, []);
+
+  const copyJourneyLink = useCallback(async () => {
+    if (!timelineLink || typeof navigator === "undefined" || !navigator.clipboard) return;
+
+    try {
+      await navigator.clipboard.writeText(timelineLink);
+      setIsTimelineLinkCopied(true);
+    } catch {
+      // Clipboard permissions can be blocked; the deep link still remains in the URL.
+    }
+  }, [timelineLink]);
+
+  useEffect(() => {
+    if (!selectedRow) return;
+
+    const controller = new AbortController();
+
+    fetch(customerLedgerDetailUrl(selectedRow), {
+      credentials: "same-origin",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) {
+          const message =
+            payload && typeof payload === "object" && "error" in payload
+              ? String(payload.error)
+              : "Could not load customer journey detail.";
+          throw new Error(message);
+        }
+        return payload as CustomerJourneyLedgerDetailData;
+      })
+      .then((payload) => {
+        if (!controller.signal.aborted) setDetail(payload);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setDetailError(
+          error instanceof Error ? error.message : "Could not load customer journey detail.",
+        );
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsLoadingDetail(false);
+      });
+
+    return () => controller.abort();
+  }, [selectedRow]);
+
+  useEffect(() => {
+    if (hasOpenedInitialTimelineLink || selectedRow) return;
+
+    const handle = window.setTimeout(() => {
+      const row = journeyRowFromCurrentUrl(rows);
+      if (row) openJourneyDrawer(row, { syncUrl: false });
+      setHasOpenedInitialTimelineLink(true);
+    }, 0);
+
+    return () => window.clearTimeout(handle);
+  }, [hasOpenedInitialTimelineLink, openJourneyDrawer, rows, selectedRow]);
+
+  useEffect(() => {
+    if (!selectedRow) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") closeJourneyDrawer();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [closeJourneyDrawer, selectedRow]);
+
+  useEffect(() => {
+    if (!isTimelineLinkCopied) return;
+    const handle = window.setTimeout(() => setIsTimelineLinkCopied(false), 1500);
+    return () => window.clearTimeout(handle);
+  }, [isTimelineLinkCopied]);
 
   const columns = useMemo<ColumnDef<CustomerLedgerRow>[]>(
     () => [
+      {
+        id: "creative",
+        header: "Creative",
+        size: 250,
+        enableSorting: false,
+        cell: ({ row }) => <CreativeCell row={row.original} />,
+      },
       {
         accessorKey: "customerName",
         header: "Customer",
@@ -60,7 +179,7 @@ export function CustomerLedger({ rows }: Props) {
         size: 130,
         cell: ({ getValue }) => (
           <span className="text-xs tabular-nums">
-            {DATE_FMT.format(new Date(getValue<string>()))}
+            {formatDate(getValue<string>())}
           </span>
         ),
       },
@@ -120,63 +239,164 @@ export function CustomerLedger({ rows }: Props) {
 
   if (rows.length === 0) {
     return (
-      <div className="rounded-xl border border-stone-200 bg-white px-4 py-10 text-center text-sm text-stone-600">
-        No customer journeys in this range yet.
+      <>
+        <div className="rounded-xl border border-stone-200 bg-white px-4 py-10 text-center text-sm text-stone-600">
+          No customer journeys in this range yet.
+        </div>
+        <CustomerJourneyDrawer
+          detail={detail}
+          error={detailError}
+          isLinkCopied={isTimelineLinkCopied}
+          isLoading={isLoadingDetail}
+          onClose={closeJourneyDrawer}
+          onCopyLink={copyJourneyLink}
+          row={selectedRow}
+          timelineLink={timelineLink}
+        />
+      </>
+    );
+  }
+
+  return (
+    <>
+      <div className="overflow-hidden rounded-xl border border-stone-200 bg-white">
+        <header className="flex items-baseline justify-between border-b border-stone-200 bg-stone-50 px-4 py-2 text-[10px] uppercase tracking-wider text-stone-600">
+          <span>Customer ledger</span>
+          <span>{rows.length}</span>
+        </header>
+        <div className="max-h-[520px] overflow-auto">
+          <table className="w-full min-w-[920px] border-collapse text-sm">
+            <thead className="sticky top-0 z-10 bg-stone-50">
+              {table.getHeaderGroups().map((hg) => (
+                <tr key={hg.id} className="border-b border-stone-200">
+                  {hg.headers.map((header) => {
+                    const sortDir = header.column.getIsSorted();
+                    const canSort = header.column.getCanSort();
+                    return (
+                      <th
+                        key={header.id}
+                        className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-stone-500"
+                        style={{ width: header.getSize() }}
+                      >
+                        {canSort ? (
+                          <button
+                            type="button"
+                            onClick={header.column.getToggleSortingHandler()}
+                            className="inline-flex items-center gap-1 hover:text-stone-900"
+                          >
+                            {flexRender(header.column.columnDef.header, header.getContext())}
+                            {sortDir === "asc" ? "↑" : sortDir === "desc" ? "↓" : ""}
+                          </button>
+                        ) : (
+                          flexRender(header.column.columnDef.header, header.getContext())
+                        )}
+                      </th>
+                    );
+                  })}
+                </tr>
+              ))}
+            </thead>
+            <tbody>
+              {table.getRowModel().rows.map((row) => (
+                <tr
+                  key={row.original.rowId}
+                  role="button"
+                  tabIndex={0}
+                  title="Open customer journey"
+                  onClick={() => openJourneyDrawer(row.original)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      openJourneyDrawer(row.original);
+                    }
+                  }}
+                  className="cursor-pointer border-b border-stone-100 outline-none transition-colors hover:bg-stone-50 focus:bg-stone-50 focus:ring-2 focus:ring-inset focus:ring-stone-300"
+                >
+                  {row.getVisibleCells().map((cell) => (
+                    <td
+                      key={cell.id}
+                      className="px-3 py-2 align-middle"
+                      style={{ width: cell.column.getSize() }}
+                    >
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <CustomerJourneyDrawer
+        detail={detail}
+        error={detailError}
+        isLinkCopied={isTimelineLinkCopied}
+        isLoading={isLoadingDetail}
+        onClose={closeJourneyDrawer}
+        onCopyLink={copyJourneyLink}
+        row={selectedRow}
+        timelineLink={timelineLink}
+      />
+    </>
+  );
+}
+
+function CreativeCell({ row }: { row: CustomerLedgerRow }) {
+  const preview = row.creativePreview;
+  const label =
+    preview?.creativeName ||
+    preview?.title ||
+    preview?.adName ||
+    row.paidTouchCampaign ||
+    row.paidTouchSource ||
+    "Direct / unattributed";
+  const sublabel = row.adId
+    ? joinedDetail(row.sourceType, row.placement) || row.adId
+    : "No paid touch";
+
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      <CreativeThumb
+        alt={`${label} creative preview`}
+        src={preview?.thumbnailUrl || preview?.imageUrl}
+      />
+      <div className="min-w-0">
+        <span className="line-clamp-1 text-sm font-medium text-stone-900">
+          {label}
+        </span>
+        <span className="line-clamp-1 text-[11px] text-stone-500">
+          {sublabel}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function CreativeThumb({
+  alt,
+  src,
+}: {
+  alt: string;
+  src?: string | null;
+}) {
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const failed = Boolean(src && failedSrc === src);
+
+  if (!src || failed) {
+    return (
+      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-stone-200 bg-stone-100 text-stone-400">
+        <ImageIcon size={18} aria-hidden />
       </div>
     );
   }
 
   return (
-    <div className="overflow-hidden rounded-xl border border-stone-200 bg-white">
-      <header className="flex items-baseline justify-between border-b border-stone-200 bg-stone-50 px-4 py-2 text-[10px] uppercase tracking-wider text-stone-600">
-        <span>Customer ledger</span>
-        <span>{rows.length}</span>
-      </header>
-      <div className="max-h-[480px] overflow-auto">
-        <table className="w-full border-collapse text-sm">
-          <thead className="sticky top-0 z-10 bg-stone-50">
-            {table.getHeaderGroups().map((hg) => (
-              <tr key={hg.id} className="border-b border-stone-200">
-                {hg.headers.map((header) => {
-                  const sortDir = header.column.getIsSorted();
-                  return (
-                    <th
-                      key={header.id}
-                      className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-stone-500"
-                      style={{ width: header.getSize() }}
-                    >
-                      <button
-                        type="button"
-                        onClick={header.column.getToggleSortingHandler()}
-                        className="inline-flex items-center gap-1 hover:text-stone-900"
-                      >
-                        {flexRender(header.column.columnDef.header, header.getContext())}
-                        {sortDir === "asc" ? "↑" : sortDir === "desc" ? "↓" : ""}
-                      </button>
-                    </th>
-                  );
-                })}
-              </tr>
-            ))}
-          </thead>
-          <tbody>
-            {table.getRowModel().rows.map((row) => (
-              <tr key={row.original.rowId} className="border-b border-stone-100 hover:bg-stone-50">
-                {row.getVisibleCells().map((cell) => (
-                  <td
-                    key={cell.id}
-                    className="px-3 py-2 align-middle"
-                    style={{ width: cell.column.getSize() }}
-                  >
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <img
+      alt={alt}
+      className="h-12 w-12 shrink-0 rounded-md border border-stone-200 bg-stone-100 object-cover"
+      onError={() => setFailedSrc(src)}
+      src={src}
+    />
   );
 }
 
@@ -260,4 +480,100 @@ function CapiChip({
       {status}
     </span>
   );
+}
+
+function journeyRowFromCurrentUrl(rows: CustomerLedgerRow[]) {
+  if (typeof window === "undefined") return null;
+
+  const params = new URLSearchParams(window.location.search);
+  const visitorId = params.get("visitorId")?.trim() || null;
+  const acuityAppointmentId = params.get("acuityAppointmentId")?.trim() || null;
+
+  if (!visitorId && !acuityAppointmentId) return null;
+
+  const exactMatch = rows.find((row) => {
+    if (visitorId && row.visitorId !== visitorId) return false;
+    if (acuityAppointmentId && row.acuityAppointmentId !== acuityAppointmentId) {
+      return false;
+    }
+    return true;
+  });
+
+  if (exactMatch) return exactMatch;
+  if (!visitorId) return null;
+
+  return emptyJourneyRow(visitorId, acuityAppointmentId);
+}
+
+function emptyJourneyRow(
+  visitorId: string,
+  acuityAppointmentId: string | null,
+): CustomerLedgerRow {
+  return {
+    adId: null,
+    adsetId: null,
+    acuityAppointmentId,
+    appointmentType: null,
+    brand: null,
+    campaignId: null,
+    capiStatus: null,
+    creativePreview: null,
+    customerEmail: null,
+    customerName: null,
+    customerPhone: null,
+    deviceBrowser: null,
+    eventId: null,
+    firstPage: null,
+    hasConversion: Boolean(acuityAppointmentId),
+    hasPaidTouch: false,
+    occurredAt: "",
+    paidTouchCampaign: null,
+    paidTouchSource: null,
+    placement: null,
+    rowId: visitorId,
+    sessionId: null,
+    sourceType: null,
+    visitorId,
+  };
+}
+
+function writeJourneyUrl(row: CustomerLedgerRow) {
+  const url = currentJourneyUrlObject(row);
+  if (!url) return null;
+  window.history.replaceState(null, "", url.toString());
+  return url.toString();
+}
+
+function currentJourneyUrl(row: CustomerLedgerRow) {
+  return currentJourneyUrlObject(row)?.toString() || null;
+}
+
+function currentJourneyUrlObject(row: CustomerLedgerRow) {
+  if (typeof window === "undefined") return null;
+  const url = new URL(window.location.href);
+  url.searchParams.set("visitorId", row.visitorId);
+  if (row.acuityAppointmentId) {
+    url.searchParams.set("acuityAppointmentId", row.acuityAppointmentId);
+  } else {
+    url.searchParams.delete("acuityAppointmentId");
+  }
+  return url;
+}
+
+function clearJourneyUrl() {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  url.searchParams.delete("visitorId");
+  url.searchParams.delete("acuityAppointmentId");
+  window.history.replaceState(null, "", url.toString());
+}
+
+function joinedDetail(...values: Array<string | null | undefined>) {
+  return values.filter(Boolean).join(" / ") || null;
+}
+
+function formatDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return DATE_FMT.format(date);
 }

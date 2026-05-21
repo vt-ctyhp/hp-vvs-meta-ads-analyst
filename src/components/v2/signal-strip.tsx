@@ -53,9 +53,12 @@ export function SignalStrip({ room, topCount = 3 }: Props) {
   }, [room]);
 
   useEffect(() => {
-    load();
+    const initial = setTimeout(load, 0);
     const id = setInterval(load, 120_000);
-    return () => clearInterval(id);
+    return () => {
+      clearTimeout(initial);
+      clearInterval(id);
+    };
   }, [load]);
 
   async function dismiss(signalId: string) {
