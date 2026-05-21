@@ -63,12 +63,13 @@ export function PeriodControls({ periods, frequency, metric }: Props) {
     (key: string, value: string) => {
       const next = new URLSearchParams(searchParams.toString());
       next.set(key, value);
+      const qs = next.toString();
+      const href = `${pathname}?${qs}`;
+      if (href === `${pathname}?${searchParams.toString()}`) return;
+
       // Sensible defaults stay in the URL so the back button works.
       startTransition(() => {
-        router.replace(`${pathname}?${next.toString()}`, { scroll: false });
-        // App Router can serve a cached RSC payload after a soft nav;
-        // refresh() forces the page to re-render with the new searchParams.
-        router.refresh();
+        router.replace(href, { scroll: false });
       });
     },
     [pathname, router, searchParams],

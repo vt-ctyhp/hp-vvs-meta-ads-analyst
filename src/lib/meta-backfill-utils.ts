@@ -1,3 +1,5 @@
+import { californiaDateString } from "./california-time.ts";
+
 export type DateChunk = {
   start: string;
   end: string;
@@ -9,7 +11,9 @@ export type InsightDateRange =
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MONTH_PATTERN = /^\d{4}-\d{2}$/;
-export const DEFAULT_INCREMENTAL_SYNC_DAYS = 35;
+// Meta documents Insights as settled after 28 days; older rows stay stored unless
+// a backfill or month re-sync intentionally repairs them.
+export const DEFAULT_INCREMENTAL_SYNC_DAYS = 28;
 const SUPPORTED_DAY_PRESETS = [3, 7, 14, 28, 30, 90] as const;
 
 export function monthlyDateChunks(start: string, end: string): DateChunk[] {
@@ -63,7 +67,8 @@ export function finalizedInsightCutoffDate(
   now = new Date(),
 ) {
   const days = incrementalSyncDays(env);
-  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const today = parseDate(californiaDateString(now));
+  if (!today) throw new Error("Unable to calculate finalized insight cutoff date.");
   today.setUTCDate(today.getUTCDate() - days + 1);
   return formatDate(today);
 }
@@ -83,7 +88,7 @@ export function monthDateRange(value: string | null | undefined): DateChunk | nu
 }
 
 export function todayString(now = new Date()) {
-  return formatDate(now);
+  return californiaDateString(now);
 }
 
 function parseDate(value: string) {

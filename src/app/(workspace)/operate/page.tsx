@@ -12,7 +12,10 @@ import {
 import { SignalStrip } from "@/components/v2/signal-strip";
 import { StatusSentence } from "@/components/v2/status-sentence";
 import { hasPermission, type UserRole } from "@/lib/access-control";
-import { createAdsAnalystClient } from "@/lib/ads-analyst-db";
+import {
+  createAdsAnalystClient,
+  getAdsAnalystEnvironment,
+} from "@/lib/ads-analyst-db";
 import { getMetaAdsBackfillState } from "@/lib/meta-backfill";
 import { requirePagePermission } from "@/lib/server-route-auth";
 import { getSystemHealth } from "@/lib/system-health";
@@ -67,6 +70,7 @@ export default async function OperatePage({
       {tab === "pipelines" ? (
         <PipelinesPanel
           canRunSync={canRunSync}
+          writeEnvironment={getAdsAnalystEnvironment()}
           syncRuns={syncRuns}
           backfillJobs={backfillState?.jobs ?? []}
           backfillChunks={backfillState?.chunks ?? []}

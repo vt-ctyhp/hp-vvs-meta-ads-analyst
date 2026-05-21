@@ -76,37 +76,35 @@ export default async function OptimizePage({
       ? (params.metric as PeriodMetric)
       : "primary_results";
 
-  let dashboard: Awaited<ReturnType<typeof fetchDashboardData>>;
-  let fetchError: string | null = null;
-  try {
-    dashboard = await fetchDashboardData({
-      days,
-      startDate: params.start ?? null,
-      endDate: params.end ?? null,
+  const dashboardPromise = fetchDashboardData({
+    days,
+    startDate: params.start ?? null,
+    endDate: params.end ?? null,
+  })
+    .then((dashboard) => ({
+      dashboard,
+      fetchError: null as string | null,
+    }))
+    .catch(async (e) => {
+      console.error("[optimize] fetchDashboardData threw:", e);
+      const { emptyDashboardPayload } = await import("@/lib/analytics");
+      return {
+        dashboard: emptyDashboardPayload([]),
+        fetchError: e instanceof Error ? e.message : String(e),
+      };
     });
-  } catch (e) {
-    fetchError = e instanceof Error ? e.message : String(e);
-    console.error("[optimize] fetchDashboardData threw:", e);
-    const { emptyDashboardPayload } = await import("@/lib/analytics");
-    dashboard = emptyDashboardPayload([]);
-  }
 
-  // Period-pivot fetch runs alongside the legacy dashboard fetch. Failure
-  // here renders an empty payload — the rest of /optimize still works.
-  let pivot: PeriodPivotPayload;
-  try {
-    pivot = await fetchPeriodPivot({
-      now: pivotAnchor,
-      periodCount,
-      frequency,
-      metric,
-      brand: brandFilter !== "all" ? brandFilter : null,
-      group: groupFilter !== "all" ? groupFilter : null,
-    });
-  } catch (e) {
+  const pivotPromise: Promise<PeriodPivotPayload> = fetchPeriodPivot({
+    now: pivotAnchor,
+    periodCount,
+    frequency,
+    metric,
+    brand: brandFilter !== "all" ? brandFilter : null,
+    group: groupFilter !== "all" ? groupFilter : null,
+  }).catch(async (e) => {
     console.error("[optimize] fetchPeriodPivot threw:", e);
     const { lastNPeriods } = await import("@/lib/period-windows");
-    pivot = {
+    return {
       configured: false,
       missingEnv: [],
       periods: lastNPeriods(pivotAnchor, periodCount, frequency),
@@ -116,7 +114,12 @@ export default async function OptimizePage({
       creatives: [],
       creativeAssets: {},
     };
-  }
+  });
+
+  const [{ dashboard, fetchError }, pivot] = await Promise.all([
+    dashboardPromise,
+    pivotPromise,
+  ]);
   // Diagnostic logging visible in Vercel function logs.
   const { getMissingRequiredEnv } = await import("@/lib/env");
   console.log("[optimize] dashboard payload sizes", {

@@ -4,7 +4,7 @@
 
 1. Vercel Cron calls `GET /api/cron/sync` daily at `13:00 UTC`.
 2. The route validates `Authorization: Bearer $CRON_SECRET`.
-3. `syncMetaAds()` validates Meta token permissions and refreshes the latest `META_INCREMENTAL_SYNC_DAYS` days of insights, defaulting to 35.
+3. `syncMetaAds()` validates Meta token permissions and refreshes the latest `META_INCREMENTAL_SYNC_DAYS` days of insights, defaulting to 28.
 4. Configured ad accounts are fetched from Meta Marketing API. HP is required; VVS is optional until access is ready.
 5. Supabase receives upserts for:
    - brands
@@ -46,7 +46,7 @@ The dashboard sync button calls `POST /api/sync`. The default button uses the sa
 
 Operate also exposes an explicit catalog refresh action for admin repair work. That action calls the same route with `mode=catalog`, records trigger `manual_catalog`, and refreshes ads, creatives, previews, and ranking diagnostics in addition to recent insights. Use it when ads or creatives are missing, not as the normal data-refresh path.
 
-Regular sync does not pull historical insight ranges. Stored historical rows remain in Supabase and dashboard reads use `aggregate_meta_daily_insights`. Rows before the finalized cutoff are not replaced by regular sync; explicit backfill or month re-sync jobs are the historical repair paths.
+Regular sync does not pull historical insight ranges. Stored historical rows remain in Supabase and dashboard reads use `aggregate_meta_daily_insights`. Rows before the finalized cutoff are not replaced by regular sync; explicit backfill or month re-sync jobs are the historical repair paths. The default cutoff is 28 days because Meta documents Insights as refreshed frequently but unchanged after 28 days. Sync date windows use California calendar dates to match the dashboard's expected ad-account reporting timezone.
 
 ## Historical Backfill
 
