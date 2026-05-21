@@ -2,13 +2,18 @@
 
 :root {
   --bg-foundation: #f7f1eb;
+  --bg-vignette-1: #f3ebe1;
+  --bg-vignette-2: #efe7dc;
   --surface-card: #fbf7f1;
   --surface-inset: #efe8dd;
   --ink-primary: #2a2725;
   --ink-body: #4a4540;
   --ink-muted: #8a8178;
   --rule: #d4cfc4;
+  --rule-soft: #e6dfd2;
   --accent: #e91d79;
+  /* A restrained warm metallic used only for ornaments + section marks. */
+  --gilt: #9c7b3f;
   --platinum: #bdc1c6;
   --positive: #245d4d;
   --warning: #8b5b19;
@@ -23,7 +28,9 @@
   --color-hp-body: var(--ink-body);
   --color-hp-muted: var(--ink-muted);
   --color-hp-rule: var(--rule);
+  --color-hp-rule-soft: var(--rule-soft);
   --color-hp-pink: var(--accent);
+  --color-hp-gilt: var(--gilt);
   --color-hp-platinum: var(--platinum);
   --color-signal-positive: var(--positive);
   --color-signal-warning: var(--warning);
@@ -40,12 +47,28 @@ html {
   background: var(--bg-foundation);
 }
 
+/*
+ * Paper atmosphere.
+ *
+ * Two layers compose the foundation:
+ *   1. A faint radial vignette pulling slightly darker into the corners,
+ *      giving the page the feel of an open broadsheet rather than a flat fill.
+ *   2. A very low-opacity SVG grain (inline data URL) for paper tooth — it
+ *      reads as texture, not noise, at 0.04 opacity.
+ */
 body {
   margin: 0;
   min-height: 100vh;
-  background: var(--bg-foundation);
+  background-color: var(--bg-foundation);
+  background-image:
+    radial-gradient(ellipse 120% 90% at 50% -10%, var(--bg-vignette-1), transparent 60%),
+    radial-gradient(ellipse 80% 60% at 100% 100%, var(--bg-vignette-2), transparent 55%),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.16 0 0 0 0 0.15 0 0 0 0 0.14 0 0 0 0.06 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  background-attachment: fixed, fixed, fixed;
+  background-repeat: no-repeat, no-repeat, repeat;
   color: var(--ink-body);
   font-family: var(--font-cardo), Georgia, serif;
+  font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
 }
 
 button,
@@ -71,4 +94,89 @@ button:disabled {
 .scrollbar-thin {
   scrollbar-width: thin;
   scrollbar-color: var(--rule) transparent;
+}
+
+/*
+ * Editorial type helpers.
+ *
+ *  .smallcaps      — true small caps where available, with a sensible fallback
+ *                    (uppercase + tight tracking) on faces that lack them.
+ *  .oldstyle-nums  — old-style (lowercase) figures: required reading material
+ *                    in a serif. Lining numerals look mechanical next to Cardo.
+ *  .lining-nums    — opt back to lining when columns of money need to align
+ *                    perfectly (the scorecard table).
+ */
+.smallcaps {
+  font-variant-caps: all-small-caps;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+.oldstyle-nums {
+  font-variant-numeric: oldstyle-nums proportional-nums;
+  font-feature-settings: "onum" 1, "pnum" 1;
+}
+
+.lining-nums {
+  font-variant-numeric: lining-nums tabular-nums;
+  font-feature-settings: "lnum" 1, "tnum" 1;
+}
+
+/*
+ * Staggered page-load reveal.
+ *
+ * Pure CSS, no JS. Sections opt in with .fade-up + a delay variant; the eye
+ * lands on the masthead first, then the headline, then the supporting blocks
+ * in rhythm. Keeps the page from feeling like a hard pop on first paint.
+ */
+@keyframes hp-fade-up {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.fade-up {
+  animation: hp-fade-up 520ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.fade-up-d1 { animation-delay: 60ms; }
+.fade-up-d2 { animation-delay: 160ms; }
+.fade-up-d3 { animation-delay: 280ms; }
+.fade-up-d4 { animation-delay: 400ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-up,
+  .fade-up-d1,
+  .fade-up-d2,
+  .fade-up-d3,
+  .fade-up-d4 {
+    animation: none;
+  }
+}
+
+/*
+ * Ornamental rule. Hairline with a centered gilt mark — used between the
+ * three sections of the Executive Snapshot in place of a flat divider.
+ */
+.ornament-rule {
+  position: relative;
+  height: 1px;
+  background: var(--rule-soft);
+  margin-block: 2.25rem;
+}
+.ornament-rule::before {
+  content: "❦";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -55%);
+  color: var(--gilt);
+  background: var(--bg-foundation);
+  padding: 0 0.65rem;
+  font-size: 0.75rem;
+  letter-spacing: 0;
 }

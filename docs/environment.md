@@ -38,9 +38,12 @@ Optional:
 | `WEBSITE_EVENT_ALLOWED_ORIGIN_WILDCARDS` | `*.shopifypreview.com` | Comma-separated wildcard host patterns for Shopify draft theme preview domains. |
 | `WEBSITE_EVENT_IP_HASH_SALT` | internal fallback | Optional salt for hashing request IPs before storage. |
 | `ADS_ANALYST_ENVIRONMENT` | `production` | Future deployment label used when issuing limited module JWTs and writing analyst-owned rows. Use `staging` for the revamp/staging deployment. |
-| `SUPABASE_ADS_ANALYST_WEB_JWT` | unset | Future limited Ads Analyst web module credential. Required before enforcing limited database access. JWT should use role `ads_analyst_web` and include `ads_analyst_environment` or `app_environment`. |
-| `SUPABASE_ADS_ANALYST_WORKER_JWT` | unset | Future limited Ads Analyst worker credential for gated sync/backfill jobs. JWT should use role `ads_analyst_worker` and include the matching environment claim. |
-| `SUPABASE_ADS_ANALYST_INGEST_JWT` | unset | Future limited Ads Analyst ingestion credential for website/social event writes. JWT should use role `ads_analyst_ingest` and include the matching environment claim. |
+| `SUPABASE_ADS_ANALYST_WEB_KEY` | unset | Preferred limited Ads Analyst web credential. Use a Supabase secret API key whose `secret_jwt_template` role is `ads_analyst_web` and whose environment claim is `staging` or `production`. |
+| `SUPABASE_ADS_ANALYST_WORKER_KEY` | unset | Preferred limited Ads Analyst worker credential for gated sync/backfill jobs. Use role `ads_analyst_worker` with the matching environment claim. |
+| `SUPABASE_ADS_ANALYST_INGEST_KEY` | unset | Preferred limited Ads Analyst ingestion credential for website/social event writes. Use role `ads_analyst_ingest` with the matching environment claim. |
+| `SUPABASE_ADS_ANALYST_WEB_JWT` | unset | Alternate limited Ads Analyst web module credential when manually minted JWTs are used instead of role-scoped secret API keys. JWT should use role `ads_analyst_web` and include `ads_analyst_environment` or `app_environment`. |
+| `SUPABASE_ADS_ANALYST_WORKER_JWT` | unset | Alternate limited Ads Analyst worker credential for gated sync/backfill jobs. JWT should use role `ads_analyst_worker` and include the matching environment claim. |
+| `SUPABASE_ADS_ANALYST_INGEST_JWT` | unset | Alternate limited Ads Analyst ingestion credential for website/social event writes. JWT should use role `ads_analyst_ingest` and include the matching environment claim. |
 | `ADS_ANALYST_ENFORCE_LIMITED_DB_ACCESS` | unset | Set to `true` after module credentials replace service-role access. Health fails while service-role access remains configured. |
 | `ADS_ANALYST_USE_ENVIRONMENT_SCOPED_UPSERTS` | unset | Keep unset until Phase 5 has replaced unique constraints with environment-scoped keys. When true, write payloads and upsert conflict targets include `environment`. |
 

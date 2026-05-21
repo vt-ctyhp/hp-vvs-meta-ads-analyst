@@ -16,6 +16,7 @@ import {
   Send,
   Table2,
 } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import {
   type FormEvent,
   memo,
@@ -79,12 +80,19 @@ const NUMBER_FORMATTER = new Intl.NumberFormat("en-US", { maximumFractionDigits:
 
 export function DashboardClient({ initialData, permissions }: Props) {
   const data = initialData;
-  const [brand, setBrand] = useState("all");
-  const [umbrella, setUmbrella] = useState("all");
+  const searchParams = useSearchParams();
+  // Seed filter state from URL params on initial mount so deep links from the
+  // executive snapshot (e.g. /analyst?umbrella=Book%20Appts%20US&campaign=…)
+  // land already filtered. Subsequent changes are local state — we don't keep
+  // the URL in sync to avoid surprising the user with router pushes.
+  const [brand, setBrand] = useState(() => searchParams.get("brand") || "all");
+  const [umbrella, setUmbrella] = useState(
+    () => searchParams.get("umbrella") || "all",
+  );
   const [startDate, setStartDate] = useState(data.sourceTransparency.timeRange.start || "");
   const [endDate, setEndDate] = useState(data.sourceTransparency.timeRange.end || "");
   const [isApplyingRange, setIsApplyingRange] = useState(false);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(() => searchParams.get("query") || "");
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [sortKey, setSortKey] = useState<SortKey>("spend");
   const [compareEnabled, setCompareEnabled] = useState(true);

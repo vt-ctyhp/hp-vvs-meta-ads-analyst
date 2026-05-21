@@ -7,7 +7,7 @@ import {
   type CreativeStatus,
 } from "./creative-score";
 import { classifyCampaignUmbrella } from "./campaign-umbrellas";
-import { ConfigurationError, getMissingRequiredEnv } from "./env";
+import { ConfigurationError, getMissingDashboardEnv } from "./env";
 import {
   fetchMetaCreativeAnalysisInsightsForRange,
   type MetaCreativeAnalysisInsight,
@@ -186,16 +186,10 @@ type StoredInsightRow = {
 };
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-const REQUIRED_ENV = [
-  "NEXT_PUBLIC_SUPABASE_URL",
-  "SUPABASE_SERVICE_ROLE_KEY",
-  "META_ACCESS_TOKEN",
-  "META_HP_AD_ACCOUNT_ID",
-] as const;
 const LIVE_META_TIMEOUT_MS = 12000;
 
 export function emptyCreativeAnalysisPayload(
-  missingEnv = getMissingRequiredEnv(REQUIRED_ENV),
+  missingEnv = getMissingDashboardEnv(["META_ACCESS_TOKEN", "META_HP_AD_ACCOUNT_ID"]),
 ): CreativeAnalysisPayload {
   return {
     configured: missingEnv.length === 0,
@@ -244,7 +238,7 @@ function fetchLiveCreativeInsights(range: { start: string; end: string }) {
 export async function fetchCreativeAnalysisData(
   dateRangeInput: CreativeAnalysisDateRangeInput = { days: 30 },
 ): Promise<CreativeAnalysisPayload> {
-  const missingEnv = getMissingRequiredEnv(REQUIRED_ENV);
+  const missingEnv = getMissingDashboardEnv(["META_ACCESS_TOKEN", "META_HP_AD_ACCOUNT_ID"]);
   if (missingEnv.length) return emptyCreativeAnalysisPayload(missingEnv);
 
   try {

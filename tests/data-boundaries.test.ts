@@ -12,6 +12,8 @@ import {
   usesEnvironmentScopedAdsAnalystUpserts,
   usesLimitedAdsAnalystDbAccess,
 } from "../src/lib/ads-analyst-db.ts";
+import { getMissingRequiredEnv } from "../src/lib/env.ts";
+import { getDataBoundaryRuntimeStatus } from "../src/lib/runtime-guardrails.ts";
 import {
   ADS_ANALYST_ENVIRONMENTS,
   ANALYST_ENVIRONMENT_SCOPED_TABLES,
@@ -25,19 +27,19 @@ const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const SOURCE_ROOT = join(REPO_ROOT, "src");
 const PHASE_2_MIGRATION = join(
   REPO_ROOT,
-  "supabase/migrations/20260519090000_ads_analyst_data_boundary.sql",
+  "supabase/migrations/20260520000000_ads_analyst_data_boundary.sql",
 );
 const PHASE_3_MIGRATION = join(
   REPO_ROOT,
-  "supabase/migrations/20260519093000_ads_analyst_environment_scope.sql",
+  "supabase/migrations/20260520000100_ads_analyst_environment_scope.sql",
 );
 const PHASE_4_MIGRATION = join(
   REPO_ROOT,
-  "supabase/migrations/20260519100000_ads_analyst_environment_aware_runtime.sql",
+  "supabase/migrations/20260520000200_ads_analyst_environment_aware_runtime.sql",
 );
 const PHASE_5_MIGRATION = join(
   REPO_ROOT,
-  "supabase/migrations/20260519103000_ads_analyst_environment_scoped_unique_keys.sql",
+  "supabase/migrations/20260520000300_ads_analyst_environment_scoped_unique_keys.sql",
 );
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx"]);
 const SKIPPED_SOURCE_FILES = new Set(["src/lib/database.types.ts"]);
@@ -66,9 +68,23 @@ describe("data boundary registry", () => {
   });
 
   it("scopes every analyst-owned table by deployment environment", () => {
+    // ANALYST_ENVIRONMENT_SCOPED_TABLES is the Phase 3 batch; newer analyst
+    // tables (ai_signals, ad_notes, etc.) declare `environment` in their own
+    // migrations and are not added to that list. The check enforces that the
+    // Phase 3 batch is a subset of ANALYST_OWNED_TABLES (no orphans) and that
+    // every analyst-owned table either lives in the Phase 3 batch or is a
+    // post-Phase-3 table that owns its env-scoping migration directly.
     assert.deepEqual(ADS_ANALYST_ENVIRONMENTS, ["production", "staging"]);
     assert.equal(DEFAULT_ADS_ANALYST_ENVIRONMENT, "production");
-    assert.deepEqual(ANALYST_ENVIRONMENT_SCOPED_TABLES, ANALYST_OWNED_TABLES);
+
+    const ownedSet = new Set<string>(ANALYST_OWNED_TABLES);
+    for (const table of ANALYST_ENVIRONMENT_SCOPED_TABLES) {
+      assert.equal(
+        ownedSet.has(table),
+        true,
+        `Phase 3 scoped table ${table} must be in ANALYST_OWNED_TABLES`,
+      );
+    }
   });
 });
 
@@ -137,6 +153,49 @@ describe("Ads Analyst environment helpers", () => {
         "environment,meta_account_id,ad_id",
       );
     });
+  });
+
+  it("accepts role-scoped Supabase secret keys instead of manually minted JWTs", () => {
+    withEnv(
+      {
+        ADS_ANALYST_ENFORCE_LIMITED_DB_ACCESS: "true",
+        ADS_ANALYST_ENVIRONMENT: "staging",
+        SUPABASE_ADS_ANALYST_WEB_KEY: "sb_secret_web",
+        SUPABASE_ADS_ANALYST_WORKER_KEY: "sb_secret_worker",
+        SUPABASE_ADS_ANALYST_INGEST_KEY: "sb_secret_ingest",
+        SUPABASE_ADS_ANALYST_WEB_JWT: undefined,
+        SUPABASE_ADS_ANALYST_WORKER_JWT: undefined,
+        SUPABASE_ADS_ANALYST_INGEST_JWT: undefined,
+        SUPABASE_SERVICE_ROLE_KEY: undefined,
+      },
+      () => {
+        assert.deepEqual(
+          getMissingRequiredEnv([
+            "SUPABASE_ADS_ANALYST_WEB_KEY",
+            "SUPABASE_ADS_ANALYST_WORKER_KEY",
+            "SUPABASE_ADS_ANALYST_INGEST_KEY",
+            "SUPABASE_ADS_ANALYST_WEB_JWT",
+            "SUPABASE_ADS_ANALYST_WORKER_JWT",
+            "SUPABASE_ADS_ANALYST_INGEST_JWT",
+          ]),
+          [],
+        );
+
+        const status = getDataBoundaryRuntimeStatus();
+        assert.equal(status.ok, true);
+        assert.equal(status.mode, "limited_module_role");
+        assert.deepEqual(status.moduleCredentialsConfigured, {
+          web: true,
+          worker: true,
+          ingest: true,
+        });
+        assert.deepEqual(status.moduleCredentialSources, {
+          web: "key",
+          worker: "key",
+          ingest: "key",
+        });
+      },
+    );
   });
 });
 

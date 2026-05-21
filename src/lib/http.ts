@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 
 import { AuthorizationError } from "./app-auth";
 import { ConfigurationError } from "./env";
+import { safeErrorMessage } from "./error-message";
+
+export { safeErrorMessage };
 
 export function jsonError(error: unknown, status = 500) {
   if (error instanceof AuthorizationError) {
@@ -18,8 +21,7 @@ export function jsonError(error: unknown, status = 500) {
     );
   }
 
-  const message = error instanceof Error ? error.message : String(error);
-  return NextResponse.json({ error: message }, { status });
+  return NextResponse.json({ error: safeErrorMessage(error) }, { status });
 }
 
 export function isAuthorizedCronRequest(request: Request) {

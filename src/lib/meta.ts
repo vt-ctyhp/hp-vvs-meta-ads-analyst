@@ -1709,12 +1709,63 @@ function chooseStoredPreview(
   return { previewSource: "fallback", previewUrl: null, previewHtml: null };
 }
 
-async function graphFetch<T>(path: string, params: Record<string, string | undefined>) {
-  const url = graphUrl(path, params);
-  const response = await fetch(url, { cache: "no-store" });
-  const json = (await response.json()) as MetaPaging<T> | T;
+/**
+ * Meta error codes that mean "back off and retry", per Meta Graph API docs.
+ *   4    — App-level rate limit reached
+ *  17    — User request limit reached
+ *  32    — Page-level throttling
+ *  613   — Calls to this api have exceeded the rate limit (custom audiences)
+ *  368   — Temporarily blocked for policies violations (sometimes transient)
+ *  80004 — Business use case usage limit
+ * Subcode 2446079 maps to throttling as well.
+ *
+ * On any of these, sleep with exponential backoff and retry. Other errors
+ * (token expired, permission missing, malformed call) are not retried —
+ * they fail fast so the operator sees them.
+ */
+const META_RETRYABLE_CODES = new Set([4, 17, 32, 613, 368, 80004]);
 
-  if (!response.ok || (isRecord(json) && "error" in json)) {
+function isMetaRetryable(json: unknown): boolean {
+  if (!isRecord(json)) return false;
+  const error = isRecord(json.error) ? json.error : null;
+  if (!error) return false;
+  const code = typeof error.code === "number" ? error.code : Number(error.code);
+  if (Number.isFinite(code) && META_RETRYABLE_CODES.has(code)) return true;
+  if (typeof error.message === "string" && /request limit reached|rate.*limit|throttle/i.test(error.message)) {
+    return true;
+  }
+  return false;
+}
+
+async function graphFetch<T>(
+  path: string,
+  params: Record<string, string | undefined>,
+  options: { retries?: number; initialDelayMs?: number } = {},
+) {
+  const url = graphUrl(path, params);
+  const maxRetries = options.retries ?? 3;
+  const initialDelayMs = options.initialDelayMs ?? 2_000;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const response = await fetch(url, { cache: "no-store" });
+    const json = (await response.json()) as MetaPaging<T> | T;
+
+    const ok = response.ok && !(isRecord(json) && "error" in json);
+    if (ok) {
+      if (isRecord(json) && Array.isArray(json.data)) {
+        return json.data as T;
+      }
+      return json as T;
+    }
+
+    if (attempt < maxRetries && isMetaRetryable(json)) {
+      // Exponential backoff with jitter: 2s, 5s, 15s (+/- ~25%).
+      const base = initialDelayMs * Math.pow(2.5, attempt);
+      const jitter = base * (0.75 + Math.random() * 0.5);
+      await new Promise((resolve) => setTimeout(resolve, Math.round(jitter)));
+      continue;
+    }
+
     const error = isRecord(json) ? json.error : undefined;
     throw new MetaGraphError(
       isRecord(error) && typeof error.message === "string"
@@ -1724,11 +1775,8 @@ async function graphFetch<T>(path: string, params: Record<string, string | undef
     );
   }
 
-  if (isRecord(json) && Array.isArray(json.data)) {
-    return json.data as T;
-  }
-
-  return json as T;
+  // Unreachable in practice; the loop returns or throws.
+  throw new MetaGraphError(`Meta Graph API exhausted retries for ${path}`);
 }
 
 async function fetchGrantedMetaPermissions() {
@@ -1804,6 +1852,21 @@ function getSyncDatePreset() {
 function syncOptionsForTrigger(trigger: "cron" | "manual" | "preview") {
   if (trigger === "preview") return {};
 
+  // Manual sync is operator-initiated and rare. Default everything to a full
+  // refresh so the catalog (ads, creatives, previews, ranking diagnostics)
+  // stays in step with the insight rows. This is the only path that
+  // bootstraps the catalog when an environment is empty (e.g. first sync
+  // after spinning up a staging build with env-fenced rows).
+  if (trigger === "manual") {
+    return {
+      refreshPreviews: true,
+      refreshAdCatalog: true,
+      refreshRankingDiagnostics: true,
+      includeCreativeDiagnostics: true,
+    };
+  }
+
+  // Cron is the cheap incremental path — insight rows only.
   return {
     refreshPreviews: false,
     refreshAdCatalog: false,
@@ -2083,10 +2146,12 @@ function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function errorToMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  return String(error);
-}
+// Re-export the shared helper. The sync pipeline used to produce
+// "[object Object]" in stored sync_runs.errors entries for any non-Error
+// thrown value (Supabase client errors are plain objects, not Error
+// instances). Using the centralized helper keeps every error path human-
+// readable.
+import { safeErrorMessage as errorToMessage } from "./error-message";
 
 function isAbortError(error: unknown) {
   return error instanceof Error && error.name === "AbortError";

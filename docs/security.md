@@ -54,10 +54,12 @@ access bypasses RLS.
 
 The Phase 4 runtime path keeps legacy service-role behavior until
 `ADS_ANALYST_ENFORCE_LIMITED_DB_ACCESS=true`. In limited mode, the app uses
-separate web, worker, and ingest module JWTs and adds the current
-`ADS_ANALYST_ENVIRONMENT` to analyst-owned writes. The backfill chunk-claim RPC
-is replaced by an environment-aware version because it is `security definer` and
-must not rely on RLS alone.
+separate web, worker, and ingest module credentials and adds the current
+`ADS_ANALYST_ENVIRONMENT` to analyst-owned writes. Prefer Supabase secret API
+keys with a role-scoped `secret_jwt_template`; manually minted JWTs remain
+supported when a project signing key is managed separately. The backfill
+chunk-claim RPC is replaced by an environment-aware version because it is
+`security definer` and must not rely on RLS alone.
 
 The Phase 5 unique-key migration is the step that makes staging usable for full
 sync testing in the shared Supabase project. It replaces analyst natural-key

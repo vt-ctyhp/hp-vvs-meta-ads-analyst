@@ -647,6 +647,6 @@ function stringField(value: unknown) {
   return typeof value === "string" && value.length ? value : null;
 }
 
-function errorToMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
+// Use the centralized safe stringifier so non-Error throws don't land in
+// meta_ads_backfill_chunks.error as "[object Object]".
+import { safeErrorMessage as errorToMessage } from "./error-message";
