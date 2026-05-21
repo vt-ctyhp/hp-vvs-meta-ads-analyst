@@ -13,13 +13,14 @@ import { useCallback, useMemo, useState, useTransition } from "react";
  *   - start, end : custom ISO date range (overrides `days` when set)
  *   - status  : live | paused | off | all   (defaults to "live" on first land)
  *
- * Data filters propagate server-side to BOTH:
- *   - fetchDashboardData (chart + status sentence + legacy grid)
- *   - fetchPeriodPivot (the tree+pivot table — see /optimize/page.tsx for the
- *     brand/group/anchor mapping)
+ * Data filters propagate through the active Optimize tab:
+ *   - fetchOptimizeSummaryData for the shared headline + options.
+ *   - fetchPeriodPivot for the Breakdown tree+pivot table.
+ *   - Creative and Triage panels apply brand/group on their diagnostic rows.
+ *   - Creative diagnostics use status as the initial Delivery filter.
  *
- * Status stays URL-local until the pivot payload carries an ad-status field.
- * Updating it should not re-run the expensive server data pipeline.
+ * Status still does not filter the Breakdown pivot because the RPC does not
+ * carry ad-status yet.
  */
 
 type Option = { value: string; label: string };
@@ -44,7 +45,7 @@ const DATE_PRESETS: Array<{ value: string; label: string }> = [
   { value: "custom", label: "Custom range…" },
 ];
 
-const SERVER_DATA_KEYS = new Set(["brand", "group", "days", "start", "end"]);
+const SERVER_DATA_KEYS = new Set(["brand", "group", "days", "start", "end", "status"]);
 
 export function OptimizeFilterBar({ brands, groups }: Props) {
   const router = useRouter();

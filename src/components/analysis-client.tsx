@@ -43,6 +43,7 @@ import { translateError } from "@/lib/glossary";
 
 type Props = {
   initialSaved: SavedAnalysisDashboard[];
+  surface?: "page" | "panel";
 };
 
 const CHART_COLORS = ["#2A2725", "#245D4D", "#8B5B19", "#8D2E2E", "#E91D79"];
@@ -77,7 +78,8 @@ const ANALYSIS_GUIDE = [
   },
 ] as const;
 
-export function AnalysisClient({ initialSaved }: Props) {
+export function AnalysisClient({ initialSaved, surface = "page" }: Props) {
+  const isPanel = surface === "panel";
   const [mode, setMode] = useState<AnalysisMode>("fast");
   const [prompt, setPrompt] = useState("");
   const [result, setResult] = useState<AnalysisResult | null>(null);
@@ -248,13 +250,31 @@ export function AnalysisClient({ initialSaved }: Props) {
   }
 
   return (
-    <main className="min-h-screen bg-hp-foundation px-4 py-6 text-hp-body md:px-8">
-      <header className="mx-auto flex max-w-7xl flex-col gap-5 border-b border-hp-rule pb-6 md:flex-row md:items-end md:justify-between">
+    <div
+      className={
+        isPanel
+          ? "space-y-5 text-hp-body"
+          : "min-h-screen bg-hp-foundation px-4 py-6 text-hp-body md:px-8"
+      }
+    >
+      <header
+        className={
+          isPanel
+            ? "flex flex-col gap-4 rounded-xl border border-hp-rule bg-hp-card p-4 md:flex-row md:items-end md:justify-between"
+            : "mx-auto flex max-w-7xl flex-col gap-5 border-b border-hp-rule pb-6 md:flex-row md:items-end md:justify-between"
+        }
+      >
         <div>
           <span className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
             HP/VVS Meta Ads
           </span>
-          <h1 className="mt-2 font-title text-4xl leading-tight text-hp-ink md:text-5xl">
+          <h1
+            className={
+              isPanel
+                ? "mt-2 font-title text-2xl leading-tight text-hp-ink"
+                : "mt-2 font-title text-4xl leading-tight text-hp-ink md:text-5xl"
+            }
+          >
             Ad-Hoc AI Analysis
           </h1>
         </div>
@@ -263,7 +283,13 @@ export function AnalysisClient({ initialSaved }: Props) {
         </div>
       </header>
 
-      <section className="mx-auto mt-8 grid max-w-7xl gap-6 xl:grid-cols-[360px_1fr]">
+      <section
+        className={
+          isPanel
+            ? "grid gap-6 xl:grid-cols-[340px_1fr]"
+            : "mx-auto mt-8 grid max-w-7xl gap-6 xl:grid-cols-[360px_1fr]"
+        }
+      >
         <aside className="space-y-6">
           <section className="border border-hp-rule bg-hp-card p-4">
             <div className="mb-4 flex items-center gap-2 text-hp-ink">
@@ -289,7 +315,7 @@ export function AnalysisClient({ initialSaved }: Props) {
             {status ? <p className="mt-3 text-sm text-signal-danger">{status}</p> : null}
           </section>
 
-          <AnalysisGuidePanel />
+          {isPanel ? null : <AnalysisGuidePanel />}
 
           <section className="border border-hp-rule bg-hp-card p-4">
             <div className="mb-4 flex items-center gap-2 text-hp-ink">
@@ -381,7 +407,7 @@ export function AnalysisClient({ initialSaved }: Props) {
                 onEditPromptChange={setEditPrompt}
                 onApplyEdit={applyDashboardEdit}
               />
-              <AnalysisOutput result={result} />
+              <AnalysisOutput result={result} hideDiagnostics={isPanel} />
             </>
           ) : (
             <div className="border border-hp-rule bg-hp-card p-8">
@@ -392,7 +418,7 @@ export function AnalysisClient({ initialSaved }: Props) {
           )}
         </section>
       </section>
-    </main>
+    </div>
   );
 }
 
@@ -533,7 +559,13 @@ function ModeSwitch({
   );
 }
 
-function AnalysisOutput({ result }: { result: AnalysisResult }) {
+function AnalysisOutput({
+  result,
+  hideDiagnostics = false,
+}: {
+  result: AnalysisResult;
+  hideDiagnostics?: boolean;
+}) {
   return (
     <>
       <section className="border border-hp-rule bg-hp-card p-6">
@@ -560,8 +592,12 @@ function AnalysisOutput({ result }: { result: AnalysisResult }) {
         <MessageList tone="warning" messages={result.warnings} />
         <MessageList tone="danger" messages={result.unsupportedReasons} />
         <MessageList tone="info" messages={result.clarificationQuestions} />
-        <MetaStrip result={result} />
-        <AnalystDebugPanel result={result} />
+        {hideDiagnostics ? null : (
+          <>
+            <MetaStrip result={result} />
+            <AnalystDebugPanel result={result} />
+          </>
+        )}
       </section>
 
       {result.validationStatus === "ready" ? (
