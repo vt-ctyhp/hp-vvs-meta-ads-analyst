@@ -16,7 +16,6 @@ export type SyncRunRow = {
 
 type Props = {
   canRunSync: boolean;
-  writeEnvironment: string;
   syncRuns: SyncRunRow[];
   backfillJobs: MetaAdsBackfillJob[];
   backfillChunks: MetaAdsBackfillChunk[];
@@ -33,7 +32,6 @@ type Props = {
 const RELATIVE = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 export function PipelinesPanel({
   canRunSync,
-  writeEnvironment,
   syncRuns,
   backfillJobs,
   backfillChunks,
@@ -47,15 +45,6 @@ export function PipelinesPanel({
           <div className="flex w-full flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h2 className="text-sm font-semibold text-stone-900">Manual Meta sync</h2>
-              <p className="text-xs text-stone-600">
-                Updates account, campaign, and ad set metadata, then refreshes the last{" "}
-                {syncDays} days of insights. Normal sync skips the full ad and creative
-                catalog; use Refresh catalog only when ads or creatives are missing. Writes
-                land as{" "}
-                <code className="rounded bg-stone-100 px-1">
-                  environment={writeEnvironment}
-                </code>.
-              </p>
             </div>
             <div className="flex flex-col items-end gap-2 sm:flex-row">
               <RunSyncButton size="sm" />
