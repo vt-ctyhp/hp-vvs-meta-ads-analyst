@@ -3,6 +3,8 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useState, useTransition } from "react";
 
+import type { OptimizeTab } from "@/components/v2/optimize/optimize-tabs";
+
 /**
  * Optimize-room filter bar. URL-state driven so views are shareable.
  *
@@ -13,18 +15,21 @@ import { useCallback, useMemo, useState, useTransition } from "react";
  *   - start, end : custom ISO date range (overrides `days` when set)
  *   - status  : live | paused | off | all   (defaults to "live" on first land)
  *
- * Data filters propagate server-side to BOTH:
- *   - fetchDashboardData (chart + status sentence + legacy grid)
- *   - fetchPeriodPivot (the tree+pivot table — see /optimize/page.tsx for the
- *     brand/group/anchor mapping)
+ * Data filters propagate through the active Optimize tab:
+ *   - fetchOptimizeSummaryData for the shared headline + options.
+ *   - fetchPeriodPivot for the Breakdown tree+pivot table.
+ *   - Creative and Triage panels apply brand/group on their diagnostic rows.
+ *   - Creative diagnostics use status as the initial Delivery filter and
+ *     need a server refresh when it changes on the Creatives tab.
  *
- * Status stays URL-local until the pivot payload carries an ad-status field.
- * Updating it should not re-run the expensive server data pipeline.
+ * Status does not filter the Breakdown pivot because the RPC does not carry
+ * ad-status yet.
  */
 
 type Option = { value: string; label: string };
 
 type Props = {
+  activeTab: OptimizeTab;
   brands: Option[];
   groups: Option[];
 };
@@ -46,7 +51,7 @@ const DATE_PRESETS: Array<{ value: string; label: string }> = [
 
 const SERVER_DATA_KEYS = new Set(["brand", "group", "days", "start", "end"]);
 
-export function OptimizeFilterBar({ brands, groups }: Props) {
+export function OptimizeFilterBar({ activeTab, brands, groups }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
@@ -89,9 +94,10 @@ export function OptimizeFilterBar({ brands, groups }: Props) {
       const currentHref = currentQs ? `${pathname}?${currentQs}` : pathname;
       if (href === currentHref) return;
 
-      const changesServerData = Object.keys(patch).some((key) =>
-        SERVER_DATA_KEYS.has(key),
-      );
+      const changesServerData = Object.keys(patch).some((key) => {
+        if (key === "status") return activeTab === "creatives";
+        return SERVER_DATA_KEYS.has(key);
+      });
       if (changesServerData) {
         startTransition(() => {
           router.replace(href, { scroll: false });
@@ -100,7 +106,7 @@ export function OptimizeFilterBar({ brands, groups }: Props) {
         window.history.replaceState(null, "", href);
       }
     },
-    [params, pathname, router, startTransition],
+    [activeTab, params, pathname, router, startTransition],
   );
 
   const brandOptions = useMemo(
@@ -198,7 +204,7 @@ export function OptimizeFilterBar({ brands, groups }: Props) {
         value={current.status}
         options={STATUS_OPTIONS}
         disabled={pending}
-        onChange={(value) => update({ status: value === "all" ? null : value })}
+        onChange={(value) => update({ status: value === "live" ? null : value })}
       />
       {pending ? (
         <span

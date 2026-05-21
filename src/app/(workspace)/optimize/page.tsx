@@ -1,12 +1,25 @@
+import { OptimizeAiPanel } from "@/components/v2/optimize/ai-panel";
+import { CreativesPanel } from "@/components/v2/optimize/creatives-panel";
 import { OptimizeFilterBar } from "@/components/v2/optimize/filter-bar";
+import {
+  normalizeOptimizeTab,
+  OptimizeTabs,
+} from "@/components/v2/optimize/optimize-tabs";
 import { PeriodControls } from "@/components/v2/optimize/period-controls";
 import { RunSyncButton } from "@/components/v2/optimize/sync-button";
 import { TimeSeriesChart } from "@/components/v2/optimize/time-series-chart";
 import { TreeTable } from "@/components/v2/optimize/tree-table";
-import { SignalStrip } from "@/components/v2/signal-strip";
+import { TriagePanel } from "@/components/v2/optimize/triage-panel";
 import { StatusSentence } from "@/components/v2/status-sentence";
-import { CAMPAIGN_UMBRELLAS } from "@/lib/campaign-umbrellas";
+import { fetchSavedAnalysisDashboards } from "@/lib/ad-hoc-analytics";
 import { hasPermission } from "@/lib/access-control";
+import { emptyDashboardPayload, fetchDashboardData } from "@/lib/analytics";
+import { CAMPAIGN_UMBRELLAS } from "@/lib/campaign-umbrellas";
+import {
+  emptyCreativeAnalysisPayload,
+  fetchCreativeAnalysisData,
+} from "@/lib/creative-analysis";
+import { firstParam, numberParam, pathWithQuery } from "@/lib/dashboard-page";
 import {
   emptyOptimizeSummaryPayload,
   fetchOptimizeSummaryData,
@@ -23,56 +36,55 @@ import { requirePagePermission } from "@/lib/server-route-auth";
 
 export const dynamic = "force-dynamic";
 
-type SearchParams = {
-  brand?: string;
-  group?: string;
-  days?: string;
-  start?: string;
-  end?: string;
-  status?: string;
-  minSpend?: string;
-  /** Period-pivot table state — defaults to 4 / week / primary_results. */
-  periods?: string;
-  freq?: string;
-  metric?: string;
-};
+type SearchParams = Record<string, string | string[] | undefined>;
 
 export default async function OptimizePage({
   searchParams,
 }: {
   searchParams: Promise<SearchParams>;
 }) {
-  const profile = await requirePagePermission("view_dashboard", "/optimize");
-  const canRunSync = hasPermission(profile.roles, "run_meta_sync");
-
   const params = await searchParams;
-  const days = Number.isFinite(Number(params.days)) ? Number(params.days) : 30;
+  const profile = await requirePagePermission(
+    "view_dashboard",
+    pathWithQuery("/optimize", params),
+  );
+  const canRunSync = hasPermission(profile.roles, "run_meta_sync");
+  const canViewAi = hasPermission(profile.roles, "view_ai_analysis");
+  const canViewCreatives = hasPermission(profile.roles, "view_creative_analysis");
+
+  const activeTab = normalizeOptimizeTab(params.tab);
+  const startDate = firstParam(params.start) ?? null;
+  const endDate = firstParam(params.end) ?? null;
+  const focus = firstParam(params.focus) ?? null;
+  const days = numberParam(params.days) || 30;
 
   // Filter-bar inputs. Status defaults to "live" so the operator lands on
   // currently-active inventory; explicit URL params override.
-  const statusFilter = (params.status ?? "live").toLowerCase();
-  const brandFilter = params.brand ?? "all";
-  const groupFilter = params.group ?? "all";
+  const statusFilter = (firstParam(params.status) ?? "live").toLowerCase();
+  const brandFilter = firstParam(params.brand) ?? "all";
+  const groupFilter = firstParam(params.group) ?? "all";
 
   // Range filter — preset OR custom start/end. The pivot table anchors
   // its rightmost period to the end of the range (today for presets).
-  const customEnd = params.end?.trim() || null;
+  const customEnd = endDate?.trim() || null;
   const pivotAnchor =
     customEnd && /^\d{4}-\d{2}-\d{2}$/.test(customEnd)
       ? new Date(`${customEnd}T12:00:00Z`)
       : new Date();
 
   // Period-pivot controls — defaults: 4 weeks of Primary KPI.
-  const periodCount = normalizePeriodCount(params.periods);
-  const frequency: Frequency = isFrequency(params.freq) ? params.freq : "week";
-  const metric: PeriodMetric = isPeriodMetric(params.metric)
-    ? params.metric
+  const periodCount = normalizePeriodCount(firstParam(params.periods));
+  const frequencyParam = firstParam(params.freq);
+  const frequency: Frequency = isFrequency(frequencyParam) ? frequencyParam : "week";
+  const metricParam = firstParam(params.metric);
+  const metric: PeriodMetric = isPeriodMetric(metricParam)
+    ? metricParam
     : "primary_results";
 
   const summaryPromise = fetchOptimizeSummaryData({
     days,
-    startDate: params.start ?? null,
-    endDate: params.end ?? null,
+    startDate,
+    endDate,
     brand: brandFilter !== "all" ? brandFilter : null,
     group: groupFilter !== "all" ? groupFilter : null,
   })
@@ -88,34 +100,73 @@ export default async function OptimizePage({
       };
     });
 
-  const pivotPromise: Promise<PeriodPivotPayload> = fetchPeriodPivot({
-    now: pivotAnchor,
-    periodCount,
-    frequency,
-    metric,
-    brand: brandFilter !== "all" ? brandFilter : null,
-    group: groupFilter !== "all" ? groupFilter : null,
-  }).catch(async (e) => {
-    console.error("[optimize] fetchPeriodPivot threw:", e);
-    const { lastNPeriods } = await import("@/lib/period-windows");
-    return {
-      configured: false,
-      missingEnv: [],
-      periods: lastNPeriods(pivotAnchor, periodCount, frequency),
-      metric,
-      query: null,
-      campaigns: [],
-      adSets: [],
-      creatives: [],
-      creativeAssets: {},
-      snapshotByEntity: {},
-    };
-  });
+  const pivotPromise: Promise<PeriodPivotPayload | null> =
+    activeTab === "breakdown"
+      ? fetchPeriodPivot({
+          now: pivotAnchor,
+          periodCount,
+          frequency,
+          metric,
+          brand: brandFilter !== "all" ? brandFilter : null,
+          group: groupFilter !== "all" ? groupFilter : null,
+        }).catch(async (e) => {
+          console.error("[optimize] fetchPeriodPivot threw:", e);
+          const { lastNPeriods } = await import("@/lib/period-windows");
+          return {
+            configured: false,
+            missingEnv: [],
+            periods: lastNPeriods(pivotAnchor, periodCount, frequency),
+            metric,
+            query: null,
+            campaigns: [],
+            adSets: [],
+            creatives: [],
+            creativeAssets: {},
+            snapshotByEntity: {},
+          };
+        })
+      : Promise.resolve(null);
 
-  const [{ summary }, pivot] = await Promise.all([
-    summaryPromise,
-    pivotPromise,
-  ]);
+  const creativePromise =
+    activeTab === "creatives" && canViewCreatives
+      ? fetchCreativeAnalysisData({
+          days,
+          startDate,
+          endDate,
+          includeLive: true,
+        }).catch((e) => {
+          console.error("[optimize] fetchCreativeAnalysisData threw:", e);
+          return {
+            ...emptyCreativeAnalysisPayload([]),
+            warnings: [e instanceof Error ? e.message : String(e)],
+          };
+        })
+      : Promise.resolve(null);
+
+  const savedDashboardsPromise =
+    activeTab === "ai" && canViewAi
+      ? fetchSavedAnalysisDashboards().catch((e) => {
+          console.error("[optimize] fetchSavedAnalysisDashboards threw:", e);
+          return [];
+        })
+      : Promise.resolve([]);
+
+  const triagePromise =
+    activeTab === "triage"
+      ? fetchDashboardData({ days, startDate, endDate }).catch((e) => {
+          console.error("[optimize] fetchDashboardData threw:", e);
+          return emptyDashboardPayload([]);
+        })
+      : Promise.resolve(null);
+
+  const [{ summary, fetchError }, pivot, creativeData, savedDashboards, triageData] =
+    await Promise.all([
+      summaryPromise,
+      pivotPromise,
+      creativePromise,
+      savedDashboardsPromise,
+      triagePromise,
+    ]);
 
   // Build filter option lists from the data so the bar always offers brands
   // that actually have rows in the selected date range.
@@ -125,14 +176,8 @@ export default async function OptimizePage({
     label: u,
   }));
 
-  // The Optimize summary fetch applies brand/group/date filters server-side,
-  // so the chart and headline stats no longer need the full dashboard payload.
+  // The Optimize summary fetch applies brand/group/date filters server-side.
   const filteredDailyTrend = summary.dailyTrend;
-  // statusFilter intentionally left unused for chart + pivot — the RPC
-  // doesn't carry an ad-status field, and "current status" doesn't
-  // meaningfully apply to historical daily aggregates anyway. Status
-  // becomes meaningful again when ad-level enrichment lands in v2.
-  void statusFilter;
 
   // Status-sentence inputs.
   const winnersCount = summary.winnersCount;
@@ -184,7 +229,11 @@ export default async function OptimizePage({
         ]}
       />
 
-      <SignalStrip room="optimize" />
+      {fetchError ? (
+        <section className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Optimize summary could not load: {fetchError}
+        </section>
+      ) : null}
 
       {isEmpty && canRunSync ? (
         <section className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-stone-300 bg-white/60 p-8 text-center">
@@ -201,21 +250,57 @@ export default async function OptimizePage({
         </section>
       ) : null}
 
-      <TimeSeriesChart data={filteredDailyTrend} />
-
-      {/* Consolidated filter + period-control bar. Two rows in one
-          container so the operator reads "filters + grouping" as one
-          coordinated control surface. */}
-      <section
-        aria-label="Optimize filters and period grouping"
-        className="overflow-hidden rounded-xl border border-stone-200 bg-white"
-      >
-        <OptimizeFilterBar brands={brandOptions} groups={groupOptions} />
-        <div className="border-t border-stone-200" />
-        <PeriodControls periods={periodCount} frequency={frequency} metric={metric} />
+      <section aria-label="Optimize filters" className="overflow-hidden rounded-xl border border-stone-200 bg-white">
+        <OptimizeFilterBar
+          activeTab={activeTab}
+          brands={brandOptions}
+          groups={groupOptions}
+        />
       </section>
 
-      <TreeTable payload={pivot} />
+      <OptimizeTabs active={activeTab} params={params} />
+
+      {activeTab === "breakdown" && pivot ? (
+        <section className="space-y-4">
+          <TimeSeriesChart data={filteredDailyTrend} />
+          <section
+            aria-label="Breakdown period grouping"
+            className="overflow-hidden rounded-xl border border-stone-200 bg-white"
+          >
+            <PeriodControls periods={periodCount} frequency={frequency} metric={metric} />
+          </section>
+          <TreeTable payload={pivot} />
+        </section>
+      ) : null}
+
+      {activeTab === "creatives" ? (
+        canViewCreatives && creativeData ? (
+          <CreativesPanel
+            key={focus ?? "creatives"}
+            data={creativeData}
+            brand={brandFilter}
+            group={groupFilter}
+            defaultDelivery={statusFilter}
+            focus={focus}
+          />
+        ) : (
+          <PermissionPanel label="Creative diagnostics" />
+        )
+      ) : null}
+
+      {activeTab === "ai" ? (
+        <OptimizeAiPanel
+          initialSaved={savedDashboards}
+          canUseAdHocAnalysis={canViewAi}
+          dateRange={{ days, startDate, endDate }}
+        />
+      ) : null}
+
+      {activeTab === "triage" ? (
+        triageData ? (
+          <TriagePanel data={triageData} brand={brandFilter} group={groupFilter} />
+        ) : null
+      ) : null}
     </div>
   );
 }
@@ -273,4 +358,12 @@ function buildSentence(args: {
   }
 
   return pieces.join(" ");
+}
+
+function PermissionPanel({ label }: { label: string }) {
+  return (
+    <section className="rounded-xl border border-stone-200 bg-white p-6 text-sm text-stone-600">
+      You do not have access to {label}.
+    </section>
+  );
 }

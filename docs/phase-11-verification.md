@@ -13,7 +13,7 @@ green.
 | Item | Status | Notes |
 |---|---|---|
 | Sign in with each role lands on the correct room | 🟡 staging-required | Routing logic in `src/lib/permission-routing.ts` is unit-covered; runtime sign-in needs preview URL. |
-| Marketing user can open Optimize + act on a signal | 🟡 staging-required | Signals API is wired; UI buttons call `/api/signals/[id]/{act,dismiss}`. |
+| Marketing user can open Optimize | 🟡 staging-required | Signal Strip runtime was removed; Optimize access still needs preview URL verification. |
 | Marketing user can open Convert, drill into customer, open conversation, send AI-drafted reply | 🟡 staging-required | Composer + suggest + send-reply (dry-run) wired. Live send gated by `ALLOW_LIVE_META_SEND`. |
 | Sales user lands at `/m/inbox`, cannot reach Optimize / Operate, can send reply | 🟡 staging-required | Route guards in `(workspace)/layout.tsx` + `/m/inbox/layout.tsx`. |
 | Admin can open Operate, trigger sync, queue backfill chunk | 🟡 staging-required | Operate room ships in Phase 7. |
@@ -24,7 +24,7 @@ green.
 
 | Item | Status | Notes |
 |---|---|---|
-| All API contracts in §10 unchanged | ✅ local | No edits to any existing API route; only new routes added (`/api/signals*`, `/api/cron/signals`, `/api/social-inbox/send-reply`, `/api/social-inbox/suggest-reply`, `/api/debug/identity-config`). |
+| All active API contracts unchanged | ✅ local | Signal endpoints and cron were intentionally retired; active reply and identity diagnostic routes remain wired. |
 | Webhook signature path untouched | ✅ local | `src/app/api/meta/webhook/route.ts` last touched in commit `469f4f9` (long before this rebuild started). |
 | Sync / backfill / CAPI write `environment='staging'` on preview | ✅ local | All inserts route through `withAdsAnalystEnvironment`; verified during Phase 0 + the staging dashboard recovery. |
 | Production analyst tables show no unintended row count change during preview testing | 🟡 staging-required | Spot-check by running a `select count(*)` per env before + after a preview-driven sync. |
@@ -56,8 +56,8 @@ green.
 | Item | Status | Notes |
 |---|---|---|
 | Every interactive control keyboard-reachable | 🟡 staging-required | All `<button>` + `<a>` elements; no `<div onClick>`. Needs runtime check. |
-| Signal cards announce title / severity / recommendation to SR | 🟡 staging-required | Markup uses semantic `<section>` + `aria-label`. Needs SR pass. |
-| Color paired with text or icon for status / severity | ✅ local | All signal/status colors carry text labels. |
+| Signal cards announce title / severity / recommendation to SR | N/A | Signal Strip runtime was removed from the workspace UI. |
+| Color paired with text or icon for status / severity | ✅ local | All remaining status colors carry text labels. |
 | Focus visible everywhere | 🟡 staging-required | Tailwind `focus:ring-2` applied; runtime check. |
 
 ## Glossary lint (PRD §17, line 761)
