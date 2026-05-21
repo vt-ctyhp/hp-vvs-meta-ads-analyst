@@ -300,9 +300,8 @@ export function CustomerLedger({ rows }: Props) {
               {table.getRowModel().rows.map((row) => (
                 <tr
                   key={row.original.rowId}
-                  role="button"
                   tabIndex={0}
-                  title="Open customer journey"
+                  aria-label="Open customer journey"
                   onClick={() => openJourneyDrawer(row.original)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {

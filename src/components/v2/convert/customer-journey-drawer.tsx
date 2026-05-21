@@ -606,20 +606,27 @@ function DetailUrl({
 }) {
   if (!value) return null;
 
+  const displayValue = value.trim();
+  const safeHref = /^https?:\/\//i.test(displayValue) ? displayValue : null;
+
   return (
     <div className="text-xs">
       <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-stone-400">
         {label}
       </div>
-      <a
-        href={value}
-        target="_blank"
-        rel="noreferrer noopener"
-        className="inline-flex max-w-full items-start gap-1.5 text-stone-500 transition hover:text-stone-950"
-      >
-        <span className="break-all">{value}</span>
-        <ExternalLink className="mt-0.5 shrink-0" size={12} />
-      </a>
+      {safeHref ? (
+        <a
+          href={safeHref}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="inline-flex max-w-full items-start gap-1.5 text-stone-500 transition hover:text-stone-950"
+        >
+          <span className="break-all">{displayValue}</span>
+          <ExternalLink className="mt-0.5 shrink-0" size={12} />
+        </a>
+      ) : (
+        <span className="inline-flex max-w-full break-all text-stone-500">{displayValue}</span>
+      )}
     </div>
   );
 }
