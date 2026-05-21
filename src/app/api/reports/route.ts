@@ -13,11 +13,17 @@ export async function POST(request: Request) {
       days?: number;
       startDate?: string | null;
       endDate?: string | null;
+      brand?: string | null;
+      group?: string | null;
+      status?: string | null;
     };
     const report = await generateExecutiveReport({
       days: body.days || 30,
       startDate: body.startDate,
       endDate: body.endDate,
+      brand: body.brand,
+      group: body.group,
+      status: body.status,
     });
     return Response.json(report);
   } catch (error) {

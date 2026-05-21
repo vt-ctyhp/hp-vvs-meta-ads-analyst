@@ -151,7 +151,7 @@ export function TopNavigation() {
     window.location.assign("/login");
   }
 
-  if (isPublicAuthPath || isV2Path || !profile?.authenticated) {
+  if (isV2Path || isPublicAuthPath || !profile?.authenticated) {
     return null;
   }
 

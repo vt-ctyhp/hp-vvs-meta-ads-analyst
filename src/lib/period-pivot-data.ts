@@ -24,6 +24,10 @@ import {
   pivotByPeriod,
   type PivotedRow,
 } from "./pivot-by-period.ts";
+import {
+  buildSharedInsightFilterContext,
+  buildSharedInsightFilters,
+} from "./optimize-filters.ts";
 
 /**
  * Metrics exposed in the trend-mode dropdown. Each maps to a single column
@@ -75,6 +79,12 @@ export type PeriodPivotInput = {
   brand?: string | null;
   /** Optional campaign-umbrella ("group") filter — `null` means all groups. */
   group?: string | null;
+  /** Optional delivery-status filter — `null` means all statuses. */
+  status?: string | null;
+  /** Optional page-level date range start. */
+  startDate?: string | null;
+  /** Optional page-level date range end. */
+  endDate?: string | null;
 };
 
 export type PeriodPivotQuery = {
@@ -84,6 +94,9 @@ export type PeriodPivotQuery = {
   metric: PeriodMetric;
   brand: string | null;
   group: string | null;
+  status: string | null;
+  start: string;
+  end: string;
 };
 
 export type PeriodPivotParentLevel = "campaign" | "ad_set";
@@ -291,31 +304,39 @@ function buildPeriodPivotContext(input: PeriodPivotInput): PeriodPivotContext {
   const missingEnv = getMissingDashboardEnv();
   const anchor = input.now ?? new Date();
   const periods = lastNPeriods(anchor, input.periodCount, input.frequency);
-  const filters: MetaInsightFilter[] = [];
-  if (input.brand && input.brand !== "all") {
-    filters.push({ field: "brand", operator: "equals", value: input.brand });
-  }
-  if (input.group && input.group !== "all") {
-    filters.push({ field: "campaign_umbrella", operator: "equals", value: input.group });
-  }
+  const filterContext = buildSharedInsightFilterContext(input);
+
+  const rangeStart = normalizeDateString(input.startDate);
+  const rangeEnd = normalizeDateString(input.endDate);
+  const start = rangeStart ?? periods[0].start;
+  const end = rangeEnd ?? periods[periods.length - 1].end;
 
   return {
     missingEnv,
     periods,
-    start: periods[0].start,
-    end: periods[periods.length - 1].end,
+    start,
+    end,
     periodDim: FREQUENCY_KEY_FIELD[input.frequency],
-    filters,
+    filters: filterContext.filters,
     metric: input.metric,
     query: {
       anchor: anchor.toISOString(),
       periodCount: input.periodCount,
       frequency: input.frequency,
       metric: input.metric,
-      brand: input.brand && input.brand !== "all" ? input.brand : null,
-      group: input.group && input.group !== "all" ? input.group : null,
+      brand: filterContext.brand,
+      group: filterContext.group,
+      status: filterContext.status,
+      start,
+      end,
     },
   };
+}
+
+export function buildPeriodPivotInsightFilters(
+  input: Pick<PeriodPivotInput, "brand" | "group" | "status">,
+): MetaInsightFilter[] {
+  return buildSharedInsightFilters(input);
 }
 
 async function fetchCampaignPivotRows(context: PeriodPivotContext) {
@@ -494,6 +515,10 @@ function resolveMetric(row: MetaInsightAggregateRow, metric: PeriodMetric): numb
       throw new Error(`Unknown metric: ${String(exhaustive)}`);
     }
   }
+}
+
+function normalizeDateString(value: string | null | undefined) {
+  return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
 }
 
 /**

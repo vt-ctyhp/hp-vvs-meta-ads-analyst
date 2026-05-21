@@ -14,10 +14,14 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { AnalysisOutput } from "@/components/analysis-client";
-import type { AnalysisResult, SavedAnalysisDashboard } from "@/lib/ad-hoc-analytics";
+import type {
+  AnalysisFilter,
+  AnalysisResult,
+  SavedAnalysisDashboard,
+} from "@/lib/ad-hoc-analytics";
 import type { AnalysisMode } from "@/lib/env";
 import { translateError } from "@/lib/glossary";
 
@@ -35,12 +39,24 @@ type Props = {
     startDate: string | null;
     endDate: string | null;
   };
+  filters?: {
+    brand: string | null;
+    group: string | null;
+    status: string | null;
+  };
+};
+
+const DEFAULT_FILTERS = {
+  brand: null,
+  group: null,
+  status: null,
 };
 
 export function OptimizeAiPanel({
   initialSaved,
   canUseAdHocAnalysis,
   dateRange,
+  filters = DEFAULT_FILTERS,
 }: Props) {
   const [prompt, setPrompt] = useState("");
   const [mode, setMode] = useState<AnalysisMode>("fast");
@@ -60,6 +76,34 @@ export function OptimizeAiPanel({
   const [renameDraft, setRenameDraft] = useState("");
 
   const requestedRangeLabel = formatRequestedRange(dateRange);
+  const runtimeFilters = useMemo<AnalysisFilter[]>(() => {
+    const nextFilters: AnalysisFilter[] = [];
+    if (filters.brand) {
+      nextFilters.push({ field: "brand", operator: "equals", value: filters.brand });
+    }
+    if (filters.group) {
+      nextFilters.push({
+        field: "campaign_umbrella",
+        operator: "equals",
+        value: filters.group,
+      });
+    }
+    if (filters.status) {
+      nextFilters.push({
+        field: "delivery_status",
+        operator: "equals",
+        value: filters.status,
+      });
+    }
+    return nextFilters;
+  }, [filters.brand, filters.group, filters.status]);
+  const runtimeContext = useMemo(
+    () => ({
+      dateRange,
+      filters: runtimeFilters,
+    }),
+    [dateRange, runtimeFilters],
+  );
 
   const refreshSaved = useCallback(async function refreshSaved() {
     try {
@@ -93,6 +137,9 @@ export function OptimizeAiPanel({
           days: dateRange.days,
           startDate: dateRange.startDate,
           endDate: dateRange.endDate,
+          brand: filters.brand,
+          group: filters.group,
+          status: filters.status,
         }),
       });
       const payload = await response.json();
@@ -123,6 +170,9 @@ export function OptimizeAiPanel({
     dateRange.days,
     dateRange.endDate,
     dateRange.startDate,
+    filters.brand,
+    filters.group,
+    filters.status,
     prompt,
     requestedRangeLabel,
   ]);
@@ -144,11 +194,7 @@ export function OptimizeAiPanel({
         body: JSON.stringify({
           prompt: nextPrompt,
           mode,
-          defaultDateRange: {
-            days: dateRange.days,
-            startDate: dateRange.startDate,
-            endDate: dateRange.endDate,
-          },
+          runtimeContext,
         }),
       });
       const payload = await response.json();
@@ -161,14 +207,21 @@ export function OptimizeAiPanel({
     } finally {
       setIsBuilding(false);
     }
-  }, [dateRange.days, dateRange.endDate, dateRange.startDate, mode, prompt, refreshSaved]);
+  }, [
+    mode,
+    prompt,
+    refreshSaved,
+    runtimeContext,
+  ]);
 
   async function loadSavedDashboard(dashboardId: string) {
     setIsDashboardLoading(true);
     setAnalysisStatus("");
     setAnalysisActionStatus("");
     try {
-      const response = await fetch(`/api/analysis?dashboardId=${encodeURIComponent(dashboardId)}`);
+      const response = await fetch(
+        `/api/analysis?dashboardId=${encodeURIComponent(dashboardId)}${runtimeQuery(runtimeContext)}`,
+      );
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Could not load saved dashboard");
       setAnalysisResult(payload);
@@ -554,6 +607,29 @@ function RangeBadge({ label }: { label: string }) {
       <span className="font-medium text-stone-950">Selected data range:</span> {label}
     </div>
   );
+}
+
+function runtimeQuery(runtimeContext: {
+  dateRange?: Props["dateRange"];
+  filters?: AnalysisFilter[];
+}) {
+  const params = new URLSearchParams();
+  if (runtimeContext.dateRange?.days) {
+    params.set("days", String(runtimeContext.dateRange.days));
+  }
+  if (runtimeContext.dateRange?.startDate) {
+    params.set("startDate", runtimeContext.dateRange.startDate);
+  }
+  if (runtimeContext.dateRange?.endDate) {
+    params.set("endDate", runtimeContext.dateRange.endDate);
+  }
+  for (const filter of runtimeContext.filters || []) {
+    if (filter.field === "brand") params.set("brand", filter.value);
+    if (filter.field === "campaign_umbrella") params.set("group", filter.value);
+    if (filter.field === "delivery_status") params.set("status", filter.value);
+  }
+  const query = params.toString();
+  return query ? `&${query}` : "";
 }
 
 function formatRequestedRange(dateRange: Props["dateRange"]) {

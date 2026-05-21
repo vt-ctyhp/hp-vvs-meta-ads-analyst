@@ -15,7 +15,15 @@ export type MetaInsightDimension =
   | "creative";
 
 export type MetaInsightFilter = {
-  field: "search" | "brand" | "campaign_umbrella" | "campaign" | "ad_set" | "ad" | "creative";
+  field:
+    | "search"
+    | "brand"
+    | "campaign_umbrella"
+    | "campaign"
+    | "ad_set"
+    | "ad"
+    | "creative"
+    | "delivery_status";
   operator: "contains" | "equals";
   value: string;
 };

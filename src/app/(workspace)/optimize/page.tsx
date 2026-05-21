@@ -1,11 +1,10 @@
 import { OptimizeAiPanel } from "@/components/v2/optimize/ai-panel";
 import { CreativesPanel } from "@/components/v2/optimize/creatives-panel";
-import { OptimizeFilterBar } from "@/components/v2/optimize/filter-bar";
+import { OptimizeControls } from "@/components/v2/optimize/optimize-controls";
 import {
   normalizeOptimizeTab,
   OptimizeTabs,
 } from "@/components/v2/optimize/optimize-tabs";
-import { PeriodControls } from "@/components/v2/optimize/period-controls";
 import { RunSyncButton } from "@/components/v2/optimize/sync-button";
 import { TimeSeriesChart } from "@/components/v2/optimize/time-series-chart";
 import { TreeTable } from "@/components/v2/optimize/tree-table";
@@ -23,7 +22,12 @@ import { firstParam, numberParam, pathWithQuery } from "@/lib/dashboard-page";
 import {
   emptyOptimizeSummaryPayload,
   fetchOptimizeSummaryData,
+  resolveOptimizeDateRange,
 } from "@/lib/optimize-page-data";
+import {
+  normalizeOptimizeDeliveryStatus,
+  normalizeOptimizeStatusSelection,
+} from "@/lib/optimize-filters";
 import {
   fetchPeriodPivot,
   isPeriodMetric,
@@ -31,7 +35,7 @@ import {
   type PeriodMetric,
   type PeriodPivotPayload,
 } from "@/lib/period-pivot-data";
-import { isFrequency, type Frequency } from "@/lib/period-windows";
+import { isFrequency, lastNPeriods, type Frequency } from "@/lib/period-windows";
 import { requirePagePermission } from "@/lib/server-route-auth";
 
 export const dynamic = "force-dynamic";
@@ -60,17 +64,16 @@ export default async function OptimizePage({
 
   // Filter-bar inputs. Status defaults to "live" so the operator lands on
   // currently-active inventory; explicit URL params override.
-  const statusFilter = (firstParam(params.status) ?? "live").toLowerCase();
+  const statusFilter =
+    normalizeOptimizeStatusSelection(firstParam(params.status)) ?? "live";
+  const deliveryStatusFilter = normalizeOptimizeDeliveryStatus(statusFilter);
   const brandFilter = firstParam(params.brand) ?? "all";
   const groupFilter = firstParam(params.group) ?? "all";
+  const pageDateRange = resolveOptimizeDateRange({ days, startDate, endDate });
 
   // Range filter — preset OR custom start/end. The pivot table anchors
   // its rightmost period to the end of the range (today for presets).
-  const customEnd = endDate?.trim() || null;
-  const pivotAnchor =
-    customEnd && /^\d{4}-\d{2}-\d{2}$/.test(customEnd)
-      ? new Date(`${customEnd}T12:00:00Z`)
-      : new Date();
+  const pivotAnchor = new Date(`${pageDateRange.end}T12:00:00Z`);
 
   // Period-pivot controls — defaults: 4 weeks of Primary KPI.
   const periodCount = normalizePeriodCount(firstParam(params.periods));
@@ -80,6 +83,11 @@ export default async function OptimizePage({
   const metric: PeriodMetric = isPeriodMetric(metricParam)
     ? metricParam
     : "primary_results";
+  const pivotPeriods = lastNPeriods(pivotAnchor, periodCount, frequency);
+  const pivotDateRange = intersectDateRanges(pageDateRange, {
+    start: pivotPeriods[0].start,
+    end: pivotPeriods[pivotPeriods.length - 1].end,
+  });
 
   const summaryPromise = fetchOptimizeSummaryData({
     days,
@@ -87,6 +95,7 @@ export default async function OptimizePage({
     endDate,
     brand: brandFilter !== "all" ? brandFilter : null,
     group: groupFilter !== "all" ? groupFilter : null,
+    status: deliveryStatusFilter,
   })
     .then((summary) => ({
       summary,
@@ -109,13 +118,15 @@ export default async function OptimizePage({
           metric,
           brand: brandFilter !== "all" ? brandFilter : null,
           group: groupFilter !== "all" ? groupFilter : null,
+          status: deliveryStatusFilter,
+          startDate: pivotDateRange.start,
+          endDate: pivotDateRange.end,
         }).catch(async (e) => {
           console.error("[optimize] fetchPeriodPivot threw:", e);
-          const { lastNPeriods } = await import("@/lib/period-windows");
           return {
             configured: false,
             missingEnv: [],
-            periods: lastNPeriods(pivotAnchor, periodCount, frequency),
+            periods: pivotPeriods,
             metric,
             query: null,
             campaigns: [],
@@ -153,7 +164,14 @@ export default async function OptimizePage({
 
   const triagePromise =
     activeTab === "triage"
-      ? fetchDashboardData({ days, startDate, endDate }).catch((e) => {
+      ? fetchDashboardData({
+          days,
+          startDate,
+          endDate,
+          brand: brandFilter !== "all" ? brandFilter : null,
+          group: groupFilter !== "all" ? groupFilter : null,
+          status: deliveryStatusFilter,
+        }).catch((e) => {
           console.error("[optimize] fetchDashboardData threw:", e);
           return emptyDashboardPayload([]);
         })
@@ -250,25 +268,19 @@ export default async function OptimizePage({
         </section>
       ) : null}
 
-      <section aria-label="Optimize filters" className="overflow-hidden rounded-xl border border-stone-200 bg-white">
-        <OptimizeFilterBar
-          activeTab={activeTab}
-          brands={brandOptions}
-          groups={groupOptions}
-        />
-      </section>
-
       <OptimizeTabs active={activeTab} params={params} />
+      <OptimizeControls
+        activeTab={activeTab}
+        brands={brandOptions}
+        groups={groupOptions}
+        periods={periodCount}
+        frequency={frequency}
+        metric={metric}
+      />
 
       {activeTab === "breakdown" && pivot ? (
         <section className="space-y-4">
           <TimeSeriesChart data={filteredDailyTrend} />
-          <section
-            aria-label="Breakdown period grouping"
-            className="overflow-hidden rounded-xl border border-stone-200 bg-white"
-          >
-            <PeriodControls periods={periodCount} frequency={frequency} metric={metric} />
-          </section>
           <TreeTable payload={pivot} />
         </section>
       ) : null}
@@ -280,7 +292,7 @@ export default async function OptimizePage({
             data={creativeData}
             brand={brandFilter}
             group={groupFilter}
-            defaultDelivery={statusFilter}
+            delivery={statusFilter}
             focus={focus}
           />
         ) : (
@@ -293,12 +305,17 @@ export default async function OptimizePage({
           initialSaved={savedDashboards}
           canUseAdHocAnalysis={canViewAi}
           dateRange={{ days, startDate, endDate }}
+          filters={{
+            brand: brandFilter !== "all" ? brandFilter : null,
+            group: groupFilter !== "all" ? groupFilter : null,
+            status: deliveryStatusFilter,
+          }}
         />
       ) : null}
 
       {activeTab === "triage" ? (
         triageData ? (
-          <TriagePanel data={triageData} brand={brandFilter} group={groupFilter} />
+          <TriagePanel data={triageData} params={params} />
         ) : null
       ) : null}
     </div>
@@ -317,6 +334,15 @@ function recentSpend(
   const end = sorted.length - offsetDays;
   const start = Math.max(0, end - windowDays);
   return sorted.slice(start, end).reduce((sum, r) => sum + (Number(r.spend) || 0), 0);
+}
+
+function intersectDateRanges(
+  selected: { start: string; end: string; days: number },
+  visiblePeriods: { start: string; end: string },
+) {
+  const start = selected.start > visiblePeriods.start ? selected.start : visiblePeriods.start;
+  const end = selected.end < visiblePeriods.end ? selected.end : visiblePeriods.end;
+  return { start, end };
 }
 
 function buildSentence(args: {

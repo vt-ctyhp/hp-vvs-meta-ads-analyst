@@ -11,6 +11,7 @@ describe("normalizeAggregateInput", () => {
       dimensions: ["date", "brand"],
       filters: [
         { field: "campaign_umbrella", operator: "equals", value: "Book Appts US" },
+        { field: "delivery_status", operator: "equals", value: "live" },
         { field: "brand", operator: "equals", value: "HP" },
       ],
     });
@@ -22,6 +23,7 @@ describe("normalizeAggregateInput", () => {
       filters: [
         { field: "brand", operator: "equals", value: "HP" },
         { field: "campaign_umbrella", operator: "equals", value: "Book Appts US" },
+        { field: "delivery_status", operator: "equals", value: "live" },
       ],
       sortField: "spend",
       sortDirection: "desc",

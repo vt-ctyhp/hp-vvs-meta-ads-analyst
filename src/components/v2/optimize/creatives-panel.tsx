@@ -9,7 +9,7 @@ type Props = {
   data: CreativeAnalysisPayload;
   brand?: string | null;
   group?: string | null;
-  defaultDelivery?: string;
+  delivery?: string;
   focus?: string | null;
 };
 
@@ -50,12 +50,11 @@ export function CreativesPanel({
   data,
   brand = "all",
   group = "all",
-  defaultDelivery = "all",
+  delivery = "all",
   focus = null,
 }: Props) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
-  const [delivery, setDelivery] = useState(normalizeDeliveryFilter(defaultDelivery));
   const [campaign, setCampaign] = useState("all");
   const [adSet, setAdSet] = useState("all");
   const [minSpend, setMinSpend] = useState("");
@@ -87,6 +86,7 @@ export function CreativesPanel({
     const normalizedQuery = query.trim().toLowerCase();
     const spendFloor = Number(minSpend);
     const hasSpendFloor = Number.isFinite(spendFloor) && spendFloor > 0;
+    const deliveryFilter = normalizeDeliveryFilter(delivery);
 
     return data.rows
       .filter((row) => {
@@ -97,7 +97,7 @@ export function CreativesPanel({
         if (group !== "all" && row.campaignUmbrella !== group) return false;
         if (campaign !== "all" && row.campaignName !== campaign) return false;
         if (adSet !== "all" && row.adSetName !== adSet) return false;
-        if (delivery !== "all" && deliveryState(row) !== delivery) return false;
+        if (deliveryFilter !== "all" && deliveryState(row) !== deliveryFilter) return false;
         if (hasSpendFloor && row.spend < spendFloor) return false;
         if (!normalizedQuery) return true;
         return [
@@ -175,7 +175,6 @@ export function CreativesPanel({
             />
           </label>
           <Select label="Status" value={status} onChange={setStatus} options={["all", ...statusOptions]} />
-          <Select label="Delivery" value={delivery} onChange={setDelivery} options={["all", "live", "paused", "off"]} />
           <Select label="Campaign" value={campaign} onChange={setCampaign} options={["all", ...campaignOptions]} />
           <Select label="Group of Ads" value={adSet} onChange={setAdSet} options={["all", ...adSetOptions]} />
           <label className="inline-flex h-9 items-center gap-2 rounded-md border border-stone-300 bg-white px-2 text-xs text-stone-500">

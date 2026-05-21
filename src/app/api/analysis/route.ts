@@ -5,6 +5,8 @@ import {
   fetchSavedAnalysisDashboards,
   renameSavedAnalysisDashboard,
   runSavedAdHocAnalysis,
+  type AnalysisRuntimeContext,
+  type DefaultAnalysisDateRange,
 } from "@/lib/ad-hoc-analytics";
 import { requirePermissionFromRequest } from "@/lib/app-auth";
 import type { AnalysisMode } from "@/lib/env";
@@ -21,7 +23,9 @@ export async function GET(request: Request) {
     const dashboardId = url.searchParams.get("dashboardId");
 
     if (dashboardId) {
-      return Response.json(await runSavedAdHocAnalysis(dashboardId));
+      return Response.json(
+        await runSavedAdHocAnalysis(dashboardId, runtimeContextFromSearch(url.searchParams)),
+      );
     }
 
     return Response.json({ dashboards: await fetchSavedAnalysisDashboards() });
@@ -40,15 +44,16 @@ export async function POST(request: Request) {
       dashboardId?: string;
       currentPrompt?: string | null;
       currentSpec?: unknown;
-      defaultDateRange?: {
-        days?: number;
-        startDate?: string | null;
-        endDate?: string | null;
-      };
+      runtimeContext?: AnalysisRuntimeContext;
+      defaultDateRange?: DefaultAnalysisDateRange;
     };
 
     if (body.dashboardId && !body.prompt?.trim()) {
-      return Response.json(await runSavedAdHocAnalysis(body.dashboardId));
+      return Response.json(
+        body.runtimeContext
+          ? await runSavedAdHocAnalysis(body.dashboardId, body.runtimeContext)
+          : await runSavedAdHocAnalysis(body.dashboardId),
+      );
     }
 
     const prompt = body.prompt?.trim();
@@ -65,6 +70,7 @@ export async function POST(request: Request) {
           currentSpec: body.currentSpec,
           prompt,
           mode,
+          runtimeContext: body.runtimeContext,
         }),
       );
     }
@@ -73,12 +79,40 @@ export async function POST(request: Request) {
       await createAdHocAnalysis({
         prompt,
         mode,
+        runtimeContext: body.runtimeContext,
         defaultDateRange: body.defaultDateRange,
       }),
     );
   } catch (error) {
     return jsonError(error);
   }
+}
+
+function runtimeContextFromSearch(searchParams: URLSearchParams): AnalysisRuntimeContext {
+  const filters: NonNullable<AnalysisRuntimeContext["filters"]> = [];
+  const brand = searchParams.get("brand");
+  const group = searchParams.get("group");
+  const status = searchParams.get("status");
+  if (brand) filters.push({ field: "brand", operator: "equals", value: brand });
+  if (group) {
+    filters.push({ field: "campaign_umbrella", operator: "equals", value: group });
+  }
+  if (status) {
+    filters.push({ field: "delivery_status", operator: "equals", value: status });
+  }
+  return {
+    dateRange: {
+      days: numberParam(searchParams.get("days")),
+      startDate: searchParams.get("startDate"),
+      endDate: searchParams.get("endDate"),
+    },
+    filters,
+  };
+}
+
+function numberParam(value: string | null) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 export async function PATCH(request: Request) {

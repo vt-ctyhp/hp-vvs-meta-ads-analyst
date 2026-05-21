@@ -706,5 +706,8 @@ function buildChildrenUrl(
   params.set("metric", query.metric);
   if (query.brand) params.set("brand", query.brand);
   if (query.group) params.set("group", query.group);
+  if (query.status) params.set("status", query.status);
+  params.set("start", query.start);
+  params.set("end", query.end);
   return `/api/optimize/pivot-children?${params.toString()}`;
 }

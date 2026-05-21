@@ -12,6 +12,7 @@ import {
   cachedAggregateMetaInsights as aggregateMetaInsights,
   type MetaInsightAggregateRow,
 } from "./meta-insight-aggregates";
+import { buildSharedInsightFilters } from "./optimize-filters";
 import { createAdsAnalystClient } from "./ads-analyst-db";
 
 export type MetricSummary = {
@@ -145,6 +146,9 @@ export type DashboardDateRangeInput = {
   days?: number;
   startDate?: string | null;
   endDate?: string | null;
+  brand?: string | null;
+  group?: string | null;
+  status?: string | null;
 };
 
 export type StoredReport = {
@@ -339,6 +343,9 @@ export async function fetchDashboardData(
     const supabase = createAdsAnalystClient("web");
     const dateRange = resolveDashboardDateRange(dateRangeInput);
     const priorRange = resolvePriorDateRange(dateRange);
+    const filters = buildSharedInsightFilters(
+      typeof dateRangeInput === "number" ? {} : dateRangeInput,
+    );
 
     const coreMetadataPromise = Promise.all([
       supabase.from("brands").select(BRAND_COLUMNS),
@@ -366,6 +373,7 @@ export async function fetchDashboardData(
           start: dateRange.start,
           end: dateRange.end,
           dimensions: [],
+          filters,
           sortField: "spend",
           sortDirection: "desc",
           limit: 1,
@@ -375,6 +383,7 @@ export async function fetchDashboardData(
           start: dateRange.start,
           end: dateRange.end,
           dimensions: ["brand"],
+          filters,
           sortField: "spend",
           sortDirection: "desc",
           limit: 100,
@@ -384,6 +393,7 @@ export async function fetchDashboardData(
           start: dateRange.start,
           end: dateRange.end,
           dimensions: ["campaign_umbrella"],
+          filters,
           sortField: "spend",
           sortDirection: "desc",
           limit: 100,
@@ -393,6 +403,7 @@ export async function fetchDashboardData(
           start: dateRange.start,
           end: dateRange.end,
           dimensions: ["campaign"],
+          filters,
           sortField: "spend",
           sortDirection: "desc",
           limit: 5000,
@@ -402,6 +413,7 @@ export async function fetchDashboardData(
           start: dateRange.start,
           end: dateRange.end,
           dimensions: ["ad_set"],
+          filters,
           sortField: "spend",
           sortDirection: "desc",
           limit: 5000,
@@ -411,6 +423,7 @@ export async function fetchDashboardData(
           start: dateRange.start,
           end: dateRange.end,
           dimensions: ["creative"],
+          filters,
           sortField: "spend",
           sortDirection: "desc",
           limit: 5000,
@@ -420,6 +433,7 @@ export async function fetchDashboardData(
           start: dateRange.start,
           end: dateRange.end,
           dimensions: ["date", "brand", "campaign_umbrella"],
+          filters,
           sortField: "date",
           sortDirection: "asc",
           limit: 10000,
@@ -429,6 +443,7 @@ export async function fetchDashboardData(
           start: dateRange.start,
           end: dateRange.end,
           dimensions: ["date"],
+          filters,
           sortField: "date",
           sortDirection: "asc",
           limit: dateRange.days + 5,
@@ -442,6 +457,7 @@ export async function fetchDashboardData(
           start: priorRange.start,
           end: priorRange.end,
           dimensions: [],
+          filters,
           sortField: "spend",
           sortDirection: "desc",
           limit: 1,
@@ -451,6 +467,7 @@ export async function fetchDashboardData(
           start: priorRange.start,
           end: priorRange.end,
           dimensions: ["brand"],
+          filters,
           sortField: "spend",
           sortDirection: "desc",
           limit: 100,
@@ -460,6 +477,7 @@ export async function fetchDashboardData(
           start: priorRange.start,
           end: priorRange.end,
           dimensions: ["campaign_umbrella"],
+          filters,
           sortField: "spend",
           sortDirection: "desc",
           limit: 100,
@@ -469,6 +487,7 @@ export async function fetchDashboardData(
           start: priorRange.start,
           end: priorRange.end,
           dimensions: ["campaign"],
+          filters,
           sortField: "spend",
           sortDirection: "desc",
           limit: 5000,
@@ -478,6 +497,7 @@ export async function fetchDashboardData(
           start: priorRange.start,
           end: priorRange.end,
           dimensions: ["date", "brand", "campaign_umbrella"],
+          filters,
           sortField: "date",
           sortDirection: "asc",
           limit: 10000,
