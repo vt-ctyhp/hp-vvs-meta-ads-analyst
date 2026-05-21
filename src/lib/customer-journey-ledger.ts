@@ -245,7 +245,7 @@ export type CustomerJourneyLedgerConversionRow = {
   visitor_id: string | null;
 };
 
-type CustomerJourneyLedgerClient = {
+export type CustomerJourneyLedgerClient = {
   from: (table: "website_visitors") => {
     select: (columns: string) => LedgerSelectChain<CustomerJourneyLedgerVisitorRow[]>;
   };
@@ -484,12 +484,16 @@ export async function fetchCustomerJourneyLedgerData(input: {
   });
 }
 
-export async function fetchCustomerJourneyLedgerDetail(input: {
-  acuityAppointmentId?: string | null;
-  eventId?: string | null;
-  visitorId?: string | null;
-}): Promise<CustomerJourneyLedgerDetailData | null> {
-  const client = createAdsAnalystClient("web") as unknown as CustomerJourneyLedgerClient;
+export async function fetchCustomerJourneyLedgerDetail(
+  input: {
+    acuityAppointmentId?: string | null;
+    eventId?: string | null;
+    visitorId?: string | null;
+  },
+  client: CustomerJourneyLedgerClient = createAdsAnalystClient(
+    "web",
+  ) as unknown as CustomerJourneyLedgerClient,
+): Promise<CustomerJourneyLedgerDetailData | null> {
   const visitorId = input.visitorId?.trim() || null;
   const acuityAppointmentId = input.acuityAppointmentId?.trim() || null;
   const eventId = input.eventId?.trim() || null;
@@ -555,6 +559,7 @@ async function fetchCustomerJourneyLedgerVisitorDetail(
     return fetchCustomerJourneyLedgerConversionOnlyDetail(client, {
       acuityAppointmentId: input.acuityAppointmentId,
       eventId: input.eventId,
+      skipVisitorLookup: true,
     });
   }
 
@@ -573,13 +578,14 @@ async function fetchCustomerJourneyLedgerConversionOnlyDetail(
   input: {
     acuityAppointmentId?: string | null;
     eventId?: string | null;
+    skipVisitorLookup?: boolean;
   },
 ): Promise<CustomerJourneyLedgerDetailData | null> {
   const conversion = await fetchDetailConversionByIdentity(client, input);
   if (!conversion) return null;
 
   const visitorId = conversion.visitor_id?.trim();
-  if (visitorId) {
+  if (visitorId && !input.skipVisitorLookup) {
     const visitorDetail = await fetchCustomerJourneyLedgerVisitorDetail(client, {
       acuityAppointmentId: conversion.acuity_appointment_id || input.acuityAppointmentId,
       eventId: conversion.event_id || input.eventId,
@@ -755,7 +761,7 @@ export function buildCustomerJourneyLedgerData(input: {
       capiStatuses: Array.from(capiStatusCounts.entries())
         .map(([status, count]) => ({ count, status }))
         .sort((a, b) => b.count - a.count || a.status.localeCompare(b.status)),
-      visitorsShown: rows.length,
+      visitorsShown: input.visitors.length,
       visitorsWithConversions: rows.filter((row) => row.hasConversion).length,
       visitorsWithPaidTouch: rows.filter((row) => row.hasPaidTouch).length,
     },

@@ -11,7 +11,11 @@ import {
   type AttributionLedgerSessionRow,
   type AttributionLedgerVisitorRow,
 } from "../src/lib/attribution-ledger.ts";
-import { normalizeCustomerJourneyLedgerDateRange } from "../src/lib/customer-journey-ledger.ts";
+import {
+  fetchCustomerJourneyLedgerDetail,
+  normalizeCustomerJourneyLedgerDateRange,
+  type CustomerJourneyLedgerClient,
+} from "../src/lib/customer-journey-ledger.ts";
 
 describe("attribution ledger row merging", () => {
   it("uses latest conversion booking, customer, and CAPI fields", () => {
@@ -252,6 +256,33 @@ describe("attribution ledger row merging", () => {
     assert.deepEqual(data.summary.capiStatuses, [{ count: 1, status: "sent" }]);
   });
 
+  it("counts visitors shown from visitor rows, not booking-only rows", () => {
+    const data = buildAttributionLedgerData({
+      conversions: [
+        conversionRow({
+          event_id: "conversion-visitor",
+          visitor_id: "visitor-1",
+        }),
+        conversionRow({
+          event_id: "conversion-without-visitor",
+          visitor_id: null,
+        }),
+        conversionRow({
+          event_id: "conversion-orphaned-visitor",
+          visitor_id: "visitor-orphan",
+        }),
+      ],
+      events: [],
+      range: { days: 7, end: "2026-05-21", start: "2026-05-15" },
+      sessions: [],
+      visitors: [visitorRow({ visitor_id: "visitor-1" })],
+    });
+
+    assert.equal(data.rows.length, 3);
+    assert.equal(data.summary.visitorsShown, 1);
+    assert.equal(data.summary.visitorsWithConversions, 3);
+  });
+
   it("normalizes shared ledger date ranges from days or explicit dates", () => {
     assert.deepEqual(
       normalizeCustomerJourneyLedgerDateRange({
@@ -448,6 +479,38 @@ describe("attribution ledger detail data", () => {
     assert.equal(detail.booking?.eventId, "acuity-1709178617");
     assert.equal(detail.confidence.level, "conversion_only");
     assert.match(detail.summary || "", /no browser visitor\/session ID/i);
+    assert.deepEqual(
+      detail.timeline.map((event) => event.label),
+      ["Acuity booking created"],
+    );
+  });
+
+  it("falls back to booking-only detail when a conversion points at a missing visitor", async () => {
+    const detail = await fetchCustomerJourneyLedgerDetail(
+      {
+        acuityAppointmentId: "apt-X",
+        visitorId: "visitor-orphan",
+      },
+      mockCustomerJourneyClient({
+        website_conversions: [
+          conversionRow({
+            acuity_appointment_id: "apt-X",
+            event_id: "acuity-apt-X",
+            occurred_at: "2026-05-21T19:00:00.000Z",
+            source_type: "direct",
+            visitor_id: "visitor-orphan",
+          }),
+        ],
+        website_events: [],
+        website_sessions: [],
+        website_visitors: [],
+      }),
+    );
+
+    assert.ok(detail);
+    assert.equal(detail.acuityAppointmentId, "apt-X");
+    assert.equal(detail.visitorId, "visitor-orphan");
+    assert.equal(detail.confidence.level, "conversion_only");
     assert.deepEqual(
       detail.timeline.map((event) => event.label),
       ["Acuity booking created"],
@@ -708,6 +771,66 @@ function linkInBioTouch(capturedAt: string) {
       source: "ig",
     },
   };
+}
+
+function mockCustomerJourneyClient(input: {
+  website_conversions?: AttributionLedgerConversionRow[];
+  website_events?: AttributionLedgerEventRow[];
+  website_sessions?: AttributionLedgerSessionRow[];
+  website_visitors?: AttributionLedgerVisitorRow[];
+}): CustomerJourneyLedgerClient {
+  return {
+    from(table: keyof typeof input) {
+      return {
+        select() {
+          return mockLedgerSelectChain(input[table] || []);
+        },
+      };
+    },
+  } as unknown as CustomerJourneyLedgerClient;
+}
+
+function mockLedgerSelectChain(sourceRows: object[]) {
+  type MockLedgerResult = { data: Array<Record<string, unknown>>; error: Error | null };
+
+  let rows = sourceRows.map((row) => row as Record<string, unknown>);
+  const chain = {
+    eq(column: string, value: unknown) {
+      rows = rows.filter((row) => row[column] === value);
+      return chain;
+    },
+    gte(column: string, value: unknown) {
+      rows = rows.filter((row) => String(row[column] ?? "") >= String(value ?? ""));
+      return chain;
+    },
+    in(column: string, values: unknown[]) {
+      rows = rows.filter((row) => values.includes(row[column]));
+      return chain;
+    },
+    limit(count: number) {
+      rows = rows.slice(0, count);
+      return chain;
+    },
+    lte(column: string, value: unknown) {
+      rows = rows.filter((row) => String(row[column] ?? "") <= String(value ?? ""));
+      return chain;
+    },
+    order(column: string, options: { ascending: boolean }) {
+      rows = [...rows].sort((left, right) => {
+        const result = String(left[column] ?? "").localeCompare(String(right[column] ?? ""));
+        return options.ascending ? result : -result;
+      });
+      return chain;
+    },
+    then<TResult1 = MockLedgerResult, TResult2 = never>(
+      onfulfilled?: ((value: MockLedgerResult) => TResult1 | PromiseLike<TResult1>) | null,
+      onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+    ) {
+      return Promise.resolve({ data: rows, error: null }).then(onfulfilled, onrejected);
+    },
+  };
+
+  return chain;
 }
 
 function visitorRow(
