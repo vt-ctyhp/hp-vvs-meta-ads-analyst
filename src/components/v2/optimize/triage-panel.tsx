@@ -97,7 +97,7 @@ function ActionBucketColumn({
           {items.map((item) => (
             <li key={item.id}>
               <Link
-                href={`/creative-analysis?focus=${encodeURIComponent(item.entityId)}`}
+                href={`/optimize?tab=creatives&focus=${encodeURIComponent(item.entityId)}`}
                 className={[
                   "block border-l-4 px-4 py-3 transition-colors hover:bg-stone-50",
                   bucket.className,

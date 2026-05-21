@@ -133,7 +133,7 @@ export default async function OptimizePage({
           days,
           startDate,
           endDate,
-          includeLive: false,
+          includeLive: true,
         }).catch((e) => {
           console.error("[optimize] fetchCreativeAnalysisData threw:", e);
           return {

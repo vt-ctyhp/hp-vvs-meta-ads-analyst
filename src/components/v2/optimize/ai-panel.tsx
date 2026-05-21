@@ -94,6 +94,14 @@ export function OptimizeAiPanel({
     }
   }, [dateRange.days, dateRange.endDate, dateRange.startDate]);
 
+  if (!canUseAdHocAnalysis) {
+    return (
+      <section className="rounded-xl border border-stone-200 bg-white p-6 text-sm text-stone-600">
+        AI analysis tools require AI Analysis access.
+      </section>
+    );
+  }
+
   return (
     <section className="space-y-5">
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
@@ -169,13 +177,7 @@ export function OptimizeAiPanel({
         </section>
       </div>
 
-      {canUseAdHocAnalysis ? (
-        <AnalysisClient initialSaved={initialSaved} surface="panel" />
-      ) : (
-        <section className="rounded-xl border border-stone-200 bg-white p-6 text-sm text-stone-600">
-          Saved ad-hoc analysis dashboards require AI Analysis access.
-        </section>
-      )}
+      <AnalysisClient initialSaved={initialSaved} surface="panel" />
     </section>
   );
 }
