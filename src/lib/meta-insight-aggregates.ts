@@ -4,6 +4,7 @@ export type MetaInsightDimension =
   | "date"
   | "week"
   | "month"
+  | "quarter"
   | "brand"
   | "campaign_umbrella"
   | "campaign"
@@ -21,6 +22,7 @@ export type MetaInsightAggregateRow = {
   date: string | null;
   week: string | null;
   month: string | null;
+  quarter: string | null;
   brand: string | null;
   campaign_umbrella: string | null;
   campaign: string | null;
@@ -88,6 +90,7 @@ export function mapAggregateRow(row: Record<string, unknown>): MetaInsightAggreg
     date: stringOrNull(row.date),
     week: stringOrNull(row.week),
     month: stringOrNull(row.month),
+    quarter: stringOrNull(row.quarter),
     brand: stringOrNull(row.brand),
     campaign_umbrella: stringOrNull(row.campaign_umbrella),
     campaign: stringOrNull(row.campaign),

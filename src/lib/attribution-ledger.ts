@@ -1,7 +1,7 @@
 import { differenceInCalendarDays, format, parseISO, subDays } from "date-fns";
 
 import { selectBestPaidTouch } from "./attribution-touch-selection.ts";
-import { createServiceClient } from "./supabase.ts";
+import { createAdsAnalystClient } from "./ads-analyst-db.ts";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_LEDGER_DAYS = 30;
@@ -274,7 +274,12 @@ export async function fetchAttributionLedgerData(input: {
   startDate?: string | null;
 }): Promise<AttributionLedgerData> {
   const range = normalizeLedgerDateRange(input);
-  const client = createServiceClient() as unknown as AttributionLedgerClient;
+  // Use the limited-mode web client. In limited-access mode (staging today,
+  // production after cutover) SUPABASE_SERVICE_ROLE_KEY is intentionally
+  // absent — `createServiceClient()` would throw. The web role's RLS still
+  // permits reads on website_visitors / website_sessions / website_events /
+  // website_conversions for the current ads-analyst environment.
+  const client = createAdsAnalystClient("web") as unknown as AttributionLedgerClient;
   const startIso = `${range.start}T00:00:00.000Z`;
   const endIso = `${range.end}T23:59:59.999Z`;
 
@@ -446,7 +451,7 @@ export async function fetchAttributionLedgerDetail(input: {
   const visitorId = input.visitorId.trim();
   if (!visitorId) return null;
 
-  const client = createServiceClient() as unknown as AttributionLedgerClient;
+  const client = createAdsAnalystClient("web") as unknown as AttributionLedgerClient;
   const [visitorsResult, sessionsResult, eventsResult, conversionsResult] = await Promise.all([
     client
       .from("website_visitors")

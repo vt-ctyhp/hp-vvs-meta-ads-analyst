@@ -5,16 +5,23 @@ import { usePathname } from "next/navigation";
 import {
   BarChart3,
   Brain,
+  ClipboardCheck,
   Database,
   Gauge,
   Inbox,
+  LineChart as LineChartIcon,
   MousePointerClick,
+  Target,
   Users,
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { APP_NAV_ROUTES } from "@/lib/app-routes";
+import {
+  APP_NAV_ROUTES,
+  APP_ROUTE_GROUP_ORDER,
+  type AppRoute,
+} from "@/lib/app-routes";
 import { type AppPermission, type UserRole } from "@/lib/access-control";
 import { AUTH } from "@/lib/glossary";
 import { createBrowserClient } from "@/lib/supabase";
@@ -22,6 +29,9 @@ import type { SystemHealthSnapshot } from "@/lib/system-health";
 
 const NAV_ICONS: Record<string, typeof BarChart3> = {
   "/": BarChart3,
+  "/analyst": LineChartIcon,
+  "/review": ClipboardCheck,
+  "/outcomes": Target,
   "/creative-analysis": Gauge,
   "/analysis": Brain,
   "/website-funnel": MousePointerClick,
@@ -48,7 +58,20 @@ export function TopNavigation() {
   const [health, setHealth] = useState<SystemHealthSnapshot | null>(null);
   const [openMenu, setOpenMenu] = useState<"health" | "identity" | null>(null);
   const closeMenu = () => setOpenMenu(null);
-  const isPublicAuthPath = pathname === "/login" || pathname === "/no-access";
+  const isPublicAuthPath =
+    pathname === "/login" || pathname === "/sign-in" || pathname === "/no-access";
+  // The 3-room workspace IA (v2) renders its own shell. Hide the legacy nav on
+  // those routes so we don't show double chrome. The sales mobile shell is
+  // also self-contained.
+  const isV2Path =
+    pathname === "/optimize" ||
+    pathname.startsWith("/optimize/") ||
+    pathname === "/convert" ||
+    pathname.startsWith("/convert/") ||
+    pathname === "/operate" ||
+    pathname.startsWith("/operate/") ||
+    pathname.startsWith("/m/");
+  if (isV2Path) return null;
 
   useEffect(() => {
     let mounted = true;
@@ -137,6 +160,14 @@ export function TopNavigation() {
     profile.permissions.includes(item.permission),
   );
 
+  // Group items by their declared group, preserving APP_NAV_ROUTES order
+  // within each group. Empty groups (user has no permission in them) are
+  // dropped so we don't render a phantom separator next to nothing.
+  const groupedNavItems = APP_ROUTE_GROUP_ORDER.map((group) => ({
+    group,
+    items: visibleNavItems.filter((item) => item.group === group),
+  })).filter((bucket) => bucket.items.length > 0);
+
   return (
     <nav className="relative z-50 border-b border-hp-rule bg-hp-card/90 text-hp-body">
       <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between md:px-8">
@@ -149,27 +180,26 @@ export function TopNavigation() {
           </div>
         </Link>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {visibleNavItems.map((item) => {
-            const Icon = NAV_ICONS[item.href];
-            const isActive =
-              item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                aria-current={isActive ? "page" : undefined}
-                className={`flex h-10 items-center gap-2 border px-4 text-[11px] uppercase tracking-[0.14em] transition-colors ${
-                  isActive
-                    ? "border-hp-ink bg-hp-ink text-hp-foundation"
-                    : "border-hp-rule text-hp-body hover:border-hp-ink hover:bg-hp-inset"
-                }`}
-              >
-                <Icon size={15} />
-                {item.label}
-              </Link>
-            );
-          })}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          {groupedNavItems.map((bucket, bucketIndex) => (
+            <div key={bucket.group} className="flex flex-wrap items-center gap-1.5">
+              {bucketIndex > 0 ? (
+                <span
+                  aria-hidden
+                  className="mx-1 hidden h-5 w-px self-center bg-hp-rule lg:inline-block"
+                />
+              ) : null}
+              {bucket.items.map((item) => (
+                <NavLink
+                  key={item.href}
+                  item={item}
+                  pathname={pathname}
+                />
+              ))}
+            </div>
+          ))}
+
+          <span aria-hidden className="hidden flex-1 lg:block" />
 
           <HealthIndicator
             health={health}
@@ -187,6 +217,50 @@ export function TopNavigation() {
         </div>
       </div>
     </nav>
+  );
+}
+
+function NavLink({
+  item,
+  pathname,
+}: {
+  item: AppRoute;
+  pathname: string;
+}) {
+  const Icon = NAV_ICONS[item.href];
+  const isActive =
+    item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+  const isPlaceholder = item.placeholder === true;
+
+  return (
+    <Link
+      key={item.href}
+      href={item.href}
+      aria-current={isActive ? "page" : undefined}
+      title={isPlaceholder ? `${item.label} — coming soon` : undefined}
+      className={`flex h-9 items-center gap-1.5 border px-3 text-[11px] uppercase tracking-[0.14em] transition-colors duration-150 ${
+        isActive
+          ? "border-hp-ink bg-hp-ink text-hp-foundation"
+          : isPlaceholder
+            ? "border-dashed border-hp-rule text-hp-muted hover:border-hp-ink hover:text-hp-body"
+            : "border-hp-rule text-hp-body hover:border-hp-ink hover:bg-hp-inset"
+      }`}
+    >
+      {Icon ? <Icon size={13} aria-hidden /> : null}
+      <span>{item.label}</span>
+      {isPlaceholder ? (
+        <span
+          aria-hidden
+          className={`ml-1 border px-1 py-px text-[9px] tracking-[0.12em] ${
+            isActive
+              ? "border-hp-foundation/40 text-hp-foundation/80"
+              : "border-hp-muted/40 text-hp-muted"
+          }`}
+        >
+          Soon
+        </span>
+      ) : null}
+    </Link>
   );
 }
 

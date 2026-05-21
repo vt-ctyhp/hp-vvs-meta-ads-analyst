@@ -13,6 +13,12 @@ const MODULE_JWT_ENV_BY_ROLE: Record<AdsAnalystModuleRole, string> = {
   ingest: "SUPABASE_ADS_ANALYST_INGEST_JWT",
 };
 
+const MODULE_KEY_ENV_BY_ROLE: Record<AdsAnalystModuleRole, string> = {
+  web: "SUPABASE_ADS_ANALYST_WEB_KEY",
+  worker: "SUPABASE_ADS_ANALYST_WORKER_KEY",
+  ingest: "SUPABASE_ADS_ANALYST_INGEST_KEY",
+};
+
 function getSupabaseUrl() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   if (!url) {
@@ -41,17 +47,31 @@ export function createServiceClient() {
 
 export function createAdsAnalystModuleClient(role: AdsAnalystModuleRole) {
   const publishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  const keyEnvName = MODULE_KEY_ENV_BY_ROLE[role];
   const jwtEnvName = MODULE_JWT_ENV_BY_ROLE[role];
+  const moduleKey = process.env[keyEnvName];
   const moduleJwt = process.env[jwtEnvName];
+
+  if (moduleKey?.trim()) {
+    return createClient<Database>(getSupabaseUrl(), moduleKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    });
+  }
+
+  if (!moduleJwt?.trim()) {
+    throw new ConfigurationError(`Missing ${keyEnvName} or ${jwtEnvName}`, [
+      keyEnvName,
+      jwtEnvName,
+    ]);
+  }
 
   if (!publishableKey) {
     throw new ConfigurationError("Missing NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", [
       "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
     ]);
-  }
-
-  if (!moduleJwt?.trim()) {
-    throw new ConfigurationError(`Missing ${jwtEnvName}`, [jwtEnvName]);
   }
 
   return createClient<Database>(getSupabaseUrl(), publishableKey, {

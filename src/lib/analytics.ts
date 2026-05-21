@@ -7,7 +7,7 @@ import {
   type CampaignUmbrella,
   type CampaignUmbrellaClassification,
 } from "./campaign-umbrellas";
-import { ConfigurationError, getMissingRequiredEnv } from "./env";
+import { ConfigurationError, getMissingDashboardEnv } from "./env";
 import { aggregateMetaInsights, type MetaInsightAggregateRow } from "./meta-insight-aggregates";
 import { createAdsAnalystClient } from "./ads-analyst-db";
 
@@ -110,6 +110,8 @@ export type ComparisonPayload = {
   overview: MetricSummary;
   byBrand: PerformanceRow[];
   byUmbrella: PerformanceRow[];
+  /** Per-campaign metrics for the prior period; matches campaigns[] by id. */
+  campaigns: PerformanceRow[];
   dailyTrend: DailyTrendRow[];
 };
 
@@ -278,7 +280,7 @@ const MESSAGING_CONTACT_ACTION_TYPES = ["onsite_conversion.total_messaging_conne
 const NEW_MESSAGING_CONTACT_ACTION_TYPES = ["onsite_conversion.messaging_first_reply"];
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-export function emptyDashboardPayload(missingEnv = getMissingRequiredEnv()): DashboardPayload {
+export function emptyDashboardPayload(missingEnv = getMissingDashboardEnv()): DashboardPayload {
   return {
     configured: missingEnv.length === 0,
     missingEnv,
@@ -314,6 +316,7 @@ export function emptyDashboardPayload(missingEnv = getMissingRequiredEnv()): Das
       overview: EMPTY_METRICS,
       byBrand: [],
       byUmbrella: [],
+      campaigns: [],
       dailyTrend: [],
     },
     generatedAt: new Date().toISOString(),
@@ -323,11 +326,7 @@ export function emptyDashboardPayload(missingEnv = getMissingRequiredEnv()): Das
 export async function fetchDashboardData(
   dateRangeInput: number | DashboardDateRangeInput = 30,
 ): Promise<DashboardPayload> {
-  const missingEnv = getMissingRequiredEnv([
-    "NEXT_PUBLIC_SUPABASE_URL",
-    "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
-    "SUPABASE_SERVICE_ROLE_KEY",
-  ]);
+  const missingEnv = getMissingDashboardEnv();
 
   if (missingEnv.length) {
     return emptyDashboardPayload(missingEnv);
@@ -466,6 +465,15 @@ export async function fetchDashboardData(
         aggregateMetaInsights({
           start: priorRange.start,
           end: priorRange.end,
+          dimensions: ["campaign"],
+          sortField: "spend",
+          sortDirection: "desc",
+          limit: 5000,
+        }),
+      () =>
+        aggregateMetaInsights({
+          start: priorRange.start,
+          end: priorRange.end,
           dimensions: ["date", "brand", "campaign_umbrella"],
           sortField: "date",
           sortDirection: "asc",
@@ -501,6 +509,7 @@ export async function fetchDashboardData(
         priorOverviewRows,
         priorByBrandRows,
         priorByUmbrellaRows,
+        priorCampaignAggregateRows,
         priorDailyTrendAggregateRows,
       ],
     ] = await Promise.all([
@@ -647,6 +656,8 @@ export async function fetchDashboardData(
           campaignUmbrella: classification.umbrella,
           campaignUmbrellaConfidence: classification.confidence,
           campaignUmbrellaReason: classification.reason,
+          campaignId: adSet?.campaign_id || null,
+          campaignName: campaign?.name || null,
           ...summaryFromAggregate(row, classification.umbrella),
         };
       })
@@ -780,6 +791,34 @@ export async function fetchDashboardData(
         };
       })
       .sort(bySpendDesc);
+    const priorCampaigns = priorCampaignAggregateRows
+      .map((row) => {
+        const campaignId = row.campaign_id || "unknown";
+        const campaign = campaignById.get(campaignId);
+        const classification = resolveCampaignClassification(
+          {
+            umbrella: campaign?.campaign_umbrella,
+            confidence: campaign?.campaign_umbrella_confidence,
+            reason: campaign?.campaign_umbrella_reason,
+          },
+          classifyCampaignUmbrella({
+            campaignName: campaign?.name || row.campaign,
+          }),
+        );
+        return {
+          id: campaignId,
+          name: campaign?.name || row.campaign || "Unknown campaign",
+          brandCode: getBrandCode(campaign?.brand_id),
+          status: campaign?.status,
+          effectiveStatus: campaign?.effective_status,
+          objective: campaign?.objective,
+          campaignUmbrella: classification.umbrella,
+          campaignUmbrellaConfidence: classification.confidence,
+          campaignUmbrellaReason: classification.reason,
+          ...summaryFromAggregate(row, classification.umbrella),
+        };
+      })
+      .sort(bySpendDesc);
     const priorDailyTrend = priorDailyTrendAggregateRows
       .map((row) => {
         const campaignUmbrella = resolveUmbrella(row.campaign_umbrella);
@@ -863,6 +902,7 @@ export async function fetchDashboardData(
         overview: priorOverview,
         byBrand: priorByBrand,
         byUmbrella: priorByUmbrella,
+        campaigns: priorCampaigns,
         dailyTrend: priorDailyTrend,
       },
       latestSyncRuns: rows<Record<string, unknown>>(syncRunsRes.data).map((run) => ({

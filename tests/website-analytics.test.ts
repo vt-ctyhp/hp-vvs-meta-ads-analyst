@@ -384,7 +384,7 @@ describe("website analytics appointment reconciliation", () => {
 
   it("keeps the raw customer-linked event retention window at 24 months", async () => {
     const migration = await readFile(
-      new URL("../supabase/migrations/20260519090000_attribution_ledger.sql", import.meta.url),
+      new URL("../supabase/migrations/20260519091500_attribution_ledger.sql", import.meta.url),
       "utf8",
     );
 

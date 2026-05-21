@@ -12,6 +12,11 @@ export type DataBoundaryRuntimeStatus = {
     worker: boolean;
     ingest: boolean;
   };
+  moduleCredentialSources: {
+    web: "key" | "jwt" | "missing";
+    worker: "key" | "jwt" | "missing";
+    ingest: "key" | "jwt" | "missing";
+  };
   environment: string;
   issues: string[];
 };
@@ -19,10 +24,15 @@ export type DataBoundaryRuntimeStatus = {
 export function getDataBoundaryRuntimeStatus(): DataBoundaryRuntimeStatus {
   const strict = isTruthyEnv("ADS_ANALYST_ENFORCE_LIMITED_DB_ACCESS");
   const serviceRoleConfigured = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY?.trim());
+  const moduleCredentialSources = {
+    web: adsAnalystCredentialSource("WEB"),
+    worker: adsAnalystCredentialSource("WORKER"),
+    ingest: adsAnalystCredentialSource("INGEST"),
+  };
   const moduleCredentialsConfigured = {
-    web: Boolean(process.env.SUPABASE_ADS_ANALYST_WEB_JWT?.trim()),
-    worker: Boolean(process.env.SUPABASE_ADS_ANALYST_WORKER_JWT?.trim()),
-    ingest: Boolean(process.env.SUPABASE_ADS_ANALYST_INGEST_JWT?.trim()),
+    web: moduleCredentialSources.web !== "missing",
+    worker: moduleCredentialSources.worker !== "missing",
+    ingest: moduleCredentialSources.ingest !== "missing",
   };
   const hasAllModuleCredentials = Object.values(moduleCredentialsConfigured).every(Boolean);
   const mode = strict ? "limited_module_role" : "legacy_service_role";
@@ -56,6 +66,7 @@ export function getDataBoundaryRuntimeStatus(): DataBoundaryRuntimeStatus {
     strict,
     serviceRoleConfigured,
     moduleCredentialsConfigured,
+    moduleCredentialSources,
     environment,
     issues,
   };
@@ -66,4 +77,12 @@ export function assertLimitedDataBoundaryRuntime() {
   if (!status.ok) {
     throw new Error(`Ads Analyst data boundary guard failed: ${status.issues.join(" ")}`);
   }
+}
+
+function adsAnalystCredentialSource(
+  role: "WEB" | "WORKER" | "INGEST",
+): "key" | "jwt" | "missing" {
+  if (process.env[`SUPABASE_ADS_ANALYST_${role}_KEY`]?.trim()) return "key";
+  if (process.env[`SUPABASE_ADS_ANALYST_${role}_JWT`]?.trim()) return "jwt";
+  return "missing";
 }
