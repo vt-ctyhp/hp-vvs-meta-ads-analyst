@@ -61,6 +61,35 @@ describe("customer ledger creative enrichment", () => {
     ]);
   });
 
+  it("prefers cached image URLs before Meta CDN image URLs for thumbnail fallback", async () => {
+    const client = mockCreativeClient({
+      meta_ads: [
+        {
+          ad_id: "ad-1",
+          creative_id: "creative-1",
+          meta_account_id: "account-1",
+          name: "Ad name",
+          preview_url: "https://meta.example/ad-preview",
+        },
+      ],
+      meta_creatives: [
+        {
+          creative_id: "creative-1",
+          image_url: "https://cdn.example/image.jpg",
+          meta_account_id: "account-1",
+          supabase_image_url: "https://cache.example/image.jpg",
+        },
+      ],
+    });
+
+    const rows = await enrichCustomerLedgerRowsWithCreativePreviews(
+      [ledgerRow({ adId: "ad-1" })],
+      { client },
+    );
+
+    assert.equal(rows[0].creativePreview?.thumbnailUrl, "https://cache.example/image.jpg");
+  });
+
   it("uses ad-level preview fields when a creative row is missing", async () => {
     const client = mockCreativeClient({
       meta_ads: [

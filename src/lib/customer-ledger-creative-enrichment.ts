@@ -255,8 +255,8 @@ function creativePreviewFromRows(
     stringOrNull(creative?.supabase_thumbnail_url) ||
     stringOrNull(creative?.thumbnail_url) ||
     stringOrNull(creative?.video_thumbnail_url) ||
-    stringOrNull(creative?.image_url) ||
     stringOrNull(creative?.supabase_image_url) ||
+    stringOrNull(creative?.image_url) ||
     stringOrNull(creative?.preview_url) ||
     stringOrNull(ad.preview_url);
   const imageUrl =
