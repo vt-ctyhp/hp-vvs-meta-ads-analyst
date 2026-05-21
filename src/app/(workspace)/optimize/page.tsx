@@ -10,6 +10,7 @@ import { hasPermission } from "@/lib/access-control";
 import {
   emptyOptimizeSummaryPayload,
   fetchOptimizeSummaryData,
+  resolveOptimizeDateRange,
 } from "@/lib/optimize-page-data";
 import {
   fetchPeriodPivot,
@@ -18,8 +19,9 @@ import {
   type PeriodMetric,
   type PeriodPivotPayload,
 } from "@/lib/period-pivot-data";
-import { isFrequency, type Frequency } from "@/lib/period-windows";
+import { isFrequency, lastNPeriods, type Frequency } from "@/lib/period-windows";
 import { requirePagePermission } from "@/lib/server-route-auth";
+import { normalizeOptimizeStatusSelection } from "@/lib/optimize-filters";
 
 export const dynamic = "force-dynamic";
 
@@ -50,17 +52,19 @@ export default async function OptimizePage({
 
   // Filter-bar inputs. Status defaults to "live" so the operator lands on
   // currently-active inventory; explicit URL params override.
-  const statusFilter = (params.status ?? "live").toLowerCase();
+  const statusFilter = normalizeOptimizeStatusSelection(params.status) ?? "live";
+  const deliveryStatusFilter = statusFilter === "all" ? null : statusFilter;
   const brandFilter = params.brand ?? "all";
   const groupFilter = params.group ?? "all";
+  const pageDateRange = resolveOptimizeDateRange({
+    days,
+    startDate: params.start ?? null,
+    endDate: params.end ?? null,
+  });
 
   // Range filter — preset OR custom start/end. The pivot table anchors
   // its rightmost period to the end of the range (today for presets).
-  const customEnd = params.end?.trim() || null;
-  const pivotAnchor =
-    customEnd && /^\d{4}-\d{2}-\d{2}$/.test(customEnd)
-      ? new Date(`${customEnd}T12:00:00Z`)
-      : new Date();
+  const pivotAnchor = new Date(`${pageDateRange.end}T12:00:00Z`);
 
   // Period-pivot controls — defaults: 4 weeks of Primary KPI.
   const periodCount = normalizePeriodCount(params.periods);
@@ -68,13 +72,19 @@ export default async function OptimizePage({
   const metric: PeriodMetric = isPeriodMetric(params.metric)
     ? params.metric
     : "primary_results";
+  const pivotPeriods = lastNPeriods(pivotAnchor, periodCount, frequency);
+  const dataDateRange = intersectDateRanges(pageDateRange, {
+    start: pivotPeriods[0].start,
+    end: pivotPeriods[pivotPeriods.length - 1].end,
+  });
 
   const summaryPromise = fetchOptimizeSummaryData({
-    days,
-    startDate: params.start ?? null,
-    endDate: params.end ?? null,
+    days: dataDateRange.days,
+    startDate: dataDateRange.start,
+    endDate: dataDateRange.end,
     brand: brandFilter !== "all" ? brandFilter : null,
     group: groupFilter !== "all" ? groupFilter : null,
+    status: deliveryStatusFilter,
   })
     .then((summary) => ({
       summary,
@@ -95,13 +105,15 @@ export default async function OptimizePage({
     metric,
     brand: brandFilter !== "all" ? brandFilter : null,
     group: groupFilter !== "all" ? groupFilter : null,
+    status: deliveryStatusFilter,
+    startDate: dataDateRange.start,
+    endDate: dataDateRange.end,
   }).catch(async (e) => {
     console.error("[optimize] fetchPeriodPivot threw:", e);
-    const { lastNPeriods } = await import("@/lib/period-windows");
     return {
       configured: false,
       missingEnv: [],
-      periods: lastNPeriods(pivotAnchor, periodCount, frequency),
+      periods: pivotPeriods,
       metric,
       query: null,
       campaigns: [],
@@ -112,7 +124,7 @@ export default async function OptimizePage({
     };
   });
 
-  const [{ summary, fetchError }, pivot] = await Promise.all([
+  const [{ summary }, pivot] = await Promise.all([
     summaryPromise,
     pivotPromise,
   ]);
@@ -125,27 +137,19 @@ export default async function OptimizePage({
     label: u,
   }));
 
-  // The Optimize summary fetch applies brand/group/date filters server-side,
+  // The Optimize summary fetch applies brand/group/date/status filters server-side,
   // so the chart and headline stats no longer need the full dashboard payload.
   const filteredDailyTrend = summary.dailyTrend;
-  // statusFilter intentionally left unused for chart + pivot — the RPC
-  // doesn't carry an ad-status field, and "current status" doesn't
-  // meaningfully apply to historical daily aggregates anyway. Status
-  // becomes meaningful again when ad-level enrichment lands in v2.
-  void statusFilter;
 
   // Status-sentence inputs.
   const winnersCount = summary.winnersCount;
   const criticalCount = summary.criticalCount;
-  const spend7d = recentSpend(summary.dailyTrend, 7);
-  const spend7dPrior = recentSpend(summary.dailyTrend, 7, 7);
-  const spendDelta = spend7dPrior > 0 ? (spend7d - spend7dPrior) / spend7dPrior : null;
+  const spendInRange = summary.spendTotal;
 
   const sentence = buildSentence({
     criticalCount,
     winnersCount,
-    spend7d,
-    spendDelta,
+    spendInRange,
   });
 
   const moneyShort = new Intl.NumberFormat("en-US", {
@@ -155,7 +159,7 @@ export default async function OptimizePage({
     notation: "compact",
   });
 
-  const isEmpty = summary.creativeCount === 0 && spend7d === 0;
+  const isEmpty = summary.creativeCount === 0 && spendInRange === 0;
 
   return (
     <div className="space-y-6">
@@ -163,11 +167,9 @@ export default async function OptimizePage({
         sentence={sentence}
         metrics={[
           {
-            label: "Spend 7d",
-            value: moneyShort.format(spend7d),
-            delta: spendDelta == null
-              ? null
-              : { value: spendDelta * 100, positive: spendDelta >= 0 },
+            label: "Spend",
+            value: moneyShort.format(spendInRange),
+            delta: null,
           },
           {
             label: "Creatives",
@@ -201,7 +203,7 @@ export default async function OptimizePage({
         </section>
       ) : null}
 
-      <TimeSeriesChart data={filteredDailyTrend} />
+      <TimeSeriesChart data={filteredDailyTrend} metric={metric} />
 
       {/* Consolidated filter + period-control bar. Two rows in one
           container so the operator reads "filters + grouping" as one
@@ -222,27 +224,33 @@ export default async function OptimizePage({
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
-function recentSpend(
-  trend: { date: string; spend: number }[],
-  windowDays: number,
-  offsetDays = 0,
-): number {
-  if (!trend.length) return 0;
-  const sorted = [...trend].sort((a, b) => a.date.localeCompare(b.date));
-  const end = sorted.length - offsetDays;
-  const start = Math.max(0, end - windowDays);
-  return sorted.slice(start, end).reduce((sum, r) => sum + (Number(r.spend) || 0), 0);
+function intersectDateRanges(
+  selected: { start: string; end: string; days: number },
+  visiblePeriods: { start: string; end: string },
+) {
+  const start = selected.start > visiblePeriods.start ? selected.start : visiblePeriods.start;
+  const end = selected.end < visiblePeriods.end ? selected.end : visiblePeriods.end;
+  return {
+    start,
+    end,
+    days: daysBetween(start, end),
+  };
+}
+
+function daysBetween(start: string, end: string) {
+  const startTime = new Date(`${start}T00:00:00Z`).getTime();
+  const endTime = new Date(`${end}T00:00:00Z`).getTime();
+  return Math.max(1, Math.round((endTime - startTime) / 86_400_000) + 1);
 }
 
 function buildSentence(args: {
   criticalCount: number;
   winnersCount: number;
-  spend7d: number;
-  spendDelta: number | null;
+  spendInRange: number;
 }): string {
-  const { criticalCount, winnersCount, spend7d, spendDelta } = args;
+  const { criticalCount, winnersCount, spendInRange } = args;
 
-  if (criticalCount === 0 && winnersCount === 0 && spend7d === 0) {
+  if (criticalCount === 0 && winnersCount === 0 && spendInRange === 0) {
     return "No delivery in this range. Run a sync or widen the date filter.";
   }
 
@@ -259,17 +267,13 @@ function buildSentence(args: {
       `${winnersCount} winner${winnersCount === 1 ? "" : "s"} ready to scale.`,
     );
   }
-  if (spend7d > 0) {
+  if (spendInRange > 0) {
     const dollars = new Intl.NumberFormat("en-US", {
       style: "currency",
       currency: "USD",
       maximumFractionDigits: 0,
-    }).format(spend7d);
-    const deltaPart =
-      spendDelta == null
-        ? ""
-        : ` (${spendDelta >= 0 ? "+" : ""}${Math.round(spendDelta * 100)}% vs prior week)`;
-    pieces.push(`${dollars} spent last 7 days${deltaPart}.`);
+    }).format(spendInRange);
+    pieces.push(`${dollars} spent in this range.`);
   }
 
   return pieces.join(" ");

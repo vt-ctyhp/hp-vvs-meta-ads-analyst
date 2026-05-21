@@ -47,6 +47,9 @@ export async function GET(request: Request) {
       metric,
       brand: url.searchParams.get("brand"),
       group: url.searchParams.get("group"),
+      status: url.searchParams.get("status"),
+      startDate: url.searchParams.get("start"),
+      endDate: url.searchParams.get("end"),
       parentLevel,
       parentId,
     });

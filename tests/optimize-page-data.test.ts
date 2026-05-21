@@ -62,6 +62,7 @@ describe("buildOptimizeSummaryFromAggregates", () => {
     });
 
     assert.equal(summary.creativeCount, 3);
+    assert.equal(summary.spendTotal, 1000);
     assert.equal(summary.winnersCount, 1);
     assert.equal(summary.criticalCount, 2);
     assert.deepEqual(summary.dailyTrend, [

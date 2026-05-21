@@ -10,34 +10,55 @@ import { AreaClosed, LinePath } from "@visx/shape";
 import { useMemo } from "react";
 
 import type { DailyTrendRow } from "@/lib/analytics";
+import type { PeriodMetric } from "@/lib/period-pivot-data";
 
 /**
  * Time-series chart for the Optimize room.
  *
- * Two stacked-ish series: primary KPI (line) + spend (filled area).
+ * Two stacked-ish series: selected metric (line) + spend (filled area).
  * Brush + comparison toggle land in a follow-up; for now this is a clean
  * daily view that respects the page filters via the data prop.
  *
  * Visx is composable so we wire only what we need: ParentSize → scales →
- * GridRows → AreaClosed (spend) + LinePath (results) + Axes.
+ * GridRows → AreaClosed (spend) + LinePath (selected metric) + Axes.
  */
 
 type Props = {
   /** Daily trend, already filtered to the current brand/group/date range. */
   data: DailyTrendRow[];
+  /** Metric selected in the filter box; plotted as the accent line. */
+  metric?: PeriodMetric;
   /** Optional accent color for the primary-result line. */
   accent?: string;
 };
 
 const margin = { top: 16, right: 24, bottom: 28, left: 56 };
+const CHART_METRIC_LABELS: Record<PeriodMetric, string> = {
+  spend: "Spend",
+  primary_results: "Primary KPI",
+  cost_per_primary_results: "$/Primary KPI",
+  ctr: "CTR",
+  impressions: "Impressions",
+  cpc: "CPC",
+};
 
-export function TimeSeriesChart({ data, accent = "#E14B7B" }: Props) {
+export function TimeSeriesChart({
+  data,
+  metric = "primary_results",
+  accent = "#E14B7B",
+}: Props) {
   // Aggregate the daily trend rows by date so multiple brands/umbrellas
   // collapse into a single visible series.
   const series = useMemo(() => {
     const byDate = new Map<
       string,
-      { date: Date; spend: number; primaryResults: number }
+      {
+        date: Date;
+        spend: number;
+        primaryResults: number;
+        impressions: number;
+        clicks: number;
+      }
     >();
     for (const row of data) {
       const existing = byDate.get(row.date);
@@ -45,15 +66,22 @@ export function TimeSeriesChart({ data, accent = "#E14B7B" }: Props) {
         date: new Date(`${row.date}T00:00:00Z`),
         spend: 0,
         primaryResults: 0,
+        impressions: 0,
+        clicks: 0,
       };
       point.spend += Number(row.spend) || 0;
       point.primaryResults += Number(row.primaryResults) || 0;
+      point.impressions += Number(row.impressions) || 0;
+      point.clicks += Number(row.clicks) || 0;
       byDate.set(row.date, point);
     }
-    return Array.from(byDate.values()).sort(
-      (a, b) => a.date.getTime() - b.date.getTime(),
-    );
-  }, [data]);
+    return Array.from(byDate.values())
+      .sort((a, b) => a.date.getTime() - b.date.getTime())
+      .map((point) => ({
+        ...point,
+        metricValue: resolveChartMetric(point, metric),
+      }));
+  }, [data, metric]);
 
   if (series.length === 0) {
     return (
@@ -84,14 +112,19 @@ export function TimeSeriesChart({ data, accent = "#E14B7B" }: Props) {
           const yResultsScale = scaleLinear<number>({
             domain: [
               0,
-              Math.max(...series.map((d) => d.primaryResults), 1) * 1.1,
+              Math.max(...series.map((d) => d.metricValue), 1) * 1.1,
             ],
             range: [innerHeight, 0],
             nice: true,
           });
 
           return (
-            <svg width={width} height={height} role="img" aria-label="Daily spend and results">
+            <svg
+              width={width}
+              height={height}
+              role="img"
+              aria-label={`Daily spend and ${CHART_METRIC_LABELS[metric]}`}
+            >
               <Group left={margin.left} top={margin.top}>
                 <GridRows
                   scale={ySpendScale}
@@ -114,7 +147,7 @@ export function TimeSeriesChart({ data, accent = "#E14B7B" }: Props) {
                 <LinePath<typeof series[number]>
                   data={series}
                   x={(d) => xScale(d.date) ?? 0}
-                  y={(d) => yResultsScale(d.primaryResults) ?? 0}
+                  y={(d) => yResultsScale(d.metricValue) ?? 0}
                   curve={curveMonotoneX}
                   stroke={accent}
                   strokeWidth={2}
@@ -162,10 +195,42 @@ export function TimeSeriesChart({ data, accent = "#E14B7B" }: Props) {
       </ParentSize>
       <div className="mt-1 flex items-center gap-4 px-2 text-[11px] text-stone-600">
         <Legend dot="#1F4B8A" filled label="Spend" />
-        <Legend dot={accent} label="Primary results" />
+        <Legend
+          dot={accent}
+          label={metric === "spend" ? "Spend line" : CHART_METRIC_LABELS[metric]}
+        />
       </div>
     </div>
   );
+}
+
+function resolveChartMetric(
+  point: {
+    spend: number;
+    primaryResults: number;
+    impressions: number;
+    clicks: number;
+  },
+  metric: PeriodMetric,
+) {
+  switch (metric) {
+    case "spend":
+      return point.spend;
+    case "primary_results":
+      return point.primaryResults;
+    case "cost_per_primary_results":
+      return point.primaryResults > 0 ? point.spend / point.primaryResults : 0;
+    case "ctr":
+      return point.impressions > 0 ? (point.clicks / point.impressions) * 100 : 0;
+    case "impressions":
+      return point.impressions;
+    case "cpc":
+      return point.clicks > 0 ? point.spend / point.clicks : 0;
+    default: {
+      const exhaustive: never = metric;
+      throw new Error(`Unknown chart metric: ${String(exhaustive)}`);
+    }
+  }
 }
 
 function Legend({

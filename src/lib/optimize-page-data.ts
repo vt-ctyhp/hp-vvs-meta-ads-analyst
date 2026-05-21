@@ -7,6 +7,7 @@ import {
   type MetaInsightAggregateRow,
   type MetaInsightFilter,
 } from "./meta-insight-aggregates.ts";
+import { normalizeOptimizeDeliveryStatus } from "./optimize-filters.ts";
 import type { DailyTrendRow, MetricSummary } from "./analytics.ts";
 
 export type OptimizeSummaryInput = {
@@ -15,6 +16,7 @@ export type OptimizeSummaryInput = {
   endDate?: string | null;
   brand?: string | null;
   group?: string | null;
+  status?: string | null;
 };
 
 export type OptimizeBrandOption = {
@@ -28,6 +30,7 @@ export type OptimizeSummaryPayload = {
   timeRange: { start: string | null; end: string | null; days: number };
   brandOptions: OptimizeBrandOption[];
   dailyTrend: DailyTrendRow[];
+  spendTotal: number;
   creativeCount: number;
   winnersCount: number;
   criticalCount: number;
@@ -67,6 +70,7 @@ export function emptyOptimizeSummaryPayload(
     timeRange: { start: null, end: null, days: 30 },
     brandOptions: [],
     dailyTrend: [],
+    spendTotal: 0,
     creativeCount: 0,
     winnersCount: 0,
     criticalCount: 0,
@@ -237,6 +241,7 @@ export function buildOptimizeSummaryFromAggregates({
         };
       })
       .sort((a, b) => a.date.localeCompare(b.date)),
+    spendTotal: overview.spend,
     creativeCount: leanCreatives.length,
     winnersCount,
     criticalCount: fatigueRisks.slice(0, 3).length + underperformers.slice(0, 3).length,
@@ -262,6 +267,14 @@ function buildInsightFilters(input: OptimizeSummaryInput): MetaInsightFilter[] {
       field: "campaign_umbrella",
       operator: "equals",
       value: input.group,
+    });
+  }
+  const status = normalizeOptimizeDeliveryStatus(input.status);
+  if (status) {
+    filters.push({
+      field: "delivery_status",
+      operator: "equals",
+      value: status,
     });
   }
   return filters;
@@ -369,7 +382,7 @@ function riskRank(level?: "low" | "medium" | "high") {
   return 0;
 }
 
-function resolveOptimizeDateRange(input: OptimizeSummaryInput) {
+export function resolveOptimizeDateRange(input: OptimizeSummaryInput) {
   const today = new Date();
   const fallbackDays = normalizeDays(input.days);
   const fallbackEnd = toDateString(today);

@@ -3,6 +3,8 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useState, useTransition } from "react";
 
+import { normalizeOptimizeStatusSelection } from "@/lib/optimize-filters";
+
 /**
  * Optimize-room filter bar. URL-state driven so views are shareable.
  *
@@ -13,13 +15,10 @@ import { useCallback, useMemo, useState, useTransition } from "react";
  *   - start, end : custom ISO date range (overrides `days` when set)
  *   - status  : live | paused | off | all   (defaults to "live" on first land)
  *
- * Data filters propagate server-side to BOTH:
- *   - fetchDashboardData (chart + status sentence + legacy grid)
- *   - fetchPeriodPivot (the tree+pivot table — see /optimize/page.tsx for the
- *     brand/group/anchor mapping)
- *
- * Status stays URL-local until the pivot payload carries an ad-status field.
- * Updating it should not re-run the expensive server data pipeline.
+ * Data filters propagate server-side to the full Optimize page:
+ *   - the status sentence and headline metrics
+ *   - the chart
+ *   - the tree/pivot table and lazy-loaded children
  */
 
 type Option = { value: string; label: string };
@@ -44,7 +43,7 @@ const DATE_PRESETS: Array<{ value: string; label: string }> = [
   { value: "custom", label: "Custom range…" },
 ];
 
-const SERVER_DATA_KEYS = new Set(["brand", "group", "days", "start", "end"]);
+const SERVER_DATA_KEYS = new Set(["brand", "group", "days", "start", "end", "status"]);
 
 export function OptimizeFilterBar({ brands, groups }: Props) {
   const router = useRouter();
@@ -58,9 +57,9 @@ export function OptimizeFilterBar({ brands, groups }: Props) {
     const days = params.get("days") ?? "30";
     const start = params.get("start") ?? "";
     const end = params.get("end") ?? "";
-    // status defaults to "live" when the URL doesn't pin it. The page
-    // adopts the same default so the initial render matches.
-    const status = params.get("status") ?? "live";
+    // status defaults to "live" when the URL doesn't pin it. `status=all`
+    // is explicit because deleting the param means "back to Live".
+    const status = normalizeOptimizeStatusSelection(params.get("status")) ?? "live";
     return { brand, group, days, start, end, status };
   }, [params]);
 
@@ -198,7 +197,7 @@ export function OptimizeFilterBar({ brands, groups }: Props) {
         value={current.status}
         options={STATUS_OPTIONS}
         disabled={pending}
-        onChange={(value) => update({ status: value === "all" ? null : value })}
+        onChange={(value) => update({ status: value })}
       />
       {pending ? (
         <span

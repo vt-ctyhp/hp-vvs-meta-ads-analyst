@@ -7,11 +7,11 @@ import { PERIOD_METRIC_LABELS, type PeriodMetric } from "@/lib/period-pivot-data
 import type { Frequency } from "@/lib/period-windows";
 
 /**
- * Header controls for the /optimize period-pivot table.
+ * Header controls for /optimize period grouping.
  *
  * Three segmented controls plus a metric dropdown. All four are URL-state
  * (?periods=4&freq=week&metric=primary_results), so deep links bookmark
- * the operator's preferred view and a refresh keeps the layout.
+ * the operator's preferred view and a refresh keeps the page data window.
  *
  * Per the rebuild PRD §13 spec:
  *   - Periods: 1 | 4 | 8 | 12
@@ -147,7 +147,7 @@ export function PeriodControls({ periods, frequency, metric }: Props) {
           aria-live="polite"
         >
           <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shadow-[0_0_0_3px_rgba(245,158,11,0.18)]" />
-          Updating table
+          Updating data
         </span>
       ) : null}
     </section>
