@@ -27,6 +27,12 @@ import { buildAttentionItems, type AttentionItem } from "./attention-rules.ts";
 import { fetchDashboardData } from "./analytics.ts";
 import type { Json } from "./database.types.ts";
 import { getSystemHealth } from "./system-health.ts";
+import {
+  evaluateSyncStall,
+  stallSummary,
+  stallTitle,
+  type StallTrigger,
+} from "./sync-stall-rule.ts";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -415,33 +421,65 @@ async function computeFunnelSignals(): Promise<SignalCandidate[]> {
 async function computePipelineSignals(): Promise<SignalCandidate[]> {
   const client = createAdsAnalystClient("web");
 
-  const { data: lastSync, error: syncErr } = await client
+  // Pull a small window so we can detect three distinct failure modes:
+  //   A) Nobody has tried in 30h — operator forgot, cron is dead.
+  //   B) Recent attempts keep failing — sync is being driven, but data is
+  //      still stale because every attempt errors out.
+  //   C) Last attempt succeeded (or is still running) but last full success
+  //      is >12h old — partial successes piling up against the date window.
+  //
+  // The original rule only handled (A) by checking the newest attempt's
+  // age. (B) — the actual common failure on staging + the symptom that
+  // sent us digging — never tripped because retries kept `started_at`
+  // recent.
+  const { data: recentRows, error: syncErr } = await client
     .from("sync_runs")
     .select("id, status, started_at, completed_at, trigger")
     .order("started_at", { ascending: false, nullsFirst: false })
-    .limit(1);
+    .limit(8);
   if (syncErr) throw new Error(`sync_runs query: ${syncErr.message}`);
 
   const candidates: SignalCandidate[] = [];
-  const newest = lastSync?.[0];
-  if (newest && newest.started_at) {
-    const ageHours = hoursBetween(String(newest.started_at), new Date().toISOString());
-    if (ageHours >= 30) {
-      candidates.push({
-        signal_type: "sync_stall",
-        severity: "critical",
-        room: "operate",
-        entity_type: "sync",
-        entity_id: String(newest.id),
-        brand: null,
-        title: `Last Meta sync was ${formatAge(ageHours)} ago`,
-        summary: `Trigger: ${newest.trigger ?? "unknown"}. Status: ${newest.status ?? "unknown"}.`,
-        score: 90,
-        recommendation: "Trigger a manual sync from Operate → Pipelines.",
-        payload: { sync_id: newest.id, trigger: newest.trigger, status: newest.status },
-        expires_at: hoursFromNow(1),
-      });
-    }
+  const rows = Array.isArray(recentRows) ? recentRows : [];
+  const newest = rows[0] ?? null;
+
+  // Delegate the trigger calculus to the pure rule module so this file
+  // stays focused on persistence + Supabase wiring. evaluateSyncStall
+  // returns null when the pipeline looks healthy.
+  const trigger: StallTrigger | null = evaluateSyncStall(rows);
+  const lastSuccess = rows.find((row) => row.status === "success") ?? null;
+
+  if (newest && trigger) {
+    candidates.push({
+      signal_type: "sync_stall",
+      severity: "critical",
+      room: "operate",
+      // Stable entity_id so this signal updates in place every cron tick
+      // (otherwise each new sync_run id would mint a fresh row and the
+      // old ones would stay active until their expires_at fired).
+      entity_type: "sync",
+      entity_id: "meta_sync_pipeline",
+      brand: null,
+      title: stallTitle(trigger),
+      summary: stallSummary(trigger, newest),
+      score: 90,
+      recommendation:
+        trigger.kind === "no_recent_attempt"
+          ? "Trigger a manual sync from Operate → Pipelines."
+          : "Open Operate → Pipelines, inspect the recent run errors, and retry once the upstream cause clears.",
+      payload: {
+        trigger_kind: trigger.kind,
+        newest_sync_id: newest.id,
+        newest_status: newest.status,
+        newest_started_at: newest.started_at,
+        last_success_id: lastSuccess?.id ?? null,
+        last_success_at: lastSuccess?.started_at ?? null,
+      },
+      // Refresh every hour. If the next cron tick clears the trigger, the
+      // upsert won't find this signal in the candidate set and the
+      // expire_old_signals pass will fade it out.
+      expires_at: hoursFromNow(1),
+    });
   }
 
   const { data: failedChunks, error: chunkErr } = await client
@@ -707,3 +745,4 @@ function formatAge(hours: number): string {
   if (hours < 24) return `${Math.round(hours)}h`;
   return `${Math.round(hours / 24)}d`;
 }
+
