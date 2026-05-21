@@ -792,7 +792,7 @@ function selectReturnEvent(
       const eventTime = timestampValue(event.occurred_at);
       return !bookingTime || eventTime <= bookingTime;
     })
-    .sort((a, b) => timestampValue(a.occurred_at) - timestampValue(b.occurred_at));
+    .sort((a, b) => timestampValue(b.occurred_at) - timestampValue(a.occurred_at));
 
   return (
     beforeBooking.find((event) => event.event_name === "PageView") ||

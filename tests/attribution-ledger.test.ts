@@ -282,6 +282,22 @@ describe("attribution ledger detail data", () => {
       ],
       events: [
         eventRow({
+          event_id: "hp_evt-original-ad",
+          event_name: "PageView",
+          fbclid: "original-click",
+          occurred_at: "2026-05-20T22:59:08.000Z",
+          page_url:
+            "https://www.hungphatusa.com/pages/book-an-appointment?utm_source=ig&utm_medium=paid_social&utm_campaign_id=120234691669940650&utm_adset_id=120242517363420650&utm_ad_id=120244031602180650&utm_content=DM_IG_HeyBeyArea&fbclid=original-click",
+          referrer: "https://www.instagram.com/",
+          source_type: "paid_meta",
+          utm_ad_id: "120244031602180650",
+          utm_adset_id: "120242517363420650",
+          utm_campaign_id: "120234691669940650",
+          utm_content: "DM_IG_HeyBeyArea",
+          utm_medium: "paid_social",
+          utm_source: "ig",
+        }),
+        eventRow({
           event_id: "hp_evt-page",
           event_name: "PageView",
           occurred_at: "2026-05-20T23:48:27.772Z",
@@ -301,6 +317,15 @@ describe("attribution ledger detail data", () => {
           event_type: "conversion",
           occurred_at: "2026-05-20T23:49:18.756Z",
         }),
+        eventRow({
+          event_id: "hp_evt-after-booking",
+          event_name: "PageView",
+          fbclid: "after-booking-click",
+          occurred_at: "2026-05-20T23:50:19.000Z",
+          page_url:
+            "https://www.hungphatusa.com/pages/book-an-appointment/confirmed?utm_source=ig&utm_medium=social&utm_content=post_booking&fbclid=after-booking-click",
+          utm_content: "post_booking",
+        }),
       ],
       sessions: [sessionRow({ session_id: "session-1" })],
       visitor: visitorRow({
@@ -316,7 +341,9 @@ describe("attribution ledger detail data", () => {
     assert.equal(detail.creditedTouch?.fbclidPresent, true);
     assert.equal(detail.creditedTouch?.pageUrl?.includes("original-click"), false);
     assert.equal(detail.returnTouch?.content, "link_in_bio");
+    assert.equal(detail.returnTouch?.medium, "social");
     assert.equal(detail.returnTouch?.pageUrl?.includes("link-in-bio-click"), false);
+    assert.equal(detail.timeline.some((event) => event.eventId === "hp_evt-after-booking"), false);
     assert.equal(detail.capi.status, "sent");
     assert.equal(detail.capi.testMode, false);
     assert.equal(detail.confidence.level, "browser_session");
@@ -327,12 +354,41 @@ describe("attribution ledger detail data", () => {
       detail.timeline.map((event) => event.label),
       [
         "Paid ad attribution captured",
+        "Page viewed",
         "Returned from Instagram/social URL",
         "Booking submitted",
         "Acuity booking created",
         "Meta CAPI sent",
       ],
     );
+  });
+
+  it("uses the only pre-booking page view as the return touch", () => {
+    const detail = buildAttributionLedgerDetailData({
+      conversions: [
+        conversionRow({
+          event_id: "acuity-single-page",
+          occurred_at: "2026-05-20T18:30:00.000Z",
+          session_id: "session-1",
+        }),
+      ],
+      events: [
+        eventRow({
+          event_id: "hp_evt-only-page",
+          event_name: "PageView",
+          fbclid: "single-click",
+          occurred_at: "2026-05-20T18:29:00.000Z",
+          page_url:
+            "https://www.hungphatusa.com/pages/book-an-appointment?utm_source=ig&utm_medium=social&utm_content=only_visit&fbclid=single-click",
+          utm_content: "only_visit",
+        }),
+      ],
+      sessions: [sessionRow({ session_id: "session-1" })],
+      visitor: visitorRow(),
+    });
+
+    assert.equal(detail.returnTouch?.content, "only_visit");
+    assert.equal(detail.timeline.find((event) => event.eventId === "hp_evt-only-page")?.label, "Returned from Instagram/social URL");
   });
 });
 
