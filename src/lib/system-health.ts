@@ -124,6 +124,15 @@ export async function getSystemHealth(): Promise<SystemHealthSnapshot> {
   if (rollupHealthResult.status === "fulfilled") {
     const rollupIssue = metaInsightRollupSystemHealthIssue(rollupHealthResult.value);
     if (rollupIssue) issues.push(rollupIssue);
+  } else {
+    issues.push({
+      level: "warning",
+      title: "Meta rollup health unavailable",
+      detail:
+        rollupHealthResult.reason instanceof Error
+          ? rollupHealthResult.reason.message
+          : "Rollup health couldn't be loaded.",
+    });
   }
 
   const status: SystemHealthStatus = issues.some((issue) => issue.level === "critical")
