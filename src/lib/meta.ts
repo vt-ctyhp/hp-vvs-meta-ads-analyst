@@ -18,6 +18,7 @@ import {
   syncOptionsForTrigger,
   type MetaAdsSyncTrigger,
 } from "./meta-sync-options";
+import { refreshMetaInsightRollups } from "./meta-insight-rollups";
 import {
   adsAnalystOnConflict,
   createAdsAnalystClient,
@@ -945,6 +946,11 @@ async function syncAccount(
   const beforeBuckets = await insightBucketSnapshots(metaAccountId, affectedRange);
 
   await replaceStoredInsightRows(metaAccountId, affectedRange, dedupedInsightRows);
+  await refreshMetaInsightRollups({
+    start: affectedRange.start,
+    end: affectedRange.end,
+    metaAccountId,
+  });
 
   const after = await insightAggregateSnapshot(metaAccountId, affectedRange);
   const afterBuckets = await insightBucketSnapshots(metaAccountId, affectedRange);

@@ -74,6 +74,7 @@ export const ANALYST_OWNED_TABLES = [
   "meta_campaigns",
   "meta_creatives",
   "meta_daily_insights",
+  "meta_daily_insight_rollups",
   "meta_social_comments",
   "meta_social_messages",
   "meta_social_pages",
