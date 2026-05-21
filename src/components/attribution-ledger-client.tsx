@@ -9,6 +9,7 @@ import {
   Clock3,
   Database,
   ExternalLink,
+  Link2,
   Loader2,
   MousePointerClick,
   ShieldCheck,
@@ -42,6 +43,9 @@ export function AttributionLedgerClient({ initialData }: Props) {
   const [detail, setDetail] = useState<AttributionLedgerDetailData | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
+  const [timelineLink, setTimelineLink] = useState<string | null>(null);
+  const [isTimelineLinkCopied, setIsTimelineLinkCopied] = useState(false);
+  const [hasOpenedInitialTimelineLink, setHasOpenedInitialTimelineLink] = useState(false);
   const capiTotal = data.summary.capiStatuses.reduce((sum, row) => sum + row.count, 0);
 
   useEffect(() => {
@@ -83,15 +87,6 @@ export function AttributionLedgerClient({ initialData }: Props) {
     return () => controller.abort();
   }, [selectedRow]);
 
-  useEffect(() => {
-    if (!selectedRow) return;
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setSelectedRow(null);
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selectedRow]);
-
   const applyDateRange = useCallback(
     function applyDateRange(nextStart = startDate, nextEnd = endDate) {
       if (!nextStart || !nextEnd) return;
@@ -104,18 +99,62 @@ export function AttributionLedgerClient({ initialData }: Props) {
     },
     [endDate, startDate],
   );
-  const openDetailDrawer = useCallback((row: AttributionLedgerRow) => {
+  const openDetailDrawer = useCallback((row: AttributionLedgerRow, options?: { syncUrl?: boolean }) => {
+    const link =
+      options?.syncUrl === false ? currentTimelineUrl(row) : writeTimelineUrl(row);
     setDetail(null);
     setDetailError(null);
     setIsLoadingDetail(true);
+    setTimelineLink(link);
+    setIsTimelineLinkCopied(false);
     setSelectedRow(row);
   }, []);
   const closeDetailDrawer = useCallback(() => {
+    clearTimelineUrl();
     setSelectedRow(null);
     setDetail(null);
     setDetailError(null);
     setIsLoadingDetail(false);
+    setTimelineLink(null);
+    setIsTimelineLinkCopied(false);
   }, []);
+  const copyTimelineLink = useCallback(async () => {
+    if (!timelineLink || typeof navigator === "undefined" || !navigator.clipboard) return;
+
+    try {
+      await navigator.clipboard.writeText(timelineLink);
+      setIsTimelineLinkCopied(true);
+    } catch {
+      // Clipboard permissions can be blocked by the browser; the link still remains in the URL.
+    }
+  }, [timelineLink]);
+
+  useEffect(() => {
+    if (hasOpenedInitialTimelineLink || selectedRow) return;
+
+    const handle = window.setTimeout(() => {
+      const row = timelineRowFromCurrentUrl(data.rows);
+      if (row) openDetailDrawer(row, { syncUrl: false });
+      setHasOpenedInitialTimelineLink(true);
+    }, 0);
+
+    return () => window.clearTimeout(handle);
+  }, [data.rows, hasOpenedInitialTimelineLink, openDetailDrawer, selectedRow]);
+
+  useEffect(() => {
+    if (!selectedRow) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") closeDetailDrawer();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [closeDetailDrawer, selectedRow]);
+
+  useEffect(() => {
+    if (!isTimelineLinkCopied) return;
+    const handle = window.setTimeout(() => setIsTimelineLinkCopied(false), 1500);
+    return () => window.clearTimeout(handle);
+  }, [isTimelineLinkCopied]);
 
   return (
     <main className="min-h-screen bg-hp-foundation text-hp-body">
@@ -263,9 +302,12 @@ export function AttributionLedgerClient({ initialData }: Props) {
       <AttributionDetailDrawer
         detail={detail}
         error={detailError}
+        isLinkCopied={isTimelineLinkCopied}
         isLoading={isLoadingDetail}
+        onCopyLink={copyTimelineLink}
         onClose={closeDetailDrawer}
         row={selectedRow}
+        timelineLink={timelineLink}
       />
     </main>
   );
@@ -348,15 +390,21 @@ function AttributionLedgerTableRow({
 function AttributionDetailDrawer({
   detail,
   error,
+  isLinkCopied,
   isLoading,
+  onCopyLink,
   onClose,
   row,
+  timelineLink,
 }: {
   detail: AttributionLedgerDetailData | null;
   error: string | null;
+  isLinkCopied: boolean;
   isLoading: boolean;
+  onCopyLink: () => void;
   onClose: () => void;
   row: AttributionLedgerRow | null;
+  timelineLink: string | null;
 }) {
   if (!row) return null;
   const title =
@@ -406,15 +454,26 @@ function AttributionDetailDrawer({
               ) : null}
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="shrink-0 border border-hp-rule p-2 text-hp-muted transition-colors duration-150 hover:border-hp-ink hover:text-hp-ink"
-            aria-label="Close attribution detail"
-            title="Close"
-          >
-            <X size={17} />
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={onCopyLink}
+              disabled={!timelineLink}
+              className="inline-flex items-center gap-2 border border-hp-rule px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted transition-colors duration-150 hover:border-hp-ink hover:text-hp-ink disabled:hover:border-hp-rule disabled:hover:text-hp-muted"
+            >
+              {isLinkCopied ? <CheckCircle2 size={14} /> : <Link2 size={14} />}
+              {isLinkCopied ? "Copied" : "Copy link"}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="border border-hp-rule p-2 text-hp-muted transition-colors duration-150 hover:border-hp-ink hover:text-hp-ink"
+              aria-label="Close attribution detail"
+              title="Close"
+            >
+              <X size={17} />
+            </button>
+          </div>
         </header>
 
         <div className="flex-1 overflow-y-auto">
@@ -894,6 +953,91 @@ function timelineTone(category: AttributionLedgerTimelineEvent["category"]) {
 
 function joinedDetail(...values: Array<string | null | undefined>) {
   return values.filter(Boolean).join(" / ") || null;
+}
+
+function timelineRowFromCurrentUrl(rows: AttributionLedgerRow[]) {
+  if (typeof window === "undefined") return null;
+
+  const params = new URLSearchParams(window.location.search);
+  const visitorId = params.get("visitorId")?.trim() || null;
+  const acuityAppointmentId = params.get("acuityAppointmentId")?.trim() || null;
+
+  if (!visitorId && !acuityAppointmentId) return null;
+
+  const exactMatch = rows.find((row) => {
+    if (visitorId && row.visitorId !== visitorId) return false;
+    if (acuityAppointmentId && row.acuityAppointmentId !== acuityAppointmentId) return false;
+    return true;
+  });
+
+  if (exactMatch) return exactMatch;
+  if (!visitorId) return null;
+
+  return emptyTimelineRow(visitorId, acuityAppointmentId);
+}
+
+function emptyTimelineRow(
+  visitorId: string,
+  acuityAppointmentId: string | null,
+): AttributionLedgerRow {
+  return {
+    adId: null,
+    adsetId: null,
+    acuityAppointmentId,
+    appointmentType: null,
+    bookingTime: null,
+    browserName: null,
+    campaignId: null,
+    capiStatus: null,
+    customerEmail: null,
+    customerName: null,
+    customerPhone: null,
+    deviceBrowser: null,
+    deviceCategory: null,
+    fbc: null,
+    fbp: null,
+    firstPage: null,
+    hasConversion: Boolean(acuityAppointmentId),
+    hasPaidTouch: false,
+    lastPaidSource: null,
+    lastSeen: "",
+    metaEventId: null,
+    osName: null,
+    placement: null,
+    sessionId: null,
+    visitorId,
+  };
+}
+
+function writeTimelineUrl(row: AttributionLedgerRow) {
+  const url = currentTimelineUrlObject(row);
+  if (!url) return null;
+  window.history.replaceState(null, "", url.toString());
+  return url.toString();
+}
+
+function currentTimelineUrl(row: AttributionLedgerRow) {
+  return currentTimelineUrlObject(row)?.toString() || null;
+}
+
+function currentTimelineUrlObject(row: AttributionLedgerRow) {
+  if (typeof window === "undefined") return null;
+  const url = new URL(window.location.href);
+  url.searchParams.set("visitorId", row.visitorId);
+  if (row.acuityAppointmentId) {
+    url.searchParams.set("acuityAppointmentId", row.acuityAppointmentId);
+  } else {
+    url.searchParams.delete("acuityAppointmentId");
+  }
+  return url;
+}
+
+function clearTimelineUrl() {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  url.searchParams.delete("visitorId");
+  url.searchParams.delete("acuityAppointmentId");
+  window.history.replaceState(null, "", url.toString());
 }
 
 function formatCapiSummary(statuses: AttributionLedgerData["summary"]["capiStatuses"]) {
