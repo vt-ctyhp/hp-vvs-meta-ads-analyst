@@ -33,6 +33,7 @@ import {
 
 import type {
   AnalysisMetric,
+  AnalysisFilter,
   AnalysisResult,
   AnalysisSpec,
   AnalysisTableColumn,
@@ -44,6 +45,14 @@ import { translateError } from "@/lib/glossary";
 type Props = {
   initialSaved: SavedAnalysisDashboard[];
   surface?: "page" | "panel";
+  runtimeContext?: {
+    dateRange?: {
+      days?: number;
+      startDate?: string | null;
+      endDate?: string | null;
+    };
+    filters?: AnalysisFilter[];
+  };
 };
 
 const CHART_COLORS = ["#2A2725", "#245D4D", "#8B5B19", "#8D2E2E", "#E91D79"];
@@ -78,7 +87,11 @@ const ANALYSIS_GUIDE = [
   },
 ] as const;
 
-export function AnalysisClient({ initialSaved, surface = "page" }: Props) {
+export function AnalysisClient({
+  initialSaved,
+  surface = "page",
+  runtimeContext,
+}: Props) {
   const isPanel = surface === "panel";
   const [mode, setMode] = useState<AnalysisMode>("fast");
   const [prompt, setPrompt] = useState("");
@@ -105,7 +118,7 @@ export function AnalysisClient({ initialSaved, surface = "page" }: Props) {
       const response = await fetch("/api/analysis", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt: nextPrompt, mode }),
+        body: JSON.stringify({ prompt: nextPrompt, mode, runtimeContext }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Analysis failed");
@@ -126,7 +139,9 @@ export function AnalysisClient({ initialSaved, surface = "page" }: Props) {
     setStatus("");
     setActionStatus("");
     try {
-      const response = await fetch(`/api/analysis?dashboardId=${encodeURIComponent(dashboardId)}`);
+      const response = await fetch(
+        `/api/analysis?dashboardId=${encodeURIComponent(dashboardId)}${runtimeQuery(runtimeContext)}`,
+      );
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Could not load saved dashboard");
       setResult(payload);
@@ -159,6 +174,7 @@ export function AnalysisClient({ initialSaved, surface = "page" }: Props) {
           currentSpec: result.spec,
           prompt: nextPrompt,
           mode,
+          runtimeContext,
         }),
       });
       const payload = await response.json();
@@ -420,6 +436,27 @@ export function AnalysisClient({ initialSaved, surface = "page" }: Props) {
       </section>
     </div>
   );
+}
+
+function runtimeQuery(runtimeContext: Props["runtimeContext"]) {
+  if (!runtimeContext) return "";
+  const params = new URLSearchParams();
+  if (runtimeContext.dateRange?.days) {
+    params.set("days", String(runtimeContext.dateRange.days));
+  }
+  if (runtimeContext.dateRange?.startDate) {
+    params.set("startDate", runtimeContext.dateRange.startDate);
+  }
+  if (runtimeContext.dateRange?.endDate) {
+    params.set("endDate", runtimeContext.dateRange.endDate);
+  }
+  for (const filter of runtimeContext.filters || []) {
+    if (filter.field === "brand") params.set("brand", filter.value);
+    if (filter.field === "campaign_umbrella") params.set("group", filter.value);
+    if (filter.field === "delivery_status") params.set("status", filter.value);
+  }
+  const query = params.toString();
+  return query ? `&${query}` : "";
 }
 
 function CurrentDashboardPanel({

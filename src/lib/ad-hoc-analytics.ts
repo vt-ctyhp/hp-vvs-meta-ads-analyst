@@ -7,7 +7,6 @@ import {
   type AnalysisMode,
   ConfigurationError,
   getMissingDashboardEnv,
-  getMissingRequiredEnv,
   getOpenAIAnalysisModel,
 } from "./env.ts";
 import { aggregateMetaInsights, type MetaInsightAggregateRow } from "./meta-insight-aggregates.ts";
@@ -58,6 +57,7 @@ const FILTER_FIELDS = [
   "ad_set",
   "ad",
   "creative",
+  "delivery_status",
 ] as const;
 
 const DATE_PRESETS = [
@@ -145,6 +145,15 @@ export type AnalysisSpec = {
     x?: AnalysisDimension;
     metrics: AnalysisMetric[];
   }>;
+};
+
+export type AnalysisRuntimeContext = {
+  dateRange?: {
+    days?: number;
+    startDate?: string | null;
+    endDate?: string | null;
+  };
+  filters?: AnalysisFilter[];
 };
 
 export type AnalysisTableColumn = {
@@ -404,20 +413,25 @@ export async function fetchSavedAnalysisDashboards(limit = 12): Promise<SavedAna
   }
 }
 
-export async function runSavedAdHocAnalysis(dashboardId: string): Promise<AnalysisResult> {
+export async function runSavedAdHocAnalysis(
+  dashboardId: string,
+  runtimeContext?: AnalysisRuntimeContext,
+): Promise<AnalysisResult> {
   const dashboard = await fetchAnalysisDashboardRecord(dashboardId);
   const spec = normalizeSpec(dashboard.spec, dashboard.prompt);
   const repairedSpec = specWasRepaired(dashboard.spec, dashboard.prompt, spec);
+  const resolvedSpec = applyRuntimeContext(spec, runtimeContext);
   const mode: AnalysisMode = dashboard.mode === "deep" ? "deep" : "fast";
   const planModel = dashboard.model_plan || getOpenAIAnalysisModel("fast");
   const analysisModel = dashboard.model_analysis;
-  const validation = validateAnalysisSpec(dashboard.prompt, spec, { repairedSpec });
+  const validation = validateAnalysisSpec(dashboard.prompt, resolvedSpec, { repairedSpec });
 
   if (validation.status !== "ready") {
     return nonExecutableResult({
       prompt: dashboard.prompt,
       mode,
       spec,
+      resolvedSpec,
       dashboardId: dashboard.id,
       planModel,
       analysisModel,
@@ -427,13 +441,14 @@ export async function runSavedAdHocAnalysis(dashboardId: string): Promise<Analys
     });
   }
 
-  const aggregated = await aggregateSpec(spec, validation, repairedSpec);
+  const aggregated = await aggregateSpec(resolvedSpec, validation, repairedSpec);
 
   return {
     ...baseResult({
       prompt: dashboard.prompt,
       mode,
       spec,
+      resolvedSpec,
       aggregated,
       dashboardId: dashboard.id,
       planModel,
@@ -494,6 +509,7 @@ export async function deleteSavedAnalysisDashboard(dashboardId: string) {
 export async function createAdHocAnalysis(input: {
   prompt: string;
   mode: AnalysisMode;
+  runtimeContext?: AnalysisRuntimeContext;
 }): Promise<AnalysisResult> {
   const prompt = input.prompt.trim();
   if (!prompt) {
@@ -518,18 +534,20 @@ export async function createAdHocAnalysis(input: {
   }
 
   const { spec, usage: planUsage } = await createSpecWithAI(prompt, planModel);
+  const resolvedSpec = applyRuntimeContext(spec, input.runtimeContext);
   const baseTokenEstimate = {
     ...emptyTokenEstimate(),
     planInputTokens: planUsage.input,
     planOutputTokens: planUsage.output,
   };
-  const validation = validateAnalysisSpec(prompt, spec);
+  const validation = validateAnalysisSpec(prompt, resolvedSpec);
 
   if (validation.status !== "ready") {
     return nonExecutableResult({
       prompt,
       mode: input.mode,
       spec,
+      resolvedSpec,
       dashboardId: null,
       planModel,
       analysisModel: null,
@@ -539,17 +557,18 @@ export async function createAdHocAnalysis(input: {
     });
   }
 
-  const aggregated = await aggregateSpec(spec, validation, false);
+  const aggregated = await aggregateSpec(resolvedSpec, validation, false);
 
   const analysis =
     input.mode === "deep"
-      ? await generateDeepAnalysis(prompt, spec, aggregated, getOpenAIAnalysisModel("deep"))
+      ? await generateDeepAnalysis(prompt, resolvedSpec, aggregated, getOpenAIAnalysisModel("deep"))
       : null;
 
   const resultBeforeSave = baseResult({
     prompt,
     mode: input.mode,
     spec,
+    resolvedSpec,
     aggregated,
     dashboardId: null,
     planModel,
@@ -569,7 +588,7 @@ export async function createAdHocAnalysis(input: {
 
   const result = {
     ...resultBeforeSave,
-    answer: analysis?.answer || buildDeterministicAnswer(spec, aggregated),
+    answer: analysis?.answer || buildDeterministicAnswer(resolvedSpec, aggregated),
   };
 
   const persistence = await persistAnalysis(result, planModel, analysis?.model || null);
@@ -586,6 +605,7 @@ export async function editAdHocAnalysis(input: {
   currentPrompt?: string | null;
   prompt: string;
   mode: AnalysisMode;
+  runtimeContext?: AnalysisRuntimeContext;
 }): Promise<AnalysisResult> {
   const editPrompt = input.prompt.trim();
   if (!editPrompt) {
@@ -620,18 +640,20 @@ export async function editAdHocAnalysis(input: {
     editPrompt,
     model: planModel,
   });
+  const resolvedSpec = applyRuntimeContext(spec, input.runtimeContext);
   const baseTokenEstimate = {
     ...emptyTokenEstimate(),
     planInputTokens: planUsage.input,
     planOutputTokens: planUsage.output,
   };
-  const validation = validateAnalysisSpec(prompt, spec);
+  const validation = validateAnalysisSpec(prompt, resolvedSpec);
 
   if (validation.status !== "ready") {
     return nonExecutableResult({
       prompt,
       mode: input.mode,
       spec,
+      resolvedSpec,
       dashboardId: dashboard?.id || null,
       planModel,
       analysisModel: null,
@@ -641,17 +663,18 @@ export async function editAdHocAnalysis(input: {
     });
   }
 
-  const aggregated = await aggregateSpec(spec, validation, false);
+  const aggregated = await aggregateSpec(resolvedSpec, validation, false);
 
   const analysis =
     input.mode === "deep"
-      ? await generateDeepAnalysis(prompt, spec, aggregated, getOpenAIAnalysisModel("deep"))
+      ? await generateDeepAnalysis(prompt, resolvedSpec, aggregated, getOpenAIAnalysisModel("deep"))
       : null;
 
   const resultBeforeSave = baseResult({
     prompt,
     mode: input.mode,
     spec,
+    resolvedSpec,
     aggregated,
     dashboardId: dashboard?.id || null,
     planModel,
@@ -671,7 +694,7 @@ export async function editAdHocAnalysis(input: {
 
   const result = {
     ...resultBeforeSave,
-    answer: analysis?.answer || buildDeterministicAnswer(spec, aggregated),
+    answer: analysis?.answer || buildDeterministicAnswer(resolvedSpec, aggregated),
   };
 
   const persistence = await persistAnalysis(result, planModel, analysis?.model || null, dashboard?.id || null);
@@ -814,6 +837,42 @@ async function editSpecWithAI(input: {
         estimateTokens(JSON.stringify(input.currentSpec)) + estimateTokens(input.editPrompt) + 900,
       output: response.usage?.completion_tokens || estimateTokens(content || ""),
     },
+  };
+}
+
+function applyRuntimeContext(
+  spec: AnalysisSpec,
+  runtimeContext?: AnalysisRuntimeContext,
+): AnalysisSpec {
+  if (!runtimeContext) return spec;
+
+  const runtimeFilters = (runtimeContext.filters || [])
+    .map((filter) => ({ ...filter, value: filter.value.trim() }))
+    .filter((filter) => filter.value);
+  const runtimeFilterFields = new Set(runtimeFilters.map((filter) => filter.field));
+  const filters = [
+    ...spec.filters.filter((filter) => !runtimeFilterFields.has(filter.field)),
+    ...runtimeFilters,
+  ];
+  const runtimeDateRange = runtimeContext.dateRange;
+  let dateRange = spec.dateRange;
+  if (runtimeDateRange?.startDate || runtimeDateRange?.endDate) {
+    dateRange = {
+      preset: "custom",
+      ...(runtimeDateRange.days ? { days: runtimeDateRange.days } : {}),
+      start: runtimeDateRange.startDate || undefined,
+      end: runtimeDateRange.endDate || undefined,
+    };
+  } else if (runtimeDateRange?.days) {
+    dateRange = {
+      days: runtimeDateRange.days,
+    };
+  }
+
+  return {
+    ...spec,
+    dateRange,
+    filters,
   };
 }
 
@@ -1748,6 +1807,7 @@ function baseResult(input: {
   prompt: string;
   mode: AnalysisMode;
   spec: AnalysisSpec;
+  resolvedSpec?: AnalysisSpec;
   aggregated: Awaited<ReturnType<typeof aggregateSpec>>;
   dashboardId: string | null;
   planModel: string;
@@ -1756,6 +1816,7 @@ function baseResult(input: {
   validation: ValidationResult;
   repairedSpec: boolean;
 }): AnalysisResult {
+  const resolvedSpec = input.resolvedSpec || input.spec;
   return {
     status: input.validation.status,
     validationStatus: input.validation.status,
@@ -1765,10 +1826,10 @@ function baseResult(input: {
     title: input.spec.title,
     answer: "",
     spec: input.spec,
-    resolvedSpec: input.spec,
+    resolvedSpec,
     table: input.aggregated.table,
     totals: input.aggregated.totals,
-    widgets: input.spec.widgets,
+    widgets: resolvedSpec.widgets,
     sourceTransparency: input.aggregated.sourceTransparency,
     analystDebug: input.aggregated.analystDebug,
     warnings: input.aggregated.warnings,
@@ -1786,6 +1847,7 @@ function nonExecutableResult(input: {
   prompt: string;
   mode: AnalysisMode;
   spec: AnalysisSpec;
+  resolvedSpec?: AnalysisSpec;
   dashboardId: string | null;
   planModel: string;
   analysisModel: string | null;
@@ -1793,7 +1855,8 @@ function nonExecutableResult(input: {
   validation: ValidationResult;
   repairedSpec: boolean;
 }): AnalysisResult {
-  const range = resolveDateRange(input.spec.dateRange, null);
+  const resolvedSpec = input.resolvedSpec || input.spec;
+  const range = resolveDateRange(resolvedSpec.dateRange, null);
   const recordCounts = {
     meta_daily_insights: 0,
     matched_insights: 0,
@@ -1808,11 +1871,11 @@ function nonExecutableResult(input: {
     sourceTable: "meta_daily_insights",
     sourceFunction: null,
     latestSyncedInsightDate: null,
-    filters: input.spec.filters,
+    filters: resolvedSpec.filters,
   };
   const analystDebug = buildAnalystDebug({
     validation: input.validation,
-    spec: input.spec,
+    spec: resolvedSpec,
     range,
     latestSyncedInsightDate: null,
     sourceFunction: null,
@@ -1830,7 +1893,7 @@ function nonExecutableResult(input: {
     title: input.spec.title,
     answer: buildValidationAnswer(input.validation),
     spec: input.spec,
-    resolvedSpec: input.spec,
+    resolvedSpec,
     table: {
       columns: [],
       rows: [],

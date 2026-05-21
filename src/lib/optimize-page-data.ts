@@ -7,6 +7,7 @@ import {
   type MetaInsightAggregateRow,
   type MetaInsightFilter,
 } from "./meta-insight-aggregates.ts";
+import { normalizeOptimizeDeliveryStatus } from "./optimize-filters.ts";
 import type { DailyTrendRow, MetricSummary } from "./analytics.ts";
 
 export type OptimizeSummaryInput = {
@@ -15,6 +16,7 @@ export type OptimizeSummaryInput = {
   endDate?: string | null;
   brand?: string | null;
   group?: string | null;
+  status?: string | null;
 };
 
 export type OptimizeBrandOption = {
@@ -85,7 +87,7 @@ export async function fetchOptimizeSummaryData(
   try {
     const startedAt = performance.now();
     const dateRange = resolveOptimizeDateRange(input);
-    const filters = buildInsightFilters(input);
+    const filters = buildOptimizeInsightFilters(input);
 
     const [
       brandRows,
@@ -252,7 +254,9 @@ function buildBrandOptions(rows: MetaInsightAggregateRow[]): OptimizeBrandOption
     .filter((brand, index, all) => all.findIndex((item) => item.value === brand.value) === index);
 }
 
-function buildInsightFilters(input: OptimizeSummaryInput): MetaInsightFilter[] {
+export function buildOptimizeInsightFilters(
+  input: Pick<OptimizeSummaryInput, "brand" | "group" | "status">,
+): MetaInsightFilter[] {
   const filters: MetaInsightFilter[] = [];
   if (input.brand && input.brand !== "all") {
     filters.push({ field: "brand", operator: "equals", value: input.brand });
@@ -263,6 +267,10 @@ function buildInsightFilters(input: OptimizeSummaryInput): MetaInsightFilter[] {
       operator: "equals",
       value: input.group,
     });
+  }
+  const status = normalizeOptimizeDeliveryStatus(input.status);
+  if (status) {
+    filters.push({ field: "delivery_status", operator: "equals", value: status });
   }
   return filters;
 }
@@ -369,7 +377,7 @@ function riskRank(level?: "low" | "medium" | "high") {
   return 0;
 }
 
-function resolveOptimizeDateRange(input: OptimizeSummaryInput) {
+export function resolveOptimizeDateRange(input: OptimizeSummaryInput) {
   const today = new Date();
   const fallbackDays = normalizeDays(input.days);
   const fallbackEnd = toDateString(today);

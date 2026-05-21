@@ -2,11 +2,38 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  buildOptimizeInsightFilters,
   buildOptimizeSummaryFromAggregates,
 } from "../src/lib/optimize-page-data.ts";
 import type { MetaInsightAggregateRow } from "../src/lib/meta-insight-aggregates.ts";
 
 describe("buildOptimizeSummaryFromAggregates", () => {
+  it("builds aggregate filters for the shared Optimize page scope", () => {
+    assert.deepEqual(
+      buildOptimizeInsightFilters({
+        brand: "HP",
+        group: "Book Appts US",
+        status: "live",
+      }),
+      [
+        { field: "brand", operator: "equals", value: "HP" },
+        { field: "campaign_umbrella", operator: "equals", value: "Book Appts US" },
+        { field: "delivery_status", operator: "equals", value: "live" },
+      ],
+    );
+  });
+
+  it("omits delivery-status filters when Optimize status is all", () => {
+    assert.deepEqual(
+      buildOptimizeInsightFilters({
+        brand: "all",
+        group: "all",
+        status: "all",
+      }),
+      [],
+    );
+  });
+
   it("builds filtered chart rows and lean action counts without dashboard metadata", () => {
     const summary = buildOptimizeSummaryFromAggregates({
       dateRangeStart: "2026-05-01",

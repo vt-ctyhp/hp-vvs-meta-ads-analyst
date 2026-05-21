@@ -113,11 +113,17 @@ export async function answerExecutiveChat(input: {
   days?: number;
   startDate?: string | null;
   endDate?: string | null;
+  brand?: string | null;
+  group?: string | null;
+  status?: string | null;
 }): Promise<ChatResult> {
   const dashboard = await fetchDashboardData({
     days: input.days || 30,
     startDate: input.startDate,
     endDate: input.endDate,
+    brand: input.brand,
+    group: input.group,
+    status: input.status,
   });
   if (!dashboard.configured) {
     throw new ConfigurationError(

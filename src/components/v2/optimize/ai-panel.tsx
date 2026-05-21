@@ -4,7 +4,7 @@ import { Bot, FileText, Loader2, MessageSquare, Send } from "lucide-react";
 import { useCallback, useState } from "react";
 
 import { AnalysisClient } from "@/components/analysis-client";
-import type { SavedAnalysisDashboard } from "@/lib/ad-hoc-analytics";
+import type { AnalysisFilter, SavedAnalysisDashboard } from "@/lib/ad-hoc-analytics";
 import { translateError } from "@/lib/glossary";
 
 type ChatMessage = {
@@ -20,12 +20,18 @@ type Props = {
     startDate: string | null;
     endDate: string | null;
   };
+  filters: {
+    brand: string | null;
+    group: string | null;
+    status: string | null;
+  };
 };
 
 export function OptimizeAiPanel({
   initialSaved,
   canUseAdHocAnalysis,
   dateRange,
+  filters,
 }: Props) {
   const [chatInput, setChatInput] = useState("");
   const [chatSessionId, setChatSessionId] = useState<string | null>(null);
@@ -52,6 +58,9 @@ export function OptimizeAiPanel({
           days: dateRange.days,
           startDate: dateRange.startDate,
           endDate: dateRange.endDate,
+          brand: filters.brand,
+          group: filters.group,
+          status: filters.status,
         }),
       });
       const payload = await response.json();
@@ -69,7 +78,16 @@ export function OptimizeAiPanel({
     } finally {
       setIsChatting(false);
     }
-  }, [chatInput, chatSessionId, dateRange.days, dateRange.endDate, dateRange.startDate]);
+  }, [
+    chatInput,
+    chatSessionId,
+    dateRange.days,
+    dateRange.endDate,
+    dateRange.startDate,
+    filters.brand,
+    filters.group,
+    filters.status,
+  ]);
 
   const generateReport = useCallback(async function generateReport() {
     setIsReporting(true);
@@ -82,6 +100,9 @@ export function OptimizeAiPanel({
           days: dateRange.days,
           startDate: dateRange.startDate,
           endDate: dateRange.endDate,
+          brand: filters.brand,
+          group: filters.group,
+          status: filters.status,
         }),
       });
       const payload = await response.json();
@@ -92,7 +113,14 @@ export function OptimizeAiPanel({
     } finally {
       setIsReporting(false);
     }
-  }, [dateRange.days, dateRange.endDate, dateRange.startDate]);
+  }, [
+    dateRange.days,
+    dateRange.endDate,
+    dateRange.startDate,
+    filters.brand,
+    filters.group,
+    filters.status,
+  ]);
 
   if (!canUseAdHocAnalysis) {
     return (
@@ -101,6 +129,18 @@ export function OptimizeAiPanel({
       </section>
     );
   }
+
+  const runtimeFilters: AnalysisFilter[] = [
+    filters.brand
+      ? { field: "brand", operator: "equals", value: filters.brand }
+      : null,
+    filters.group
+      ? { field: "campaign_umbrella", operator: "equals", value: filters.group }
+      : null,
+    filters.status
+      ? { field: "delivery_status", operator: "equals", value: filters.status }
+      : null,
+  ].filter((filter): filter is AnalysisFilter => Boolean(filter));
 
   return (
     <section className="space-y-5">
@@ -177,7 +217,14 @@ export function OptimizeAiPanel({
         </section>
       </div>
 
-      <AnalysisClient initialSaved={initialSaved} surface="panel" />
+      <AnalysisClient
+        initialSaved={initialSaved}
+        surface="panel"
+        runtimeContext={{
+          dateRange,
+          filters: runtimeFilters,
+        }}
+      />
     </section>
   );
 }

@@ -15,6 +15,9 @@ export async function POST(request: Request) {
       days?: number;
       startDate?: string | null;
       endDate?: string | null;
+      brand?: string | null;
+      group?: string | null;
+      status?: string | null;
     };
 
     if (!body.message?.trim()) {
@@ -27,6 +30,9 @@ export async function POST(request: Request) {
       days: body.days,
       startDate: body.startDate,
       endDate: body.endDate,
+      brand: body.brand,
+      group: body.group,
+      status: body.status,
     });
 
     return Response.json(result);

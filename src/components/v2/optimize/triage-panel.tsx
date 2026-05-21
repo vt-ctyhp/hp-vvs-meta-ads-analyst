@@ -4,8 +4,7 @@ import type { ActionBucket, ActionItem, DashboardPayload } from "@/lib/analytics
 
 type Props = {
   data: DashboardPayload;
-  brand?: string | null;
-  group?: string | null;
+  params?: Record<string, string | string[] | undefined>;
 };
 
 const BUCKETS: Array<{
@@ -36,12 +35,8 @@ const BUCKETS: Array<{
 
 const TRIAGE_BUCKET_LIMIT = 10;
 
-export function TriagePanel({ data, brand = "all", group = "all" }: Props) {
-  const items = data.actionQueue.filter((item) => {
-    if (brand !== "all" && item.brandCode !== brand) return false;
-    if (group !== "all" && item.campaignUmbrella !== group) return false;
-    return true;
-  });
+export function TriagePanel({ data, params = {} }: Props) {
+  const items = data.actionQueue;
   const grouped = groupActionItems(items);
 
   return (
@@ -67,6 +62,7 @@ export function TriagePanel({ data, brand = "all", group = "all" }: Props) {
             key={bucket.key}
             bucket={bucket}
             group={grouped[bucket.key]}
+            params={params}
           />
         ))}
       </div>
@@ -77,9 +73,11 @@ export function TriagePanel({ data, brand = "all", group = "all" }: Props) {
 function ActionBucketColumn({
   bucket,
   group,
+  params,
 }: {
   bucket: (typeof BUCKETS)[number];
   group: GroupedActionItems[ActionBucket];
+  params: Record<string, string | string[] | undefined>;
 }) {
   const hiddenCount = group.total - group.items.length;
 
@@ -101,7 +99,7 @@ function ActionBucketColumn({
           {group.items.map((item) => (
             <li key={item.id}>
               <Link
-                href={`/optimize?tab=creatives&focus=${encodeURIComponent(item.entityId)}`}
+                href={hrefForCreativeFocus(params, item.entityId)}
                 className={[
                   "block border-l-4 px-4 py-3 transition-colors hover:bg-stone-50",
                   bucket.className,
@@ -137,6 +135,24 @@ function ActionBucketColumn({
       )}
     </section>
   );
+}
+
+function hrefForCreativeFocus(
+  params: Record<string, string | string[] | undefined>,
+  entityId: string,
+) {
+  const next = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (key === "focus") continue;
+    if (Array.isArray(value)) {
+      for (const item of value) next.append(key, item);
+    } else if (value !== undefined) {
+      next.set(key, value);
+    }
+  }
+  next.set("tab", "creatives");
+  next.set("focus", entityId);
+  return `/optimize?${next.toString()}`;
 }
 
 type GroupedActionItems = Record<ActionBucket, { items: ActionItem[]; total: number }>;
