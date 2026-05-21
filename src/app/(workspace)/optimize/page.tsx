@@ -13,6 +13,8 @@ import {
 } from "@/lib/optimize-page-data";
 import {
   fetchPeriodPivot,
+  isPeriodMetric,
+  normalizePeriodCount,
   type PeriodMetric,
   type PeriodPivotPayload,
 } from "@/lib/period-pivot-data";
@@ -34,16 +36,6 @@ type SearchParams = {
   freq?: string;
   metric?: string;
 };
-
-const ALLOWED_PERIODS = new Set([1, 4, 8, 12]);
-const ALLOWED_METRICS: PeriodMetric[] = [
-  "spend",
-  "primary_results",
-  "cost_per_primary_results",
-  "ctr",
-  "impressions",
-  "cpc",
-];
 
 export default async function OptimizePage({
   searchParams,
@@ -71,13 +63,11 @@ export default async function OptimizePage({
       : new Date();
 
   // Period-pivot controls — defaults: 4 weeks of Primary KPI.
-  const requestedPeriods = Number(params.periods);
-  const periodCount = ALLOWED_PERIODS.has(requestedPeriods) ? requestedPeriods : 4;
+  const periodCount = normalizePeriodCount(params.periods);
   const frequency: Frequency = isFrequency(params.freq) ? params.freq : "week";
-  const metric: PeriodMetric =
-    ALLOWED_METRICS.includes(params.metric as PeriodMetric)
-      ? (params.metric as PeriodMetric)
-      : "primary_results";
+  const metric: PeriodMetric = isPeriodMetric(params.metric)
+    ? params.metric
+    : "primary_results";
 
   const summaryPromise = fetchOptimizeSummaryData({
     days,
@@ -113,6 +103,7 @@ export default async function OptimizePage({
       missingEnv: [],
       periods: lastNPeriods(pivotAnchor, periodCount, frequency),
       metric,
+      query: null,
       campaigns: [],
       adSets: [],
       creatives: [],

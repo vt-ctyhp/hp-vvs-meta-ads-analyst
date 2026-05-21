@@ -1,18 +1,10 @@
 /**
  * Period-pivot data fetcher for the /optimize tree+pivot table.
  *
- * Issues N RPC calls in parallel (one per tree level — campaign, ad set,
- * creative) over the same date range, returning rows already pivoted by
- * period. The /optimize page wires the result into TanStack's expandable
- * row model.
- *
- * Why three eager fetches instead of lazy-on-expand:
- *   - Each call is small (max ~5k rows after the RPC's grouping).
- *   - Parallel network is faster than serial round-trips.
- *   - The user can expand any campaign without latency.
- *
- * If the data volume ever forces it, swap to lazy fetch by accepting a
- * `parentFilter` and only resolving children when a row is expanded.
+ * The first page load only fetches campaign rows. Expanding a campaign asks
+ * the API for ad-set rows; expanding an ad set asks for creative rows and
+ * their assets. That keeps initial /optimize rendering focused on the rows
+ * the operator can see immediately.
  */
 
 import { createAdsAnalystClient } from "./ads-analyst-db.ts";
@@ -49,6 +41,16 @@ export type PeriodMetric =
   | "impressions"
   | "cpc";
 
+export const ALLOWED_PERIOD_COUNTS = [1, 4, 8, 12] as const;
+export const ALLOWED_PERIOD_METRICS: PeriodMetric[] = [
+  "spend",
+  "primary_results",
+  "cost_per_primary_results",
+  "ctr",
+  "impressions",
+  "cpc",
+];
+
 export const PERIOD_METRIC_LABELS: Record<PeriodMetric, string> = {
   spend: "Spend",
   primary_results: "Primary KPI",
@@ -73,6 +75,22 @@ export type PeriodPivotInput = {
   brand?: string | null;
   /** Optional campaign-umbrella ("group") filter — `null` means all groups. */
   group?: string | null;
+};
+
+export type PeriodPivotQuery = {
+  anchor: string;
+  periodCount: number;
+  frequency: Frequency;
+  metric: PeriodMetric;
+  brand: string | null;
+  group: string | null;
+};
+
+export type PeriodPivotParentLevel = "campaign" | "ad_set";
+
+export type PeriodPivotChildrenInput = PeriodPivotInput & {
+  parentLevel: PeriodPivotParentLevel;
+  parentId: string;
 };
 
 export type CreativeAsset = {
@@ -101,21 +119,34 @@ export type PeriodPivotPayload = {
   missingEnv: string[];
   periods: PeriodWindow[];
   metric: PeriodMetric;
+  query: PeriodPivotQuery | null;
   /** Top of the tree. */
   campaigns: PivotedRow[];
-  /** Children. `parentIds.campaign_id` links each row to its campaign. */
+  /** Optional eager children. Lazy /optimize payloads leave this empty. */
   adSets: PivotedRow[];
-  /** Grandchildren. `parentIds.ad_set_id` links each row to its ad set. */
+  /** Optional eager grandchildren. Lazy /optimize payloads leave this empty. */
   creatives: PivotedRow[];
   /**
    * Creative metadata keyed by creative_id. Tree-table uses this to swap
-   * the cryptic creative_id for the real creative name + thumbnail.
+   * the cryptic creative_id for the real creative name + thumbnail. Lazy
+   * payloads only populate this when creative children are fetched.
    */
+  creativeAssets: Record<string, CreativeAsset>;
+};
+
+export type PeriodPivotChildrenPayload = {
+  configured: boolean;
+  missingEnv: string[];
+  parentLevel: PeriodPivotParentLevel;
+  parentId: string;
+  level: "ad_set" | "creative";
+  rows: PivotedRow[];
   creativeAssets: Record<string, CreativeAsset>;
 };
 
 const EMPTY_PIVOT_PAYLOAD: Omit<PeriodPivotPayload, "missingEnv" | "periods" | "metric"> = {
   configured: false,
+  query: null,
   campaigns: [],
   adSets: [],
   creatives: [],
@@ -137,21 +168,97 @@ const FREQUENCY_KEY_FIELD: Record<Frequency, MetaInsightDimension> = {
 export async function fetchPeriodPivot(
   input: PeriodPivotInput,
 ): Promise<PeriodPivotPayload> {
-  const missingEnv = getMissingDashboardEnv();
-  const periods = lastNPeriods(input.now ?? new Date(), input.periodCount, input.frequency);
+  const context = buildPeriodPivotContext(input);
   const empty: PeriodPivotPayload = {
     ...EMPTY_PIVOT_PAYLOAD,
-    missingEnv,
-    periods,
+    missingEnv: context.missingEnv,
+    periods: context.periods,
     metric: input.metric,
+    query: context.query,
   };
 
-  if (missingEnv.length) {
+  if (context.missingEnv.length) {
     return empty;
   }
 
-  const start = periods[0].start;
-  const end = periods[periods.length - 1].end;
+  const campaigns = await fetchCampaignPivotRows(context);
+
+  return {
+    configured: true,
+    missingEnv: [],
+    periods: context.periods,
+    metric: input.metric,
+    query: context.query,
+    campaigns,
+    adSets: [],
+    creatives: [],
+    creativeAssets: {},
+  };
+}
+
+export async function fetchPeriodPivotChildren(
+  input: PeriodPivotChildrenInput,
+): Promise<PeriodPivotChildrenPayload> {
+  const context = buildPeriodPivotContext(input);
+  const empty: PeriodPivotChildrenPayload = {
+    configured: false,
+    missingEnv: context.missingEnv,
+    parentLevel: input.parentLevel,
+    parentId: input.parentId,
+    level: input.parentLevel === "campaign" ? "ad_set" : "creative",
+    rows: [],
+    creativeAssets: {},
+  };
+
+  if (context.missingEnv.length) return empty;
+
+  if (input.parentLevel === "campaign") {
+    const rows = await fetchAdSetPivotRows(context, input.parentId);
+    return {
+      ...empty,
+      configured: true,
+      missingEnv: [],
+      rows,
+    };
+  }
+
+  const rows = await fetchCreativePivotRows(context, input.parentId);
+  const creativeAssets = await fetchCreativeAssets(rows.map((row) => row.entityId));
+  return {
+    ...empty,
+    configured: true,
+    missingEnv: [],
+    rows,
+    creativeAssets,
+  };
+}
+
+export function isPeriodMetric(value: unknown): value is PeriodMetric {
+  return typeof value === "string" && ALLOWED_PERIOD_METRICS.includes(value as PeriodMetric);
+}
+
+export function normalizePeriodCount(value: unknown) {
+  const requested = Number(value);
+  return ALLOWED_PERIOD_COUNTS.includes(requested as (typeof ALLOWED_PERIOD_COUNTS)[number])
+    ? requested
+    : 4;
+}
+
+type PeriodPivotContext = {
+  missingEnv: string[];
+  periods: PeriodWindow[];
+  start: string;
+  end: string;
+  periodDim: MetaInsightDimension;
+  filters: MetaInsightFilter[];
+  metric: PeriodMetric;
+  query: PeriodPivotQuery;
+};
+
+function buildPeriodPivotContext(input: PeriodPivotInput): PeriodPivotContext {
+  const missingEnv = getMissingDashboardEnv();
+  const anchor = input.now ?? new Date();
+  const periods = lastNPeriods(anchor, input.periodCount, input.frequency);
   const filters: MetaInsightFilter[] = [];
   if (input.brand && input.brand !== "all") {
     filters.push({ field: "brand", operator: "equals", value: input.brand });
@@ -160,98 +267,91 @@ export async function fetchPeriodPivot(
     filters.push({ field: "campaign_umbrella", operator: "equals", value: input.group });
   }
 
-  const periodDim = FREQUENCY_KEY_FIELD[input.frequency];
-
-  // Parallel: one RPC per tree level. Sort by spend desc so the top-of-grid
-  // rows are the highest-spend entities — matches what the analyst expects
-  // to see first.
-  const [campaignRows, adSetRows, creativeRows] = await Promise.all([
-    aggregateMetaInsights({
-      start,
-      end,
-      dimensions: [periodDim, "campaign"],
-      filters,
-      sortField: "spend",
-      sortDirection: "desc",
-      limit: 5000,
-    }),
-    aggregateMetaInsights({
-      start,
-      end,
-      dimensions: [periodDim, "campaign", "ad_set"],
-      filters,
-      sortField: "spend",
-      sortDirection: "desc",
-      limit: 10000,
-    }),
-    aggregateMetaInsights({
-      start,
-      end,
-      dimensions: [periodDim, "campaign", "ad_set", "creative"],
-      filters,
-      sortField: "spend",
-      sortDirection: "desc",
-      limit: 10000,
-    }),
-  ]);
-
-  // Pivot each level. Pre-compute the "value" field by metric so the rest
-  // of the pipeline doesn't need to know about metric-specific quirks
-  // (e.g. cost_per_primary_results = spend / primary_results).
-  const campaigns = pivotByPeriod(
-    rowsWithMetric(campaignRows, input.metric),
-    {
-      periods,
-      entityIdField: "campaign_id",
-      displayField: "campaign",
-      periodKeyField: periodDim as keyof MetaInsightAggregateRow,
-      valueField: "metricValue",
-      // Campaign sits at the top of the tree — no parent.
-    },
-  );
-
-  const adSets = pivotByPeriod(
-    rowsWithMetric(adSetRows, input.metric),
-    {
-      periods,
-      entityIdField: "ad_set_id",
-      displayField: "ad_set",
-      periodKeyField: periodDim as keyof MetaInsightAggregateRow,
-      valueField: "metricValue",
-      parentIdFields: ["campaign_id"],
-    },
-  );
-
-  const creatives = pivotByPeriod(
-    rowsWithMetric(creativeRows, input.metric),
-    {
-      periods,
-      entityIdField: "creative_id",
-      displayField: "creative",
-      periodKeyField: periodDim as keyof MetaInsightAggregateRow,
-      valueField: "metricValue",
-      // Two parents: campaign and ad_set. Both preserved so the consumer
-      // can attach a creative to its ad-set regardless of which level is
-      // currently expanded.
-      parentIdFields: ["campaign_id", "ad_set_id"],
-    },
-  );
-
-  // Enrich creative rows with real names + thumbnails. The aggregate RPC
-  // only emits creative_id; the meta_creatives table carries the human-
-  // friendly fields. One scoped IN query, ~hundreds of IDs max.
-  const creativeAssets = await fetchCreativeAssets(creatives.map((c) => c.entityId));
-
   return {
-    configured: true,
-    missingEnv: [],
+    missingEnv,
     periods,
+    start: periods[0].start,
+    end: periods[periods.length - 1].end,
+    periodDim: FREQUENCY_KEY_FIELD[input.frequency],
+    filters,
     metric: input.metric,
-    campaigns,
-    adSets,
-    creatives,
-    creativeAssets,
+    query: {
+      anchor: anchor.toISOString(),
+      periodCount: input.periodCount,
+      frequency: input.frequency,
+      metric: input.metric,
+      brand: input.brand && input.brand !== "all" ? input.brand : null,
+      group: input.group && input.group !== "all" ? input.group : null,
+    },
   };
+}
+
+async function fetchCampaignPivotRows(context: PeriodPivotContext) {
+  const rows = await aggregateMetaInsights({
+    start: context.start,
+    end: context.end,
+    dimensions: [context.periodDim, "campaign"],
+    filters: context.filters,
+    sortField: "spend",
+    sortDirection: "desc",
+    limit: 5000,
+  });
+
+  return pivotByPeriod(rowsWithMetric(rows, context.metric), {
+    periods: context.periods,
+    entityIdField: "campaign_id",
+    displayField: "campaign",
+    periodKeyField: context.periodDim as keyof MetaInsightAggregateRow,
+    valueField: "metricValue",
+  });
+}
+
+async function fetchAdSetPivotRows(context: PeriodPivotContext, campaignId: string) {
+  const rows = await aggregateMetaInsights({
+    start: context.start,
+    end: context.end,
+    dimensions: [context.periodDim, "campaign", "ad_set"],
+    filters: [
+      ...context.filters,
+      { field: "campaign", operator: "contains", value: campaignId },
+    ],
+    sortField: "spend",
+    sortDirection: "desc",
+    limit: 10000,
+  });
+
+  return pivotByPeriod(rowsWithMetric(rows, context.metric), {
+    periods: context.periods,
+    entityIdField: "ad_set_id",
+    displayField: "ad_set",
+    periodKeyField: context.periodDim as keyof MetaInsightAggregateRow,
+    valueField: "metricValue",
+    parentIdFields: ["campaign_id"],
+  });
+}
+
+async function fetchCreativePivotRows(context: PeriodPivotContext, adSetId: string) {
+  const rows = await aggregateMetaInsights({
+    start: context.start,
+    end: context.end,
+    dimensions: [context.periodDim, "campaign", "ad_set", "creative"],
+    filters: [
+      ...context.filters,
+      { field: "ad_set", operator: "contains", value: adSetId },
+    ],
+    sortField: "spend",
+    sortDirection: "desc",
+    limit: 10000,
+  });
+
+  return pivotByPeriod(rowsWithMetric(rows, context.metric), {
+    periods: context.periods,
+    entityIdField: "creative_id",
+    displayField: "creative",
+    periodKeyField: context.periodDim as keyof MetaInsightAggregateRow,
+    valueField: "metricValue",
+    parentIdFields: ["campaign_id", "ad_set_id"],
+  });
 }
 
 type DynamicCreativesClient = {
