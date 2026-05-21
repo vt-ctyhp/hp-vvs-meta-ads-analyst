@@ -9,7 +9,6 @@ import {
   PeopleRoster,
   type RosterEntry,
 } from "@/components/v2/operate/people-roster";
-import { SignalStrip } from "@/components/v2/signal-strip";
 import { StatusSentence } from "@/components/v2/status-sentence";
 import { hasPermission, type UserRole } from "@/lib/access-control";
 import { createAdsAnalystClient } from "@/lib/ads-analyst-db";
@@ -59,8 +58,6 @@ export default async function OperatePage({
   return (
     <div className="space-y-6">
       <StatusSentence sentence={sentence} />
-
-      <SignalStrip room="operate" />
 
       <OperateTabs active={tab} />
 

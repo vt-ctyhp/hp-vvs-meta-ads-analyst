@@ -5,7 +5,6 @@ import {
   CustomerLedger,
 } from "@/components/v2/convert/customer-ledger";
 import { FunnelViz } from "@/components/v2/convert/funnel-viz";
-import { SignalStrip } from "@/components/v2/signal-strip";
 import { StatusSentence } from "@/components/v2/status-sentence";
 import {
   buildCustomerLedgerStatusSentence,
@@ -93,8 +92,6 @@ export default async function ConvertPage({
           },
         ]}
       />
-
-      <SignalStrip room="convert" />
 
       <FunnelViz steps={funnel.funnel} />
 
