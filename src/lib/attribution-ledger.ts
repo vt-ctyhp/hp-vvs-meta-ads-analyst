@@ -1,5 +1,6 @@
 import { differenceInCalendarDays, format, parseISO, subDays } from "date-fns";
 
+import { selectBestPaidTouch } from "./attribution-touch-selection.ts";
 import { createServiceClient } from "./supabase.ts";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -59,6 +60,7 @@ export type AttributionLedgerData = {
 
 type AttributionTouch = {
   browserName?: string;
+  capturedAt?: string;
   deviceCategory?: string;
   fbc?: string;
   fbp?: string;
@@ -320,11 +322,15 @@ export function buildAttributionLedgerRows(input: {
     .map((visitor) => {
       const session = sessionsByVisitor.get(visitor.visitor_id) || null;
       const conversion = conversionsByVisitor.get(visitor.visitor_id) || null;
-      const paidTouch =
-        attributionTouch(visitor.last_paid_touch) ||
-        attributionTouch(conversion?.last_paid_touch) ||
-        attributionTouch(conversion?.conversion_touch) ||
-        attributionTouch(session?.last_paid_touch);
+      const paidTouch = selectBestPaidTouch(
+        [
+          attributionTouch(visitor.last_paid_touch),
+          attributionTouch(conversion?.last_paid_touch),
+          attributionTouch(conversion?.conversion_touch),
+          attributionTouch(session?.last_paid_touch),
+        ],
+        { maxCapturedAt: conversion?.occurred_at },
+      );
       const campaignId = paidTouch?.utm?.campaignId || null;
       const adsetId = paidTouch?.utm?.adsetId || null;
       const adId = paidTouch?.utm?.adId || null;
@@ -405,6 +411,7 @@ function attributionTouch(value: unknown): AttributionTouch | null {
   const utm = utmRecord ? stringRecord(utmRecord) : undefined;
   const touch: AttributionTouch = {
     browserName: stringValue(record.browserName),
+    capturedAt: stringValue(record.capturedAt),
     deviceCategory: stringValue(record.deviceCategory),
     fbc: stringValue(record.fbc),
     fbp: stringValue(record.fbp),

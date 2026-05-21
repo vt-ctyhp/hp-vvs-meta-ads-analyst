@@ -9,6 +9,11 @@ import {
   usesLimitedAdsAnalystDbAccess,
   withAdsAnalystEnvironment,
 } from "./ads-analyst-db.ts";
+import {
+  isPaidAttributionTouch,
+  selectBestPaidTouch,
+  selectLastPaidTouch as selectBestLastPaidTouch,
+} from "./attribution-touch-selection.ts";
 import { BOOKING_ACTION_TYPES, actionArray, actionCount } from "./meta-kpi.ts";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -617,7 +622,7 @@ export async function resolveWebsiteAttribution(input: unknown): Promise<Website
     : null;
   const firstTouch = visitor?.first_touch || session?.first_touch || null;
   const lastTouch = mostRecentTouch(visitor?.last_touch, session?.last_touch);
-  const lastPaidTouch = mostRecentTouch(visitor?.last_paid_touch, session?.last_paid_touch);
+  const lastPaidTouch = selectBestPaidTouch([visitor?.last_paid_touch, session?.last_paid_touch]);
   const bestTouch = lastPaidTouch || lastTouch || firstTouch;
   const fbc = parsed.data.fbc || bestTouch?.fbc || visitor?.fbc || session?.fbc || undefined;
   const fbp = parsed.data.fbp || bestTouch?.fbp || visitor?.fbp || session?.fbp || undefined;
@@ -1230,17 +1235,20 @@ async function recordWebsiteEvent(
   if (row.session_id) {
     await upsertWebsiteSession(client, row, touch);
   }
+  const lastPaidTouch = selectBestPaidTouch([visitor?.last_paid_touch, touch], {
+    maxCapturedAt: row.occurred_at,
+  });
   const conversionContext = isConversionEventName(eventName, row.meta_event_name)
     ? {
         customer,
         firstTouch: visitor?.first_touch || null,
         lastTouch: visitor?.last_touch || touch,
-        lastPaidTouch: visitor?.last_paid_touch || (isPaidTouch(touch) ? touch : null),
+        lastPaidTouch,
         touch,
         trackingCompleteness: trackingCompletenessReport({
           customer,
           firstTouch: visitor?.first_touch || null,
-          lastPaidTouch: visitor?.last_paid_touch || (isPaidTouch(touch) ? touch : null),
+          lastPaidTouch,
           row,
         }),
       }
@@ -1599,34 +1607,14 @@ function attributionTouch(row: WebsiteEventRow): AttributionTouch {
 }
 
 export function isPaidTouch(touch: AttributionTouch | null | undefined) {
-  if (!touch) return false;
-  if (touch.fbc || touch.utm?.fbclid || touch.utm?.adId || touch.utm?.adsetId || touch.utm?.campaignId) {
-    return true;
-  }
-  return touch.sourceType.startsWith("paid_");
+  return isPaidAttributionTouch(touch);
 }
 
 export function selectLastPaidTouch(
   existing: AttributionTouch | null | undefined,
   touch: AttributionTouch,
 ) {
-  if (!isPaidTouch(touch)) return existing || null;
-  if (!existing) return touch;
-  if (hasExplicitPaidAttribution(touch)) return touch;
-  if (!hasExplicitPaidAttribution(existing)) return touch;
-  return existing;
-}
-
-function hasExplicitPaidAttribution(touch: AttributionTouch | null | undefined) {
-  if (!touch?.utm) return false;
-  const medium = (touch.utm.medium || "").toLowerCase();
-  return Boolean(
-    touch.utm.fbclid ||
-      touch.utm.adId ||
-      touch.utm.adsetId ||
-      touch.utm.campaignId ||
-      (medium.includes("paid") && (touch.utm.source || touch.utm.campaign || touch.utm.content || touch.utm.id)),
-  );
+  return selectBestLastPaidTouch(existing, touch);
 }
 
 function classifySourceType(input: {

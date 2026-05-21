@@ -11,6 +11,7 @@ import {
   selectLastPaidTouch,
   type AppointmentEventConversionRow,
 } from "../src/lib/website-analytics.ts";
+import { selectBestPaidTouch } from "../src/lib/attribution-touch-selection.ts";
 
 describe("website analytics appointment reconciliation", () => {
   it("builds a website Schedule conversion from an Acuity appointment event", () => {
@@ -148,6 +149,112 @@ describe("website analytics appointment reconciliation", () => {
     };
 
     assert.equal(selectLastPaidTouch(originalAdTouch, directReturnTouch), originalAdTouch);
+  });
+
+  it("does not let Instagram link-in-bio fbclid-only returns replace richer paid ad context", () => {
+    const originalAdTouch = {
+      capturedAt: "2026-05-20T22:59:07.892Z",
+      eventId: "evt-paid",
+      eventName: "PageView",
+      fbc: "fb.1.1779317947891.original-click",
+      fbp: "fb.1.1779317947891.123",
+      pageUrl: "https://www.hungphatusa.com/pages/book-an-appointment?fbclid=original-click",
+      source: "shopify_browser",
+      sourceType: "paid_meta",
+      utm: {
+        adId: "120244031602180650",
+        adsetId: "120242517363420650",
+        campaignId: "120234691669940650",
+        content: "DM_IG_HeyBeyArea",
+        fbclid: "original-click",
+        medium: "paid_social",
+        placement: "Instagram_Stories",
+        source: "ig",
+      },
+    };
+
+    const linkInBioTouch = {
+      capturedAt: "2026-05-20T23:48:27.772Z",
+      eventId: "evt-link-in-bio",
+      eventName: "PageView",
+      fbc: "fb.1.1779320908163.link-in-bio-click",
+      fbp: "fb.1.1779320908167.123",
+      pageUrl: "https://www.hungphatusa.com/pages/book-an-appointment?utm_source=ig&utm_medium=social&utm_content=link_in_bio&fbclid=link-in-bio-click",
+      referrer: "https://l.instagram.com/",
+      source: "shopify_browser",
+      sourceType: "paid_meta",
+      utm: {
+        content: "link_in_bio",
+        fbclid: "link-in-bio-click",
+        medium: "social",
+        source: "ig",
+      },
+    };
+
+    assert.equal(selectLastPaidTouch(originalAdTouch, linkInBioTouch), originalAdTouch);
+  });
+
+  it("uses the newer touch when paid touches have the same richness", () => {
+    const olderAdTouch = {
+      capturedAt: "2026-05-20T22:00:00.000Z",
+      eventId: "evt-paid-old",
+      eventName: "PageView",
+      source: "shopify_browser",
+      sourceType: "paid_meta",
+      utm: {
+        adId: "old-ad",
+        adsetId: "old-adset",
+        campaignId: "old-campaign",
+      },
+    };
+    const newerAdTouch = {
+      capturedAt: "2026-05-20T23:00:00.000Z",
+      eventId: "evt-paid-new",
+      eventName: "PageView",
+      source: "shopify_browser",
+      sourceType: "paid_meta",
+      utm: {
+        adId: "new-ad",
+        adsetId: "new-adset",
+        campaignId: "new-campaign",
+      },
+    };
+
+    assert.equal(selectLastPaidTouch(olderAdTouch, newerAdTouch), newerAdTouch);
+  });
+
+  it("ignores known paid touches after the booking cutoff", () => {
+    const bookingTouch = {
+      capturedAt: "2026-05-20T23:49:18.756Z",
+      eventId: "acuity-1708622080",
+      eventName: "Schedule",
+      source: "booking_api",
+      sourceType: "paid_meta",
+      utm: {
+        adId: "booking-ad",
+        adsetId: "booking-adset",
+        campaignId: "booking-campaign",
+      },
+    };
+    const afterBookingTouch = {
+      capturedAt: "2026-05-20T23:49:27.795Z",
+      eventId: "evt-after-booking",
+      eventName: "Engaged60Seconds",
+      source: "shopify_browser",
+      sourceType: "paid_meta",
+      utm: {
+        adId: "after-booking-ad",
+        adsetId: "after-booking-adset",
+        campaignId: "after-booking-campaign",
+      },
+    };
+
+    assert.equal(
+      selectBestPaidTouch([bookingTouch, afterBookingTouch], {
+        maxCapturedAt: "2026-05-20T23:49:18.756Z",
+      }),
+      bookingTouch,
+    );
   });
 
   it("requires the shared secret for server-side conversion and attribution endpoints", () => {

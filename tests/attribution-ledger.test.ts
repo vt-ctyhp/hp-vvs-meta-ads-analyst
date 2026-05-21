@@ -112,6 +112,54 @@ describe("attribution ledger row merging", () => {
     assert.equal(rows[0].placement, "instagram_stories");
     assert.equal(rows[0].hasPaidTouch, true);
   });
+
+  it("credits richer conversion ad context over later Instagram link-in-bio touch", () => {
+    const rows = buildAttributionLedgerRows({
+      conversions: [
+        conversionRow({
+          acuity_appointment_id: "1708622080",
+          last_paid_touch: {
+            capturedAt: "2026-05-20T23:49:18.756Z",
+            eventName: "Schedule",
+            source: "booking_api",
+            sourceType: "paid_meta",
+            utm: {
+              adId: "120244031602180650",
+              adsetId: "120242517363420650",
+              campaignId: "120234691669940650",
+              medium: "paid_social",
+              placement: "Instagram_Stories",
+              source: "ig",
+            },
+          },
+          occurred_at: "2026-05-20T23:49:18.756Z",
+        }),
+      ],
+      sessions: [],
+      visitors: [
+        visitorRow({
+          last_paid_touch: {
+            capturedAt: "2026-05-20T23:49:27.795Z",
+            eventName: "Engaged60Seconds",
+            source: "shopify_browser",
+            sourceType: "paid_meta",
+            utm: {
+              content: "link_in_bio",
+              fbclid: "link-in-bio-click",
+              medium: "social",
+              source: "ig",
+            },
+          },
+        }),
+      ],
+    });
+
+    assert.equal(rows[0].campaignId, "120234691669940650");
+    assert.equal(rows[0].adsetId, "120242517363420650");
+    assert.equal(rows[0].adId, "120244031602180650");
+    assert.equal(rows[0].placement, "Instagram_Stories");
+    assert.equal(rows[0].lastPaidSource, "ig");
+  });
 });
 
 function visitorRow(
