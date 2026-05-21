@@ -10,8 +10,13 @@
  * page-scoped on the surfaces that need them.
  */
 
-import { ConfigurationError, getMissingRequiredEnv } from "./env";
-import { createAdsAnalystClient } from "./ads-analyst-db";
+import { ConfigurationError, getMissingRequiredEnv } from "./env.ts";
+import { createAdsAnalystClient } from "./ads-analyst-db.ts";
+import {
+  formatMetaInsightRollupHealth,
+  getRecentMetaInsightRollupHealth,
+  type MetaInsightRollupHealth,
+} from "./meta-insight-rollups.ts";
 
 export type SystemHealthStatus = "ok" | "warning" | "critical";
 
@@ -130,6 +135,15 @@ export async function getSystemHealth(): Promise<SystemHealthSnapshot> {
     });
   }
 
+  try {
+    const rollupHealth = await getRecentMetaInsightRollupHealth();
+    const rollupIssue = metaInsightRollupSystemHealthIssue(rollupHealth);
+    if (rollupIssue) issues.push(rollupIssue);
+  } catch {
+    // Keep the shell health check lean and non-blocking. Full rollup
+    // diagnostics are available from the Backfill data-health surface.
+  }
+
   const status: SystemHealthStatus = issues.some((issue) => issue.level === "critical")
     ? "critical"
     : issues.length
@@ -142,5 +156,18 @@ export async function getSystemHealth(): Promise<SystemHealthSnapshot> {
     missingEnv,
     latestSync,
     issues,
+  };
+}
+
+export function metaInsightRollupSystemHealthIssue(
+  health: MetaInsightRollupHealth,
+): SystemHealthIssue | null {
+  if (health.ok) return null;
+
+  return {
+    level: "warning",
+    title: "Meta rollups need repair",
+    detail: `Recent Optimize rollups are incomplete (${formatMetaInsightRollupHealth(health)}).`,
+    link: { href: "/admin/backfill", label: "Open backfill" },
   };
 }

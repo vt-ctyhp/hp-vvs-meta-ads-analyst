@@ -112,6 +112,25 @@ type DataHealth = {
     monthlyCoverageOk: boolean;
     spendJumpsOk: boolean;
     recentSyncWarningsOk: boolean;
+    rollupsOk: boolean;
+  };
+  rollups: {
+    available: boolean;
+    health: {
+      rawRows: number;
+      rollupRows: number;
+      missingRollups: number;
+      staleRollups: number;
+      orphanRollups: number;
+      newestRawUpdate: string | null;
+      newestRollupUpdate: string | null;
+      oldestProblemDate: string | null;
+      repairMetaAccountId: string | null;
+      repairMonth: string | null;
+      ok: boolean;
+    } | null;
+    summary: string | null;
+    error: string | null;
   };
   accounts: Array<{
     metaAccountId: string | null;
@@ -900,6 +919,13 @@ function DataHealthPanel({
           ok: health.checks.recentSyncWarningsOk,
           value: (health.lastSync?.warnings.length || 0).toLocaleString(),
         },
+        {
+          label: "Rollup coverage",
+          ok: health.checks.rollupsOk,
+          value: health.rollups.health
+            ? `${health.rollups.health.missingRollups + health.rollups.health.staleRollups} issue(s)`
+            : "unavailable",
+        },
       ]
     : [];
 
@@ -933,6 +959,34 @@ function DataHealthPanel({
                 health.lastSync
                   ? `${health.lastSync.status || "unknown"} · ${formatDateTime(health.lastSync.completedAt || health.lastSync.startedAt)}`
                   : "-"
+              }
+            />
+          </div>
+          <div className="mt-3 grid gap-3 md:grid-cols-5">
+            <SmallMetric
+              label="Raw Rows"
+              value={health.rollups.health ? health.rollups.health.rawRows.toLocaleString() : "-"}
+            />
+            <SmallMetric
+              label="Rollup Rows"
+              value={health.rollups.health ? health.rollups.health.rollupRows.toLocaleString() : "-"}
+            />
+            <SmallMetric
+              label="Missing Rollups"
+              value={health.rollups.health ? health.rollups.health.missingRollups.toLocaleString() : "-"}
+            />
+            <SmallMetric
+              label="Stale Rollups"
+              value={health.rollups.health ? health.rollups.health.staleRollups.toLocaleString() : "-"}
+            />
+            <SmallMetric
+              label="Next Repair"
+              value={
+                health.rollups.health?.repairMetaAccountId && health.rollups.health.repairMonth
+                  ? `${health.rollups.health.repairMetaAccountId} · ${health.rollups.health.repairMonth}`
+                  : health.rollups.available
+                    ? "None"
+                    : "Unavailable"
               }
             />
           </div>

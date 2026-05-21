@@ -298,6 +298,137 @@ comment on function public.refresh_meta_daily_insight_rollups(date, date, text, 
 grant execute on function public.refresh_meta_daily_insight_rollups(date, date, text, text)
   to ads_analyst_worker;
 
+create or replace function public.meta_insight_rollup_health(
+  p_start date default null,
+  p_end date default null,
+  p_environment text default null
+)
+returns table (
+  raw_rows bigint,
+  rollup_rows bigint,
+  missing_rollups bigint,
+  stale_rollups bigint,
+  orphan_rollups bigint,
+  newest_raw_update timestamptz,
+  newest_rollup_update timestamptz,
+  oldest_problem_date date,
+  repair_meta_account_id text,
+  repair_month text,
+  ok boolean
+)
+language sql
+stable
+set search_path = public
+as $$
+  with environment_scope as (
+    select case
+      when p_environment in ('production', 'staging') then p_environment
+      else analytics.current_ads_analyst_environment()
+    end as environment
+  ),
+  raw as (
+    select
+      i.id,
+      i.meta_account_id,
+      i.date_start,
+      i.updated_at
+    from public.meta_daily_insights i
+    cross join environment_scope e
+    where i.environment = e.environment
+      and (p_start is null or i.date_start >= p_start)
+      and (p_end is null or i.date_start <= p_end)
+  ),
+  rollups as (
+    select
+      r.id,
+      r.insight_id,
+      r.meta_account_id,
+      r.date_start,
+      r.updated_at
+    from public.meta_daily_insight_rollups r
+    cross join environment_scope e
+    where r.environment = e.environment
+      and (p_start is null or r.date_start >= p_start)
+      and (p_end is null or r.date_start <= p_end)
+  ),
+  raw_with_rollups as (
+    select
+      raw.id,
+      raw.meta_account_id,
+      raw.date_start,
+      raw.updated_at as raw_updated_at,
+      rollups.id as rollup_id,
+      rollups.updated_at as rollup_updated_at
+    from raw
+    left join rollups
+      on rollups.insight_id = raw.id
+  ),
+  orphan_rollup_rows as (
+    select rollups.*
+    from rollups
+    left join public.meta_daily_insights i
+      on i.id = rollups.insight_id
+    where i.id is null
+  ),
+  problem_rows as (
+    select
+      date_start,
+      meta_account_id
+    from raw_with_rollups
+    where rollup_id is null
+       or raw_updated_at > rollup_updated_at
+    union all
+    select
+      date_start,
+      meta_account_id
+    from orphan_rollup_rows
+  ),
+  repair_chunk as (
+    select
+      meta_account_id,
+      date_trunc('month', date_start)::date as month_start,
+      min(date_start) as oldest_problem_date
+    from problem_rows
+    where meta_account_id is not null
+    group by meta_account_id, date_trunc('month', date_start)::date
+    order by min(date_start) asc, meta_account_id asc
+    limit 1
+  ),
+  stats as (
+    select
+      (select count(*) from raw) as raw_rows,
+      (select count(*) from rollups) as rollup_rows,
+      (select count(*) from raw_with_rollups where rollup_id is null) as missing_rollups,
+      (select count(*) from raw_with_rollups where raw_updated_at > rollup_updated_at) as stale_rollups,
+      (select count(*) from orphan_rollup_rows) as orphan_rollups,
+      (select max(updated_at) from raw) as newest_raw_update,
+      (select max(updated_at) from rollups) as newest_rollup_update
+  )
+  select
+    stats.raw_rows,
+    stats.rollup_rows,
+    stats.missing_rollups,
+    stats.stale_rollups,
+    stats.orphan_rollups,
+    stats.newest_raw_update,
+    stats.newest_rollup_update,
+    repair_chunk.oldest_problem_date,
+    repair_chunk.meta_account_id as repair_meta_account_id,
+    to_char(repair_chunk.month_start, 'YYYY-MM') as repair_month,
+    stats.raw_rows = stats.rollup_rows
+      and stats.missing_rollups = 0
+      and stats.stale_rollups = 0
+      and stats.orphan_rollups = 0 as ok
+  from stats
+  left join repair_chunk on true;
+$$;
+
+comment on function public.meta_insight_rollup_health(date, date, text) is
+  'Compares raw Meta daily insight rows with precomputed rollups and returns the next account-month chunk that should be repaired.';
+
+grant execute on function public.meta_insight_rollup_health(date, date, text)
+  to ads_analyst_web, ads_analyst_worker, ads_analyst_ingest;
+
 -- One-time backfill for already-stored insights. Runtime refreshes keep this
 -- table current after new sync/backfill jobs.
 select public.refresh_meta_daily_insight_rollups(null, null, null, 'production');
