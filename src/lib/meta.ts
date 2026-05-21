@@ -14,6 +14,10 @@ import {
 } from "./meta-backfill-utils";
 import { resolveMetaKpi } from "./meta-kpi";
 import {
+  syncOptionsForTrigger,
+  type MetaAdsSyncTrigger,
+} from "./meta-sync-options";
+import {
   adsAnalystOnConflict,
   createAdsAnalystClient,
   getAdsAnalystEnvironment,
@@ -218,7 +222,7 @@ class MetaGraphError extends Error {
   }
 }
 
-export async function syncMetaAds(trigger: "cron" | "manual" | "preview" = "manual") {
+export async function syncMetaAds(trigger: MetaAdsSyncTrigger = "manual") {
   const supabase = createAdsAnalystClient("worker");
   const accounts = getConfiguredAccounts();
   const runInsert = await supabase
@@ -1837,8 +1841,11 @@ async function graphPages<T>(
   }
 
   if (nextUrl && options.maxPages && page >= options.maxPages) {
+    const limitHint = path.includes("/insights")
+      ? "increase the page limit or reduce the requested date range"
+      : "increase the page limit or run a smaller explicit catalog refresh";
     throw new MetaGraphError(
-      `Meta Graph API pagination limit reached for ${path}; increase the page limit or reduce the requested date range.`,
+      `Meta Graph API pagination limit reached for ${path}; ${limitHint}.`,
     );
   }
 
@@ -1847,32 +1854,6 @@ async function graphPages<T>(
 
 function getSyncDatePreset() {
   return incrementalDatePreset();
-}
-
-function syncOptionsForTrigger(trigger: "cron" | "manual" | "preview") {
-  if (trigger === "preview") return {};
-
-  // Manual sync is operator-initiated and rare. Default everything to a full
-  // refresh so the catalog (ads, creatives, previews, ranking diagnostics)
-  // stays in step with the insight rows. This is the only path that
-  // bootstraps the catalog when an environment is empty (e.g. first sync
-  // after spinning up a staging build with env-fenced rows).
-  if (trigger === "manual") {
-    return {
-      refreshPreviews: true,
-      refreshAdCatalog: true,
-      refreshRankingDiagnostics: true,
-      includeCreativeDiagnostics: true,
-    };
-  }
-
-  // Cron is the cheap incremental path — insight rows only.
-  return {
-    refreshPreviews: false,
-    refreshAdCatalog: false,
-    refreshRankingDiagnostics: false,
-    includeCreativeDiagnostics: false,
-  };
 }
 
 function getSyncInsightDateRange(): InsightDateRange {
