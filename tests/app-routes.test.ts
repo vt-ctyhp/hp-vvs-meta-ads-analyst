@@ -9,7 +9,12 @@ import {
   normalizeAppNextPath,
 } from "../src/lib/app-routes.ts";
 
-test("dashboard users land on the dashboard after login", () => {
+test("dashboard users land on the legacy broadsheet after login (legacy auth flow)", () => {
+  // The legacy auth flow (firstPermittedAppPath) still points dashboard-
+  // permitted users at the broadsheet. Phase 12 moved that surface from `/`
+  // to `/broadsheet`; `/` itself now redirects per role via
+  // resolveLandingPath, but getPostLoginDestination is part of the legacy
+  // route table and stays in lockstep with APP_NAV_ROUTES.
   const destination = getPostLoginDestination({
     authenticated: true,
     active: true,
@@ -17,7 +22,7 @@ test("dashboard users land on the dashboard after login", () => {
     permissions: ["view_dashboard", "view_inbox"],
   });
 
-  assert.equal(destination, "/");
+  assert.equal(destination, "/broadsheet");
 });
 
 test("inbox-only users land on their first permitted page", () => {

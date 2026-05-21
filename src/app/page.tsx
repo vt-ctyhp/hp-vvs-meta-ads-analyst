@@ -1,26 +1,39 @@
-import { ExecutiveSnapshot } from "@/components/executive-snapshot";
-import {
-  loadDashboardPagePayload,
-  type DashboardPageSearchParams,
-} from "@/lib/dashboard-page";
+import { redirect } from "next/navigation";
+
+import { resolveLandingPath } from "@/lib/permission-routing";
+import { getServerAccessProfile } from "@/lib/server-route-auth";
 
 export const dynamic = "force-dynamic";
 
-type SearchParams = Promise<DashboardPageSearchParams>;
+/**
+ * Root entry — Phase 12 cutover landing.
+ *
+ * Routes every authenticated user to the room their roles open by default:
+ *   - Admin / Marketing / read-only      → /optimize
+ *   - Sales-frontline / client_advisor / joc → /m/inbox
+ *   - View-inbox-only roles              → /m/inbox
+ *   - No roles                           → /no-access
+ *
+ * Unauthenticated visitors are pushed to /login with a `next=/` hint so the
+ * resolver runs again after they sign in. (The hint is `/` itself rather
+ * than a specific room so we don't have to know the user's role yet.)
+ *
+ * The legacy Performance Broadsheet that used to render here moved to
+ * /broadsheet (preserved for direct URL access + as a fallback during the
+ * early cutover monitoring window).
+ *
+ * This page never renders UI — every code path ends in a redirect.
+ */
+export default async function Root() {
+  const profile = await getServerAccessProfile();
 
-// / is the Executive Snapshot as of v1 Days 4-5. The analyst dashboard lives
-// at /analyst (unchanged) for power users.
-//
-// Default WoW window is the current calendar week (Mon → today, capped at
-// Sunday) when the user hasn't explicitly chosen via the WeekWindowToggle.
-export default async function Home({
-  searchParams,
-}: {
-  searchParams?: SearchParams;
-}) {
-  const params = searchParams ? await searchParams : {};
-  const { dashboard, wow } = await loadDashboardPagePayload(params, "/", {
-    defaultWow: "cal",
-  });
-  return <ExecutiveSnapshot data={dashboard} wow={wow} />;
+  if (!profile?.authenticated) {
+    redirect("/login?next=%2F");
+  }
+
+  if (!profile.active || profile.missingAppProfile) {
+    redirect("/no-access");
+  }
+
+  redirect(resolveLandingPath(profile.roles));
 }

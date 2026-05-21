@@ -41,7 +41,11 @@ export type PermissionProfile = {
  */
 export const APP_NAV_ROUTES = [
   // Performance: how the account is doing.
-  { href: "/", label: "Overview", permission: "view_dashboard", group: "performance" },
+  // "Overview" → /broadsheet because `/` is now a server-side redirect to the
+  // role-specific v2 room (resolveLandingPath in permission-routing.ts).
+  // Keeping the broadsheet as a permanent named route so links can target it
+  // explicitly and so the post-login destination has a stable landing surface.
+  { href: "/broadsheet", label: "Overview", permission: "view_dashboard", group: "performance" },
   { href: "/analyst", label: "Analyst", permission: "view_dashboard", group: "performance" },
   { href: "/creative-analysis", label: "Creatives", permission: "view_creative_analysis", group: "performance" },
   // Attribution Ledger: first-party booking attribution per appointment
