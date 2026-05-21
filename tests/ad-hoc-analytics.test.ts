@@ -57,6 +57,50 @@ describe("ad-hoc analytics prompt normalization", () => {
     assert.deepEqual(spec.dimensions, ["date"]);
   });
 
+  it("uses the Optimize default date range when the prompt has no date", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Show spend by campaign umbrella.",
+      { defaultDateRange: { days: 14 } },
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.dateRange, { days: 14 });
+  });
+
+  it("lets explicit prompt dates override the Optimize default date range", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Show spend by campaign umbrella for the last 4 weeks.",
+      { defaultDateRange: { days: 14 } },
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.dateRange, { preset: "last_4_weeks" });
+  });
+
+  it("uses custom Optimize dates as the default analysis range", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Show spend by campaign umbrella.",
+      {
+        defaultDateRange: {
+          days: 31,
+          startDate: "2026-05-01",
+          endDate: "2026-05-31",
+        },
+      },
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.dateRange, {
+      preset: "custom",
+      start: "2026-05-01",
+      end: "2026-05-31",
+      days: 31,
+    });
+  });
+
   it("normalizes cash-for-gold performance since January 2026", () => {
     const plan = buildAnalysisPlanForPrompt(
       {},

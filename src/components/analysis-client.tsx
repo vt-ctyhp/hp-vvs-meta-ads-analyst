@@ -422,7 +422,7 @@ export function AnalysisClient({ initialSaved, surface = "page" }: Props) {
   );
 }
 
-function CurrentDashboardPanel({
+export function CurrentDashboardPanel({
   result,
   titleDraft,
   editPrompt,
@@ -559,7 +559,7 @@ function ModeSwitch({
   );
 }
 
-function AnalysisOutput({
+export function AnalysisOutput({
   result,
   hideDiagnostics = false,
 }: {
