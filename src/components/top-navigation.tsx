@@ -71,12 +71,11 @@ export function TopNavigation() {
     pathname === "/operate" ||
     pathname.startsWith("/operate/") ||
     pathname.startsWith("/m/");
-  if (isV2Path) return null;
 
   useEffect(() => {
     let mounted = true;
 
-    if (isPublicAuthPath) {
+    if (isPublicAuthPath || isV2Path) {
       return () => {
         mounted = false;
       };
@@ -104,7 +103,7 @@ export function TopNavigation() {
       mounted = false;
       subscription.data.subscription.unsubscribe();
     };
-  }, [isPublicAuthPath]);
+  }, [isPublicAuthPath, isV2Path]);
 
   useEffect(() => {
     if (!profile?.authenticated) return;
@@ -152,7 +151,7 @@ export function TopNavigation() {
     window.location.assign("/login");
   }
 
-  if (isPublicAuthPath || !profile?.authenticated) {
+  if (isV2Path || isPublicAuthPath || !profile?.authenticated) {
     return null;
   }
 
