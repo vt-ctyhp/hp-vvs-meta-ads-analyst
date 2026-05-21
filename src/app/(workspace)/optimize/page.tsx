@@ -54,6 +54,20 @@ export default async function OptimizePage({
   const params = await searchParams;
   const days = Number.isFinite(Number(params.days)) ? Number(params.days) : 30;
 
+  // Filter-bar inputs. Status defaults to "live" so the operator lands on
+  // currently-active inventory; explicit URL params override.
+  const statusFilter = (params.status ?? "live").toLowerCase();
+  const brandFilter = params.brand ?? "all";
+  const groupFilter = params.group ?? "all";
+
+  // Range filter — preset OR custom start/end. The pivot table anchors
+  // its rightmost period to the end of the range (today for presets).
+  const customEnd = params.end?.trim() || null;
+  const pivotAnchor =
+    customEnd && /^\d{4}-\d{2}-\d{2}$/.test(customEnd)
+      ? new Date(`${customEnd}T12:00:00Z`)
+      : new Date();
+
   // Period-pivot controls — defaults: 4 weeks of Primary KPI.
   const requestedPeriods = Number(params.periods);
   const periodCount = ALLOWED_PERIODS.has(requestedPeriods) ? requestedPeriods : 4;
@@ -83,10 +97,12 @@ export default async function OptimizePage({
   let pivot: PeriodPivotPayload;
   try {
     pivot = await fetchPeriodPivot({
+      now: pivotAnchor,
       periodCount,
       frequency,
       metric,
-      brand: params.brand && params.brand !== "all" ? params.brand : null,
+      brand: brandFilter !== "all" ? brandFilter : null,
+      group: groupFilter !== "all" ? groupFilter : null,
     });
   } catch (e) {
     console.error("[optimize] fetchPeriodPivot threw:", e);
@@ -94,11 +110,12 @@ export default async function OptimizePage({
     pivot = {
       configured: false,
       missingEnv: [],
-      periods: lastNPeriods(new Date(), periodCount, frequency),
+      periods: lastNPeriods(pivotAnchor, periodCount, frequency),
       metric,
       campaigns: [],
       adSets: [],
       creatives: [],
+      creativeAssets: {},
     };
   }
   // Diagnostic logging visible in Vercel function logs.
@@ -129,15 +146,13 @@ export default async function OptimizePage({
   }));
 
   // Apply UI-side filters on top of what the server already aggregated.
-  const minSpend = Number(params.minSpend) || 0;
-  const statusFilter = (params.status ?? "all").toLowerCase();
-  const brandFilter = params.brand ?? "all";
-  const groupFilter = params.group ?? "all";
-
+  // Brand + group + status all map onto the legacy creative grid here;
+  // brand + group also re-flow server-side into both fetchDashboardData
+  // and fetchPeriodPivot via the URL params above. Status only filters
+  // client-side because the RPC doesn't carry an ad-status field.
   const filteredCreatives = dashboard.creatives.filter((row) => {
     if (brandFilter !== "all" && row.brandCode !== brandFilter) return false;
     if (groupFilter !== "all" && row.campaignUmbrella !== groupFilter) return false;
-    if (minSpend > 0 && row.spend < minSpend) return false;
     if (statusFilter !== "all") {
       const eff = (row.effectiveStatus ?? row.status ?? "").toLowerCase();
       if (statusFilter === "live" && !eff.includes("active")) return false;

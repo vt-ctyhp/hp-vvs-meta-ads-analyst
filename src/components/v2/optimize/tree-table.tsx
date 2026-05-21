@@ -10,9 +10,13 @@ import {
   type ExpandedState,
 } from "@tanstack/react-table";
 
-import type { PeriodPivotPayload } from "@/lib/period-pivot-data";
+import type {
+  CreativeAsset,
+  PeriodPivotPayload,
+} from "@/lib/period-pivot-data";
 import type { PivotedRow } from "@/lib/pivot-by-period";
 
+import { CreativeDetailDrawer } from "./creative-detail-drawer";
 import { formatDelta, formatMetric } from "./metric-format";
 
 /**
@@ -41,6 +45,7 @@ import { formatDelta, formatMetric } from "./metric-format";
 
 type TreeRow = PivotedRow & {
   level: "campaign" | "ad_set" | "creative";
+  asset?: CreativeAsset;
   subRows?: TreeRow[];
 };
 
@@ -50,13 +55,17 @@ type Props = {
 
 export function TreeTable({ payload }: Props) {
   const data = useMemo(() => buildTree(payload), [payload]);
+  const [selectedCreative, setSelectedCreative] = useState<{
+    row: TreeRow;
+    asset: CreativeAsset | undefined;
+  } | null>(null);
 
   const columns = useMemo<ColumnDef<TreeRow>[]>(() => {
     const cols: ColumnDef<TreeRow>[] = [
       {
         id: "name",
         header: "Name",
-        size: 320,
+        size: 360,
         cell: ({ row }) => (
           <NameCell
             depth={row.depth}
@@ -65,6 +74,16 @@ export function TreeTable({ payload }: Props) {
             onToggle={row.getToggleExpandedHandler()}
             level={row.original.level}
             label={row.original.displayName}
+            asset={row.original.asset}
+            onCreativeClick={
+              row.original.level === "creative"
+                ? () =>
+                    setSelectedCreative({
+                      row: row.original,
+                      asset: row.original.asset,
+                    })
+                : undefined
+            }
           />
         ),
       },
@@ -160,50 +179,65 @@ export function TreeTable({ payload }: Props) {
   }
 
   return (
-    <section
-      aria-label="Campaign → Ad Set → Creative tree, pivoted by period"
-      className="overflow-hidden rounded-xl border border-stone-200 bg-white"
-    >
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-stone-50 text-[11px] uppercase tracking-wider text-stone-500">
-            {table.getHeaderGroups().map((headerGroup) => (
-              <tr key={headerGroup.id}>
-                {headerGroup.headers.map((header) => (
-                  <th
-                    key={header.id}
-                    style={{ width: header.getSize() }}
-                    className="border-b border-stone-200 px-3 py-2 text-left first:sticky first:left-0 first:bg-stone-50"
-                  >
-                    {flexRender(header.column.columnDef.header, header.getContext())}
-                  </th>
-                ))}
-              </tr>
-            ))}
-          </thead>
-          <tbody>
-            {table.getRowModel().rows.map((row) => (
-              <tr
-                key={row.id}
-                className={[
-                  "border-b border-stone-100 last:border-b-0",
-                  row.depth === 0 ? "bg-white" : "bg-stone-50/60",
-                ].join(" ")}
-              >
-                {row.getVisibleCells().map((cell) => (
-                  <td
-                    key={cell.id}
-                    className="px-3 py-2 align-top first:sticky first:left-0 first:bg-inherit"
-                  >
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
+    <>
+      <section
+        aria-label="Campaign → Ad Set → Creative tree, pivoted by period"
+        className="overflow-hidden rounded-xl border border-stone-200 bg-white"
+      >
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-stone-50 text-[11px] uppercase tracking-wider text-stone-500">
+              {table.getHeaderGroups().map((headerGroup) => (
+                <tr key={headerGroup.id}>
+                  {headerGroup.headers.map((header) => (
+                    <th
+                      key={header.id}
+                      style={{ width: header.getSize() }}
+                      className="border-b border-stone-200 px-3 py-2 text-left first:sticky first:left-0 first:bg-stone-50"
+                    >
+                      {flexRender(header.column.columnDef.header, header.getContext())}
+                    </th>
+                  ))}
+                </tr>
+              ))}
+            </thead>
+            <tbody>
+              {table.getRowModel().rows.map((row) => (
+                <tr
+                  key={row.id}
+                  className={[
+                    "border-b border-stone-100 last:border-b-0",
+                    row.depth === 0 ? "bg-white" : "bg-stone-50/60",
+                  ].join(" ")}
+                >
+                  {row.getVisibleCells().map((cell) => (
+                    <td
+                      key={cell.id}
+                      className="px-3 py-2 align-top first:sticky first:left-0 first:bg-inherit"
+                    >
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <CreativeDetailDrawer
+        open={selectedCreative !== null}
+        onClose={() => setSelectedCreative(null)}
+        creativeId={selectedCreative?.row.entityId ?? null}
+        asset={selectedCreative?.asset}
+        adSetId={selectedCreative?.row.parentIds.ad_set_id ?? null}
+        campaignId={selectedCreative?.row.parentIds.campaign_id ?? null}
+        displayName={selectedCreative?.row.displayName ?? null}
+        periodValues={selectedCreative?.row.periodValues ?? null}
+        periods={payload.periods}
+        metric={payload.metric}
+      />
+    </>
   );
 }
 
@@ -214,6 +248,8 @@ function NameCell({
   onToggle,
   level,
   label,
+  asset,
+  onCreativeClick,
 }: {
   depth: number;
   canExpand: boolean;
@@ -221,8 +257,21 @@ function NameCell({
   onToggle: () => void;
   level: TreeRow["level"];
   label: string;
+  asset?: CreativeAsset;
+  onCreativeClick?: () => void;
 }) {
   const pad = depth * 16;
+  const isCreative = level === "creative";
+  // For creative rows, render thumbnail + creative name (not the bare id).
+  // The creative name comes from meta_creatives via the asset enrichment;
+  // displayName is the fallback (already the creative_id from the RPC).
+  const renderedLabel = isCreative
+    ? (asset?.name ?? asset?.title ?? label)
+    : label;
+  const thumb = isCreative
+    ? (asset?.thumbnailUrl ?? asset?.imageUrl ?? asset?.videoThumbnailUrl)
+    : null;
+
   return (
     <div style={{ paddingLeft: pad }} className="flex items-center gap-2">
       {canExpand ? (
@@ -231,20 +280,52 @@ function NameCell({
           onClick={onToggle}
           aria-label={isExpanded ? "Collapse" : "Expand"}
           aria-expanded={isExpanded}
-          className="inline-flex h-5 w-5 items-center justify-center rounded text-stone-500 hover:bg-stone-100"
+          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-stone-500 hover:bg-stone-100"
         >
           {isExpanded ? "▾" : "▸"}
         </button>
       ) : (
-        <span className="inline-block w-5" aria-hidden />
+        <span className="inline-block w-5 shrink-0" aria-hidden />
       )}
-      <span
-        className="text-[10px] uppercase tracking-wider text-stone-400"
-        title={`Tree level: ${level}`}
-      >
-        {LEVEL_BADGE[level]}
-      </span>
-      <span className="truncate font-medium text-stone-900">{label}</span>
+      {isCreative ? (
+        thumb ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={thumb}
+            alt=""
+            className="h-8 w-8 shrink-0 rounded border border-stone-200 object-cover"
+            loading="lazy"
+          />
+        ) : (
+          <span
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border border-dashed border-stone-300 text-[9px] text-stone-400"
+            aria-hidden
+          >
+            no img
+          </span>
+        )
+      ) : (
+        <span
+          className="inline-flex h-5 shrink-0 items-center text-[10px] uppercase tracking-wider text-stone-400"
+          title={`Tree level: ${level}`}
+        >
+          {LEVEL_BADGE[level]}
+        </span>
+      )}
+      {onCreativeClick ? (
+        <button
+          type="button"
+          onClick={onCreativeClick}
+          className="truncate text-left font-medium text-stone-900 hover:text-[#E14B7B] hover:underline"
+          title="Open creative detail"
+        >
+          {renderedLabel}
+        </button>
+      ) : (
+        <span className="truncate font-medium text-stone-900" title={renderedLabel}>
+          {renderedLabel}
+        </span>
+      )}
     </div>
   );
 }
@@ -265,7 +346,11 @@ function buildTree(payload: PeriodPivotPayload): TreeRow[] {
     const parentId = creative.parentIds.ad_set_id;
     if (!parentId) continue;
     const arr = creativesByAdSet.get(parentId) ?? [];
-    arr.push({ ...creative, level: "creative" });
+    arr.push({
+      ...creative,
+      level: "creative",
+      asset: payload.creativeAssets[creative.entityId],
+    });
     creativesByAdSet.set(parentId, arr);
   }
 

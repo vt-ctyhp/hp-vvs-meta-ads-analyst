@@ -15,6 +15,7 @@
  * `parentFilter` and only resolving children when a row is expanded.
  */
 
+import { createAdsAnalystClient } from "./ads-analyst-db.ts";
 import { getMissingDashboardEnv } from "./env.ts";
 import {
   aggregateMetaInsights,
@@ -70,6 +71,18 @@ export type PeriodPivotInput = {
   metric: PeriodMetric;
   /** Optional brand filter — `null` means all brands. */
   brand?: string | null;
+  /** Optional campaign-umbrella ("group") filter — `null` means all groups. */
+  group?: string | null;
+};
+
+export type CreativeAsset = {
+  creativeId: string;
+  name: string | null;
+  title: string | null;
+  thumbnailUrl: string | null;
+  imageUrl: string | null;
+  videoThumbnailUrl: string | null;
+  previewUrl: string | null;
 };
 
 export type PeriodPivotPayload = {
@@ -83,6 +96,11 @@ export type PeriodPivotPayload = {
   adSets: PivotedRow[];
   /** Grandchildren. `parentIds.ad_set_id` links each row to its ad set. */
   creatives: PivotedRow[];
+  /**
+   * Creative metadata keyed by creative_id. Tree-table uses this to swap
+   * the cryptic creative_id for the real creative name + thumbnail.
+   */
+  creativeAssets: Record<string, CreativeAsset>;
 };
 
 const EMPTY_PIVOT_PAYLOAD: Omit<PeriodPivotPayload, "missingEnv" | "periods" | "metric"> = {
@@ -90,6 +108,7 @@ const EMPTY_PIVOT_PAYLOAD: Omit<PeriodPivotPayload, "missingEnv" | "periods" | "
   campaigns: [],
   adSets: [],
   creatives: [],
+  creativeAssets: {},
 };
 
 /**
@@ -125,6 +144,9 @@ export async function fetchPeriodPivot(
   const filters: MetaInsightFilter[] = [];
   if (input.brand && input.brand !== "all") {
     filters.push({ field: "brand", operator: "equals", value: input.brand });
+  }
+  if (input.group && input.group !== "all") {
+    filters.push({ field: "campaign_umbrella", operator: "equals", value: input.group });
   }
 
   const periodDim = FREQUENCY_KEY_FIELD[input.frequency];
@@ -204,6 +226,11 @@ export async function fetchPeriodPivot(
     },
   );
 
+  // Enrich creative rows with real names + thumbnails. The aggregate RPC
+  // only emits creative_id; the meta_creatives table carries the human-
+  // friendly fields. One scoped IN query, ~hundreds of IDs max.
+  const creativeAssets = await fetchCreativeAssets(creatives.map((c) => c.entityId));
+
   return {
     configured: true,
     missingEnv: [],
@@ -212,7 +239,65 @@ export async function fetchPeriodPivot(
     campaigns,
     adSets,
     creatives,
+    creativeAssets,
   };
+}
+
+type DynamicCreativesClient = {
+  from: (table: "meta_creatives") => {
+    select: (cols: string) => {
+      in: (
+        col: string,
+        values: string[],
+      ) => Promise<{ data: unknown; error: Error | null }>;
+    };
+  };
+};
+
+async function fetchCreativeAssets(
+  creativeIds: string[],
+): Promise<Record<string, CreativeAsset>> {
+  if (creativeIds.length === 0) return {};
+  // Dedupe up front; the pivot already groups by creative_id, but be safe.
+  const unique = Array.from(new Set(creativeIds.filter(Boolean)));
+  if (unique.length === 0) return {};
+
+  try {
+    const supabase = createAdsAnalystClient("web") as unknown as DynamicCreativesClient;
+    const { data, error } = await supabase
+      .from("meta_creatives")
+      .select(
+        "creative_id,name,title,thumbnail_url,image_url,video_thumbnail_url,preview_url",
+      )
+      .in("creative_id", unique);
+    if (error) {
+      console.error("[period-pivot] creative metadata fetch failed:", error);
+      return {};
+    }
+    const rows = Array.isArray(data) ? (data as Record<string, unknown>[]) : [];
+    const out: Record<string, CreativeAsset> = {};
+    for (const row of rows) {
+      const id = typeof row.creative_id === "string" ? row.creative_id : null;
+      if (!id) continue;
+      out[id] = {
+        creativeId: id,
+        name: stringOrNull(row.name),
+        title: stringOrNull(row.title),
+        thumbnailUrl: stringOrNull(row.thumbnail_url),
+        imageUrl: stringOrNull(row.image_url),
+        videoThumbnailUrl: stringOrNull(row.video_thumbnail_url),
+        previewUrl: stringOrNull(row.preview_url),
+      };
+    }
+    return out;
+  } catch (e) {
+    console.error("[period-pivot] creative metadata fetch threw:", e);
+    return {};
+  }
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
 /**
