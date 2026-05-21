@@ -253,20 +253,10 @@ function creativePreviewFromRows(
 ): CustomerLedgerCreativePreview {
   const thumbnailUrl =
     stringOrNull(creative?.supabase_thumbnail_url) ||
-    stringOrNull(creative?.thumbnail_url) ||
-    stringOrNull(creative?.video_thumbnail_url) ||
-    stringOrNull(creative?.supabase_image_url) ||
-    stringOrNull(creative?.image_url) ||
-    stringOrNull(creative?.preview_url) ||
-    stringOrNull(ad.preview_url);
+    stringOrNull(creative?.supabase_image_url);
   const imageUrl =
     stringOrNull(creative?.supabase_image_url) ||
-    stringOrNull(creative?.image_url) ||
-    stringOrNull(creative?.video_thumbnail_url) ||
-    stringOrNull(creative?.thumbnail_url) ||
-    stringOrNull(creative?.supabase_thumbnail_url) ||
-    stringOrNull(creative?.preview_url) ||
-    stringOrNull(ad.preview_url);
+    stringOrNull(creative?.supabase_thumbnail_url);
 
   return {
     adId,

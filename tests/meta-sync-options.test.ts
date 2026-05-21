@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { syncOptionsForTrigger } from "../src/lib/meta-sync-options.ts";
+import {
+  shouldCacheCreativeThumbnailsAfterSync,
+  syncOptionsForTrigger,
+} from "../src/lib/meta-sync-options.ts";
 
 describe("syncOptionsForTrigger", () => {
   it("keeps normal manual sync on the cheap incremental path", () => {
@@ -31,5 +34,12 @@ describe("syncOptionsForTrigger", () => {
       syncOptionsForTrigger("cron_catalog"),
       syncOptionsForTrigger("manual_catalog"),
     );
+  });
+
+  it("caches creative thumbnails only after catalog refresh triggers", () => {
+    assert.equal(shouldCacheCreativeThumbnailsAfterSync("manual_catalog"), true);
+    assert.equal(shouldCacheCreativeThumbnailsAfterSync("cron_catalog"), true);
+    assert.equal(shouldCacheCreativeThumbnailsAfterSync("manual"), false);
+    assert.equal(shouldCacheCreativeThumbnailsAfterSync("cron"), false);
   });
 });
