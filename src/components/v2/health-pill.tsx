@@ -26,19 +26,25 @@ export function HealthPill() {
           }
           return;
         }
+        // /api/system-health returns { status: "ok" | "warning" | "critical", issues: [...] }.
+        // The original code read json.severity + json.ok — neither exists on
+        // the payload — so every response collapsed to "ok". That made the
+        // pill light up green even when 12 consecutive sync runs were
+        // failing.
         const json = (await response.json()) as {
-          ok?: boolean;
-          severity?: "ok" | "warn" | "critical";
+          status?: "ok" | "warning" | "critical";
           issues?: unknown[];
         };
         if (cancelled) return;
 
         const next: HealthStatus =
-          json.severity === "critical" || json.ok === false
+          json.status === "critical"
             ? "critical"
-            : json.severity === "warn"
+            : json.status === "warning"
               ? "warn"
-              : "ok";
+              : json.status === "ok"
+                ? "ok"
+                : "unknown";
         setStatus(next);
         setIssueCount(Array.isArray(json.issues) ? json.issues.length : next === "ok" ? 0 : 1);
       } catch {
