@@ -30,7 +30,7 @@ type Props = {
 };
 
 const STATUS_OPTIONS: Option[] = [
-  { value: "all", label: "All status" },
+  { value: "all", label: "All current statuses" },
   { value: "live", label: "Live" },
   { value: "paused", label: "Paused" },
   { value: "off", label: "Off" },
@@ -197,7 +197,7 @@ export function OptimizeFilterBar({ brands, groups }: Props) {
         </span>
       ) : null}
       <Select
-        label="Status"
+        label="Current status"
         value={current.status}
         options={STATUS_OPTIONS}
         disabled={pending}

@@ -24,7 +24,10 @@ import {
   pivotByPeriod,
   type PivotedRow,
 } from "./pivot-by-period.ts";
-import { normalizeOptimizeDeliveryStatus } from "./optimize-filters.ts";
+import {
+  buildSharedInsightFilterContext,
+  buildSharedInsightFilters,
+} from "./optimize-filters.ts";
 
 /**
  * Metrics exposed in the trend-mode dropdown. Each maps to a single column
@@ -301,8 +304,7 @@ function buildPeriodPivotContext(input: PeriodPivotInput): PeriodPivotContext {
   const missingEnv = getMissingDashboardEnv();
   const anchor = input.now ?? new Date();
   const periods = lastNPeriods(anchor, input.periodCount, input.frequency);
-  const filters = buildPeriodPivotInsightFilters(input);
-  const status = normalizeOptimizeDeliveryStatus(input.status);
+  const filterContext = buildSharedInsightFilterContext(input);
 
   const rangeStart = normalizeDateString(input.startDate);
   const rangeEnd = normalizeDateString(input.endDate);
@@ -315,16 +317,16 @@ function buildPeriodPivotContext(input: PeriodPivotInput): PeriodPivotContext {
     start,
     end,
     periodDim: FREQUENCY_KEY_FIELD[input.frequency],
-    filters,
+    filters: filterContext.filters,
     metric: input.metric,
     query: {
       anchor: anchor.toISOString(),
       periodCount: input.periodCount,
       frequency: input.frequency,
       metric: input.metric,
-      brand: input.brand && input.brand !== "all" ? input.brand : null,
-      group: input.group && input.group !== "all" ? input.group : null,
-      status,
+      brand: filterContext.brand,
+      group: filterContext.group,
+      status: filterContext.status,
       start,
       end,
     },
@@ -334,18 +336,7 @@ function buildPeriodPivotContext(input: PeriodPivotInput): PeriodPivotContext {
 export function buildPeriodPivotInsightFilters(
   input: Pick<PeriodPivotInput, "brand" | "group" | "status">,
 ): MetaInsightFilter[] {
-  const filters: MetaInsightFilter[] = [];
-  if (input.brand && input.brand !== "all") {
-    filters.push({ field: "brand", operator: "equals", value: input.brand });
-  }
-  if (input.group && input.group !== "all") {
-    filters.push({ field: "campaign_umbrella", operator: "equals", value: input.group });
-  }
-  const status = normalizeOptimizeDeliveryStatus(input.status);
-  if (status) {
-    filters.push({ field: "delivery_status", operator: "equals", value: status });
-  }
-  return filters;
+  return buildSharedInsightFilters(input);
 }
 
 async function fetchCampaignPivotRows(context: PeriodPivotContext) {

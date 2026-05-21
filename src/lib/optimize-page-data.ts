@@ -7,7 +7,7 @@ import {
   type MetaInsightAggregateRow,
   type MetaInsightFilter,
 } from "./meta-insight-aggregates.ts";
-import { normalizeOptimizeDeliveryStatus } from "./optimize-filters.ts";
+import { buildSharedInsightFilters } from "./optimize-filters.ts";
 import type { DailyTrendRow, MetricSummary } from "./analytics.ts";
 
 export type OptimizeSummaryInput = {
@@ -257,22 +257,7 @@ function buildBrandOptions(rows: MetaInsightAggregateRow[]): OptimizeBrandOption
 export function buildOptimizeInsightFilters(
   input: Pick<OptimizeSummaryInput, "brand" | "group" | "status">,
 ): MetaInsightFilter[] {
-  const filters: MetaInsightFilter[] = [];
-  if (input.brand && input.brand !== "all") {
-    filters.push({ field: "brand", operator: "equals", value: input.brand });
-  }
-  if (input.group && input.group !== "all") {
-    filters.push({
-      field: "campaign_umbrella",
-      operator: "equals",
-      value: input.group,
-    });
-  }
-  const status = normalizeOptimizeDeliveryStatus(input.status);
-  if (status) {
-    filters.push({ field: "delivery_status", operator: "equals", value: status });
-  }
-  return filters;
+  return buildSharedInsightFilters(input);
 }
 
 function summaryFromAggregate(

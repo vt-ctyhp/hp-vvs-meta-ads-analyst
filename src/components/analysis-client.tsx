@@ -33,8 +33,8 @@ import {
 
 import type {
   AnalysisMetric,
-  AnalysisFilter,
   AnalysisResult,
+  AnalysisRuntimeContext,
   AnalysisSpec,
   AnalysisTableColumn,
   SavedAnalysisDashboard,
@@ -45,14 +45,7 @@ import { translateError } from "@/lib/glossary";
 type Props = {
   initialSaved: SavedAnalysisDashboard[];
   surface?: "page" | "panel";
-  runtimeContext?: {
-    dateRange?: {
-      days?: number;
-      startDate?: string | null;
-      endDate?: string | null;
-    };
-    filters?: AnalysisFilter[];
-  };
+  runtimeContext?: AnalysisRuntimeContext;
 };
 
 const CHART_COLORS = ["#2A2725", "#245D4D", "#8B5B19", "#8D2E2E", "#E91D79"];
