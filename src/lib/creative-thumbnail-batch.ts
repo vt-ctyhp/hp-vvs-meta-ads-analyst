@@ -5,34 +5,35 @@ import { cacheCreativeThumbnail } from "./creative-thumbnail-cache.ts";
  * Driver for the /api/cron/cache-thumbnails route.
  *
  * Each invocation:
- *   1. Pulls up to `limit` creatives that have a `thumbnail_url` from Meta
- *      but no `supabase_thumbnail_url` yet. Sorted by recency so newer
- *      creatives get cached first (they're the ones an operator is most
- *      likely to look at).
- *   2. For each, downloads the Meta CDN image and uploads it to the
- *      `creative-thumbnails` Supabase Storage bucket.
- *   3. On success, stamps `supabase_thumbnail_url` so subsequent runs
- *      skip this creative.
+ *   1. Pulls up to `limit` creatives missing EITHER cache column:
+ *        - supabase_thumbnail_url (powers the 32x32 tree-table cell)
+ *        - supabase_image_url (powers the ~400px drawer preview)
+ *      Sorted by recency so newer creatives — the ones an operator is
+ *      most likely to look at — get cached first.
+ *   2. For each row, caches each missing slot independently:
+ *        - thumbnail from `thumbnail_url`
+ *        - image from `image_url` (falls back to video_thumbnail_url for
+ *          video creatives that don't expose a still image_url)
+ *   3. Stamps the corresponding column on success. Subsequent runs skip
+ *      already-cached slots.
  *
- * The cron runs every hour. With ~50 creatives per run and the current
- * ~87-creative footprint, the entire library is cached after the first
- * two hours of cron activity. New creatives are picked up by the next
- * run after they sync.
+ * The cron runs hourly. With ~50 rows per run and 2 uploads per row, an
+ * 87-creative library is fully cached after the first two runs.
  *
- * Failures are non-fatal: the row's supabase_thumbnail_url stays NULL,
- * the next cron run retries. Hot Meta CDN URLs are refreshed by every
- * sync that includes catalog refresh, so a transient failure should
- * heal on its own.
+ * Failures on either slot are non-fatal: the row's column stays NULL,
+ * the next cron run retries. Meta refreshes thumbnail_url/image_url on
+ * every catalog-refresh sync, so a transient 403 heals on its own.
  */
 
 const DEFAULT_LIMIT = 50;
 
 export type ThumbnailBatchResult = {
   pickedUp: number;
-  cached: number;
+  thumbnailCached: number;
+  imageCached: number;
   skipped: number;
   failed: number;
-  failures: Array<{ creativeId: string; reason: string }>;
+  failures: Array<{ creativeId: string; kind: string; reason: string }>;
 };
 
 type Row = {
@@ -41,19 +42,19 @@ type Row = {
   image_url: string | null;
   video_thumbnail_url: string | null;
   image_hash: string | null;
+  supabase_thumbnail_url: string | null;
+  supabase_image_url: string | null;
 };
 
 type CreativesQuery = {
   from: (table: "meta_creatives") => {
     select: (cols: string) => {
-      is: (col: string, value: null) => {
-        not: (col: string, op: string, value: null) => {
-          order: (
-            col: string,
-            opts: { ascending: boolean; nullsFirst?: boolean },
-          ) => {
-            limit: (n: number) => Promise<{ data: unknown; error: Error | null }>;
-          };
+      or: (filter: string) => {
+        order: (
+          col: string,
+          opts: { ascending: boolean; nullsFirst?: boolean },
+        ) => {
+          limit: (n: number) => Promise<{ data: unknown; error: Error | null }>;
         };
       };
     };
@@ -71,16 +72,14 @@ export async function cacheThumbnailBatch(
   const limit = Math.max(1, Math.min(options.limit ?? DEFAULT_LIMIT, 200));
   const supabase = createAdsAnalystClient("worker") as unknown as CreativesQuery;
 
-  // Order by created_at desc — newer creatives first. Operators are far
-  // more likely to scan recent creatives in the tree-table than dredge
-  // through year-old rotations.
+  // PostgREST `.or()` filter — selects rows missing EITHER cache column.
+  // Order by created_at desc so a backlog of new creatives caches first.
   const { data, error } = await supabase
     .from("meta_creatives")
     .select(
-      "creative_id,thumbnail_url,image_url,video_thumbnail_url,image_hash",
+      "creative_id,thumbnail_url,image_url,video_thumbnail_url,image_hash,supabase_thumbnail_url,supabase_image_url",
     )
-    .is("supabase_thumbnail_url", null)
-    .not("thumbnail_url", "is", null)
+    .or("supabase_thumbnail_url.is.null,supabase_image_url.is.null")
     .order("created_at", { ascending: false, nullsFirst: false })
     .limit(limit);
 
@@ -91,48 +90,91 @@ export async function cacheThumbnailBatch(
   const rows: Row[] = Array.isArray(data) ? (data as Row[]) : [];
   const summary: ThumbnailBatchResult = {
     pickedUp: rows.length,
-    cached: 0,
+    thumbnailCached: 0,
+    imageCached: 0,
     skipped: 0,
     failed: 0,
     failures: [],
   };
 
   for (const row of rows) {
-    const sourceUrl =
-      row.thumbnail_url || row.image_url || row.video_thumbnail_url;
-    if (!sourceUrl) {
-      summary.skipped += 1;
-      continue;
+    const updates: Record<string, string> = {};
+
+    // ── thumbnail slot ────────────────────────────────────────────────
+    if (!row.supabase_thumbnail_url) {
+      const sourceUrl =
+        row.thumbnail_url || row.image_url || row.video_thumbnail_url;
+      if (sourceUrl) {
+        const result = await cacheCreativeThumbnail({
+          creativeId: row.creative_id,
+          sourceUrl,
+          imageHash: row.image_hash,
+          kind: "thumbnail",
+        });
+        if (result.status === "cached") {
+          updates.supabase_thumbnail_url = result.publicUrl;
+          summary.thumbnailCached += 1;
+        } else if (result.status === "failed") {
+          summary.failed += 1;
+          summary.failures.push({
+            creativeId: row.creative_id,
+            kind: "thumbnail",
+            reason: result.reason,
+          });
+        } else {
+          summary.skipped += 1;
+        }
+      } else {
+        summary.skipped += 1;
+      }
     }
 
-    const result = await cacheCreativeThumbnail({
-      creativeId: row.creative_id,
-      sourceUrl,
-      imageHash: row.image_hash,
-    });
+    // ── full image slot ───────────────────────────────────────────────
+    if (!row.supabase_image_url) {
+      // Prefer image_url (full resolution). Some video creatives don't
+      // expose image_url — fall back to video_thumbnail_url, then
+      // thumbnail_url so the drawer always has SOMETHING permanent.
+      const sourceUrl =
+        row.image_url || row.video_thumbnail_url || row.thumbnail_url;
+      if (sourceUrl) {
+        const result = await cacheCreativeThumbnail({
+          creativeId: row.creative_id,
+          sourceUrl,
+          imageHash: row.image_hash,
+          kind: "image",
+        });
+        if (result.status === "cached") {
+          updates.supabase_image_url = result.publicUrl;
+          summary.imageCached += 1;
+        } else if (result.status === "failed") {
+          summary.failed += 1;
+          summary.failures.push({
+            creativeId: row.creative_id,
+            kind: "image",
+            reason: result.reason,
+          });
+        } else {
+          summary.skipped += 1;
+        }
+      } else {
+        summary.skipped += 1;
+      }
+    }
 
-    if (result.status === "cached") {
+    // ── one update per row carrying whatever slot(s) succeeded ───────
+    if (Object.keys(updates).length > 0) {
       const { error: updateError } = await supabase
         .from("meta_creatives")
-        .update({ supabase_thumbnail_url: result.publicUrl })
+        .update(updates)
         .eq("creative_id", row.creative_id);
       if (updateError) {
         summary.failed += 1;
         summary.failures.push({
           creativeId: row.creative_id,
-          reason: `update failed: ${updateError.message}`,
+          kind: "update",
+          reason: updateError.message,
         });
-      } else {
-        summary.cached += 1;
       }
-    } else if (result.status === "skipped") {
-      summary.skipped += 1;
-    } else {
-      summary.failed += 1;
-      summary.failures.push({
-        creativeId: row.creative_id,
-        reason: result.reason,
-      });
     }
   }
 

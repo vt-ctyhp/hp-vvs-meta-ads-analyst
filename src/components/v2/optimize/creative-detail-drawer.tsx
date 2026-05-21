@@ -61,13 +61,18 @@ export function CreativeDetailDrawer({
 
   if (!open || !creativeId) return null;
 
-  // Prefer the permanent Supabase Storage URL when present; Meta CDN
-  // URLs expire ~24-48h so they only serve as a fallback for un-cached
-  // creatives.
+  // Prefer the permanent Supabase Storage URLs (never expire).
+  //   - supabaseImageUrl is the full-resolution copy — best for the
+  //     drawer's ~400px preview.
+  //   - supabaseThumbnailUrl falls back when the image slot hasn't
+  //     been cached yet (lower-res but still permanent).
+  //   - Meta CDN URLs only serve as a final fallback for creatives the
+  //     cron hasn't reached. They expire in 24-48h.
   const previewSrc =
+    asset?.supabaseImageUrl ??
     asset?.supabaseThumbnailUrl ??
-    asset?.thumbnailUrl ??
     asset?.imageUrl ??
+    asset?.thumbnailUrl ??
     asset?.videoThumbnailUrl ??
     null;
   const previewLink = asset?.previewUrl ?? null;

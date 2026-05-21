@@ -47,10 +47,18 @@ const MAX_BYTES = 5 * 1024 * 1024;
 // tight; if Meta is slow, give up and try this creative again next cron.
 const FETCH_TIMEOUT_MS = 10_000;
 
+export type ThumbnailKind = "thumbnail" | "image";
+
 export async function cacheCreativeThumbnail(input: {
   creativeId: string;
   sourceUrl: string;
   imageHash?: string | null;
+  /**
+   * Which slot we're filling. Used in the object key so the small
+   * thumbnail and the full image can both live in the same bucket
+   * without one stomping the other.
+   */
+  kind?: ThumbnailKind;
 }): Promise<ThumbnailCacheResult> {
   if (!input.creativeId || !input.sourceUrl) {
     return { status: "skipped", reason: "missing creativeId or sourceUrl" };
@@ -95,13 +103,17 @@ export async function cacheCreativeThumbnail(input: {
     return { status: "failed", reason: `Meta fetch failed: ${safeErrorMessage(e)}` };
   }
 
-  // 2. Upload to Supabase Storage. Object key includes image_hash so a
-  //    Meta-side update writes to a new path instead of stomping the old
-  //    file (avoids cache races on the CDN edge).
+  // 2. Upload to Supabase Storage. Object key encodes:
+  //    - creative_id + image_hash so a Meta-side update writes to a new
+  //      path instead of stomping the old file (avoids cache races on the
+  //      CDN edge).
+  //    - kind so the small thumbnail and the full image coexist
+  //      ($id-$hash-thumb.jpg vs $id-$hash-image.jpg).
   const ext = extensionFromContentType(contentType);
-  const objectKey = input.imageHash
-    ? `${input.creativeId}-${input.imageHash}.${ext}`
-    : `${input.creativeId}.${ext}`;
+  const kind = input.kind ?? "thumbnail";
+  const suffix = kind === "image" ? "image" : "thumb";
+  const hashPart = input.imageHash ? `-${input.imageHash}` : "";
+  const objectKey = `${input.creativeId}${hashPart}-${suffix}.${ext}`;
 
   try {
     const supabase = createAdsAnalystClient("worker") as unknown as StorageClient;
