@@ -20,12 +20,17 @@ create table if not exists public.meta_daily_insight_rollups (
   brand text not null default 'Unassigned',
   campaign_umbrella text not null default 'Needs review',
   campaign_umbrella_raw text,
+  campaign_filter_text text not null default '',
   campaign text not null default 'Unknown campaign',
   campaign_id text not null default 'unknown',
+  ad_set_filter_text text not null default '',
   ad_set text not null default 'Unknown ad set',
   ad_set_id text not null default 'unknown',
+  ad_filter_text text not null default '',
   ad text not null default 'Unknown ad',
   ad_id text not null default 'unknown',
+  creative_filter_text text not null default '',
+  search_filter_text text not null default '',
   creative text not null default 'Unknown creative',
   creative_id text not null default 'unknown',
   daily_budget numeric not null default 0,
@@ -153,12 +158,17 @@ begin
     brand,
     campaign_umbrella,
     campaign_umbrella_raw,
+    campaign_filter_text,
     campaign,
     campaign_id,
+    ad_set_filter_text,
     ad_set,
     ad_set_id,
+    ad_filter_text,
     ad,
     ad_id,
+    creative_filter_text,
+    search_filter_text,
     creative,
     creative_id,
     daily_budget,
@@ -194,71 +204,77 @@ begin
     coalesce(b.code, 'Unassigned') as brand,
     coalesce(i.campaign_umbrella, 'Needs review') as campaign_umbrella,
     i.campaign_umbrella as campaign_umbrella_raw,
+    concat_ws(' ', i.campaign_name, i.campaign_id) as campaign_filter_text,
     coalesce(i.campaign_name, i.campaign_id, 'Unknown campaign') as campaign,
     coalesce(i.campaign_id, i.campaign_name, 'unknown') as campaign_id,
+    concat_ws(' ', i.ad_set_name, i.ad_set_id) as ad_set_filter_text,
     coalesce(i.ad_set_name, i.ad_set_id, 'Unknown ad set') as ad_set,
     coalesce(i.ad_set_id, i.ad_set_name, 'unknown') as ad_set_id,
+    concat_ws(' ', i.ad_name, i.ad_id) as ad_filter_text,
     coalesce(i.ad_name, i.ad_id, 'Unknown ad') as ad,
     coalesce(i.ad_id, i.ad_name, 'unknown') as ad_id,
+    coalesce(i.creative_id, '') as creative_filter_text,
+    concat_ws(
+      ' ',
+      coalesce(b.code, 'Unassigned'),
+      i.campaign_umbrella,
+      i.campaign_name,
+      i.ad_set_name,
+      i.ad_name,
+      i.creative_id
+    ) as search_filter_text,
     coalesce(i.creative_id, 'Unknown creative') as creative,
     coalesce(i.creative_id, 'unknown') as creative_id,
     coalesce(s.daily_budget, 0) as daily_budget,
     extract(day from (date_trunc('month', i.date_start)::date + interval '1 month - 1 day'))::numeric as days_in_month,
-    round(
+    (
       coalesce(s.daily_budget, 0)
-      * extract(day from (date_trunc('month', i.date_start)::date + interval '1 month - 1 day'))::numeric,
-      2
+      * extract(day from (date_trunc('month', i.date_start)::date + interval '1 month - 1 day'))::numeric
     ) as monthly_budget,
-    round(coalesce(i.spend, 0), 2) as spend,
+    coalesce(i.spend, 0) as spend,
     coalesce(i.impressions, 0)::bigint as impressions,
     coalesce(i.reach, 0)::bigint as reach,
     coalesce(i.clicks, 0)::bigint as clicks,
     coalesce(i.leads, 0)::bigint as leads,
     coalesce(i.bookings, 0)::bigint as bookings,
     coalesce(i.conversions, 0)::bigint as conversions,
-    round(coalesce((
+    coalesce((
       select sum((a ->> 'value')::numeric)
       from jsonb_array_elements(i.actions) a
       where a ->> 'action_type' in ('offsite_conversion.fb_pixel_custom')
-    ), 0), 2) as website_bookings,
-    round(coalesce((
+    ), 0) as website_bookings,
+    coalesce((
       select sum((a ->> 'value')::numeric)
       from jsonb_array_elements(i.actions) a
       where a ->> 'action_type' in ('onsite_conversion.total_messaging_connection')
-    ), 0), 2) as messaging_contacts,
-    round(coalesce((
+    ), 0) as messaging_contacts,
+    coalesce((
       select sum((a ->> 'value')::numeric)
       from jsonb_array_elements(i.actions) a
       where a ->> 'action_type' in ('onsite_conversion.messaging_first_reply')
-    ), 0), 2) as new_messaging_contacts,
-    round(
-      case
-        when coalesce(i.campaign_umbrella, 'Needs review') = 'Book Appts US'
-        then coalesce((
-          select sum((a ->> 'value')::numeric)
-          from jsonb_array_elements(i.actions) a
-          where a ->> 'action_type' in ('offsite_conversion.fb_pixel_custom')
-        ), 0)
-        else coalesce((
-          select sum((a ->> 'value')::numeric)
-          from jsonb_array_elements(i.actions) a
-          where a ->> 'action_type' in ('onsite_conversion.total_messaging_connection')
-        ), 0)
-      end,
-      2
-    ) as primary_results,
-    round(
-      case
-        when coalesce(i.campaign_umbrella, 'Needs review') in ('Facebook US Product', 'Facebook VN Product')
-        then coalesce((
-          select sum((a ->> 'value')::numeric)
-          from jsonb_array_elements(i.actions) a
-          where a ->> 'action_type' in ('onsite_conversion.messaging_first_reply')
-        ), 0)
-        else 0
-      end,
-      2
-    ) as secondary_results
+    ), 0) as new_messaging_contacts,
+    case
+      when coalesce(i.campaign_umbrella, 'Needs review') = 'Book Appts US'
+      then coalesce((
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(i.actions) a
+        where a ->> 'action_type' in ('offsite_conversion.fb_pixel_custom')
+      ), 0)
+      else coalesce((
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(i.actions) a
+        where a ->> 'action_type' in ('onsite_conversion.total_messaging_connection')
+      ), 0)
+    end as primary_results,
+    case
+      when coalesce(i.campaign_umbrella, 'Needs review') in ('Facebook US Product', 'Facebook VN Product')
+      then coalesce((
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(i.actions) a
+        where a ->> 'action_type' in ('onsite_conversion.messaging_first_reply')
+      ), 0)
+      else 0
+    end as secondary_results
   from public.meta_daily_insights i
   left join public.brands b
     on b.id = i.brand_id
@@ -361,11 +377,11 @@ as $$
                   case coalesce(f ->> 'field', 'search')
                     when 'brand' then r.brand
                     when 'campaign_umbrella' then coalesce(r.campaign_umbrella_raw, '')
-                    when 'campaign' then concat_ws(' ', r.campaign, r.campaign_id)
-                    when 'ad_set' then concat_ws(' ', r.ad_set, r.ad_set_id)
-                    when 'ad' then concat_ws(' ', r.ad, r.ad_id)
-                    when 'creative' then r.creative_id
-                    else concat_ws(' ', r.brand, r.campaign_umbrella_raw, r.campaign, r.ad_set, r.ad, r.creative_id)
+                    when 'campaign' then r.campaign_filter_text
+                    when 'ad_set' then r.ad_set_filter_text
+                    when 'ad' then r.ad_filter_text
+                    when 'creative' then r.creative_filter_text
+                    else r.search_filter_text
                   end
                 ) = lower(coalesce(f ->> 'value', ''))
               else
@@ -374,11 +390,11 @@ as $$
                     case coalesce(f ->> 'field', 'search')
                       when 'brand' then r.brand
                       when 'campaign_umbrella' then coalesce(r.campaign_umbrella_raw, '')
-                      when 'campaign' then concat_ws(' ', r.campaign, r.campaign_id)
-                      when 'ad_set' then concat_ws(' ', r.ad_set, r.ad_set_id)
-                      when 'ad' then concat_ws(' ', r.ad, r.ad_id)
-                      when 'creative' then r.creative_id
-                      else concat_ws(' ', r.brand, r.campaign_umbrella_raw, r.campaign, r.ad_set, r.ad, r.creative_id)
+                      when 'campaign' then r.campaign_filter_text
+                      when 'ad_set' then r.ad_set_filter_text
+                      when 'ad' then r.ad_filter_text
+                      when 'creative' then r.creative_filter_text
+                      else r.search_filter_text
                     end
                   )
                 ) > 0
