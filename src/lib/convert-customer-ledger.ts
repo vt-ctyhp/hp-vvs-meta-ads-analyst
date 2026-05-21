@@ -6,20 +6,43 @@ export type CustomerLedgerSearchParams = {
   start?: string | null;
 };
 
+export type CustomerLedgerCreativePreview = {
+  adId: string;
+  adName: string | null;
+  body: string | null;
+  creativeId: string | null;
+  creativeName: string | null;
+  imageUrl: string | null;
+  previewHtml: string | null;
+  previewSource: string | null;
+  previewUrl: string | null;
+  thumbnailUrl: string | null;
+  title: string | null;
+};
+
 export type CustomerLedgerRow = {
+  adId: string | null;
+  adsetId: string | null;
   acuityAppointmentId: string | null;
   appointmentType: string | null;
   brand: string | null;
   capiStatus: string | null;
+  campaignId: string | null;
+  creativePreview: CustomerLedgerCreativePreview | null;
   customerEmail: string | null;
   customerName: string | null;
+  customerPhone: string | null;
+  deviceBrowser: string | null;
   eventId: string | null;
+  firstPage: string | null;
   hasConversion: boolean;
   hasPaidTouch: boolean;
   occurredAt: string;
   paidTouchCampaign: string | null;
   paidTouchSource: string | null;
+  placement: string | null;
   rowId: string;
+  sessionId: string | null;
   sourceType: string | null;
   visitorId: string;
 };
@@ -29,6 +52,19 @@ export type CustomerJourneyLedgerRequest = {
   endDate?: string | null;
   startDate?: string | null;
 };
+
+export type CustomerLedgerDetailIdentity =
+  | {
+      data: {
+        acuityAppointmentId: string | null;
+        visitorId: string;
+      };
+      error: null;
+    }
+  | {
+      data: null;
+      error: string;
+    };
 
 export function customerJourneyLedgerRequestFromSearchParams(
   params: CustomerLedgerSearchParams,
@@ -48,23 +84,65 @@ export function customerLedgerRowsFromJourneys(
   return rows.map((row) => {
     const eventId = row.conversionEventId || null;
     return {
+      adId: row.adId,
+      adsetId: row.adsetId,
       acuityAppointmentId: row.acuityAppointmentId,
       appointmentType: row.appointmentType,
       brand: row.brand,
       capiStatus: row.capiStatus,
+      campaignId: row.campaignId,
+      creativePreview: null,
       customerEmail: row.customerEmail,
       customerName: row.customerName,
+      customerPhone: row.customerPhone,
+      deviceBrowser: row.deviceBrowser,
       eventId,
+      firstPage: row.firstPage,
       hasConversion: row.hasConversion,
       hasPaidTouch: row.hasPaidTouch,
       occurredAt: row.bookingTime || row.lastSeen,
       paidTouchCampaign: row.campaignId,
       paidTouchSource: row.lastPaidSource,
+      placement: row.placement,
       rowId: eventId || row.visitorId,
+      sessionId: row.sessionId,
       sourceType: row.lastPaidSourceType,
       visitorId: row.visitorId,
     };
   });
+}
+
+export function customerLedgerDetailIdentityFromSearchParams(
+  searchParams: URLSearchParams,
+): CustomerLedgerDetailIdentity {
+  const visitorId = searchParams.get("visitorId")?.trim() || null;
+  const acuityAppointmentId =
+    searchParams.get("acuityAppointmentId")?.trim() || null;
+
+  if (!visitorId) {
+    return {
+      data: null,
+      error: "visitorId is required.",
+    };
+  }
+
+  return {
+    data: {
+      acuityAppointmentId,
+      visitorId,
+    },
+    error: null,
+  };
+}
+
+export function customerLedgerDetailUrl(
+  row: Pick<CustomerLedgerRow, "acuityAppointmentId" | "visitorId">,
+) {
+  const params = new URLSearchParams({ visitorId: row.visitorId });
+  if (row.acuityAppointmentId) {
+    params.set("acuityAppointmentId", row.acuityAppointmentId);
+  }
+  return `/api/convert/customer-ledger/detail?${params.toString()}`;
 }
 
 export function countCustomerLedgerCapiGaps(rows: CustomerLedgerRow[]): number {

@@ -14,6 +14,7 @@ import {
   customerLedgerRowsFromJourneys,
   type CustomerLedgerRow,
 } from "@/lib/convert-customer-ledger";
+import { enrichCustomerLedgerRowsWithCreativePreviews } from "@/lib/customer-ledger-creative-enrichment";
 import { fetchCustomerJourneyLedgerData } from "@/lib/customer-journey-ledger";
 import { requirePagePermission } from "@/lib/server-route-auth";
 import {
@@ -113,7 +114,9 @@ async function fetchLedger(params: SearchParams): Promise<CustomerLedgerRow[]> {
   const data = await fetchCustomerJourneyLedgerData(
     customerJourneyLedgerRequestFromSearchParams(params),
   );
-  return customerLedgerRowsFromJourneys(data.rows);
+  return enrichCustomerLedgerRowsWithCreativePreviews(
+    customerLedgerRowsFromJourneys(data.rows),
+  );
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
