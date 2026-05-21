@@ -44,7 +44,7 @@ export type CustomerJourneyLedgerRow = {
   osName: string | null;
   placement: string | null;
   sessionId: string | null;
-  visitorId: string;
+  visitorId: string | null;
 };
 
 export type CustomerJourneyLedgerData = {
@@ -115,14 +115,14 @@ export type CustomerJourneyLedgerDetailData = {
   };
   confidence: {
     explanation: string;
-    level: "browser_session" | "browser_visitor" | "unmatched";
+    level: "browser_session" | "browser_visitor" | "conversion_only" | "unmatched";
     signals: string[];
   };
   creditedTouch: CustomerJourneyLedgerTouchSummary | null;
   returnTouch: CustomerJourneyLedgerTouchSummary | null;
   summary: string | null;
   timeline: CustomerJourneyLedgerTimelineEvent[];
-  visitorId: string;
+  visitorId: string | null;
 };
 
 type AttributionTouch = {
@@ -245,7 +245,7 @@ export type CustomerJourneyLedgerConversionRow = {
   visitor_id: string | null;
 };
 
-type CustomerJourneyLedgerClient = {
+export type CustomerJourneyLedgerClient = {
   from: (table: "website_visitors") => {
     select: (columns: string) => LedgerSelectChain<CustomerJourneyLedgerVisitorRow[]>;
   };
@@ -272,6 +272,111 @@ type LedgerSelectChain<T> = PromiseLike<{ data: T | null; error: Error | null }>
   order: (column: string, options: { ascending: boolean }) => LedgerSelectChain<T>;
 };
 
+const VISITOR_COLUMNS = [
+  "visitor_id",
+  "first_seen_at",
+  "last_seen_at",
+  "first_page_url",
+  "last_page_url",
+  "first_touch",
+  "last_touch",
+  "last_paid_touch",
+  "fbp",
+  "fbc",
+  "user_agent",
+  "device_category",
+  "browser_name",
+  "os_name",
+  "customer_name",
+  "customer_email",
+  "customer_phone",
+  "conversion_event_id",
+].join(",");
+
+const SESSION_COLUMNS = [
+  "session_id",
+  "visitor_id",
+  "last_seen_at",
+  "first_page_url",
+  "last_page_url",
+  "last_paid_touch",
+  "fbp",
+  "fbc",
+  "user_agent",
+  "device_category",
+  "browser_name",
+  "os_name",
+  "customer_name",
+  "customer_email",
+  "customer_phone",
+  "conversion_event_id",
+].join(",");
+
+const EVENT_COLUMNS = [
+  "event_id",
+  "session_id",
+  "visitor_id",
+  "source",
+  "event_name",
+  "event_type",
+  "occurred_at",
+  "page_url",
+  "referrer",
+  "utm_source",
+  "utm_medium",
+  "utm_campaign",
+  "utm_content",
+  "utm_term",
+  "utm_id",
+  "utm_creative",
+  "utm_ad",
+  "utm_ad_id",
+  "utm_adset",
+  "utm_adset_id",
+  "utm_placement",
+  "fbclid",
+  "fbp",
+  "fbc",
+  "device_category",
+  "browser_name",
+  "os_name",
+  "source_type",
+  "properties",
+  "raw_json",
+].join(",");
+
+const CONVERSION_COLUMNS = [
+  "event_id",
+  "session_id",
+  "visitor_id",
+  "occurred_at",
+  "received_at",
+  "source_type",
+  "acuity_appointment_id",
+  "appointment_type",
+  "brand",
+  "customer_name",
+  "customer_email",
+  "customer_phone",
+  "meta_event_id",
+  "meta_capi_status",
+  "meta_capi_test_mode",
+  "fbp",
+  "fbc",
+  "user_agent",
+  "device_category",
+  "browser_name",
+  "os_name",
+  "page_url",
+  "referrer",
+  "first_touch",
+  "last_touch",
+  "last_paid_touch",
+  "conversion_touch",
+  "properties",
+  "raw_json",
+].join(",");
+
 export async function fetchCustomerJourneyLedgerData(input: {
   days?: number | null;
   endDate?: string | null;
@@ -287,43 +392,54 @@ export async function fetchCustomerJourneyLedgerData(input: {
   const startIso = `${range.start}T00:00:00.000Z`;
   const endIso = `${range.end}T23:59:59.999Z`;
 
-  const visitorsResult = await client
-    .from("website_visitors")
-    .select(
-      [
-        "visitor_id",
-        "first_seen_at",
-        "last_seen_at",
-        "first_page_url",
-        "last_page_url",
-        "first_touch",
-        "last_touch",
-        "last_paid_touch",
-        "fbp",
-        "fbc",
-        "user_agent",
-        "device_category",
-        "browser_name",
-        "os_name",
-        "customer_name",
-        "customer_email",
-        "customer_phone",
-        "conversion_event_id",
-      ].join(","),
-    )
-    .gte("last_seen_at", startIso)
-    .lte("last_seen_at", endIso)
-    .order("last_seen_at", { ascending: false })
-    .limit(MAX_LEDGER_VISITORS);
+  const [visitorsResult, rangeConversionsResult] = await Promise.all([
+    client
+      .from("website_visitors")
+      .select(VISITOR_COLUMNS)
+      .gte("last_seen_at", startIso)
+      .lte("last_seen_at", endIso)
+      .order("last_seen_at", { ascending: false })
+      .limit(MAX_LEDGER_VISITORS),
+    client
+      .from("website_conversions")
+      .select(CONVERSION_COLUMNS)
+      .gte("occurred_at", startIso)
+      .lte("occurred_at", endIso)
+      .order("occurred_at", { ascending: false })
+      .limit(MAX_RELATED_ROWS),
+  ]);
 
   if (visitorsResult.error) throw visitorsResult.error;
+  if (rangeConversionsResult.error) throw rangeConversionsResult.error;
 
-  const visitors = visitorsResult.data || [];
+  const rangeConversions = rangeConversionsResult.data || [];
+  const initialVisitors = visitorsResult.data || [];
+  const initialVisitorIds = new Set(initialVisitors.map((visitor) => visitor.visitor_id));
+  const missingConversionVisitorIds = uniqueStrings(
+    rangeConversions
+      .map((conversion) => conversion.visitor_id)
+      .filter((visitorId): visitorId is string => Boolean(visitorId))
+      .filter((visitorId) => !initialVisitorIds.has(visitorId)),
+  );
+  const extraVisitorsResult = missingConversionVisitorIds.length
+    ? await client
+        .from("website_visitors")
+        .select(VISITOR_COLUMNS)
+        .in("visitor_id", missingConversionVisitorIds)
+        .limit(MAX_LEDGER_VISITORS)
+    : null;
+
+  if (extraVisitorsResult?.error) throw extraVisitorsResult.error;
+
+  const visitors = uniqueVisitors([
+    ...initialVisitors,
+    ...(extraVisitorsResult?.data || []),
+  ]);
   const visitorIds = visitors.map((visitor) => visitor.visitor_id);
 
   if (!visitorIds.length) {
     return buildCustomerJourneyLedgerData({
-      conversions: [],
+      conversions: rangeConversions,
       events: [],
       range,
       sessions: [],
@@ -334,103 +450,19 @@ export async function fetchCustomerJourneyLedgerData(input: {
   const [sessionsResult, eventsResult, conversionsResult] = await Promise.all([
     client
       .from("website_sessions")
-      .select(
-        [
-          "session_id",
-          "visitor_id",
-          "last_seen_at",
-          "first_page_url",
-          "last_page_url",
-          "last_paid_touch",
-          "fbp",
-          "fbc",
-          "user_agent",
-          "device_category",
-          "browser_name",
-          "os_name",
-          "customer_name",
-          "customer_email",
-          "customer_phone",
-          "conversion_event_id",
-        ].join(","),
-      )
+      .select(SESSION_COLUMNS)
       .in("visitor_id", visitorIds)
       .order("last_seen_at", { ascending: false })
       .limit(MAX_RELATED_ROWS),
     client
       .from("website_events")
-      .select(
-        [
-          "event_id",
-          "session_id",
-          "visitor_id",
-          "source",
-          "event_name",
-          "event_type",
-          "occurred_at",
-          "page_url",
-          "referrer",
-          "utm_source",
-          "utm_medium",
-          "utm_campaign",
-          "utm_content",
-          "utm_term",
-          "utm_id",
-          "utm_creative",
-          "utm_ad",
-          "utm_ad_id",
-          "utm_adset",
-          "utm_adset_id",
-          "utm_placement",
-          "fbclid",
-          "fbp",
-          "fbc",
-          "device_category",
-          "browser_name",
-          "os_name",
-          "source_type",
-          "properties",
-          "raw_json",
-        ].join(","),
-      )
+      .select(EVENT_COLUMNS)
       .in("visitor_id", visitorIds)
       .order("occurred_at", { ascending: false })
       .limit(MAX_RELATED_ROWS),
     client
       .from("website_conversions")
-      .select(
-        [
-          "event_id",
-          "session_id",
-          "visitor_id",
-          "occurred_at",
-          "received_at",
-          "source_type",
-          "acuity_appointment_id",
-          "appointment_type",
-          "brand",
-          "customer_name",
-          "customer_email",
-          "customer_phone",
-          "meta_event_id",
-          "meta_capi_status",
-          "meta_capi_test_mode",
-          "fbp",
-          "fbc",
-          "user_agent",
-          "device_category",
-          "browser_name",
-          "os_name",
-          "page_url",
-          "referrer",
-          "first_touch",
-          "last_touch",
-          "last_paid_touch",
-          "conversion_touch",
-          "properties",
-          "raw_json",
-        ].join(","),
-      )
+      .select(CONVERSION_COLUMNS)
       .in("visitor_id", visitorIds)
       .order("occurred_at", { ascending: false })
       .limit(MAX_RELATED_ROWS),
@@ -441,7 +473,10 @@ export async function fetchCustomerJourneyLedgerData(input: {
   if (conversionsResult.error) throw conversionsResult.error;
 
   return buildCustomerJourneyLedgerData({
-    conversions: conversionsResult.data || [],
+    conversions: uniqueConversions([
+      ...rangeConversions,
+      ...(conversionsResult.data || []),
+    ]),
     events: eventsResult.data || [],
     range,
     sessions: sessionsResult.data || [],
@@ -449,140 +484,66 @@ export async function fetchCustomerJourneyLedgerData(input: {
   });
 }
 
-export async function fetchCustomerJourneyLedgerDetail(input: {
-  acuityAppointmentId?: string | null;
-  visitorId: string;
-}): Promise<CustomerJourneyLedgerDetailData | null> {
-  const visitorId = input.visitorId.trim();
-  if (!visitorId) return null;
+export async function fetchCustomerJourneyLedgerDetail(
+  input: {
+    acuityAppointmentId?: string | null;
+    eventId?: string | null;
+    visitorId?: string | null;
+  },
+  client: CustomerJourneyLedgerClient = createAdsAnalystClient(
+    "web",
+  ) as unknown as CustomerJourneyLedgerClient,
+): Promise<CustomerJourneyLedgerDetailData | null> {
+  const visitorId = input.visitorId?.trim() || null;
+  const acuityAppointmentId = input.acuityAppointmentId?.trim() || null;
+  const eventId = input.eventId?.trim() || null;
 
-  const client = createAdsAnalystClient("web") as unknown as CustomerJourneyLedgerClient;
+  if (!visitorId && !acuityAppointmentId && !eventId) return null;
+
+  if (!visitorId) {
+    return fetchCustomerJourneyLedgerConversionOnlyDetail(client, {
+      acuityAppointmentId,
+      eventId,
+    });
+  }
+
+  return fetchCustomerJourneyLedgerVisitorDetail(client, {
+    acuityAppointmentId,
+    eventId,
+    visitorId,
+  });
+}
+
+async function fetchCustomerJourneyLedgerVisitorDetail(
+  client: CustomerJourneyLedgerClient,
+  input: {
+    acuityAppointmentId?: string | null;
+    eventId?: string | null;
+    visitorId: string;
+  },
+): Promise<CustomerJourneyLedgerDetailData | null> {
+  const visitorId = input.visitorId;
   const [visitorsResult, sessionsResult, eventsResult, conversionsResult] = await Promise.all([
     client
       .from("website_visitors")
-      .select(
-        [
-          "visitor_id",
-          "first_seen_at",
-          "last_seen_at",
-          "first_page_url",
-          "last_page_url",
-          "first_touch",
-          "last_touch",
-          "last_paid_touch",
-          "fbp",
-          "fbc",
-          "user_agent",
-          "device_category",
-          "browser_name",
-          "os_name",
-          "customer_name",
-          "customer_email",
-          "customer_phone",
-          "conversion_event_id",
-        ].join(","),
-      )
+      .select(VISITOR_COLUMNS)
       .eq("visitor_id", visitorId)
       .limit(1),
     client
       .from("website_sessions")
-      .select(
-        [
-          "session_id",
-          "visitor_id",
-          "last_seen_at",
-          "first_page_url",
-          "last_page_url",
-          "last_paid_touch",
-          "fbp",
-          "fbc",
-          "user_agent",
-          "device_category",
-          "browser_name",
-          "os_name",
-          "customer_name",
-          "customer_email",
-          "customer_phone",
-          "conversion_event_id",
-        ].join(","),
-      )
+      .select(SESSION_COLUMNS)
       .eq("visitor_id", visitorId)
       .order("last_seen_at", { ascending: false })
       .limit(50),
     client
       .from("website_events")
-      .select(
-        [
-          "event_id",
-          "session_id",
-          "visitor_id",
-          "source",
-          "event_name",
-          "event_type",
-          "occurred_at",
-          "page_url",
-          "referrer",
-          "utm_source",
-          "utm_medium",
-          "utm_campaign",
-          "utm_content",
-          "utm_term",
-          "utm_id",
-          "utm_creative",
-          "utm_ad",
-          "utm_ad_id",
-          "utm_adset",
-          "utm_adset_id",
-          "utm_placement",
-          "fbclid",
-          "fbp",
-          "fbc",
-          "device_category",
-          "browser_name",
-          "os_name",
-          "source_type",
-          "properties",
-          "raw_json",
-        ].join(","),
-      )
+      .select(EVENT_COLUMNS)
       .eq("visitor_id", visitorId)
       .order("occurred_at", { ascending: true })
       .limit(MAX_RELATED_ROWS),
     client
       .from("website_conversions")
-      .select(
-        [
-          "event_id",
-          "session_id",
-          "visitor_id",
-          "occurred_at",
-          "received_at",
-          "source_type",
-          "acuity_appointment_id",
-          "appointment_type",
-          "brand",
-          "customer_name",
-          "customer_email",
-          "customer_phone",
-          "meta_event_id",
-          "meta_capi_status",
-          "meta_capi_test_mode",
-          "fbp",
-          "fbc",
-          "user_agent",
-          "device_category",
-          "browser_name",
-          "os_name",
-          "page_url",
-          "referrer",
-          "first_touch",
-          "last_touch",
-          "last_paid_touch",
-          "conversion_touch",
-          "properties",
-          "raw_json",
-        ].join(","),
-      )
+      .select(CONVERSION_COLUMNS)
       .eq("visitor_id", visitorId)
       .order("occurred_at", { ascending: false })
       .limit(50),
@@ -594,10 +555,17 @@ export async function fetchCustomerJourneyLedgerDetail(input: {
   if (conversionsResult.error) throw conversionsResult.error;
 
   const visitor = (visitorsResult.data || [])[0] || null;
-  if (!visitor) return null;
+  if (!visitor) {
+    return fetchCustomerJourneyLedgerConversionOnlyDetail(client, {
+      acuityAppointmentId: input.acuityAppointmentId,
+      eventId: input.eventId,
+      skipVisitorLookup: true,
+    });
+  }
 
   return buildCustomerJourneyLedgerDetailData({
     acuityAppointmentId: input.acuityAppointmentId,
+    eventId: input.eventId,
     conversions: conversionsResult.data || [],
     events: eventsResult.data || [],
     sessions: sessionsResult.data || [],
@@ -605,14 +573,77 @@ export async function fetchCustomerJourneyLedgerDetail(input: {
   });
 }
 
+async function fetchCustomerJourneyLedgerConversionOnlyDetail(
+  client: CustomerJourneyLedgerClient,
+  input: {
+    acuityAppointmentId?: string | null;
+    eventId?: string | null;
+    skipVisitorLookup?: boolean;
+  },
+): Promise<CustomerJourneyLedgerDetailData | null> {
+  const conversion = await fetchDetailConversionByIdentity(client, input);
+  if (!conversion) return null;
+
+  const visitorId = conversion.visitor_id?.trim();
+  if (visitorId && !input.skipVisitorLookup) {
+    const visitorDetail = await fetchCustomerJourneyLedgerVisitorDetail(client, {
+      acuityAppointmentId: conversion.acuity_appointment_id || input.acuityAppointmentId,
+      eventId: conversion.event_id || input.eventId,
+      visitorId,
+    });
+    if (visitorDetail) return visitorDetail;
+  }
+
+  return buildCustomerJourneyLedgerConversionOnlyDetailData({ conversion });
+}
+
+async function fetchDetailConversionByIdentity(
+  client: CustomerJourneyLedgerClient,
+  input: {
+    acuityAppointmentId?: string | null;
+    eventId?: string | null;
+  },
+) {
+  const acuityAppointmentId = input.acuityAppointmentId?.trim();
+  const eventId = input.eventId?.trim();
+
+  if (acuityAppointmentId) {
+    const result = await client
+      .from("website_conversions")
+      .select(CONVERSION_COLUMNS)
+      .eq("acuity_appointment_id", acuityAppointmentId)
+      .order("occurred_at", { ascending: false })
+      .limit(1);
+    if (result.error) throw result.error;
+    const conversion = (result.data || [])[0] || null;
+    if (conversion) return conversion;
+  }
+
+  const normalizedEventId = eventId || (acuityAppointmentId ? `acuity-${acuityAppointmentId}` : null);
+  if (!normalizedEventId) return null;
+
+  const result = await client
+    .from("website_conversions")
+    .select(CONVERSION_COLUMNS)
+    .eq("event_id", normalizedEventId)
+    .order("occurred_at", { ascending: false })
+    .limit(1);
+  if (result.error) throw result.error;
+  return (result.data || [])[0] || null;
+}
+
 export function buildCustomerJourneyLedgerDetailData(input: {
   acuityAppointmentId?: string | null;
+  eventId?: string | null;
   conversions: CustomerJourneyLedgerConversionRow[];
   events: CustomerJourneyLedgerEventRow[];
   sessions: CustomerJourneyLedgerSessionRow[];
   visitor: CustomerJourneyLedgerVisitorRow;
 }): CustomerJourneyLedgerDetailData {
-  const conversion = selectDetailConversion(input.conversions, input.acuityAppointmentId);
+  const conversion = selectDetailConversion(input.conversions, {
+    acuityAppointmentId: input.acuityAppointmentId,
+    eventId: input.eventId,
+  });
   const sessionsByVisitor = latestByVisitor(input.sessions, "last_seen_at");
   const sessionsByVisitorAndId = groupSessionsByVisitorAndId(input.sessions);
   const session = selectSessionForConversion({
@@ -667,6 +698,48 @@ export function buildCustomerJourneyLedgerDetailData(input: {
   };
 }
 
+export function buildCustomerJourneyLedgerConversionOnlyDetailData(input: {
+  conversion: CustomerJourneyLedgerConversionRow;
+}): CustomerJourneyLedgerDetailData {
+  const conversion = input.conversion;
+  const creditedTouch = selectBestPaidTouch(
+    [
+      attributionTouch(conversion.last_paid_touch),
+      attributionTouch(conversion.conversion_touch),
+      ...conversionAttributionTouches(conversion),
+    ],
+    { maxCapturedAt: conversion.occurred_at },
+  );
+  const timeline = buildDetailTimeline({
+    conversion,
+    creditedTouch,
+    events: [],
+    returnEvent: null,
+  });
+
+  return {
+    acuityAppointmentId: conversion.acuity_appointment_id || null,
+    booking: {
+      appointmentType: conversion.appointment_type,
+      bookingTime: conversion.occurred_at,
+      eventId: conversion.event_id,
+      metaEventId: conversion.meta_event_id,
+      sessionId: conversion.session_id,
+    },
+    capi: {
+      eventId: conversion.meta_event_id || null,
+      status: conversion.meta_capi_status || null,
+      testMode: conversion.meta_capi_test_mode ?? null,
+    },
+    confidence: confidenceForConversionOnly(conversion),
+    creditedTouch: summarizeTouch(creditedTouch),
+    returnTouch: null,
+    summary: summarizeConversionOnlyPath(creditedTouch, conversion),
+    timeline,
+    visitorId: conversion.visitor_id || null,
+  };
+}
+
 export function buildCustomerJourneyLedgerData(input: {
   conversions: CustomerJourneyLedgerConversionRow[];
   events?: CustomerJourneyLedgerEventRow[];
@@ -688,7 +761,7 @@ export function buildCustomerJourneyLedgerData(input: {
       capiStatuses: Array.from(capiStatusCounts.entries())
         .map(([status, count]) => ({ count, status }))
         .sort((a, b) => b.count - a.count || a.status.localeCompare(b.status)),
-      visitorsShown: rows.length,
+      visitorsShown: input.visitors.length,
       visitorsWithConversions: rows.filter((row) => row.hasConversion).length,
       visitorsWithPaidTouch: rows.filter((row) => row.hasPaidTouch).length,
     },
@@ -706,8 +779,9 @@ export function buildCustomerJourneyLedgerRows(input: {
   const sessionsByVisitorAndId = groupSessionsByVisitorAndId(input.sessions);
   const conversionsByVisitor = latestByVisitor(input.conversions, "occurred_at");
   const eventsByVisitor = groupByVisitor(input.events || []);
+  const matchedVisitorIds = new Set(input.visitors.map((visitor) => visitor.visitor_id));
 
-  return [...input.visitors]
+  const visitorRows = [...input.visitors]
     .sort((a, b) => timestampValue(b.last_seen_at) - timestampValue(a.last_seen_at))
     .map((visitor) => {
       const conversion = conversionsByVisitor.get(visitor.visitor_id) || null;
@@ -782,13 +856,86 @@ export function buildCustomerJourneyLedgerRows(input: {
         visitorId: visitor.visitor_id,
       };
     });
+
+  const conversionOnlyRows = input.conversions
+    .filter((conversion) => !conversion.visitor_id || !matchedVisitorIds.has(conversion.visitor_id))
+    .map((conversion) =>
+      conversionOnlyLedgerRow(
+        conversion,
+        conversion.visitor_id ? eventsByVisitor.get(conversion.visitor_id) || [] : [],
+      ),
+    );
+
+  return [...visitorRows, ...conversionOnlyRows].sort(
+    (a, b) => timestampValue(b.lastSeen) - timestampValue(a.lastSeen),
+  );
+}
+
+function conversionOnlyLedgerRow(
+  conversion: CustomerJourneyLedgerConversionRow,
+  events: CustomerJourneyLedgerEventRow[],
+): CustomerJourneyLedgerRow {
+  const eventTouches = events.flatMap(eventAttributionTouches);
+  const paidTouch = selectBestPaidTouch(
+    [
+      attributionTouch(conversion.last_paid_touch),
+      attributionTouch(conversion.conversion_touch),
+      ...conversionAttributionTouches(conversion),
+      ...eventTouches,
+    ],
+    { maxCapturedAt: conversion.occurred_at },
+  );
+  const campaignId = paidTouch?.utm?.campaignId || null;
+  const adsetId = paidTouch?.utm?.adsetId || null;
+  const adId = paidTouch?.utm?.adId || null;
+  const placement = paidTouch?.utm?.placement || null;
+  const source =
+    paidTouch?.utm?.source || paidTouch?.sourceType || paidTouch?.source || conversion.source_type || null;
+  const deviceCategory = conversion.device_category || paidTouch?.deviceCategory || null;
+  const browserName = conversion.browser_name || paidTouch?.browserName || null;
+  const osName = conversion.os_name || paidTouch?.osName || null;
+
+  return {
+    adId,
+    adsetId,
+    acuityAppointmentId: conversion.acuity_appointment_id || null,
+    appointmentType: conversion.appointment_type || null,
+    bookingTime: conversion.occurred_at,
+    brand: conversion.brand || null,
+    browserName,
+    campaignId,
+    capiStatus: conversion.meta_capi_status || null,
+    conversionEventId: conversion.event_id,
+    customerEmail: conversion.customer_email || null,
+    customerName: conversion.customer_name || null,
+    customerPhone: conversion.customer_phone || null,
+    deviceBrowser: formatDeviceBrowser(deviceCategory, browserName, osName),
+    deviceCategory,
+    fbc: conversion.fbc || paidTouch?.fbc || null,
+    fbp: conversion.fbp || paidTouch?.fbp || null,
+    firstPage: conversion.page_url || paidTouch?.pageUrl || null,
+    hasConversion: true,
+    hasPaidTouch: Boolean(paidTouch),
+    lastPaidSource: source,
+    lastPaidSourceType: paidTouch?.sourceType || conversion.source_type || null,
+    lastSeen: conversion.occurred_at,
+    metaEventId: conversion.meta_event_id || null,
+    osName,
+    placement,
+    sessionId: conversion.session_id || null,
+    visitorId: conversion.visitor_id || null,
+  };
 }
 
 function selectDetailConversion(
   conversions: CustomerJourneyLedgerConversionRow[],
-  acuityAppointmentId?: string | null,
+  input: {
+    acuityAppointmentId?: string | null;
+    eventId?: string | null;
+  },
 ) {
-  const normalizedAcuityId = acuityAppointmentId?.trim();
+  const normalizedAcuityId = input.acuityAppointmentId?.trim();
+  const normalizedEventId = input.eventId?.trim();
   if (normalizedAcuityId) {
     const match = conversions.find((conversion) => {
       return (
@@ -797,6 +944,10 @@ function selectDetailConversion(
         conversion.event_id === `acuity-${normalizedAcuityId}`
       );
     });
+    if (match) return match;
+  }
+  if (normalizedEventId) {
+    const match = conversions.find((conversion) => conversion.event_id === normalizedEventId);
     if (match) return match;
   }
 
@@ -1053,6 +1204,21 @@ function confidenceForDetail(
   };
 }
 
+function confidenceForConversionOnly(
+  conversion: CustomerJourneyLedgerConversionRow,
+): CustomerJourneyLedgerDetailData["confidence"] {
+  const signals = [`Conversion event: ${conversion.event_id}`];
+  if (conversion.acuity_appointment_id) signals.push(`Acuity appointment: ${conversion.acuity_appointment_id}`);
+  if (conversion.visitor_id) signals.push(`Visitor ID on conversion: ${conversion.visitor_id}`);
+
+  return {
+    explanation:
+      "The booking conversion exists, but no matching website visitor record was available for the detail lookup. This row is visible as an unattributed booking instead of being hidden from the ledger.",
+    level: "conversion_only",
+    signals,
+  };
+}
+
 function summarizePath(
   creditedTouch: AttributionTouch | null,
   returnTouch: AttributionTouch | null,
@@ -1079,6 +1245,14 @@ function summarizePath(
   return parts.length ? sentenceCase(`${parts.join("; ")}.`) : "Booking conversion found for this visitor.";
 }
 
+function summarizeConversionOnlyPath(
+  creditedTouch: AttributionTouch | null,
+  conversion: CustomerJourneyLedgerConversionRow,
+) {
+  if (creditedTouch) return summarizePath(creditedTouch, null, conversion);
+  return "Booking conversion found, but no browser visitor/session ID was captured for same-device journey matching.";
+}
+
 function formatDurationBetween(start: string, end: string) {
   const deltaMs = Math.abs(timestampValue(end) - timestampValue(start));
   const seconds = Math.round(deltaMs / 1_000);
@@ -1092,6 +1266,32 @@ function formatDurationBetween(start: string, end: string) {
 
 function sentenceCase(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values));
+}
+
+function uniqueVisitors(rows: CustomerJourneyLedgerVisitorRow[]) {
+  const byVisitorId = new Map<string, CustomerJourneyLedgerVisitorRow>();
+  for (const row of rows) {
+    const existing = byVisitorId.get(row.visitor_id);
+    if (!existing || timestampValue(row.last_seen_at) > timestampValue(existing.last_seen_at)) {
+      byVisitorId.set(row.visitor_id, row);
+    }
+  }
+  return Array.from(byVisitorId.values());
+}
+
+function uniqueConversions(rows: CustomerJourneyLedgerConversionRow[]) {
+  const byEventId = new Map<string, CustomerJourneyLedgerConversionRow>();
+  for (const row of rows) {
+    const existing = byEventId.get(row.event_id);
+    if (!existing || timestampValue(row.occurred_at) > timestampValue(existing.occurred_at)) {
+      byEventId.set(row.event_id, row);
+    }
+  }
+  return Array.from(byEventId.values());
 }
 
 function latestByVisitor<Row extends { visitor_id: string | null }>(

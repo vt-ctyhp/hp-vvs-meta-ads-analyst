@@ -487,26 +487,28 @@ function journeyRowFromCurrentUrl(rows: CustomerLedgerRow[]) {
   const params = new URLSearchParams(window.location.search);
   const visitorId = params.get("visitorId")?.trim() || null;
   const acuityAppointmentId = params.get("acuityAppointmentId")?.trim() || null;
+  const eventId = params.get("eventId")?.trim() || null;
 
-  if (!visitorId && !acuityAppointmentId) return null;
+  if (!visitorId && !acuityAppointmentId && !eventId) return null;
 
   const exactMatch = rows.find((row) => {
     if (visitorId && row.visitorId !== visitorId) return false;
     if (acuityAppointmentId && row.acuityAppointmentId !== acuityAppointmentId) {
       return false;
     }
+    if (eventId && row.eventId !== eventId) return false;
     return true;
   });
 
   if (exactMatch) return exactMatch;
-  if (!visitorId) return null;
 
-  return emptyJourneyRow(visitorId, acuityAppointmentId);
+  return emptyJourneyRow(visitorId, acuityAppointmentId, eventId);
 }
 
 function emptyJourneyRow(
-  visitorId: string,
+  visitorId: string | null,
   acuityAppointmentId: string | null,
+  eventId: string | null,
 ): CustomerLedgerRow {
   return {
     adId: null,
@@ -521,15 +523,15 @@ function emptyJourneyRow(
     customerName: null,
     customerPhone: null,
     deviceBrowser: null,
-    eventId: null,
+    eventId,
     firstPage: null,
-    hasConversion: Boolean(acuityAppointmentId),
+    hasConversion: Boolean(acuityAppointmentId || eventId),
     hasPaidTouch: false,
     occurredAt: "",
     paidTouchCampaign: null,
     paidTouchSource: null,
     placement: null,
-    rowId: visitorId,
+    rowId: visitorId || eventId || acuityAppointmentId || "journey-detail",
     sessionId: null,
     sourceType: null,
     visitorId,
@@ -550,11 +552,20 @@ function currentJourneyUrl(row: CustomerLedgerRow) {
 function currentJourneyUrlObject(row: CustomerLedgerRow) {
   if (typeof window === "undefined") return null;
   const url = new URL(window.location.href);
-  url.searchParams.set("visitorId", row.visitorId);
+  if (row.visitorId) {
+    url.searchParams.set("visitorId", row.visitorId);
+  } else {
+    url.searchParams.delete("visitorId");
+  }
   if (row.acuityAppointmentId) {
     url.searchParams.set("acuityAppointmentId", row.acuityAppointmentId);
+    url.searchParams.delete("eventId");
+  } else if (row.eventId) {
+    url.searchParams.delete("acuityAppointmentId");
+    url.searchParams.set("eventId", row.eventId);
   } else {
     url.searchParams.delete("acuityAppointmentId");
+    url.searchParams.delete("eventId");
   }
   return url;
 }
@@ -564,6 +575,7 @@ function clearJourneyUrl() {
   const url = new URL(window.location.href);
   url.searchParams.delete("visitorId");
   url.searchParams.delete("acuityAppointmentId");
+  url.searchParams.delete("eventId");
   window.history.replaceState(null, "", url.toString());
 }
 

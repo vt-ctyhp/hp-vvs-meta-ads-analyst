@@ -44,7 +44,7 @@ export type CustomerLedgerRow = {
   rowId: string;
   sessionId: string | null;
   sourceType: string | null;
-  visitorId: string;
+  visitorId: string | null;
 };
 
 export type CustomerJourneyLedgerRequest = {
@@ -57,7 +57,8 @@ export type CustomerLedgerDetailIdentity =
   | {
       data: {
         acuityAppointmentId: string | null;
-        visitorId: string;
+        eventId: string | null;
+        visitorId: string | null;
       };
       error: null;
     }
@@ -104,7 +105,7 @@ export function customerLedgerRowsFromJourneys(
       paidTouchCampaign: row.campaignId,
       paidTouchSource: row.lastPaidSource,
       placement: row.placement,
-      rowId: eventId || row.visitorId,
+      rowId: eventId || row.visitorId || row.acuityAppointmentId || row.lastSeen,
       sessionId: row.sessionId,
       sourceType: row.lastPaidSourceType,
       visitorId: row.visitorId,
@@ -118,17 +119,19 @@ export function customerLedgerDetailIdentityFromSearchParams(
   const visitorId = searchParams.get("visitorId")?.trim() || null;
   const acuityAppointmentId =
     searchParams.get("acuityAppointmentId")?.trim() || null;
+  const eventId = searchParams.get("eventId")?.trim() || null;
 
-  if (!visitorId) {
+  if (!visitorId && !acuityAppointmentId && !eventId) {
     return {
       data: null,
-      error: "visitorId is required.",
+      error: "visitorId, acuityAppointmentId, or eventId is required.",
     };
   }
 
   return {
     data: {
       acuityAppointmentId,
+      eventId,
       visitorId,
     },
     error: null,
@@ -136,11 +139,16 @@ export function customerLedgerDetailIdentityFromSearchParams(
 }
 
 export function customerLedgerDetailUrl(
-  row: Pick<CustomerLedgerRow, "acuityAppointmentId" | "visitorId">,
+  row: Pick<CustomerLedgerRow, "acuityAppointmentId" | "eventId" | "visitorId">,
 ) {
-  const params = new URLSearchParams({ visitorId: row.visitorId });
+  const params = new URLSearchParams();
+  if (row.visitorId) {
+    params.set("visitorId", row.visitorId);
+  }
   if (row.acuityAppointmentId) {
     params.set("acuityAppointmentId", row.acuityAppointmentId);
+  } else if (row.eventId) {
+    params.set("eventId", row.eventId);
   }
   return `/api/convert/customer-ledger/detail?${params.toString()}`;
 }
