@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/signals",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/cache-thumbnails",
+      "schedule": "0 * * * *"
     }
   ]
 }

@@ -61,8 +61,15 @@ export function CreativeDetailDrawer({
 
   if (!open || !creativeId) return null;
 
+  // Prefer the permanent Supabase Storage URL when present; Meta CDN
+  // URLs expire ~24-48h so they only serve as a fallback for un-cached
+  // creatives.
   const previewSrc =
-    asset?.thumbnailUrl ?? asset?.imageUrl ?? asset?.videoThumbnailUrl ?? null;
+    asset?.supabaseThumbnailUrl ??
+    asset?.thumbnailUrl ??
+    asset?.imageUrl ??
+    asset?.videoThumbnailUrl ??
+    null;
   const previewLink = asset?.previewUrl ?? null;
   const headline = asset?.name ?? asset?.title ?? displayName ?? "Untitled creative";
 

@@ -79,6 +79,13 @@ export type CreativeAsset = {
   creativeId: string;
   name: string | null;
   title: string | null;
+  /**
+   * Permanent thumbnail URL backed by Supabase Storage. Stamped by the
+   * /api/cron/cache-thumbnails job. Renders first when present because
+   * it never expires; Meta CDN URLs below fall back if caching has not
+   * caught up yet for this creative.
+   */
+  supabaseThumbnailUrl: string | null;
   thumbnailUrl: string | null;
   imageUrl: string | null;
   videoThumbnailUrl: string | null;
@@ -267,7 +274,7 @@ async function fetchCreativeAssets(
     const { data, error } = await supabase
       .from("meta_creatives")
       .select(
-        "creative_id,name,title,thumbnail_url,image_url,video_thumbnail_url,preview_url",
+        "creative_id,name,title,supabase_thumbnail_url,thumbnail_url,image_url,video_thumbnail_url,preview_url",
       )
       .in("creative_id", unique);
     if (error) {
@@ -283,6 +290,7 @@ async function fetchCreativeAssets(
         creativeId: id,
         name: stringOrNull(row.name),
         title: stringOrNull(row.title),
+        supabaseThumbnailUrl: stringOrNull(row.supabase_thumbnail_url),
         thumbnailUrl: stringOrNull(row.thumbnail_url),
         imageUrl: stringOrNull(row.image_url),
         videoThumbnailUrl: stringOrNull(row.video_thumbnail_url),

@@ -268,8 +268,14 @@ function NameCell({
   const renderedLabel = isCreative
     ? (asset?.name ?? asset?.title ?? label)
     : label;
+  // Prefer the permanent Supabase Storage URL stamped by
+  // /api/cron/cache-thumbnails — never expires. Meta CDN URLs are the
+  // fallback for creatives the cron hasn't reached yet.
   const thumb = isCreative
-    ? (asset?.thumbnailUrl ?? asset?.imageUrl ?? asset?.videoThumbnailUrl)
+    ? (asset?.supabaseThumbnailUrl ??
+       asset?.thumbnailUrl ??
+       asset?.imageUrl ??
+       asset?.videoThumbnailUrl)
     : null;
 
   return (
