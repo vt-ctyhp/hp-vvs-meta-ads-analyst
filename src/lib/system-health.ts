@@ -70,36 +70,22 @@ export async function getSystemHealth(): Promise<SystemHealthSnapshot> {
     trigger: null,
   };
 
-  try {
-    const supabase = createAdsAnalystClient("web");
-    const { data, error } = await supabase
-      .from("sync_runs")
-      .select("status,trigger,started_at,completed_at")
-      .order("started_at", { ascending: false })
-      .limit(1);
+  const [latestSyncResult, rollupHealthResult] = await Promise.allSettled([
+    fetchLatestSyncHealth(),
+    getRecentMetaInsightRollupHealth(),
+  ]);
 
-    if (error) throw error;
-
-    const row = Array.isArray(data) ? data[0] : null;
-    if (row) {
-      const status = (row.status as SystemHealthSnapshot["latestSync"]["status"]) || null;
-      latestSync = {
-        at: typeof row.completed_at === "string" ? row.completed_at : (row.started_at as string),
-        status,
-        trigger: (row.trigger as string) || null,
-      };
-    }
-  } catch (error) {
-    if (!(error instanceof ConfigurationError)) {
-      issues.push({
-        level: "warning",
-        title: "Couldn't read sync history",
-        detail:
-          error instanceof Error
-            ? error.message
-            : "Most recent sync status couldn't be loaded.",
-      });
-    }
+  if (latestSyncResult.status === "fulfilled") {
+    latestSync = latestSyncResult.value;
+  } else if (!(latestSyncResult.reason instanceof ConfigurationError)) {
+    issues.push({
+      level: "warning",
+      title: "Couldn't read sync history",
+      detail:
+        latestSyncResult.reason instanceof Error
+          ? latestSyncResult.reason.message
+          : "Most recent sync status couldn't be loaded.",
+    });
   }
 
   if (latestSync.at) {
@@ -135,13 +121,9 @@ export async function getSystemHealth(): Promise<SystemHealthSnapshot> {
     });
   }
 
-  try {
-    const rollupHealth = await getRecentMetaInsightRollupHealth();
-    const rollupIssue = metaInsightRollupSystemHealthIssue(rollupHealth);
+  if (rollupHealthResult.status === "fulfilled") {
+    const rollupIssue = metaInsightRollupSystemHealthIssue(rollupHealthResult.value);
     if (rollupIssue) issues.push(rollupIssue);
-  } catch {
-    // Keep the shell health check lean and non-blocking. Full rollup
-    // diagnostics are available from the Backfill data-health surface.
   }
 
   const status: SystemHealthStatus = issues.some((issue) => issue.level === "critical")
@@ -156,6 +138,27 @@ export async function getSystemHealth(): Promise<SystemHealthSnapshot> {
     missingEnv,
     latestSync,
     issues,
+  };
+}
+
+async function fetchLatestSyncHealth(): Promise<SystemHealthSnapshot["latestSync"]> {
+  const supabase = createAdsAnalystClient("web");
+  const { data, error } = await supabase
+    .from("sync_runs")
+    .select("status,trigger,started_at,completed_at")
+    .order("started_at", { ascending: false })
+    .limit(1);
+
+  if (error) throw error;
+
+  const row = Array.isArray(data) ? data[0] : null;
+  if (!row) return { at: null, status: null, trigger: null };
+
+  const status = (row.status as SystemHealthSnapshot["latestSync"]["status"]) || null;
+  return {
+    at: typeof row.completed_at === "string" ? row.completed_at : (row.started_at as string),
+    status,
+    trigger: (row.trigger as string) || null,
   };
 }
 
