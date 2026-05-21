@@ -74,7 +74,7 @@ type RollupDiagnostic = {
 
 export async function getMetaDataHealth(input: { compareMonth?: string | null } = {}) {
   const cutoff = finalizedInsightCutoffDate();
-  const [accounts, insightRows, syncRuns] = await Promise.all([
+  const [accounts, insightRows, syncRuns, rollups] = await Promise.all([
     fetchAll("meta_ad_accounts", "meta_account_id,name,last_synced_at,updated_at", [
       { column: "meta_account_id" },
     ]),
@@ -89,6 +89,7 @@ export async function getMetaDataHealth(input: { compareMonth?: string | null } 
       ],
     ),
     fetchRecentSyncRuns(),
+    fetchRollupDiagnostic(),
   ]);
   const duplicateSummary = summarizeDuplicateKeys(insightRows);
   const monthlyTotals = summarizeMonthlyTotals(insightRows, cutoff);
@@ -97,7 +98,6 @@ export async function getMetaDataHealth(input: { compareMonth?: string | null } 
   const spendAlerts = summarizeSpendAlerts(monthlyUmbrella, cutoff);
   const recentAuditWarnings = syncRuns.flatMap((run) => syncRunAuditWarnings(run)).slice(0, 12);
   const compareMonth = normalizeMonthInput(input.compareMonth);
-  const rollups = await fetchRollupDiagnostic();
 
   return {
     generatedAt: new Date().toISOString(),

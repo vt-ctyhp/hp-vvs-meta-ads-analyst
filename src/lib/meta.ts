@@ -946,11 +946,19 @@ async function syncAccount(
   const beforeBuckets = await insightBucketSnapshots(metaAccountId, affectedRange);
 
   await replaceStoredInsightRows(metaAccountId, affectedRange, dedupedInsightRows);
-  await refreshMetaInsightRollups({
-    start: affectedRange.start,
-    end: affectedRange.end,
-    metaAccountId,
-  });
+  try {
+    await refreshMetaInsightRollups({
+      start: affectedRange.start,
+      end: affectedRange.end,
+      metaAccountId,
+    });
+  } catch (error) {
+    console.error("[meta-sync] insight rollup refresh failed after storing raw insights", {
+      metaAccountId,
+      affectedRange,
+      error: errorToMessage(error),
+    });
+  }
 
   const after = await insightAggregateSnapshot(metaAccountId, affectedRange);
   const afterBuckets = await insightBucketSnapshots(metaAccountId, affectedRange);

@@ -324,4 +324,72 @@ describe("repairNextMetaInsightRollupChunk", () => {
     assert.equal(result.repair, null);
     assert.equal(refreshed, false);
   });
+
+  it("throws when unhealthy health omits repair scope", async () => {
+    await assert.rejects(
+      () =>
+        repairNextMetaInsightRollupChunk(
+          {},
+          {
+            health: {
+              async rpc() {
+                return {
+                  data: [
+                    {
+                      raw_rows: 10,
+                      rollup_rows: 9,
+                      missing_rollups: 1,
+                      stale_rollups: 0,
+                      orphan_rollups: 0,
+                      newest_raw_update: null,
+                      newest_rollup_update: null,
+                      oldest_problem_date: "2026-05-10",
+                      repair_meta_account_id: null,
+                      repair_month: null,
+                      ok: false,
+                    },
+                  ],
+                  error: null,
+                };
+              },
+            },
+          },
+        ),
+      /without a repair account and month/,
+    );
+  });
+
+  it("throws when unhealthy health reports an unparseable repair month", async () => {
+    await assert.rejects(
+      () =>
+        repairNextMetaInsightRollupChunk(
+          {},
+          {
+            health: {
+              async rpc() {
+                return {
+                  data: [
+                    {
+                      raw_rows: 10,
+                      rollup_rows: 9,
+                      missing_rollups: 1,
+                      stale_rollups: 0,
+                      orphan_rollups: 0,
+                      newest_raw_update: null,
+                      newest_rollup_update: null,
+                      oldest_problem_date: "2026-05-10",
+                      repair_meta_account_id: "act_123",
+                      repair_month: "May 2026",
+                      ok: false,
+                    },
+                  ],
+                  error: null,
+                };
+              },
+            },
+          },
+        ),
+      /monthDateRange returned null/,
+    );
+  });
 });

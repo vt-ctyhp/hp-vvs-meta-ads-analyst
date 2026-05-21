@@ -144,13 +144,19 @@ export async function repairNextMetaInsightRollupChunk(
   } = {},
 ): Promise<RepairNextMetaInsightRollupChunkResult> {
   const health = await getMetaInsightRollupHealth(input, clients.health);
-  if (health.ok || !health.repairMetaAccountId || !health.repairMonth) {
+  if (health.ok) {
     return { status: "healthy", health, repair: null };
+  }
+
+  if (!health.repairMetaAccountId || !health.repairMonth) {
+    throw new Error("Rollup health reported a repairable problem without a repair account and month.");
   }
 
   const monthRange = monthDateRange(health.repairMonth);
   if (!monthRange) {
-    return { status: "healthy", health, repair: null };
+    throw new Error(
+      `Rollup health reported repair month "${health.repairMonth}" but monthDateRange returned null.`,
+    );
   }
 
   const start = maxDate(monthRange.start, input.start ?? null);
