@@ -13,13 +13,13 @@ import { useCallback, useMemo, useState, useTransition } from "react";
  *   - start, end : custom ISO date range (overrides `days` when set)
  *   - status  : live | paused | off | all   (defaults to "live" on first land)
  *
- * Filters propagate server-side to BOTH:
+ * Data filters propagate server-side to BOTH:
  *   - fetchDashboardData (chart + status sentence + legacy grid)
  *   - fetchPeriodPivot (the tree+pivot table — see /optimize/page.tsx for the
  *     brand/group/anchor mapping)
  *
- * Status is enforced client-side because the RPC's p_filters jsonb doesn't
- * carry an ad-status field; the page-level filter happens post-fetch.
+ * Status stays URL-local until the pivot payload carries an ad-status field.
+ * Updating it should not re-run the expensive server data pipeline.
  */
 
 type Option = { value: string; label: string };
@@ -43,6 +43,8 @@ const DATE_PRESETS: Array<{ value: string; label: string }> = [
   { value: "90", label: "Last 90 days" },
   { value: "custom", label: "Custom range…" },
 ];
+
+const SERVER_DATA_KEYS = new Set(["brand", "group", "days", "start", "end"]);
 
 export function OptimizeFilterBar({ brands, groups }: Props) {
   const router = useRouter();
@@ -83,13 +85,19 @@ export function OptimizeFilterBar({ brands, groups }: Props) {
       }
       const qs = next.toString();
       const href = qs ? `${pathname}?${qs}` : pathname;
+      const currentQs = params.toString();
+      const currentHref = currentQs ? `${pathname}?${currentQs}` : pathname;
+      if (href === currentHref) return;
+
+      const changesServerData = Object.keys(patch).some((key) =>
+        SERVER_DATA_KEYS.has(key),
+      );
       startTransition(() => {
-        router.replace(href, { scroll: false });
-        // Force the server component tree to re-fetch with the new
-        // searchParams. Without this, App Router can serve a cached RSC
-        // payload and the chart + tree-table stay on the previous data
-        // even though the URL has updated.
-        router.refresh();
+        if (changesServerData) {
+          router.replace(href, { scroll: false });
+        } else {
+          window.history.replaceState(null, "", href);
+        }
       });
     },
     [params, pathname, router, startTransition],
