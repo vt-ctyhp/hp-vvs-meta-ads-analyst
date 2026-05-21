@@ -46,7 +46,8 @@ export function TechnicalId({
     truncateTo && value.length > truncateTo ? `${value.slice(0, truncateTo)}…` : value;
   const fontSize = size === "xs" ? "text-[10px]" : "text-[11px]";
 
-  async function copy() {
+  async function copy(event: React.MouseEvent<HTMLButtonElement>) {
+    event.stopPropagation();
     if (typeof navigator === "undefined" || !navigator.clipboard) return;
     try {
       await navigator.clipboard.writeText(value!);
