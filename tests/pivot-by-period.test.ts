@@ -113,9 +113,10 @@ describe("pivotByPeriod", () => {
   });
 
   it("coerces numeric strings to numbers (PostgREST returns numerics as strings sometimes)", () => {
+    // Cast through unknown to test the string-coercion path; the input
+    // type would normally forbid a string in the `spend` field.
     const rows = [
-      // @ts-expect-error — intentionally testing the string-coercion path
-      { campaign_id: "c1", campaign: "W", week: "2026-05-18", spend: "342.50" },
+      { campaign_id: "c1", campaign: "W", week: "2026-05-18", spend: "342.50" as unknown as number },
     ];
 
     const pivoted = pivotByPeriod(rows, {
