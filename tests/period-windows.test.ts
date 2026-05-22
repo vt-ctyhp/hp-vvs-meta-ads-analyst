@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   isFrequency,
   lastNPeriods,
+  periodsNewestFirst,
   type PeriodWindow,
 } from "../src/lib/period-windows.ts";
 
@@ -217,5 +218,28 @@ describe("lastNPeriods — guards", () => {
     assert.equal(windows.length, 1);
     assert.equal(windows[0].isCurrent, true);
     assert.equal(windows[0].key, "2026-05-18");
+  });
+});
+
+describe("periodsNewestFirst", () => {
+  it("returns the same period windows with the most recent start first", () => {
+    const windows = lastNPeriods(utcDate("2026-05-20"), 4, "week");
+    const newestFirst = periodsNewestFirst(windows);
+
+    assert.deepEqual(
+      newestFirst.map((w) => w.key),
+      ["2026-05-18", "2026-05-11", "2026-05-04", "2026-04-27"],
+    );
+    assert.equal(newestFirst[0].isCurrent, true);
+  });
+
+  it("does not mutate the source array", () => {
+    const windows = lastNPeriods(utcDate("2026-05-20"), 4, "month");
+    periodsNewestFirst(windows);
+
+    assert.deepEqual(
+      windows.map((w) => w.key),
+      ["2026-02", "2026-03", "2026-04", "2026-05"],
+    );
   });
 });

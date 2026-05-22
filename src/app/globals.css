@@ -122,6 +122,21 @@ button:disabled {
   font-feature-settings: "lnum" 1, "tnum" 1;
 }
 
+.breakdown-name-label {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.breakdown-name-label:hover,
+.breakdown-name-label:focus-visible {
+  -webkit-line-clamp: unset;
+}
+
 /*
  * Staggered page-load reveal.
  *
