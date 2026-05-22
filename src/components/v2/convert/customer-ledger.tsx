@@ -383,12 +383,15 @@ function CreativeCell({ row }: { row: CustomerLedgerRow }) {
     "Direct / unattributed";
   const sublabel = row.adId
     ? joinedDetail(row.sourceType, row.placement) || row.adId
-    : "No paid touch";
+    : row.hasPaidTouch
+      ? "Paid signal, no ad ID"
+      : "No ad creative";
 
   return (
     <div className="flex min-w-0 items-center gap-3">
       <CreativeThumb
         alt={`${label} creative preview`}
+        expected={Boolean(row.adId)}
         src={preview?.thumbnailUrl || preview?.imageUrl}
       />
       <div className="min-w-0">
@@ -405,13 +408,26 @@ function CreativeCell({ row }: { row: CustomerLedgerRow }) {
 
 function CreativeThumb({
   alt,
+  expected,
   src,
 }: {
   alt: string;
+  expected: boolean;
   src?: string | null;
 }) {
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const failed = Boolean(src && failedSrc === src);
+
+  if (!expected) {
+    return (
+      <div
+        aria-label="No ad creative"
+        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-stone-200 bg-stone-50 text-[10px] font-medium uppercase tracking-wide text-stone-400"
+      >
+        n/a
+      </div>
+    );
+  }
 
   if (!src || failed) {
     return (

@@ -16,6 +16,10 @@ import {
 import { resolveMetaKpi } from "./meta-kpi";
 import { createAdsAnalystClient, getAdsAnalystEnvironment } from "./ads-analyst-db";
 import { resolveCreativeDisplayMedia } from "./creative-display-media";
+import {
+  isBetterCreativeMediaRow,
+  isBetterEnvironmentScopedRow,
+} from "./creative-metadata-selection";
 import { normalizeOptimizeDeliveryStatus } from "./optimize-filters";
 
 type JsonRecord = Record<string, unknown>;
@@ -129,6 +133,7 @@ type BrandRow = { id: string; code: string; name: string | null };
 type AccountRow = { brand_id: string | null; meta_account_id: string; name: string | null };
 type AdRow = {
   brand_id: string | null;
+  environment?: string | null;
   meta_account_id: string;
   ad_id: string;
   creative_id: string | null;
@@ -141,6 +146,7 @@ type AdRow = {
 };
 type CreativeRow = {
   brand_id: string | null;
+  environment?: string | null;
   meta_account_id: string;
   creative_id: string;
   name: string | null;
@@ -591,7 +597,7 @@ async function fetchCreativeMetadata(
   const adRows = await selectRowsByRemoteId<AdRow>(
     supabase,
     "meta_ads",
-    "brand_id,meta_account_id,ad_id,creative_id,status,effective_status,last_synced_at,preview_url,preview_html,preview_source",
+    "environment,brand_id,meta_account_id,ad_id,creative_id,status,effective_status,last_synced_at,preview_url,preview_html,preview_source",
     "ad_id",
     adIds,
   );
@@ -604,6 +610,7 @@ async function fetchCreativeMetadata(
     "meta_creatives",
     [
       "brand_id",
+      "environment",
       "meta_account_id",
       "creative_id",
       "name",
@@ -625,8 +632,12 @@ async function fetchCreativeMetadata(
   );
 
   return {
-    ads: new Map(adRows.map((row) => [insightKey(row.meta_account_id, row.ad_id), row])),
-    creatives: new Map(creativeRows.map((row) => [insightKey(row.meta_account_id, row.creative_id), row])),
+    ads: indexBestRowsByKey(adRows, (row) => insightKey(row.meta_account_id, row.ad_id), isBetterEnvironmentScopedRow),
+    creatives: indexBestRowsByKey(
+      creativeRows,
+      (row) => insightKey(row.meta_account_id, row.creative_id),
+      isBetterCreativeMediaRow,
+    ),
   };
 }
 
@@ -895,6 +906,22 @@ async function selectRowsByRemoteId<T>(
     output.push(...rows<T>(data));
   }
 
+  return output;
+}
+
+function indexBestRowsByKey<T>(
+  rows: T[],
+  keyForRow: (row: T) => string,
+  isBetter: (candidate: T, current: T) => boolean,
+) {
+  const output = new Map<string, T>();
+  for (const row of rows) {
+    const key = keyForRow(row);
+    const current = output.get(key);
+    if (!current || isBetter(row, current)) {
+      output.set(key, row);
+    }
+  }
   return output;
 }
 

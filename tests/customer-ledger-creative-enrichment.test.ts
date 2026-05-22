@@ -90,6 +90,49 @@ describe("customer ledger creative enrichment", () => {
     assert.equal(rows[0].creativePreview?.thumbnailUrl, "https://cache.example/image.jpg");
   });
 
+  it("falls back to cached duplicate creative media before uncached current-environment rows", async () => {
+    const client = mockCreativeClient({
+      meta_ads: [
+        {
+          ad_id: "ad-1",
+          creative_id: "creative-1",
+          environment: "production",
+          meta_account_id: "account-1",
+          name: "Production ad",
+        },
+      ],
+      meta_creatives: [
+        {
+          creative_id: "creative-1",
+          environment: "production",
+          last_synced_at: "2026-05-22T02:00:00.000Z",
+          meta_account_id: "account-1",
+          name: "Production uncached creative",
+          thumbnail_url: "https://cdn.example/production-thumb.jpg",
+        },
+        {
+          creative_id: "creative-1",
+          environment: "staging",
+          last_synced_at: "2026-05-21T02:00:00.000Z",
+          meta_account_id: "account-1",
+          name: "Cached duplicate creative",
+          supabase_thumbnail_url: "https://cache.example/staging-thumb.jpg",
+        },
+      ],
+    });
+
+    const rows = await enrichCustomerLedgerRowsWithCreativePreviews(
+      [ledgerRow({ adId: "ad-1" })],
+      { client },
+    );
+
+    assert.equal(rows[0].creativePreview?.creativeName, "Cached duplicate creative");
+    assert.equal(
+      rows[0].creativePreview?.thumbnailUrl,
+      "https://cache.example/staging-thumb.jpg",
+    );
+  });
+
   it("keeps ad-level preview fields separate from durable display media", async () => {
     const client = mockCreativeClient({
       meta_ads: [
