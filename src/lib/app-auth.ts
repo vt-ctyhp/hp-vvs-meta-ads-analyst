@@ -6,6 +6,7 @@ import {
   type UserRole,
 } from "./access-control";
 import { createAdsAnalystClient, usesLimitedAdsAnalystDbAccess } from "./ads-analyst-db";
+import { ConfigurationError, isTruthyEnv } from "./env";
 import { createServerAuthClient, createServiceClient } from "./supabase";
 
 export type AccessProfile = {
@@ -22,6 +23,10 @@ export type AccessProfile = {
 };
 
 export const AUTH_ACCESS_COOKIE = "hp_vvs_app_access";
+export const LOCAL_TEST_ACCESS_TOKEN_PREFIX = "local-test:";
+
+const LOCAL_TEST_DEFAULT_EMAIL = "local-admin@hp-vvs.test";
+const LOCAL_TEST_DEFAULT_PASSWORD = "local-test-password";
 
 export class AuthorizationError extends Error {
   status: number;
@@ -84,12 +89,70 @@ export async function requirePermissionFromRequest(
 }
 
 export async function getAccessProfileForToken(accessToken: string): Promise<AccessProfile> {
-  const authClient = createServerAuthClient();
-  const { data, error } = await authClient.auth.getUser(accessToken);
+  const localProfile = getLocalTestAccessProfileForToken(accessToken);
+  if (localProfile) return localProfile;
 
-  if (error || !data.user) return anonymousProfile();
+  try {
+    const authClient = createServerAuthClient();
+    const { data, error } = await authClient.auth.getUser(accessToken);
 
-  return getAccessProfileForAuthUser(data.user);
+    if (error || !data.user) return anonymousProfile();
+
+    return getAccessProfileForAuthUser(data.user);
+  } catch (error) {
+    if (isLocalTestAuthEnabled() && error instanceof ConfigurationError) {
+      return anonymousProfile();
+    }
+
+    throw error;
+  }
+}
+
+export function isLocalTestAuthEnabled() {
+  return process.env.NODE_ENV !== "production" && isTruthyEnv("LOCAL_TEST_AUTH_ENABLED");
+}
+
+export function getLocalTestAuthCredentials() {
+  return {
+    email: process.env.LOCAL_TEST_AUTH_EMAIL?.trim() || LOCAL_TEST_DEFAULT_EMAIL,
+    password: process.env.LOCAL_TEST_AUTH_PASSWORD?.trim() || LOCAL_TEST_DEFAULT_PASSWORD,
+  };
+}
+
+export function getLocalTestAccessToken() {
+  const { email } = getLocalTestAuthCredentials();
+  return `${LOCAL_TEST_ACCESS_TOKEN_PREFIX}${email}`;
+}
+
+export function validateLocalTestCredentials(email: string, password: string) {
+  if (!isLocalTestAuthEnabled()) return false;
+
+  const credentials = getLocalTestAuthCredentials();
+  return (
+    email.trim().toLowerCase() === credentials.email.toLowerCase() &&
+    password === credentials.password
+  );
+}
+
+export function getLocalTestAccessProfileForToken(accessToken: string): AccessProfile | null {
+  if (!isLocalTestAuthEnabled()) return null;
+  if (accessToken !== getLocalTestAccessToken()) return null;
+
+  const { email } = getLocalTestAuthCredentials();
+  const roles: UserRole[] = ["admin"];
+
+  return {
+    authenticated: true,
+    authUserId: "local-test-auth-user",
+    appUserId: "local-test-app-user",
+    email,
+    fullName: "Local Test Admin",
+    initials: "LT",
+    active: true,
+    roles,
+    permissions: permissionsForRoles(roles),
+    missingAppProfile: false,
+  };
 }
 
 async function getAccessProfileForAuthUser(user: User): Promise<AccessProfile> {
