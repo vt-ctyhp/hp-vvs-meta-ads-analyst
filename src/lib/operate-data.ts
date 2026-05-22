@@ -1,6 +1,4 @@
-import type { UserRole } from "@/lib/access-control";
 import { createAdsAnalystClient } from "@/lib/ads-analyst-db";
-import type { RosterEntry } from "@/components/v2/operate/people-roster";
 import type { SyncRunRow } from "@/components/v2/operate/pipelines-panel";
 
 export async function fetchOperateSyncRuns(): Promise<SyncRunRow[]> {
@@ -36,36 +34,6 @@ export async function fetchOperateSyncRuns(): Promise<SyncRunRow[]> {
   }));
 }
 
-export async function fetchOperateRoster(): Promise<RosterEntry[]> {
-  const supabase = createAdsAnalystClient("web") as unknown as {
-    schema: (s: "analytics") => {
-      from: (t: "ads_analyst_identity_profiles_v1") => {
-        select: (cols: string) => Promise<{
-          data: unknown;
-          error: Error | null;
-        }>;
-      };
-    };
-  };
-
-  const { data, error } = await supabase
-    .schema("analytics")
-    .from("ads_analyst_identity_profiles_v1")
-    .select("app_user_id,auth_user_id,email,full_name,initials,active,roles");
-
-  if (error) throw error;
-  const rows = Array.isArray(data) ? (data as Record<string, unknown>[]) : [];
-  return rows.map((row) => ({
-    appUserId: (row.app_user_id as string | null) ?? null,
-    authUserId: (row.auth_user_id as string | null) ?? null,
-    email: String(row.email ?? ""),
-    fullName: String(row.full_name ?? row.email ?? ""),
-    initials: (row.initials as string | null) ?? null,
-    active: Boolean(row.active),
-    roles: parseRoles(row.roles),
-  }));
-}
-
 export function buildPipelinesSentence(args: {
   syncRuns: SyncRunRow[];
   backfillJobsCount: number;
@@ -92,19 +60,6 @@ export function buildPipelinesSentence(args: {
 
 export function buildHealthSentence(status: string | null) {
   return status ? `System health: ${status}.` : "Health snapshot loading.";
-}
-
-function parseRoles(value: unknown): UserRole[] {
-  if (Array.isArray(value)) return value.filter((v): v is UserRole => typeof v === "string");
-  if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
-      if (Array.isArray(parsed)) return parsed.filter((v): v is UserRole => typeof v === "string");
-    } catch {
-      // ignore malformed role payloads from the read-only view
-    }
-  }
-  return [];
 }
 
 function relTime(iso: string | null): string {
