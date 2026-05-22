@@ -35,10 +35,10 @@ export default async function MobileInboxLayout({
   }
 
   return (
-    <div className="min-h-screen bg-[#F8F4EE] text-stone-900">
-      <header className="sticky top-0 z-30 border-b border-stone-200 bg-white/90 backdrop-blur">
+    <div className="min-h-screen text-hp-body">
+      <header className="sticky top-0 z-30 border-b border-hp-rule bg-hp-card/90 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-3xl items-center gap-3 px-4">
-          <span className="font-[family-name:var(--font-title)] text-base font-medium tracking-tight">
+          <span className="font-[family-name:var(--font-title)] text-2xl font-medium tracking-tight text-hp-ink">
             Inbox
           </span>
           <div className="ml-auto">

@@ -26,7 +26,7 @@ export default async function OperateCoveragePage() {
           rangeEnd={monthState.range.end}
         />
       ) : (
-        <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+        <p className="border border-signal-danger bg-signal-danger-bg px-5 py-4 text-sm text-signal-danger">
           Backfill month status unavailable. Try refreshing.
         </p>
       )}

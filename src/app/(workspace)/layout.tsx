@@ -17,7 +17,6 @@ import { redirect } from "next/navigation";
 import { HealthPill } from "@/components/v2/health-pill";
 import { IdentityMenu } from "@/components/v2/identity-menu";
 import { WorkspaceNav } from "@/components/v2/workspace-nav";
-import { hasPermission } from "@/lib/access-control";
 import { firstWorkspaceHref, resolveLandingPath, roomsForRoles } from "@/lib/permission-routing";
 import { getServerAccessProfile } from "@/lib/server-route-auth";
 
@@ -47,20 +46,17 @@ export default async function WorkspaceLayout({
   const homeHref = firstWorkspaceHref(rooms, profile.permissions);
 
   return (
-    <div className="min-h-screen bg-[#F8F4EE] text-stone-900">
-      <header className="sticky top-0 z-30 border-b border-stone-200 bg-white/85 backdrop-blur">
+    <div className="min-h-screen text-hp-body">
+      <header className="sticky top-0 z-30 border-b border-hp-rule bg-hp-card/90 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-7xl items-center gap-4 px-6">
           <a
             href={homeHref}
-            className="font-[family-name:var(--font-title)] text-lg font-medium tracking-tight"
+            className="font-[family-name:var(--font-title)] text-lg font-medium tracking-tight text-hp-ink"
           >
             HP / VVS
           </a>
           <WorkspaceNav rooms={rooms} permissions={profile.permissions} />
           <div className="ml-auto flex items-center gap-2">
-            {hasPermission(profile.roles, "view_dashboard") ? (
-              <CommandPaletteTrigger />
-            ) : null}
             <HealthPill />
             <IdentityMenu
               email={profile.email}
@@ -73,24 +69,5 @@ export default async function WorkspaceLayout({
       </header>
       <main className="mx-auto max-w-7xl px-6 py-6">{children}</main>
     </div>
-  );
-}
-
-function CommandPaletteTrigger() {
-  // Phase 9 wires the full cmdk palette. For now this is a visual placeholder
-  // matching the same hit area + keyboard hint slot the eventual palette will
-  // claim, so we don't have to relayout when Phase 9 lands.
-  return (
-    <button
-      type="button"
-      title="Ask anything · Cmd+K (coming soon)"
-      disabled
-      className="hidden h-10 items-center gap-2 rounded-full border border-stone-300 bg-white px-3 text-xs text-stone-500 opacity-60 sm:inline-flex"
-    >
-      <span>Ask anything…</span>
-      <kbd className="rounded border border-stone-300 bg-stone-50 px-1 py-0.5 text-[10px] font-medium text-stone-500">
-        ⌘K
-      </kbd>
-    </button>
   );
 }

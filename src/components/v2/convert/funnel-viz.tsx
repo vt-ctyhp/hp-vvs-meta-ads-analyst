@@ -32,7 +32,7 @@ type Props = {
 export function FunnelViz({ steps }: Props) {
   if (steps.length === 0) {
     return (
-      <div className="rounded-xl border border-stone-200 bg-white px-4 py-10 text-center text-sm text-stone-600">
+      <div className="border border-hp-rule bg-hp-card px-4 py-10 text-center text-sm text-hp-muted">
         No funnel data in this range. Verify the booking pixel is firing on the
         Shopify site.
       </div>
@@ -45,9 +45,9 @@ export function FunnelViz({ steps }: Props) {
   return (
     <section
       aria-label="Website funnel"
-      className="overflow-hidden rounded-xl border border-stone-200 bg-white"
+      className="overflow-hidden border border-hp-rule bg-hp-card"
     >
-      <header className="flex items-baseline justify-between border-b border-stone-200 bg-stone-50 px-4 py-2 text-[10px] uppercase tracking-wider text-stone-600">
+      <header className="flex items-baseline justify-between border-b border-hp-rule bg-hp-inset px-5 py-3 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
         <span>Funnel</span>
         <span>{steps.length} stages</span>
       </header>
@@ -82,7 +82,7 @@ export function FunnelViz({ steps }: Props) {
                       y={26}
                       textAnchor="end"
                       className="text-xs"
-                      style={{ fill: "#1F1A14" }}
+                      style={{ fill: "var(--ink-primary)" }}
                     >
                       {step.label}
                     </text>
@@ -99,7 +99,7 @@ export function FunnelViz({ steps }: Props) {
                       x={barX + w + 8}
                       y={20}
                       className="text-xs font-semibold tabular-nums"
-                      style={{ fill: "#1F1A14" }}
+                      style={{ fill: "var(--ink-primary)" }}
                     >
                       {step.count.toLocaleString()}
                     </text>
@@ -107,7 +107,7 @@ export function FunnelViz({ steps }: Props) {
                       x={barX + w + 8}
                       y={36}
                       className="text-[10px] tabular-nums"
-                      style={{ fill: "#5A5346" }}
+                      style={{ fill: "var(--ink-muted)" }}
                     >
                       {step.rateFromPrevious == null
                         ? idx === 0

@@ -1,6 +1,5 @@
 import { RunSyncButton } from "@/components/v2/optimize/sync-button";
 import { formatCaliforniaDateTime } from "@/lib/california-time";
-import { tokens } from "@/lib/design-tokens";
 import type { MetaAdsBackfillChunk, MetaAdsBackfillJob } from "@/lib/meta-backfill";
 import { incrementalSyncDays } from "@/lib/meta-backfill-utils";
 
@@ -41,10 +40,10 @@ export function PipelinesPanel({
   return (
     <div className="space-y-6">
       {canRunSync ? (
-        <section className="flex flex-col items-start gap-3 rounded-xl border border-stone-200 bg-white p-4">
+        <section className="flex flex-col items-start gap-3 border border-hp-rule bg-hp-card p-5">
           <div className="flex w-full flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <h2 className="text-sm font-semibold text-stone-900">Manual Meta sync</h2>
+              <h2 className="font-[family-name:var(--font-title)] text-xl text-hp-ink">Manual Meta sync</h2>
             </div>
             <div className="flex flex-col items-end gap-2 sm:flex-row">
               <RunSyncButton size="sm" />
@@ -57,23 +56,23 @@ export function PipelinesPanel({
               />
             </div>
           </div>
-          <div className="grid w-full gap-3 border-t border-stone-100 pt-3 text-xs text-stone-700 sm:grid-cols-2">
-            <div className="border-l-2 border-pink-400 pl-3">
-              <h3 className="font-semibold text-stone-900">Run Meta sync now</h3>
+          <div className="grid w-full gap-3 border-t border-hp-rule-soft pt-4 text-xs text-hp-body sm:grid-cols-2">
+            <div className="border-l-2 border-hp-pink pl-3">
+              <h3 className="font-[family-name:var(--font-title)] text-base text-hp-ink">Run Meta sync now</h3>
               <p className="mt-1">
                 Use this most of the time. It updates the dashboard numbers for the last{" "}
                 {syncDays} California days and is the faster, lighter sync.
               </p>
             </div>
-            <div className="border-l-2 border-stone-300 pl-3">
-              <h3 className="font-semibold text-stone-900">Refresh catalog</h3>
+            <div className="border-l-2 border-hp-rule pl-3">
+              <h3 className="font-[family-name:var(--font-title)] text-base text-hp-ink">Refresh catalog</h3>
               <p className="mt-1">
                 Use this only when an ad, creative, thumbnail, or preview looks missing
                 or wrong. It reloads the full Meta ad and creative list, so it can take longer.
               </p>
             </div>
           </div>
-          <p className="text-xs font-medium text-stone-700">
+          <p className="text-xs font-medium text-hp-body">
             If you are not sure, choose Run Meta sync now.
           </p>
         </section>
@@ -81,15 +80,15 @@ export function PipelinesPanel({
 
       <section
         aria-label="Recent sync runs"
-        className="overflow-hidden rounded-xl border border-stone-200 bg-white"
+        className="overflow-hidden border border-hp-rule bg-hp-card"
       >
-        <header className="flex items-center justify-between border-b border-stone-200 bg-stone-50 px-4 py-2 text-xs uppercase tracking-wider text-stone-600">
+        <header className="flex items-center justify-between border-b border-hp-rule bg-hp-inset px-5 py-3 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
           <span>Recent sync runs</span>
           <span>{syncRuns.length}</span>
         </header>
         <table className="w-full text-sm">
-          <thead className="text-[10px] uppercase tracking-wider text-stone-500">
-            <tr className="border-b border-stone-200">
+          <thead className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+            <tr className="border-b border-hp-rule">
               <Th>Started</Th>
               <Th>Trigger</Th>
               <Th>Status</Th>
@@ -101,13 +100,13 @@ export function PipelinesPanel({
           <tbody>
             {syncRuns.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-4 py-4 text-center text-stone-500">
+                <td colSpan={6} className="px-4 py-4 text-center text-hp-muted">
                   No sync runs yet.
                 </td>
               </tr>
             ) : (
               syncRuns.map((run) => (
-                <tr key={run.id} className="border-b border-stone-100">
+                <tr key={run.id} className="border-b border-hp-rule-soft">
                   <Td>
                     <div className="flex flex-col">
                       {run.startedAt ? (
@@ -115,7 +114,7 @@ export function PipelinesPanel({
                       ) : (
                         <span>—</span>
                       )}
-                      <span className="text-[10px] text-stone-500">
+                      <span className="text-[10px] text-hp-muted">
                         {run.startedAt ? relativeTime(run.startedAt) : ""}
                       </span>
                     </div>
@@ -126,16 +125,16 @@ export function PipelinesPanel({
                   </Td>
                   <Td>{formatDuration(run.startedAt, run.completedAt)}</Td>
                   <Td>
-                    <code className="text-[11px] text-stone-700">{summarizeMetrics(run.metrics)}</code>
+                    <code className="text-[11px] text-hp-body">{summarizeMetrics(run.metrics)}</code>
                   </Td>
                   <Td>
                     {Array.isArray(run.errors) && run.errors.length > 0 ? (
-                      <span className="text-rose-700">
+                      <span className="text-signal-danger">
                         {(run.errors as string[]).slice(0, 2).join("; ")}
                         {(run.errors as string[]).length > 2 ? "…" : ""}
                       </span>
                     ) : (
-                      <span className="text-stone-400">—</span>
+                      <span className="text-hp-muted">—</span>
                     )}
                   </Td>
                 </tr>
@@ -147,21 +146,21 @@ export function PipelinesPanel({
 
       <section
         aria-label="Backfill jobs"
-        className="overflow-hidden rounded-xl border border-stone-200 bg-white"
+        className="overflow-hidden border border-hp-rule bg-hp-card"
       >
-        <header className="flex items-center justify-between border-b border-stone-200 bg-stone-50 px-4 py-2 text-xs uppercase tracking-wider text-stone-600">
+        <header className="flex items-center justify-between border-b border-hp-rule bg-hp-inset px-5 py-3 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
           <span>Backfill jobs</span>
           <span>{backfillJobs.length}</span>
         </header>
         {backfillJobs.length === 0 ? (
-          <div className="px-4 py-4 text-center text-sm text-stone-500">
+          <div className="px-4 py-4 text-center text-sm text-hp-muted">
             No backfill jobs in this environment. Historical history loads via Operate → New job
             in a future build.
           </div>
         ) : (
           <table className="w-full text-sm">
-            <thead className="text-[10px] uppercase tracking-wider text-stone-500">
-              <tr className="border-b border-stone-200">
+            <thead className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+              <tr className="border-b border-hp-rule">
                 <Th>Range</Th>
                 <Th>Status</Th>
                 <Th>Chunks</Th>
@@ -171,7 +170,7 @@ export function PipelinesPanel({
             </thead>
             <tbody>
               {backfillJobs.map((job) => (
-                <tr key={job.id} className="border-b border-stone-100">
+                <tr key={job.id} className="border-b border-hp-rule-soft">
                   <Td>
                     <span className="tabular-nums">
                       {job.requestedStart} → {job.requestedEnd}
@@ -184,7 +183,7 @@ export function PipelinesPanel({
                     <span className="tabular-nums">
                       {job.completedChunks}/{job.totalChunks}
                       {job.failedChunks > 0 ? (
-                        <span className="ml-1 text-rose-700">
+                        <span className="ml-1 text-signal-danger">
                           ({job.failedChunks} failed)
                         </span>
                       ) : null}
@@ -218,15 +217,15 @@ export function PipelinesPanel({
       {backfillChunks.length > 0 ? (
         <section
           aria-label="Recent backfill chunks"
-          className="overflow-hidden rounded-xl border border-stone-200 bg-white"
+          className="overflow-hidden border border-hp-rule bg-hp-card"
         >
-          <header className="flex items-center justify-between border-b border-stone-200 bg-stone-50 px-4 py-2 text-xs uppercase tracking-wider text-stone-600">
+          <header className="flex items-center justify-between border-b border-hp-rule bg-hp-inset px-5 py-3 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
             <span>Recent backfill chunks</span>
             <span>{backfillChunks.length}</span>
           </header>
           <table className="w-full text-sm">
-            <thead className="text-[10px] uppercase tracking-wider text-stone-500">
-              <tr className="border-b border-stone-200">
+            <thead className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+              <tr className="border-b border-hp-rule">
                 <Th>Account</Th>
                 <Th>Range</Th>
                 <Th>Status</Th>
@@ -237,7 +236,7 @@ export function PipelinesPanel({
             </thead>
             <tbody>
               {backfillChunks.slice(0, 25).map((chunk) => (
-                <tr key={chunk.id} className="border-b border-stone-100">
+                <tr key={chunk.id} className="border-b border-hp-rule-soft">
                   <Td>{chunk.brandCode}</Td>
                   <Td className="tabular-nums">
                     {chunk.startDate} → {chunk.endDate}
@@ -249,9 +248,9 @@ export function PipelinesPanel({
                   <Td className="tabular-nums">{chunk.insightRows}</Td>
                   <Td>
                     {chunk.error ? (
-                      <span className="text-rose-700">{chunk.error.slice(0, 80)}</span>
+                      <span className="text-signal-danger">{chunk.error.slice(0, 80)}</span>
                     ) : (
-                      <span className="text-stone-400">—</span>
+                      <span className="text-hp-muted">—</span>
                     )}
                   </Td>
                 </tr>
@@ -276,7 +275,7 @@ function Td({
   className?: string;
 }) {
   return (
-    <td className={`px-3 py-2 align-middle text-stone-800 ${className ?? ""}`}>
+    <td className={`px-3 py-2 align-middle text-hp-body ${className ?? ""}`}>
       {children}
     </td>
   );
@@ -287,8 +286,8 @@ function StatusChip({ status }: { status: string | null | undefined }) {
   const color = statusColor(value);
   return (
     <span
-      className="inline-flex h-5 items-center rounded-full border px-2 text-[10px] font-medium capitalize"
-      style={{ borderColor: color, color }}
+      className="inline-flex h-[22px] items-center border px-2 text-[10px] font-bold uppercase tracking-[0.14em]"
+      style={{ borderColor: color, color, backgroundColor: statusBg(value) }}
     >
       {value}
     </span>
@@ -297,13 +296,20 @@ function StatusChip({ status }: { status: string | null | undefined }) {
 
 function statusColor(value: string): string {
   const v = value.toLowerCase();
-  if (v === "success" || v === "completed" || v === "done")
-    return tokens.color.status.done;
-  if (v === "running" || v === "in_progress") return tokens.color.status.running;
-  if (v === "queued" || v === "pending") return tokens.color.status.queued;
-  if (v === "failed" || v === "error") return tokens.color.status.failed;
-  if (v === "partial") return tokens.color.status.snoozed;
-  return tokens.color.light.textMuted;
+  if (v === "success" || v === "completed" || v === "done") return "var(--positive)";
+  if (v === "running" || v === "in_progress") return "var(--info)";
+  if (v === "queued" || v === "pending" || v === "partial") return "var(--warning)";
+  if (v === "failed" || v === "error") return "var(--danger)";
+  return "var(--ink-muted)";
+}
+
+function statusBg(value: string): string {
+  const v = value.toLowerCase();
+  if (v === "success" || v === "completed" || v === "done") return "var(--positive-bg)";
+  if (v === "running" || v === "in_progress") return "var(--info-bg)";
+  if (v === "queued" || v === "pending" || v === "partial") return "var(--warning-bg)";
+  if (v === "failed" || v === "error") return "var(--danger-bg)";
+  return "transparent";
 }
 
 function summarizeMetrics(metrics: unknown): string {

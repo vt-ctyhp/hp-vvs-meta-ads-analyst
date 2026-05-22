@@ -18,6 +18,11 @@
   --positive: #245d4d;
   --warning: #8b5b19;
   --danger: #8d2e2e;
+  --positive-bg: #e6efe9;
+  --warning-bg: #f6ecd6;
+  --danger-bg: #f5dedb;
+  --info: #0f4c75;
+  --info-bg: #e0f0fa;
 }
 
 @theme inline {
@@ -35,6 +40,11 @@
   --color-signal-positive: var(--positive);
   --color-signal-warning: var(--warning);
   --color-signal-danger: var(--danger);
+  --color-signal-positive-bg: var(--positive-bg);
+  --color-signal-warning-bg: var(--warning-bg);
+  --color-signal-danger-bg: var(--danger-bg);
+  --color-signal-info: var(--info);
+  --color-signal-info-bg: var(--info-bg);
   --font-body: var(--font-cardo);
   --font-title: var(--font-title);
 }

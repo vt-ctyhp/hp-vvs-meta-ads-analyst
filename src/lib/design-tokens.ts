@@ -64,11 +64,11 @@ export const tokens = {
       text: "#1F1A14",
       textMuted: "#5A5346",
       textSubtle: "#8B8470",
-      accent: "#E14B7B", // HP pink
+      accent: "#e91d79", // HP pink
       accentInk: "#FFFFFF",
-      accentHover: "#C53D6A",
+      accentHover: "#c9166a",
       accentSubtle: "#FDE6EE",
-      focus: "#E14B7B",
+      focus: "#e91d79",
     },
     dark: {
       bgPage: "#16110A",
@@ -94,7 +94,7 @@ export const tokens = {
       // Sequence used by Visx series. Ordered for accessible adjacency.
       series: [
         "#1F4B8A",
-        "#E14B7B",
+        "#e91d79",
         "#3F7A66",
         "#B07535",
         "#6B4D8C",

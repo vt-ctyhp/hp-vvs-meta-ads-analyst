@@ -558,6 +558,8 @@ export function DashboardClient({
         </div>
       </section>
 
+      <div className="ornament-rule mx-auto max-w-7xl" />
+
       {umbrella === "all" ? (
         <section className="mx-auto mt-6 max-w-7xl border border-hp-rule bg-hp-card p-6 sm:p-8">
           <SectionHeader
@@ -846,7 +848,8 @@ const DateRangeControls = memo(function DateRangeControls({
   }
 
   return (
-    <form onSubmit={submitDateRange} className="flex flex-col gap-2 lg:flex-row lg:items-center">
+    <div className="flex w-full flex-col gap-2 xl:w-auto">
+      <form onSubmit={submitDateRange} className="flex flex-col gap-2 lg:flex-row lg:items-center">
       <div className="flex min-w-0 flex-wrap items-center gap-2 border border-hp-rule px-3 py-2">
         <CalendarRange size={16} className="text-hp-muted" />
         <input
@@ -924,8 +927,9 @@ const DateRangeControls = memo(function DateRangeControls({
           </select>
         </label>
       ) : null}
+      </form>
       {compareEnabled && periodWindows.length ? (
-        <div className="flex min-h-8 max-w-full items-center gap-2 overflow-x-auto text-[10px] uppercase tracking-[0.12em] text-hp-muted lg:max-w-[360px]">
+        <div className="mt-2 flex w-full flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.12em] text-hp-muted">
           {periodWindows.map((period) => (
             <span
               key={period.key}
@@ -940,7 +944,7 @@ const DateRangeControls = memo(function DateRangeControls({
           ))}
         </div>
       ) : null}
-    </form>
+    </div>
   );
 });
 
@@ -1411,15 +1415,21 @@ const MetricTreeRow = memo(function MetricTreeRow({
       <td className="px-3 py-4 text-xs leading-5 text-hp-muted [overflow-wrap:anywhere]">
         {row.campaignUmbrella}
       </td>
-      <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.spend, "money")}</td>
+      <td className="px-3 py-4 text-right font-[family-name:var(--font-title)] text-[17px] leading-tight tabular-nums text-hp-ink">
+        {formatMetric(row.spend, "money")}
+      </td>
       <td className="px-3 py-4 text-right">
         <ResultCell row={row} align="right" />
       </td>
-      <td className="px-3 py-4 text-right tabular-nums">
+      <td className="px-3 py-4 text-right font-[family-name:var(--font-title)] text-[17px] leading-tight tabular-nums text-hp-ink">
         {formatMetric(row.costPerPrimaryResult, "money")}
       </td>
-      <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.ctr, "percent")}</td>
-      <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.cpc, "money")}</td>
+      <td className="px-3 py-4 text-right font-[family-name:var(--font-title)] text-[17px] leading-tight tabular-nums text-hp-ink">
+        {formatMetric(row.ctr, "percent")}
+      </td>
+      <td className="px-3 py-4 text-right font-[family-name:var(--font-title)] text-[17px] leading-tight tabular-nums text-hp-ink">
+        {formatMetric(row.cpc, "money")}
+      </td>
     </tr>
   );
 });
@@ -1630,7 +1640,9 @@ const RiskBadge = memo(function RiskBadge({ level }: { level?: PerformanceRow["r
 const ResultCell = memo(function ResultCell({ row, align = "left" }: { row: PerformanceRow; align?: "left" | "right" }) {
   return (
     <div className={align === "right" ? "text-right" : "text-left"}>
-      <div className="tabular-nums text-hp-ink">{formatMetric(row.primaryResults, "number")}</div>
+      <div className="font-[family-name:var(--font-title)] text-[17px] leading-tight tabular-nums text-hp-ink">
+        {formatMetric(row.primaryResults, "number")}
+      </div>
       <div className="text-[10px] leading-4 text-hp-muted break-words">
         {row.primaryResultLabel}
       </div>

@@ -41,7 +41,7 @@ export function WebsiteFunnelClient({ initialData }: Props) {
   const [endDate, setEndDate] = useState(data.sourceTransparency.timeRange.end);
   const [isApplyingRange, setIsApplyingRange] = useState(false);
 
-  const discrepancyTone = data.overview.discrepancy === 0 ? "text-emerald-700" : "text-hp-pink";
+  const discrepancyTone = data.overview.discrepancy === 0 ? "text-signal-positive" : "text-hp-pink";
   const maxFunnel = useMemo(
     () => Math.max(...data.funnel.map((row) => row.count), 1),
     [data.funnel],

@@ -22,22 +22,22 @@ export function BackfillMonthTable({ rows, rangeStart, rangeEnd }: Props) {
 
   if (rows.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-stone-300 bg-white/60 p-8 text-center text-sm text-stone-600">
+      <div className="border border-dashed border-hp-rule bg-hp-card/60 p-8 text-center text-sm text-hp-muted">
         No backfill months are available for this environment.
       </div>
     );
   }
 
   return (
-    <section className="overflow-hidden rounded-xl border border-stone-200 bg-white">
-      <header className="flex flex-col gap-2 border-b border-stone-200 bg-stone-50 px-4 py-3 sm:flex-row sm:items-end sm:justify-between">
+    <section className="overflow-hidden border border-hp-rule bg-hp-card">
+      <header className="flex flex-col gap-2 border-b border-hp-rule bg-hp-inset px-5 py-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h2 className="text-sm font-semibold text-stone-900">Backfill month status</h2>
-          <p className="mt-1 text-xs text-stone-600">
+          <h2 className="font-[family-name:var(--font-title)] text-xl text-hp-ink">Backfill month status</h2>
+          <p className="mt-1 text-xs text-hp-body">
             Historical backfill only. Normal incremental syncs do not mark a month synced.
           </p>
         </div>
-        <div className="text-left text-xs text-stone-600 sm:text-right">
+        <div className="text-left text-xs text-hp-body sm:text-right">
           <div className="tabular-nums">
             {rangeStart} to {rangeEnd}
           </div>
@@ -50,8 +50,8 @@ export function BackfillMonthTable({ rows, rangeStart, rangeEnd }: Props) {
 
       <div className="overflow-x-auto">
         <table className="w-full min-w-[920px] text-sm">
-          <thead className="text-[10px] uppercase tracking-wider text-stone-500">
-            <tr className="border-b border-stone-200">
+          <thead className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+            <tr className="border-b border-hp-rule">
               <Th>Month</Th>
               <Th>Synced</Th>
               <Th>Supabase Loaded</Th>
@@ -64,11 +64,11 @@ export function BackfillMonthTable({ rows, rangeStart, rangeEnd }: Props) {
           </thead>
           <tbody>
             {newestFirst.map((row) => (
-              <tr key={row.month} className="border-b border-stone-100">
+              <tr key={row.month} className="border-b border-hp-rule-soft">
                 <Td>
                   <div className="flex flex-col">
-                    <span className="font-medium text-stone-900">{row.month}</span>
-                    <span className="text-[10px] text-stone-500 tabular-nums">
+                    <span className="font-[family-name:var(--font-title)] text-base text-hp-ink">{row.month}</span>
+                    <span className="text-[10px] text-hp-muted tabular-nums">
                       {row.monthStart} to {row.monthEnd}
                     </span>
                   </div>
@@ -92,14 +92,14 @@ export function BackfillMonthTable({ rows, rangeStart, rangeEnd }: Props) {
                       {formatCaliforniaDateTime(row.latestBackfillOrResyncAt)}
                     </time>
                   ) : (
-                    <span className="text-stone-400">-</span>
+                    <span className="text-hp-muted">-</span>
                   )}
                 </Td>
                 <Td>
                   {row.notes.length > 0 ? (
-                    <span className="text-xs text-stone-700">{row.notes.join(" ")}</span>
+                    <span className="text-xs text-hp-body">{row.notes.join(" ")}</span>
                   ) : (
-                    <span className="text-stone-400">-</span>
+                    <span className="text-hp-muted">-</span>
                   )}
                 </Td>
               </tr>
@@ -123,7 +123,7 @@ function Td({
   className?: string;
 }) {
   return (
-    <td className={`px-3 py-2 align-middle text-stone-800 ${className ?? ""}`}>
+    <td className={`px-3 py-2 align-middle text-hp-body ${className ?? ""}`}>
       {children}
     </td>
   );
@@ -165,16 +165,16 @@ function StatusPill({
   tone: "good" | "warn" | "bad" | "neutral" | "info";
 }) {
   const className = {
-    good: "border-emerald-700 text-emerald-700",
-    warn: "border-amber-700 text-amber-700",
-    bad: "border-rose-700 text-rose-700",
-    neutral: "border-stone-400 text-stone-600",
-    info: "border-sky-700 text-sky-700",
+    good: "border-signal-positive bg-signal-positive-bg text-signal-positive",
+    warn: "border-signal-warning bg-signal-warning-bg text-signal-warning",
+    bad: "border-signal-danger bg-signal-danger-bg text-signal-danger",
+    neutral: "border-hp-rule bg-hp-card text-hp-muted",
+    info: "border-signal-info bg-signal-info-bg text-signal-info",
   }[tone];
 
   return (
     <span
-      className={`inline-flex min-h-5 items-center whitespace-nowrap rounded-full border px-2 text-[10px] font-medium ${className}`}
+      className={`inline-flex min-h-[22px] items-center whitespace-nowrap border px-2 text-[10px] font-bold uppercase tracking-[0.14em] ${className}`}
     >
       {label}
     </span>

@@ -9,8 +9,6 @@
  * jargon. Keep it under ~20 words.
  */
 
-import { tokens } from "@/lib/design-tokens";
-
 type Props = {
   /** The single sentence the user reads first. e.g. "3 creatives need attention." */
   sentence: string;
@@ -25,37 +23,41 @@ type Props = {
 };
 
 export function StatusSentence({ sentence, metrics = [], accent }: Props) {
-  const stripe = accent ?? tokens.color.light.accent;
+  const stripe = accent ?? "var(--accent)";
+  const lines = sentence.split(/(?<=\.)\s+/).filter(Boolean);
 
   return (
     <header
       aria-label="Room headline"
-      className="relative flex flex-col gap-3 rounded-xl border border-stone-200 bg-white px-6 py-4 md:flex-row md:items-center md:justify-between"
+      className="flex flex-col gap-4 border border-l-[3px] border-hp-rule bg-hp-card px-6 py-5 md:flex-row md:items-center md:justify-between"
+      style={{ borderLeftColor: stripe }}
     >
-      <span
-        aria-hidden
-        className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-md"
-        style={{ background: stripe }}
-      />
-      <p className="pl-3 font-[family-name:var(--font-title)] text-lg leading-snug text-stone-900 md:text-xl">
-        {sentence}
-      </p>
+      <div className="space-y-1">
+        {lines.map((line, index) => (
+          <p
+            key={`${line}-${index}`}
+            className="font-[family-name:var(--font-title)] text-2xl leading-snug text-hp-ink"
+          >
+            {line}
+          </p>
+        ))}
+      </div>
       {metrics.length > 0 ? (
-        <dl className="flex flex-wrap items-center gap-4 pl-3 md:pl-0">
+        <dl className="flex flex-wrap items-center gap-4">
           {metrics.map((m) => (
             <div key={m.label} className="min-w-[88px]">
-              <dt className="text-[10px] uppercase tracking-wider text-stone-500">
+              <dt className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
                 {m.label}
               </dt>
-              <dd className="flex items-baseline gap-1 text-base font-semibold tabular-nums text-stone-900">
+              <dd className="flex items-baseline gap-1 font-[family-name:var(--font-title)] text-xl tabular-nums text-hp-ink">
                 <span>{m.value}</span>
                 {m.delta != null ? (
                   <span
                     className={
                       "text-xs " +
                       (m.delta.positive
-                        ? "text-emerald-700"
-                        : "text-rose-700")
+                        ? "text-signal-positive"
+                        : "text-signal-danger")
                     }
                   >
                     {m.delta.positive ? "▲" : "▼"}

@@ -17,10 +17,10 @@ export type StatusHighlight = {
   tone?: StatusToneKey;
 };
 
-const TONE_COLOR: Record<StatusToneKey, string> = {
-  positive: "#245D4D",
-  warning: "#8D2E2E",
-  neutral: "inherit",
+const TONE_CLASS: Record<StatusToneKey, string> = {
+  positive: "text-signal-positive italic",
+  warning: "text-signal-warning italic",
+  neutral: "text-hp-body",
 };
 
 export function StatusSentence({
@@ -41,17 +41,18 @@ export function StatusSentence({
         {context ? (
           <p className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">{context}</p>
         ) : null}
-        <p className="mt-1 font-title text-2xl leading-snug text-hp-ink md:text-[26px]">
-          {highlights.map((highlight, index) => {
-            const color = highlight.tone ? TONE_COLOR[highlight.tone] : undefined;
-            return (
-              <span key={`${highlight.text}-${index}`}>
-                <span style={color ? { color } : undefined}>{highlight.text}</span>
-                {index < highlights.length - 1 ? <span className="text-hp-muted"> · </span> : null}
-              </span>
-            );
-          })}
-        </p>
+        <div className="mt-1 space-y-1">
+          {highlights.map((highlight, index) => (
+            <p
+              key={`${highlight.text}-${index}`}
+              className={`font-title text-2xl leading-snug md:text-[26px] ${
+                highlight.tone ? TONE_CLASS[highlight.tone] : "text-hp-ink"
+              }`}
+            >
+              {highlight.text}
+            </p>
+          ))}
+        </div>
       </div>
       {action ? <div className="shrink-0">{action}</div> : null}
     </div>

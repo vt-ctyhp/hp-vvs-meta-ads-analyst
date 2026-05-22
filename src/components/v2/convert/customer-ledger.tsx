@@ -162,11 +162,11 @@ export function CustomerLedger({ rows }: Props) {
         size: 200,
         cell: ({ row }) => (
           <div className="flex flex-col gap-0.5">
-            <span className="line-clamp-1 text-sm font-medium text-stone-900">
+            <span className="line-clamp-1 font-[family-name:var(--font-title)] text-base text-hp-ink">
               {row.original.customerName ?? "—"}
             </span>
             {row.original.customerEmail ? (
-              <span className="line-clamp-1 text-[11px] text-stone-500">
+              <span className="line-clamp-1 text-[11px] text-hp-muted">
                 {row.original.customerEmail}
               </span>
             ) : null}
@@ -178,7 +178,7 @@ export function CustomerLedger({ rows }: Props) {
         header: "Activity",
         size: 130,
         cell: ({ getValue }) => (
-          <span className="text-xs tabular-nums">
+          <span className="text-xs tabular-nums text-hp-body">
             {formatDate(getValue<string>())}
           </span>
         ),
@@ -195,7 +195,9 @@ export function CustomerLedger({ rows }: Props) {
         header: "Brand",
         size: 70,
         cell: ({ getValue }) => (
-          <span className="text-xs">{getValue<string>() ?? "—"}</span>
+          <span className="inline-block border border-hp-rule px-2 py-[1px] text-[11px] uppercase tracking-[0.10em] text-hp-ink">
+            {getValue<string>() ?? "—"}
+          </span>
         ),
       },
       {
@@ -226,7 +228,7 @@ export function CustomerLedger({ rows }: Props) {
         header: "Type",
         size: 140,
         cell: ({ getValue }) => (
-          <span className="line-clamp-1 text-xs text-stone-700">
+          <span className="line-clamp-1 text-xs text-hp-body">
             {getValue<string>() ?? "—"}
           </span>
         ),
@@ -247,7 +249,7 @@ export function CustomerLedger({ rows }: Props) {
   if (rows.length === 0) {
     return (
       <>
-        <div className="rounded-xl border border-stone-200 bg-white px-4 py-10 text-center text-sm text-stone-600">
+        <div className="border border-hp-rule bg-hp-card px-4 py-10 text-center text-sm text-hp-muted">
           No customer journeys in this range yet.
         </div>
         <CustomerJourneyDrawer
@@ -266,30 +268,30 @@ export function CustomerLedger({ rows }: Props) {
 
   return (
     <>
-      <div className="overflow-hidden rounded-xl border border-stone-200 bg-white">
-        <header className="flex items-baseline justify-between border-b border-stone-200 bg-stone-50 px-4 py-2 text-[10px] uppercase tracking-wider text-stone-600">
+      <div className="overflow-hidden border border-hp-rule bg-hp-card">
+        <header className="flex items-baseline justify-between border-b border-hp-rule bg-hp-inset px-5 py-3 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
           <span>Customer ledger</span>
           <span>{rows.length}</span>
         </header>
         <div className="max-h-[520px] overflow-auto">
           <table className="w-full min-w-[1040px] border-collapse text-sm">
-            <thead className="sticky top-0 z-10 bg-stone-50">
+            <thead className="sticky top-0 z-10 bg-hp-inset">
               {table.getHeaderGroups().map((hg) => (
-                <tr key={hg.id} className="border-b border-stone-200">
+                <tr key={hg.id} className="border-b border-hp-rule">
                   {hg.headers.map((header) => {
                     const sortDir = header.column.getIsSorted();
                     const canSort = header.column.getCanSort();
                     return (
                       <th
                         key={header.id}
-                        className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-stone-500"
+                        className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-hp-muted"
                         style={{ width: header.getSize() }}
                       >
                         {canSort ? (
                           <button
                             type="button"
                             onClick={header.column.getToggleSortingHandler()}
-                            className="inline-flex items-center gap-1 hover:text-stone-900"
+                            className="inline-flex items-center gap-1 hover:text-hp-ink"
                           >
                             {flexRender(header.column.columnDef.header, header.getContext())}
                             {sortDir === "asc" ? "↑" : sortDir === "desc" ? "↓" : ""}
@@ -316,7 +318,7 @@ export function CustomerLedger({ rows }: Props) {
                       openJourneyDrawer(row.original);
                     }
                   }}
-                  className="cursor-pointer border-b border-stone-100 outline-none transition-colors hover:bg-stone-50 focus:bg-stone-50 focus:ring-2 focus:ring-inset focus:ring-stone-300"
+                  className="cursor-pointer border-b border-hp-rule-soft outline-none transition-colors hover:bg-hp-inset focus:bg-hp-inset focus:ring-2 focus:ring-inset focus:ring-hp-pink"
                 >
                   {row.getVisibleCells().map((cell) => (
                     <td
@@ -352,18 +354,18 @@ function LocationCell({ row }: { row: CustomerLedgerRow }) {
   const secondary = formatLocationSecondary(row);
 
   if (!primary) {
-    return <span className="text-xs text-stone-400">n/a</span>;
+    return <span className="text-xs text-hp-muted">n/a</span>;
   }
 
   return (
     <div className="flex min-w-0 items-start gap-2">
-      <MapPin className="mt-0.5 shrink-0 text-stone-400" size={13} aria-hidden />
+      <MapPin className="mt-0.5 shrink-0 text-hp-muted" size={13} aria-hidden />
       <div className="min-w-0">
-        <span className="line-clamp-1 text-xs font-medium text-stone-800">
+        <span className="line-clamp-1 text-xs font-medium text-hp-ink">
           {primary}
         </span>
         {secondary ? (
-          <span className="line-clamp-1 text-[10px] text-stone-500">
+          <span className="line-clamp-1 text-[10px] text-hp-muted">
             {secondary}
           </span>
         ) : null}
@@ -395,10 +397,10 @@ function CreativeCell({ row }: { row: CustomerLedgerRow }) {
         src={preview?.thumbnailUrl || preview?.imageUrl}
       />
       <div className="min-w-0">
-        <span className="line-clamp-1 text-sm font-medium text-stone-900">
+        <span className="line-clamp-1 font-[family-name:var(--font-title)] text-base text-hp-ink">
           {label}
         </span>
-        <span className="line-clamp-1 text-[11px] text-stone-500">
+        <span className="line-clamp-1 text-[11px] text-hp-muted">
           {sublabel}
         </span>
       </div>
@@ -422,7 +424,7 @@ function CreativeThumb({
     return (
       <div
         aria-label="No ad creative"
-        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-stone-200 bg-stone-50 text-[10px] font-medium uppercase tracking-wide text-stone-400"
+        className="flex h-12 w-12 shrink-0 items-center justify-center border border-hp-rule bg-hp-inset text-[10px] font-medium uppercase tracking-wide text-hp-muted"
       >
         n/a
       </div>
@@ -431,7 +433,7 @@ function CreativeThumb({
 
   if (!src || failed) {
     return (
-      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-stone-200 bg-stone-100 text-stone-400">
+      <div className="flex h-12 w-12 shrink-0 items-center justify-center border border-hp-rule bg-hp-inset text-hp-muted">
         <ImageIcon size={18} aria-hidden />
       </div>
     );
@@ -440,7 +442,7 @@ function CreativeThumb({
   return (
     <img
       alt={alt}
-      className="h-12 w-12 shrink-0 rounded-md border border-stone-200 bg-stone-100 object-cover"
+      className="h-12 w-12 shrink-0 border border-hp-rule bg-hp-inset object-cover"
       onError={() => setFailedSrc(src)}
       src={src}
     />
@@ -458,9 +460,9 @@ function SourceChip({
 }) {
   if (!type) {
     if (source) {
-      return <span className="line-clamp-1 text-xs text-stone-600">{source}</span>;
+      return <span className="line-clamp-1 text-xs text-hp-body">{source}</span>;
     }
-    return <span className="text-xs text-stone-400">Direct / unattributed</span>;
+    return <span className="text-xs text-hp-muted">Direct / unattributed</span>;
   }
   const label =
     type === "paid_meta"
@@ -475,19 +477,19 @@ function SourceChip({
               ? "Organic"
               : type;
   const style = type.startsWith("paid_")
-    ? "border-sky-200 bg-sky-50 text-sky-800"
-    : "border-emerald-200 bg-emerald-50 text-emerald-800";
+    ? "border-signal-info bg-signal-info-bg text-signal-info"
+    : "border-signal-positive bg-signal-positive-bg text-signal-positive";
   return (
     <div className="flex flex-col gap-0.5">
       <span
-        className={`inline-flex h-5 w-fit items-center rounded-full border px-2 text-[10px] font-medium ${style}`}
+        className={`inline-flex h-[22px] w-fit items-center border px-2 text-[10px] font-bold uppercase tracking-[0.14em] ${style}`}
       >
         {label}
       </span>
       {campaign ? (
-        <span className="line-clamp-1 text-[10px] text-stone-500">{campaign}</span>
+        <span className="line-clamp-1 text-[10px] text-hp-muted">{campaign}</span>
       ) : source ? (
-        <span className="line-clamp-1 text-[10px] text-stone-500">{source}</span>
+        <span className="line-clamp-1 text-[10px] text-hp-muted">{source}</span>
       ) : null}
     </div>
   );
@@ -502,27 +504,27 @@ function CapiChip({
 }) {
   if (!hasConversion) {
     return (
-      <span className="inline-flex h-5 items-center rounded-full border border-stone-200 bg-stone-50 px-2 text-[10px] text-stone-500">
+      <span className="inline-flex h-[22px] items-center border border-hp-rule bg-hp-card px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-hp-muted">
         no booking
       </span>
     );
   }
   if (!status)
     return (
-      <span className="inline-flex h-5 items-center rounded-full border border-stone-200 bg-stone-50 px-2 text-[10px] text-stone-600">
+      <span className="inline-flex h-[22px] items-center border border-hp-rule bg-hp-card px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-hp-muted">
         none
       </span>
     );
   const lower = status.toLowerCase();
   const style =
     lower === "success" || lower === "sent"
-      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+      ? "border-signal-positive bg-signal-positive-bg text-signal-positive"
       : lower === "queued" || lower === "pending"
-        ? "border-amber-200 bg-amber-50 text-amber-800"
-        : "border-rose-200 bg-rose-50 text-rose-800";
+        ? "border-signal-warning bg-signal-warning-bg text-signal-warning"
+        : "border-signal-danger bg-signal-danger-bg text-signal-danger";
   return (
     <span
-      className={`inline-flex h-5 items-center rounded-full border px-2 text-[10px] font-medium capitalize ${style}`}
+      className={`inline-flex h-[22px] items-center border px-2 text-[10px] font-bold uppercase tracking-[0.14em] ${style}`}
     >
       {status}
     </span>

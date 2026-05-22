@@ -31,7 +31,7 @@ type Props = {
 
 const margin = { top: 16, right: 24, bottom: 28, left: 56 };
 
-export function TimeSeriesChart({ data, accent = "#E14B7B" }: Props) {
+export function TimeSeriesChart({ data, accent = "var(--accent)" }: Props) {
   // Aggregate the daily trend rows by date so multiple brands/umbrellas
   // collapse into a single visible series.
   const series = useMemo(() => {

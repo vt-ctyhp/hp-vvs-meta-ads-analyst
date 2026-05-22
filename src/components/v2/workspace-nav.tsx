@@ -70,10 +70,13 @@ export function WorkspaceNav({ rooms, permissions }: Props) {
           permissions.includes(item.permission),
         );
         const href = visibleItems[0]?.href ?? ROOM_PATHS[room];
+        const activeItemHref = visibleItems
+          .filter((item) => pathMatches(pathname, item.href))
+          .sort((a, b) => b.href.length - a.href.length)[0]?.href;
         const isActive =
-          visibleItems.some((item) => pathname === item.href || pathname.startsWith(`${item.href}/`)) ||
+          Boolean(activeItemHref) ||
           ROOM_ACTIVE_PREFIXES[room].some(
-            (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+            (prefix) => pathMatches(pathname, prefix),
           );
         return (
           <div key={room} className="group relative">
@@ -82,30 +85,29 @@ export function WorkspaceNav({ rooms, permissions }: Props) {
               aria-current={isActive ? "page" : undefined}
               title={ROOM_TAGLINE[room]}
               className={[
-                "inline-flex h-10 items-center gap-2 rounded-full px-4 transition-colors",
+                "inline-flex h-10 items-center gap-2 px-4 transition-colors",
                 isActive
-                  ? "bg-[var(--workspace-accent,#E14B7B)] text-white shadow-sm"
-                  : "text-stone-700 hover:bg-stone-200/70 hover:text-stone-900",
+                  ? "bg-hp-pink text-hp-foundation"
+                  : "text-hp-body hover:bg-hp-inset hover:text-hp-ink",
               ].join(" ")}
             >
               <span>{ROOM_LABEL[room]}</span>
               <ChevronDown size={14} aria-hidden />
             </Link>
             {visibleItems.length ? (
-              <div className="invisible absolute left-0 top-full z-50 mt-2 w-56 rounded-lg border border-stone-200 bg-white p-1 opacity-0 shadow-lg transition group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
+              <div className="invisible absolute left-0 top-full z-50 mt-2 w-56 border border-hp-rule bg-hp-card p-1 opacity-0 shadow-lg transition group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
                 {visibleItems.map((item) => {
-                  const itemActive =
-                    pathname === item.href || pathname.startsWith(`${item.href}/`);
+                  const itemActive = activeItemHref === item.href;
                   return (
                     <Link
                       key={item.href}
                       href={item.href}
                       aria-current={itemActive ? "page" : undefined}
                       className={[
-                        "block rounded-md px-3 py-2 text-sm transition-colors",
+                        "block px-3 py-2 text-sm transition-colors",
                         itemActive
-                          ? "bg-stone-900 text-stone-50"
-                          : "text-stone-700 hover:bg-stone-100 hover:text-stone-950",
+                          ? "bg-hp-ink text-hp-foundation"
+                          : "text-hp-body hover:bg-hp-inset hover:text-hp-ink",
                       ].join(" ")}
                     >
                       {item.label}
@@ -119,4 +121,8 @@ export function WorkspaceNav({ rooms, permissions }: Props) {
       })}
     </nav>
   );
+}
+
+function pathMatches(pathname: string, href: string) {
+  return pathname === href || pathname.startsWith(`${href}/`);
 }

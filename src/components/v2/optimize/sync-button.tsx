@@ -68,8 +68,8 @@ export function RunSyncButton({
   const sizeClass = size === "sm" ? "h-8 px-3 text-xs" : "h-10 px-4 text-sm";
   const variantClass =
     variant === "secondary"
-      ? "border border-stone-300 bg-white text-stone-800 hover:bg-stone-50"
-      : "bg-[#E14B7B] text-white shadow-sm hover:bg-[#C53D6A]";
+      ? "border border-hp-rule bg-hp-card text-hp-ink hover:bg-hp-inset"
+      : "bg-hp-pink text-hp-foundation shadow-sm hover:bg-hp-ink";
   const idleLabel = label ?? defaultIdleLabel(mode);
   const activeLabel =
     runningLabel ?? defaultRunningLabel(mode);
@@ -80,12 +80,12 @@ export function RunSyncButton({
         type="button"
         onClick={run}
         disabled={status === "running"}
-        className={`${sizeClass} ${variantClass} inline-flex items-center gap-2 rounded-full font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60`}
+        className={`${sizeClass} ${variantClass} inline-flex items-center gap-2 font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60`}
       >
         {status === "running" ? activeLabel : idleLabel}
       </button>
       {error ? (
-        <p className="max-w-md text-center text-xs text-rose-700">{error}</p>
+        <p className="max-w-md text-center text-xs text-signal-danger">{error}</p>
       ) : null}
     </div>
   );

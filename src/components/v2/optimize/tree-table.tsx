@@ -609,7 +609,7 @@ function NameCell({
           onClick={onCreativeClick}
           className={[
             TREE_NAME_LABEL_CLASS,
-            "hover:text-[#E14B7B] hover:underline focus-visible:text-[#E14B7B] focus-visible:underline",
+            "hover:text-hp-pink hover:underline focus-visible:text-hp-pink focus-visible:underline",
           ].join(" ")}
           title={renderedLabel}
           aria-label={`Open creative detail for ${renderedLabel}`}
@@ -640,7 +640,7 @@ const LEVEL_BADGE: Record<TreeRow["level"], string> = {
 };
 
 const TREE_NAME_LABEL_CLASS =
-  "breakdown-name-label text-left font-medium leading-snug text-stone-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#E14B7B]";
+  "breakdown-name-label text-left font-medium leading-snug text-stone-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hp-pink";
 
 /**
  * Small img-with-fallback. Sources should already be durable Supabase

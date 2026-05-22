@@ -33,9 +33,9 @@ export default async function MobileInboxIndex() {
 
   return (
     <div className="space-y-4">
-      <header className="rounded-xl border border-stone-200 bg-white px-4 py-3">
-        <p className="text-sm font-medium text-stone-900">{sentence}</p>
-        <p className="pt-0.5 text-[11px] text-stone-500">
+      <header className="border border-hp-rule bg-hp-card px-4 py-4">
+        <p className="font-[family-name:var(--font-title)] text-lg leading-snug text-hp-ink">{sentence}</p>
+        <p className="mt-2 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
           {canSendReplies
             ? "Tap a conversation to draft and send a reply."
             : "Read-only access — sending replies needs send_inbox_reply permission."}

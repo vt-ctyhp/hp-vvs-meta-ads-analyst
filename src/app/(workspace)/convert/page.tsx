@@ -55,6 +55,8 @@ export default async function ConvertPage({
         <ConvertFunnel data={data} />
       </Suspense>
 
+      <div className="ornament-rule" />
+
       <Suspense fallback={<CustomerLedgerFallback />}>
         <ConvertLedger data={data} />
       </Suspense>
@@ -163,17 +165,13 @@ function StatusSentenceFallback() {
   return (
     <section
       aria-label="Loading Convert headline"
-      className="relative flex flex-col gap-3 rounded-xl border border-stone-200 bg-white px-6 py-4 md:flex-row md:items-center md:justify-between"
+      className="flex flex-col gap-3 border border-l-[3px] border-hp-rule bg-hp-card px-6 py-5 md:flex-row md:items-center md:justify-between"
     >
-      <span
-        aria-hidden
-        className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-md bg-stone-200"
-      />
-      <div className="space-y-2 pl-3">
+      <div className="space-y-2">
         <Skeleton className="h-3 w-24" />
         <Skeleton className="h-6 w-[min(36rem,72vw)]" />
       </div>
-      <div className="grid grid-cols-2 gap-4 pl-3 sm:flex sm:pl-0">
+      <div className="grid grid-cols-2 gap-4 sm:flex">
         {["customers", "bookings", "gaps"].map((item) => (
           <div key={item} className="min-w-[88px] space-y-2">
             <Skeleton className="h-2 w-20" />
@@ -189,9 +187,9 @@ function FunnelFallback() {
   return (
     <section
       aria-label="Loading website funnel"
-      className="overflow-hidden rounded-xl border border-stone-200 bg-white"
+      className="overflow-hidden border border-hp-rule bg-hp-card"
     >
-      <div className="flex items-center justify-between border-b border-stone-200 bg-stone-50 px-4 py-2">
+      <div className="flex items-center justify-between border-b border-hp-rule bg-hp-inset px-5 py-3">
         <Skeleton className="h-3 w-16" />
         <Skeleton className="h-3 w-20" />
       </div>
@@ -199,7 +197,7 @@ function FunnelFallback() {
         {[92, 76, 58, 36].map((width, index) => (
           <div key={index} className="grid grid-cols-[10rem_1fr_5rem] items-center gap-4">
             <Skeleton className="h-4 w-full" />
-            <Skeleton className="h-9 rounded-md" style={{ width: `${width}%` }} />
+            <Skeleton className="h-9" style={{ width: `${width}%` }} />
             <Skeleton className="h-4 w-14" />
           </div>
         ))}
@@ -212,13 +210,13 @@ function CustomerLedgerFallback() {
   return (
     <section
       aria-label="Loading customer ledger"
-      className="overflow-hidden rounded-xl border border-stone-200 bg-white"
+      className="overflow-hidden border border-hp-rule bg-hp-card"
     >
-      <div className="flex items-center justify-between border-b border-stone-200 bg-stone-50 px-4 py-3">
+      <div className="flex items-center justify-between border-b border-hp-rule bg-hp-inset px-5 py-3">
         <Skeleton className="h-4 w-32" />
         <Skeleton className="h-8 w-24" />
       </div>
-      <div className="divide-y divide-stone-100">
+      <div className="divide-y divide-hp-rule-soft">
         {Array.from({ length: 6 }).map((_, index) => (
           <div key={index} className="grid grid-cols-[1fr_6rem_5rem] items-center gap-4 px-4 py-3">
             <div className="space-y-2">
@@ -226,7 +224,7 @@ function CustomerLedgerFallback() {
               <Skeleton className="h-3 w-[min(26rem,56vw)]" />
             </div>
             <Skeleton className="h-4 w-16" />
-            <Skeleton className="h-7 w-16 rounded-full" />
+            <Skeleton className="h-7 w-16" />
           </div>
         ))}
       </div>
@@ -244,7 +242,7 @@ function Skeleton({
   return (
     <span
       aria-hidden
-      className={["block animate-pulse rounded bg-stone-200/80", className].join(" ")}
+      className={["block animate-pulse bg-hp-inset", className].join(" ")}
       style={style}
     />
   );

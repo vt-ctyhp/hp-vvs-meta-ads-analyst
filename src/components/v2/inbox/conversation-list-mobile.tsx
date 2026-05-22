@@ -66,18 +66,18 @@ export function ConversationListMobile({ threads, comments }: Props) {
 
   return (
     <div className="space-y-3">
-      <div className="sticky top-14 z-20 -mx-4 border-b border-stone-200 bg-[#F8F4EE]/95 px-4 py-2 backdrop-blur">
+      <div className="sticky top-14 z-20 -mx-4 border-b border-hp-rule bg-hp-foundation/95 px-4 py-2 backdrop-blur">
         <input
           type="search"
           placeholder="Search by name or message…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          className="h-10 w-full rounded-full border border-stone-300 bg-white px-4 text-sm text-stone-800 placeholder:text-stone-400 focus:outline-none focus:ring-2 focus:ring-stone-400"
+          className="h-11 w-full border border-hp-rule bg-hp-card px-4 text-sm text-hp-ink placeholder:text-hp-muted focus:border-hp-pink focus:outline-none"
         />
       </div>
 
       {items.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-stone-300 bg-white/60 px-4 py-10 text-center text-sm text-stone-600">
+        <div className="border border-dashed border-hp-rule bg-hp-card/60 px-4 py-10 text-center text-sm text-hp-muted">
           {query ? "No matches." : "Inbox is clear."}
         </div>
       ) : (
@@ -86,8 +86,13 @@ export function ConversationListMobile({ threads, comments }: Props) {
             <li key={item.href}>
               <Link
                 href={item.href}
-                className="block rounded-xl border border-stone-200 bg-white px-4 py-3 transition-colors hover:bg-stone-50 active:bg-stone-100"
+                className={`relative block border border-hp-rule bg-hp-card px-4 py-3 transition-colors hover:bg-hp-inset ${
+                  item.kind === "thread" && item.data.unread_count > 0 ? "pl-[18px]" : ""
+                }`}
               >
+                {item.kind === "thread" && item.data.unread_count > 0 ? (
+                  <span aria-hidden className="absolute top-0 bottom-0 left-0 w-[3px] bg-hp-pink" />
+                ) : null}
                 <div className="flex items-start gap-3">
                   <PlatformBadge
                     platform={item.data.platform}
@@ -95,22 +100,22 @@ export function ConversationListMobile({ threads, comments }: Props) {
                   />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="line-clamp-1 text-sm font-medium text-stone-900">
+                      <span className="line-clamp-1 font-[family-name:var(--font-title)] text-base font-medium text-hp-ink">
                         {item.kind === "thread"
                           ? item.data.participant_name ?? "Unknown"
                           : item.data.author_name ?? "Comment"}
                       </span>
-                      <span className="ml-auto text-[10px] tabular-nums text-stone-500">
+                      <span className="ml-auto text-[10px] tabular-nums text-hp-muted">
                         {relTime(item.at)}
                       </span>
                     </div>
-                    <p className="line-clamp-2 pt-0.5 text-[13px] text-stone-700">
+                    <p className="line-clamp-2 pt-0.5 text-[13px] text-hp-body">
                       {item.kind === "thread"
                         ? item.data.snippet ?? ""
                         : item.data.body ?? ""}
                     </p>
                     {item.kind === "thread" && item.data.unread_count > 0 ? (
-                      <span className="mt-1 inline-flex h-5 items-center rounded-full bg-[#E14B7B] px-2 text-[10px] font-medium text-white">
+                      <span className="mt-1 inline-flex h-[22px] items-center bg-hp-pink px-2 text-[10px] font-medium text-hp-foundation">
                         {item.data.unread_count} unread
                       </span>
                     ) : null}
@@ -135,16 +140,16 @@ function PlatformBadge({
   const platformLabel = platform === "facebook" ? "FB" : "IG";
   const platformStyle =
     platform === "facebook"
-      ? "border-sky-200 bg-sky-50 text-sky-800"
-      : "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-800";
+      ? "border-signal-info bg-signal-info-bg text-signal-info"
+      : "border-hp-pink bg-hp-card text-hp-pink";
   return (
     <div className="flex flex-col items-center gap-0.5">
       <span
-        className={`inline-flex h-6 w-9 items-center justify-center rounded-full border text-[10px] font-semibold ${platformStyle}`}
+        className={`inline-flex h-7 w-10 items-center justify-center border text-[10px] font-semibold ${platformStyle}`}
       >
         {platformLabel}
       </span>
-      <span className="text-[9px] uppercase tracking-wider text-stone-500">
+      <span className="text-[9px] uppercase tracking-[0.14em] text-hp-muted">
         {kind === "thread" ? "Msg" : "Cmt"}
       </span>
     </div>

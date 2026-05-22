@@ -40,9 +40,9 @@ export function IdentityMenu({ email, fullName, initials, roles }: Props) {
         onClick={() => setOpen((value) => !value)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="inline-flex h-10 min-w-[40px] items-center justify-center gap-2 rounded-full border border-stone-300 bg-white px-3 text-sm font-medium text-stone-800 shadow-sm transition-colors hover:bg-stone-50"
+        className="inline-flex h-10 min-w-[40px] items-center justify-center gap-2 border border-hp-rule bg-hp-card px-3 text-sm font-medium text-hp-ink shadow-sm transition-colors hover:bg-hp-inset"
       >
-        <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-stone-900 text-xs font-semibold text-white">
+        <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-hp-ink text-xs font-semibold text-hp-foundation">
           {initials ?? "—"}
         </span>
         <span className="hidden text-sm sm:inline">{displayName}</span>
@@ -51,14 +51,14 @@ export function IdentityMenu({ email, fullName, initials, roles }: Props) {
       {open ? (
         <div
           role="menu"
-          className="absolute right-0 z-50 mt-2 w-72 rounded-xl border border-stone-200 bg-white p-3 shadow-xl"
+          className="absolute right-0 z-50 mt-2 w-72 border border-hp-rule bg-hp-card p-3 shadow-xl"
           onMouseLeave={() => setOpen(false)}
         >
-          <div className="space-y-1 border-b border-stone-200 pb-3">
-            <p className="text-sm font-medium text-stone-900">{displayName}</p>
-            {email ? <p className="truncate text-xs text-stone-500">{email}</p> : null}
-            <p className="pt-1 text-xs uppercase tracking-wider text-stone-400">Roles</p>
-            <p className="text-xs text-stone-600">
+          <div className="space-y-1 border-b border-hp-rule pb-3">
+            <p className="text-sm font-medium text-hp-ink">{displayName}</p>
+            {email ? <p className="truncate text-xs text-hp-muted">{email}</p> : null}
+            <p className="pt-1 text-xs uppercase tracking-[0.14em] text-hp-muted">Roles</p>
+            <p className="text-xs text-hp-body">
               {roles.length === 0
                 ? "No roles assigned"
                 : roles.map((role) => ROLE_LABELS[role] ?? role).join(" · ")}
@@ -68,7 +68,7 @@ export function IdentityMenu({ email, fullName, initials, roles }: Props) {
             type="button"
             onClick={handleSignOut}
             disabled={signingOut}
-            className="mt-3 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-medium text-stone-800 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+            className="mt-3 w-full border border-hp-rule bg-hp-card px-3 py-2 text-sm font-medium text-hp-ink transition-colors hover:bg-hp-inset disabled:cursor-not-allowed disabled:opacity-60"
           >
             {signingOut ? "Signing out…" : "Sign out"}
           </button>

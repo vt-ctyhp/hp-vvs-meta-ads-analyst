@@ -74,27 +74,27 @@ export function HealthPill() {
 
   const bgClass =
     status === "ok"
-      ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+      ? "border-signal-positive bg-signal-positive-bg text-signal-positive"
       : status === "warn"
-        ? "bg-amber-50 text-amber-800 border-amber-200"
+        ? "border-signal-warning bg-signal-warning-bg text-signal-warning"
         : status === "critical"
-          ? "bg-rose-50 text-rose-800 border-rose-200"
-          : "bg-stone-100 text-stone-700 border-stone-200";
+          ? "border-signal-danger bg-signal-danger-bg text-signal-danger"
+          : "border-hp-rule bg-hp-card text-hp-muted";
 
   const dotClass =
     status === "ok"
-      ? "bg-emerald-500"
+      ? "bg-signal-positive"
       : status === "warn"
-        ? "bg-amber-500"
+        ? "bg-signal-warning"
         : status === "critical"
-          ? "bg-rose-500"
-          : "bg-stone-400";
+          ? "bg-signal-danger"
+          : "bg-hp-muted";
 
   return (
     <span
       role="status"
       title="System health"
-      className={`inline-flex h-10 items-center gap-2 rounded-full border px-3 text-xs font-medium ${bgClass}`}
+      className={`inline-flex h-10 items-center gap-2 border px-3 text-xs font-medium ${bgClass}`}
     >
       <span className={`inline-block h-2 w-2 rounded-full ${dotClass}`} />
       <span>{label}</span>

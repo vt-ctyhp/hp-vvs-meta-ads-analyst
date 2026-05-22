@@ -59,10 +59,10 @@ export function ConversationQueue({ threads, comments }: Props) {
   return (
     <section
       aria-label="Conversation queue"
-      className="overflow-hidden rounded-xl border border-stone-200 bg-white"
+      className="overflow-hidden border border-hp-rule bg-hp-card"
     >
-      <header className="flex items-center gap-2 border-b border-stone-200 bg-stone-50 px-3 py-2">
-        <span className="text-[10px] uppercase tracking-wider text-stone-600">
+      <header className="flex items-center gap-2 border-b border-hp-rule bg-hp-inset px-4 py-3">
+        <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
           Conversations
         </span>
         <input
@@ -70,18 +70,18 @@ export function ConversationQueue({ threads, comments }: Props) {
           placeholder="Search by name or text…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          className="ml-auto h-8 w-56 rounded-md border border-stone-300 bg-white px-2 text-xs text-stone-800 focus:outline-none focus:ring-2 focus:ring-stone-400"
+          className="ml-auto h-8 w-56 border border-hp-rule bg-hp-card px-2 text-xs text-hp-ink focus:border-hp-pink focus:outline-none"
         />
-        <span className="text-[11px] text-stone-500 tabular-nums">{items.length}</span>
+        <span className="text-[11px] text-hp-muted tabular-nums">{items.length}</span>
       </header>
       {items.length === 0 ? (
-        <p className="px-4 py-8 text-center text-sm text-stone-600">
+        <p className="px-4 py-8 text-center text-sm text-hp-muted">
           {query
             ? "No matches."
             : "No conversations in this environment yet. Trigger an inbox sync from Operate."}
         </p>
       ) : (
-        <ul className="max-h-[520px] divide-y divide-stone-100 overflow-auto">
+        <ul className="max-h-[520px] divide-y divide-hp-rule-soft overflow-auto">
           {items.map((item) => {
             const id =
               item.kind === "thread"
@@ -95,7 +95,7 @@ export function ConversationQueue({ threads, comments }: Props) {
                   onClick={() => setSelectedId(id)}
                   className={[
                     "flex w-full items-start gap-3 px-3 py-2 text-left transition-colors",
-                    isActive ? "bg-stone-100" : "hover:bg-stone-50",
+                    isActive ? "bg-hp-inset" : "hover:bg-hp-inset",
                   ].join(" ")}
                 >
                   <PlatformBadge
@@ -104,21 +104,21 @@ export function ConversationQueue({ threads, comments }: Props) {
                   />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="line-clamp-1 text-sm font-medium text-stone-900">
+                      <span className="line-clamp-1 font-[family-name:var(--font-title)] text-base text-hp-ink">
                         {item.kind === "thread"
                           ? item.data.participant_name ?? "Unknown"
                           : item.data.author_name ?? "Comment"}
                       </span>
                       {item.kind === "thread" && item.data.unread_count > 0 ? (
-                        <span className="inline-flex h-5 items-center rounded-full bg-[#E14B7B] px-2 text-[10px] font-medium text-white">
+                        <span className="inline-flex h-[22px] items-center bg-hp-pink px-2 text-[10px] font-medium text-hp-foundation">
                           {item.data.unread_count}
                         </span>
                       ) : null}
-                      <span className="ml-auto text-[10px] text-stone-500 tabular-nums">
+                      <span className="ml-auto text-[10px] text-hp-muted tabular-nums">
                         {relTime(item.at)}
                       </span>
                     </div>
-                    <p className="line-clamp-2 text-[11px] text-stone-600">
+                    <p className="line-clamp-2 text-[11px] text-hp-body">
                       {item.kind === "thread"
                         ? item.data.snippet ?? ""
                         : item.data.body ?? ""}
@@ -144,16 +144,16 @@ function PlatformBadge({
   const platformLabel = platform === "facebook" ? "FB" : "IG";
   const platformStyle =
     platform === "facebook"
-      ? "border-sky-200 bg-sky-50 text-sky-800"
-      : "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-800";
+      ? "border-signal-info bg-signal-info-bg text-signal-info"
+      : "border-hp-pink bg-hp-card text-hp-pink";
   return (
     <div className="flex flex-col items-center gap-0.5">
       <span
-        className={`inline-flex h-5 w-7 items-center justify-center rounded-full border text-[10px] font-semibold ${platformStyle}`}
+        className={`inline-flex h-6 w-8 items-center justify-center border text-[10px] font-semibold ${platformStyle}`}
       >
         {platformLabel}
       </span>
-      <span className="text-[9px] uppercase tracking-wider text-stone-500">
+      <span className="text-[9px] uppercase tracking-[0.14em] text-hp-muted">
         {kind === "thread" ? "Msg" : "Cmt"}
       </span>
     </div>

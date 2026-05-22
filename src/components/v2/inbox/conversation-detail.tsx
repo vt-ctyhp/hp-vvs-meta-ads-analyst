@@ -50,19 +50,19 @@ export function ConversationDetail({
 }: Props) {
   return (
     <div className="space-y-4">
-      <header className="flex items-center gap-3 rounded-xl border border-stone-200 bg-white px-4 py-3">
+      <header className="flex items-center gap-3 border border-hp-rule bg-hp-card px-4 py-3">
         <Link
           href={backHref}
-          className="inline-flex h-9 items-center rounded-full border border-stone-300 bg-white px-3 text-xs font-medium text-stone-800 hover:bg-stone-50"
+          className="inline-flex h-9 items-center border border-hp-ink bg-transparent px-3 text-[10px] uppercase tracking-[0.14em] text-hp-ink hover:bg-hp-ink hover:text-hp-foundation"
           aria-label="Back to inbox"
         >
           ← Back
         </Link>
         <div className="min-w-0 flex-1">
-          <p className="line-clamp-1 text-sm font-medium text-stone-900">
+          <p className="line-clamp-1 font-[family-name:var(--font-title)] text-base text-hp-ink">
             {participantName ?? "Unknown"}
           </p>
-          <p className="text-[11px] text-stone-500">
+          <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
             {platform.toUpperCase()} · {kind === "thread" ? "Conversation" : "Comment"}
             {participantEmail ? ` · ${participantEmail}` : ""}
           </p>
@@ -71,7 +71,7 @@ export function ConversationDetail({
 
       <section
         aria-label="Messages"
-        className="space-y-2 rounded-xl border border-stone-200 bg-white p-3"
+        className="space-y-3 border border-hp-rule bg-hp-card p-4"
       >
         {kind === "comment" ? (
           <Bubble
@@ -81,7 +81,7 @@ export function ConversationDetail({
             senderName={participantName}
           />
         ) : messages.length === 0 ? (
-          <p className="px-2 py-6 text-center text-sm text-stone-500">
+          <p className="px-2 py-6 text-center text-sm text-hp-muted">
             No messages yet for this thread. Trigger an inbox sync to fetch
             history.
           </p>
@@ -125,14 +125,14 @@ function Bubble({
     <div className={`flex ${outbound ? "justify-end" : "justify-start"}`}>
       <div
         className={[
-          "max-w-[80%] rounded-2xl px-3 py-2 text-sm",
+          "max-w-[80%] border px-3 py-2 text-sm",
           outbound
-            ? "rounded-br-md bg-stone-900 text-stone-50"
-            : "rounded-bl-md bg-stone-100 text-stone-900",
+            ? "border-hp-ink bg-hp-ink text-hp-foundation"
+            : "border-hp-rule bg-hp-inset text-hp-ink",
         ].join(" ")}
       >
         {!outbound && senderName ? (
-          <p className="pb-0.5 text-[10px] uppercase tracking-wider text-stone-500">
+          <p className="pb-0.5 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
             {senderName}
           </p>
         ) : null}
@@ -140,7 +140,7 @@ function Bubble({
         <p
           className={[
             "pt-1 text-[10px]",
-            outbound ? "text-stone-300" : "text-stone-500",
+            outbound ? "text-hp-foundation/60" : "text-hp-muted",
           ].join(" ")}
         >
           {sentAt ? MSG_FMT.format(new Date(sentAt)) : ""}

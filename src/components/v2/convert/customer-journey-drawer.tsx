@@ -26,6 +26,7 @@ import type {
   CustomerJourneyLedgerTimelineEvent,
   CustomerJourneyLedgerTouchSummary,
 } from "@/lib/customer-journey-ledger";
+import { formatTimeToBook } from "@/lib/time-to-book";
 
 type Props = {
   detail: CustomerJourneyLedgerDetailData | null;
@@ -65,32 +66,32 @@ export function CustomerJourneyDrawer({
         type="button"
         aria-label="Close customer journey detail"
         onClick={onClose}
-        className="flex-1 bg-stone-950/35 transition-opacity"
+        className="flex-1 bg-hp-ink/35 transition-opacity"
       />
       <aside
         role="dialog"
         aria-modal="true"
         aria-labelledby="customer-journey-title"
-        className="flex h-full w-full max-w-[720px] flex-col border-l border-stone-200 bg-white shadow-[-12px_0_32px_rgba(41,37,36,0.16)]"
+        className="flex h-full w-full max-w-[720px] flex-col border-l border-hp-rule bg-hp-card shadow-[-12px_0_32px_rgba(42,39,37,0.10)]"
       >
-        <header className="border-b border-stone-200 bg-stone-50 px-5 py-4">
+        <header className="border-b border-hp-rule bg-hp-inset px-5 py-4">
           <div className="flex items-start justify-between gap-4">
             <div className="flex min-w-0 gap-3">
               <CreativeHeroThumb row={row} />
               <div className="min-w-0">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-stone-500">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-hp-muted">
                   Customer journey
                 </p>
                 <h3
                   id="customer-journey-title"
-                  className="mt-1 text-xl font-semibold leading-tight text-stone-950 [overflow-wrap:anywhere]"
+                  className="mt-1 font-[family-name:var(--font-title)] text-2xl leading-tight text-hp-ink [overflow-wrap:anywhere]"
                 >
                   {title}
                 </h3>
-                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-stone-500">
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-hp-muted">
                   <span>
                     Booking:{" "}
-                    <span className="text-stone-800">
+                    <span className="text-hp-ink">
                       {bookingTime ? formatDateTime(bookingTime) : "none found"}
                     </span>
                   </span>
@@ -105,7 +106,7 @@ export function CustomerJourneyDrawer({
                 type="button"
                 onClick={onCopyLink}
                 disabled={!timelineLink}
-                className="inline-flex h-9 items-center gap-2 rounded-md border border-stone-200 bg-white px-3 text-[11px] font-medium text-stone-600 transition hover:border-stone-400 hover:text-stone-950 disabled:opacity-50"
+                className="inline-flex h-9 items-center gap-2 border border-hp-rule bg-hp-card px-3 text-[11px] font-medium text-hp-muted transition hover:border-hp-ink hover:text-hp-ink disabled:opacity-50"
               >
                 {isLinkCopied ? <CheckCircle2 size={14} /> : <Link2 size={14} />}
                 {isLinkCopied ? "Copied" : "Copy"}
@@ -113,7 +114,7 @@ export function CustomerJourneyDrawer({
               <button
                 type="button"
                 onClick={onClose}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-stone-200 bg-white text-stone-500 transition hover:border-stone-400 hover:text-stone-950"
+                className="inline-flex h-9 w-9 items-center justify-center border border-hp-rule bg-hp-card text-hp-muted transition hover:border-hp-ink hover:text-hp-ink"
                 aria-label="Close customer journey detail"
                 title="Close"
               >
@@ -142,13 +143,23 @@ function CustomerJourneyDetailContent({
   detail: CustomerJourneyLedgerDetailData;
   row: CustomerLedgerRow;
 }) {
+  const conversionAt = row.occurredAt;
+  const creditedTouchAt = detail.creditedTouch?.capturedAt ?? null;
+  const deltaMs =
+    conversionAt && creditedTouchAt
+      ? Date.parse(conversionAt) - Date.parse(creditedTouchAt)
+      : null;
+  const timeToBook = formatTimeToBook(deltaMs);
+  const attributedCreative =
+    detail.creditedTouch?.content || detail.creditedTouch?.adId || null;
+
   return (
     <>
-      <section className="border-b border-stone-200 p-5">
-        <p className="text-sm leading-6 text-stone-800">
+      <section className="border-b border-hp-rule p-5">
+        <p className="text-sm leading-6 text-hp-body">
           {detail.summary || "No booking conversion was found for this visitor."}
         </p>
-        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <DetailMiniMetric
             icon={ShieldCheck}
             label="Match"
@@ -164,12 +175,38 @@ function CustomerJourneyDetailContent({
             label="Timeline"
             value={`${formatNumber(detail.timeline.length)} events`}
           />
+          <DetailMiniMetric
+            icon={Clock3}
+            label="Time to book"
+            value={
+              timeToBook.unit ? (
+                <span>
+                  <span className="font-[family-name:var(--font-title)] tabular-nums">
+                    {timeToBook.value}
+                  </span>{" "}
+                  <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                    {timeToBook.unit}
+                  </span>
+                </span>
+              ) : (
+                "—"
+              )
+            }
+          />
+        </div>
+        <div className="mt-4 border-t border-hp-rule-soft pt-4">
+          <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+            Attributed creative
+          </p>
+          <p className="mt-1 font-[family-name:var(--font-title)] text-lg italic text-hp-ink">
+            {attributedCreative ?? "—"}
+          </p>
         </div>
       </section>
 
       <CreativePreviewPanel row={row} />
 
-      <section className="grid gap-4 border-b border-stone-200 p-5 lg:grid-cols-2">
+      <section className="grid gap-4 border-b border-hp-rule p-5 lg:grid-cols-2">
         <TouchSummaryCard
           emptyMessage="No paid ad touch was found for this visitor."
           title="Credited paid touch"
@@ -182,7 +219,7 @@ function CustomerJourneyDetailContent({
         />
       </section>
 
-      <section className="grid gap-4 border-b border-stone-200 p-5 lg:grid-cols-2">
+      <section className="grid gap-4 border-b border-hp-rule p-5 lg:grid-cols-2">
         <DetailPanel title="Booking and customer" icon={CalendarCheck2}>
           <DetailField label="Appointment" value={detail.booking?.appointmentType || row.appointmentType} />
           <DetailField label="Brand" value={row.brand} />
@@ -207,18 +244,18 @@ function CustomerJourneyDetailContent({
 
       <TimelineSection events={detail.timeline} />
 
-      <section className="border-t border-stone-200 p-5">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-stone-500">
+      <section className="border-t border-hp-rule p-5">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-hp-muted">
           Confidence
         </div>
-        <p className="mt-2 text-sm leading-6 text-stone-700">
+        <p className="mt-2 text-sm leading-6 text-hp-body">
           {detail.confidence.explanation}
         </p>
         {detail.confidence.signals.length ? (
-          <ul className="mt-3 space-y-2 text-sm text-stone-500">
+          <ul className="mt-3 space-y-2 text-sm text-hp-muted">
             {detail.confidence.signals.map((signal) => (
               <li key={signal} className="flex gap-2">
-                <span aria-hidden className="mt-2 h-1.5 w-1.5 shrink-0 bg-stone-400" />
+                <span aria-hidden className="mt-2 h-1.5 w-1.5 shrink-0 bg-hp-muted" />
                 <span>{signal}</span>
               </li>
             ))}
@@ -240,21 +277,21 @@ function CreativePreviewPanel({ row }: { row: CustomerLedgerRow }) {
     "No paid creative attached";
 
   return (
-    <section className="grid gap-4 border-b border-stone-200 p-5 lg:grid-cols-[220px_1fr]">
+    <section className="grid gap-4 border-b border-hp-rule p-5 lg:grid-cols-[220px_1fr]">
       <CreativeMedia
         alt={title}
-        className="aspect-[4/3] w-full rounded-md border border-stone-200 bg-stone-100"
+        className="aspect-[4/3] w-full border border-hp-rule bg-hp-inset"
         src={preview?.imageUrl || preview?.thumbnailUrl}
       />
       <div className="min-w-0">
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-stone-500">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-hp-muted">
           Ad creative
         </p>
-        <h4 className="mt-1 text-base font-semibold text-stone-950 [overflow-wrap:anywhere]">
+        <h4 className="mt-1 font-[family-name:var(--font-title)] text-lg text-hp-ink [overflow-wrap:anywhere]">
           {title}
         </h4>
         {preview?.body ? (
-          <p className="mt-2 line-clamp-3 text-sm leading-6 text-stone-600">
+          <p className="mt-2 line-clamp-3 text-sm leading-6 text-hp-body">
             {preview.body}
           </p>
         ) : null}
@@ -284,7 +321,7 @@ function CreativeHeroThumb({ row }: { row: CustomerLedgerRow }) {
   return (
     <CreativeMedia
       alt={label}
-      className="h-14 w-14 shrink-0 rounded-md border border-stone-200 bg-stone-100"
+      className="h-14 w-14 shrink-0 border border-hp-rule bg-hp-inset"
       src={preview?.thumbnailUrl || preview?.imageUrl}
     />
   );
@@ -304,7 +341,7 @@ function CreativeMedia({
 
   if (!src || failed) {
     return (
-      <div className={`flex items-center justify-center text-stone-400 ${className}`}>
+      <div className={`flex items-center justify-center text-hp-muted ${className}`}>
         <ImageIcon size={20} aria-hidden />
       </div>
     );
@@ -327,17 +364,18 @@ function DetailMiniMetric({
 }: {
   icon: LucideIcon;
   label: string;
-  value: string;
+  value: ReactNode;
 }) {
+  const title = typeof value === "string" ? value : undefined;
   return (
-    <div className="rounded-md border border-stone-200 bg-stone-50 p-3">
+    <div className="border border-hp-rule bg-hp-inset p-3">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-stone-500">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-hp-muted">
           {label}
         </p>
-        <Icon size={15} className="text-stone-400" />
+        <Icon size={15} className="text-hp-muted" />
       </div>
-      <p className="mt-2 truncate text-sm font-medium text-stone-950" title={value}>
+      <p className="mt-2 truncate font-[family-name:var(--font-title)] text-lg text-hp-ink" title={title}>
         {value}
       </p>
     </div>
@@ -369,7 +407,7 @@ function TouchSummaryCard({
           <DetailUrl label="Referrer" value={touch.referrer} />
         </>
       ) : (
-        <p className="text-sm leading-6 text-stone-500">{emptyMessage}</p>
+        <p className="text-sm leading-6 text-hp-muted">{emptyMessage}</p>
       )}
     </DetailPanel>
   );
@@ -385,12 +423,12 @@ function DetailPanel({
   title: string;
 }) {
   return (
-    <section className="rounded-md border border-stone-200 bg-white p-4">
+    <section className="border border-hp-rule bg-hp-card p-4">
       <div className="mb-4 flex items-center justify-between gap-3">
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-stone-500">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-hp-muted">
           {title}
         </p>
-        <Icon size={15} className="text-stone-400" />
+        <Icon size={15} className="text-hp-muted" />
       </div>
       <div className="space-y-3">{children}</div>
     </section>
@@ -409,10 +447,10 @@ function PresencePills({ touch }: { touch: CustomerJourneyLedgerTouchSummary }) 
       {signals.map(([label, present]) => (
         <span
           key={label}
-          className={`rounded-full border px-2 py-1 text-[10px] font-medium ${
+          className={`border px-2 py-1 text-[10px] font-medium ${
             present
-              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-              : "border-stone-200 bg-stone-50 text-stone-500"
+              ? "border-signal-positive bg-signal-positive-bg text-signal-positive"
+              : "border-hp-rule bg-hp-card text-hp-muted"
           }`}
         >
           {label} {present ? "yes" : "no"}
@@ -427,16 +465,16 @@ function TimelineSection({ events }: { events: CustomerJourneyLedgerTimelineEven
     <section className="p-5">
       <div className="flex items-end justify-between gap-4">
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-stone-500">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-hp-muted">
             Event path
           </p>
-          <h4 className="mt-1 text-lg font-semibold text-stone-950">Timeline</h4>
+          <h4 className="mt-1 font-[family-name:var(--font-title)] text-xl text-hp-ink">Timeline</h4>
         </div>
-        <p className="text-xs text-stone-500">{formatNumber(events.length)} events</p>
+        <p className="text-xs text-hp-muted">{formatNumber(events.length)} events</p>
       </div>
 
       {events.length ? (
-        <ol className="mt-4 overflow-hidden rounded-md border border-stone-200 bg-white">
+        <ol className="mt-4 overflow-hidden border border-hp-rule bg-hp-card">
           {events.map((event, index) => (
             <TimelineEventItem
               key={`${event.occurredAt}-${event.eventId || event.label}-${index}`}
@@ -446,7 +484,7 @@ function TimelineSection({ events }: { events: CustomerJourneyLedgerTimelineEven
           ))}
         </ol>
       ) : (
-        <p className="mt-4 rounded-md border border-stone-200 bg-stone-50 p-4 text-sm text-stone-500">
+        <p className="mt-4 border border-hp-rule bg-hp-inset p-4 text-sm text-hp-muted">
           No curated timeline events were found for this journey.
         </p>
       )}
@@ -476,25 +514,25 @@ function TimelineEventItem({
   return (
     <li
       className={`grid gap-3 px-4 py-4 sm:grid-cols-[112px_1fr] ${
-        isLast ? "" : "border-b border-stone-200"
+        isLast ? "" : "border-b border-hp-rule-soft"
       }`}
     >
-      <time className="text-xs leading-5 text-stone-500" dateTime={event.occurredAt}>
+      <time className="text-xs leading-5 text-hp-muted" dateTime={event.occurredAt}>
         {formatTimelineDate(event.occurredAt)}
       </time>
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
           <span
-            className={`rounded-full border px-2 py-1 text-[10px] font-medium ${timelineTone(
+            className={`border px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em] ${timelineTone(
               event.category,
             )}`}
           >
             {categoryLabel(event.category)}
           </span>
-          <h5 className="text-sm font-medium text-stone-950">{event.label}</h5>
+          <h5 className="font-[family-name:var(--font-title)] text-base text-hp-ink">{event.label}</h5>
         </div>
 
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-stone-500">
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-hp-muted">
           <span>
             {joinedDetail(event.source, event.medium, event.content, event.placement) ||
               "No source detail"}
@@ -511,7 +549,7 @@ function TimelineEventItem({
           <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
             {idFields.map(([label, value]) => (
               <div key={label}>
-                <dt className="uppercase tracking-wider text-stone-400">{label}</dt>
+                <dt className="uppercase tracking-[0.14em] text-hp-muted">{label}</dt>
                 <dd className="mt-1">
                   <TechnicalId value={value} label={`${label} ID`} truncateTo={18} size="xs" />
                 </dd>
@@ -525,7 +563,7 @@ function TimelineEventItem({
             {signals.map((signal) => (
               <span
                 key={signal}
-                className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-medium text-emerald-800"
+                className="border border-signal-positive bg-signal-positive-bg px-2 py-1 text-[10px] font-medium text-signal-positive"
               >
                 {signal}
               </span>
@@ -544,9 +582,9 @@ function TimelineEventItem({
 
 function DetailLoadingState() {
   return (
-    <div className="flex min-h-[320px] items-center justify-center p-8 text-sm text-stone-500">
+    <div className="flex min-h-[320px] items-center justify-center p-8 text-sm text-hp-muted">
       <div className="text-center">
-        <Loader2 className="mx-auto animate-spin text-stone-800" size={24} />
+        <Loader2 className="mx-auto animate-spin text-hp-ink" size={24} />
         <p className="mt-4">Loading customer journey...</p>
       </div>
     </div>
@@ -556,7 +594,7 @@ function DetailLoadingState() {
 function DetailErrorState({ message }: { message: string }) {
   return (
     <div className="p-5">
-      <div className="rounded-md border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+      <div className="border border-signal-danger bg-signal-danger-bg p-4 text-sm text-signal-danger">
         <div className="flex items-start gap-3">
           <AlertCircle className="mt-0.5 shrink-0" size={18} />
           <div>
@@ -572,10 +610,10 @@ function DetailErrorState({ message }: { message: string }) {
 function DetailField({ label, value }: { label: string; value: string | null | undefined }) {
   return (
     <div className="grid grid-cols-[88px_1fr] gap-3 text-sm">
-      <dt className="text-[10px] font-medium uppercase tracking-wider text-stone-400">
+      <dt className="text-[10px] font-medium uppercase tracking-[0.14em] text-hp-muted">
         {label}
       </dt>
-      <dd className="min-w-0 text-stone-800 [overflow-wrap:anywhere]">{value || "n/a"}</dd>
+      <dd className="min-w-0 text-hp-body [overflow-wrap:anywhere]">{value || "n/a"}</dd>
     </div>
   );
 }
@@ -589,7 +627,7 @@ function DetailIdField({
 }) {
   return (
     <div className="grid grid-cols-[88px_1fr] gap-3 text-sm">
-      <dt className="text-[10px] font-medium uppercase tracking-wider text-stone-400">
+      <dt className="text-[10px] font-medium uppercase tracking-[0.14em] text-hp-muted">
         {label}
       </dt>
       <dd className="min-w-0">
@@ -613,7 +651,7 @@ function DetailUrl({
 
   return (
     <div className="text-xs">
-      <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-stone-400">
+      <div className="mb-1 text-[10px] font-medium uppercase tracking-[0.14em] text-hp-muted">
         {label}
       </div>
       {safeHref ? (
@@ -621,13 +659,13 @@ function DetailUrl({
           href={safeHref}
           target="_blank"
           rel="noreferrer noopener"
-          className="inline-flex max-w-full items-start gap-1.5 text-stone-500 transition hover:text-stone-950"
+          className="inline-flex max-w-full items-start gap-1.5 text-hp-muted transition hover:text-hp-ink"
         >
           <span className="break-all">{displayValue}</span>
           <ExternalLink className="mt-0.5 shrink-0" size={12} />
         </a>
       ) : (
-        <span className="inline-flex max-w-full break-all text-stone-500">{displayValue}</span>
+        <span className="inline-flex max-w-full break-all text-hp-muted">{displayValue}</span>
       )}
     </div>
   );
@@ -657,15 +695,15 @@ function categoryLabel(category: CustomerJourneyLedgerTimelineEvent["category"])
 
 function timelineTone(category: CustomerJourneyLedgerTimelineEvent["category"]) {
   if (category === "ad_touch") {
-    return "border-sky-200 bg-sky-50 text-sky-800";
+    return "border-hp-pink bg-hp-card text-hp-pink";
   }
   if (category === "booking" || category === "conversion") {
-    return "border-emerald-200 bg-emerald-50 text-emerald-800";
+    return "border-signal-positive bg-signal-positive-bg text-signal-positive";
   }
   if (category === "capi") {
-    return "border-amber-200 bg-amber-50 text-amber-800";
+    return "border-signal-warning bg-signal-warning-bg text-signal-warning";
   }
-  return "border-stone-200 bg-stone-50 text-stone-600";
+  return "border-hp-rule bg-hp-card text-hp-muted";
 }
 
 function joinedDetail(...values: Array<string | null | undefined>) {

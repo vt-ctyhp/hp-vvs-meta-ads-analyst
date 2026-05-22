@@ -151,19 +151,12 @@ export function ReplyComposer({
   }
 
   return (
-    <section className="rounded-xl border border-stone-200 bg-white p-3">
-      <header className="mb-2 flex items-center gap-2">
-        <span className="text-[10px] uppercase tracking-wider text-stone-500">
-          Reply
+    <section className="border border-hp-rule bg-hp-card">
+      <header className="border-b border-hp-rule bg-hp-inset px-4 py-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+        Reply as{" "}
+        <span className="font-[family-name:var(--font-title)] italic text-hp-ink">
+          {brand}
         </span>
-        <button
-          type="button"
-          onClick={suggest}
-          disabled={state.generating}
-          className="ml-auto inline-flex h-7 items-center rounded-full border border-stone-300 bg-white px-3 text-xs font-medium text-stone-800 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {state.generating ? "Drafting…" : "Ask AI"}
-        </button>
       </header>
 
       <textarea
@@ -171,26 +164,32 @@ export function ReplyComposer({
         onChange={(e) => setState((s) => ({ ...s, text: e.target.value }))}
         rows={5}
         placeholder="Type or generate a reply…"
-        className="w-full resize-y rounded-md border border-stone-300 bg-white p-2 text-sm text-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-400"
+        className="min-h-[84px] w-full resize-none border-0 bg-transparent px-4 py-3 text-[14px] text-hp-ink placeholder:text-hp-muted focus:outline-none"
       />
 
-      <footer className="mt-2 flex flex-col gap-2">
+      <footer className="flex flex-col">
         {!canSend ? (
-          <p className="text-[11px] text-stone-600">
+          <p className="border-t border-hp-rule-soft px-4 py-3 text-[11px] text-hp-body">
             Read-only role. To send, request the{" "}
-            <code className="rounded bg-stone-100 px-1">send_inbox_reply</code>{" "}
+            <code className="bg-hp-inset px-1">send_inbox_reply</code>{" "}
             permission.
           </p>
-        ) : state.confirming ? (
-          <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-            <span>
-              Send as <b>{brand}</b>? Reply will be posted to {platform}.
-            </span>
-            <div className="ml-auto flex items-center gap-1">
+        ) : null}
+
+        {state.confirming ? (
+          <div className="flex items-center gap-2 border-t border-signal-warning bg-signal-warning-bg px-4 py-3 text-[11px] font-bold uppercase tracking-[0.14em] text-signal-warning">
+            <span aria-hidden>!</span>
+            <span>Send as {brand}? Tap Send again to confirm.</span>
+          </div>
+        ) : null}
+
+        <div className="flex items-center justify-between gap-2 border-t border-hp-rule-soft px-4 py-3">
+          {state.confirming ? (
+            <>
               <button
                 type="button"
                 onClick={cancelConfirm}
-                className="inline-flex h-7 items-center rounded-full border border-stone-300 bg-white px-3 text-xs text-stone-800 hover:bg-stone-50"
+                className="h-9 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted hover:border-hp-ink hover:text-hp-ink"
               >
                 Cancel
               </button>
@@ -198,31 +197,41 @@ export function ReplyComposer({
                 type="button"
                 onClick={confirmSend}
                 disabled={state.status === "sending"}
-                className="inline-flex h-7 items-center rounded-full bg-stone-900 px-3 text-xs font-medium text-stone-50 transition-colors hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-60"
+                className="h-9 border border-signal-warning bg-signal-warning px-4 text-[10px] uppercase tracking-[0.14em] text-hp-foundation hover:border-signal-danger hover:bg-signal-danger disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {state.status === "sending" ? "Sending…" : "Confirm send"}
+                {state.status === "sending" ? "Sending…" : `Send as ${brand} →`}
               </button>
-            </div>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={startConfirm}
-            disabled={!state.text.trim() || state.status === "sending"}
-            className="inline-flex h-10 w-full items-center justify-center rounded-full bg-[#E14B7B] text-sm font-medium text-white shadow-sm transition-colors hover:bg-[#C53D6A] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {state.status === "sent" ? "Sent" : "Send reply"}
-          </button>
-        )}
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={suggest}
+                disabled={state.generating}
+                className="h-9 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted hover:border-hp-ink hover:text-hp-ink disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {state.generating ? "Drafting…" : "Ask AI"}
+              </button>
+              <button
+                type="button"
+                onClick={startConfirm}
+                disabled={!state.text.trim() || state.status === "sending" || !canSend}
+                className="h-9 border border-hp-ink bg-hp-ink px-4 text-[10px] uppercase tracking-[0.14em] text-hp-foundation hover:border-hp-pink hover:bg-hp-pink disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {state.status === "sent" ? "Sent" : "Send →"}
+              </button>
+            </>
+          )}
+        </div>
 
         {state.message ? (
           <p
             className={
               state.status === "error"
-                ? "text-xs text-rose-700"
+                ? "border-t border-hp-rule-soft px-4 py-3 text-xs text-signal-danger"
                 : state.status === "sent"
-                  ? "text-xs text-emerald-700"
-                  : "text-xs text-stone-600"
+                  ? "border-t border-hp-rule-soft px-4 py-3 text-xs text-signal-positive"
+                  : "border-t border-hp-rule-soft px-4 py-3 text-xs text-hp-body"
             }
           >
             {state.message}
