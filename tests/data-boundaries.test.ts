@@ -41,6 +41,10 @@ const PHASE_5_MIGRATION = join(
   REPO_ROOT,
   "supabase/migrations/20260520000300_ads_analyst_environment_scoped_unique_keys.sql",
 );
+const AGGREGATE_ENV_SCOPE_MIGRATION = join(
+  REPO_ROOT,
+  "supabase/migrations/20260522120000_aggregate_meta_insights_environment_scope.sql",
+);
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx"]);
 const SKIPPED_SOURCE_FILES = new Set(["src/lib/database.types.ts"]);
 const MUTATION_METHOD_PATTERN = String.raw`\.(?:insert|upsert|update|delete)\s*\(`;
@@ -409,6 +413,28 @@ describe("Phase 5 environment-scoped unique-key migration", () => {
       migration.includes(`'${table}'`),
     );
     assert.deepEqual(referencedSalesTables, []);
+  });
+});
+
+describe("aggregate Meta insights environment scoping", () => {
+  const migration = readFileSync(AGGREGATE_ENV_SCOPE_MIGRATION, "utf8");
+
+  it("filters insight rows and joined metadata to one Ads Analyst environment", () => {
+    assert.match(migration, /current_setting\('request\.jwt\.claim\.ads_analyst_environment'/);
+    assert.match(migration, /current_setting\('request\.jwt\.claim\.app_environment'/);
+    assert.match(migration, /i\.environment = r\.environment/);
+    assert.match(migration, /b\.environment = r\.environment/);
+    assert.match(migration, /c\.environment = r\.environment/);
+    assert.match(migration, /s\.environment = r\.environment/);
+    assert.match(migration, /a\.environment = r\.environment/);
+  });
+
+  it("keeps the fix schema-only and preserves service-role RPC execution", () => {
+    assert.doesNotMatch(migration, /\binsert\s+into\b/i);
+    assert.doesNotMatch(migration, /\bupdate\s+public\./i);
+    assert.doesNotMatch(migration, /\bdelete\s+from\b/i);
+    assert.doesNotMatch(migration, /\btruncate\s+table\b/i);
+    assert.match(migration, /to ads_analyst_web, ads_analyst_worker, ads_analyst_ingest, authenticated, service_role/);
   });
 });
 
