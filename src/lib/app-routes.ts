@@ -28,8 +28,9 @@ export type PermissionProfile = {
 
 export const OPTIMIZE_DEFAULT_DAYS = 7;
 export const OPTIMIZE_DEFAULT_PERIODS = 1;
-export const OPTIMIZE_LANDING_PATH =
-  `/optimize?days=${OPTIMIZE_DEFAULT_DAYS}&periods=${OPTIMIZE_DEFAULT_PERIODS}`;
+export const ANALYST_LANDING_PATH = "/analyst";
+export const MOBILE_INBOX_LANDING_PATH = "/m/inbox";
+export const OPTIMIZE_LANDING_PATH = ANALYST_LANDING_PATH;
 
 /**
  * Nav order matters. Within each group, items are listed in the order they're
@@ -39,37 +40,24 @@ export const OPTIMIZE_LANDING_PATH =
  *   tools       (occasional ad-hoc + workflow surfaces)
  *   admin       (admin / data ops)
  *
- * Labels are deliberately short and unambiguous. We had three "analysis"
- * surfaces (Analyst View / Creative Analysis / AI Analysis) which made it
- * impossible to tell which to click; they're now Analyst / Creatives /
- * Queries.
+ * Labels are deliberately short and unambiguous. Final visible IA has three
+ * primary rooms: Analyst, Convert, and Operate. Legacy URLs stay in the access
+ * map below so old links can redirect cleanly without remaining visible nav.
  */
 export const APP_NAV_ROUTES = [
-  // Performance: how the account is doing.
-  // "Overview" → /broadsheet because `/` is now a server-side redirect to the
-  // role-specific v2 room (resolveLandingPath in permission-routing.ts).
-  // Keeping the broadsheet as a permanent named route so links can target it
-  // explicitly and so the post-login destination has a stable landing surface.
-  { href: "/broadsheet", label: "Overview", permission: "view_dashboard", group: "performance" },
   { href: "/analyst", label: "Analyst", permission: "view_dashboard", group: "performance" },
-  { href: "/creative-analysis", label: "Creatives", permission: "view_creative_analysis", group: "performance" },
-  // Attribution Ledger: first-party booking attribution per appointment
-  // (added on main while the rebuild branch was in flight). Lives under
-  // Performance because it's another lens on the same booking funnel.
-  { href: "/attribution-ledger", label: "Attribution", permission: "view_dashboard", group: "performance" },
+  { href: "/analyst/creative-analysis", label: "Creative Analysis", permission: "view_creative_analysis", group: "performance" },
+  { href: "/analysis", label: "AI Analysis", permission: "view_ai_analysis", group: "performance" },
 
   // Channels: where customers come in.
-  { href: "/inbox", label: "Inbox", permission: "view_inbox", group: "channels" },
-  { href: "/website-funnel", label: "Website", permission: "view_dashboard", group: "channels" },
-
-  // Tools: workflow + ad-hoc surfaces.
-  { href: "/analysis", label: "Queries", permission: "view_ai_analysis", group: "tools" },
-  { href: "/review", label: "Review", permission: "view_review", group: "tools", placeholder: true },
-  { href: "/outcomes", label: "Outcomes", permission: "view_outcomes", group: "tools", placeholder: true },
+  { href: "/convert", label: "Convert", permission: "view_dashboard", group: "channels" },
+  { href: "/convert/inbox", label: "Inbox", permission: "view_inbox", group: "channels" },
 
   // Admin: data ops + access.
-  { href: "/admin/backfill", label: "Backfill", permission: "view_backfill", group: "admin" },
-  { href: "/users", label: "Users", permission: "view_users", group: "admin" },
+  { href: "/operate/pipelines", label: "Pipelines", permission: "view_backfill", group: "admin" },
+  { href: "/operate/coverage", label: "Coverage", permission: "view_backfill", group: "admin" },
+  { href: "/operate/health", label: "Health", permission: "view_backfill", group: "admin" },
+  { href: "/operate/users", label: "Users", permission: "view_users", group: "admin" },
 ] satisfies AppRoute[];
 
 export const APP_ROUTE_GROUP_ORDER: AppRouteGroup[] = [
@@ -83,8 +71,16 @@ type AppAccessRoute = Pick<AppRoute, "href" | "permission">;
 
 const APP_ACCESS_ROUTES = [
   { href: "/optimize", permission: "view_dashboard" },
-  { href: "/convert", permission: "view_dashboard" },
-  { href: "/operate", permission: "manage_backfill" },
+  { href: "/creative-analysis", permission: "view_creative_analysis" },
+  { href: "/inbox", permission: "view_inbox" },
+  { href: "/users", permission: "view_users" },
+  { href: "/admin/backfill", permission: "view_backfill" },
+  { href: "/broadsheet", permission: "view_dashboard" },
+  { href: "/website-funnel", permission: "view_dashboard" },
+  { href: "/attribution-ledger", permission: "view_dashboard" },
+  { href: "/review", permission: "view_review" },
+  { href: "/outcomes", permission: "view_outcomes" },
+  { href: "/operate", permission: "view_backfill" },
   { href: "/m/inbox", permission: "view_inbox" },
   ...APP_NAV_ROUTES,
 ] satisfies AppAccessRoute[];
@@ -101,13 +97,18 @@ export function hasInternalAppAccess(profile: PermissionProfile) {
 }
 
 export function firstPermittedAppPath(permissions: readonly AppPermission[]) {
-  if (permissions.includes("view_dashboard")) return OPTIMIZE_LANDING_PATH;
+  if (permissions.includes("view_dashboard")) return ANALYST_LANDING_PATH;
+  if (permissions.includes("view_inbox")) return MOBILE_INBOX_LANDING_PATH;
 
   return APP_NAV_ROUTES.find((route) => permissions.includes(route.permission))?.href || null;
 }
 
 export function getAppRouteForPath(pathname: string) {
-  return APP_ACCESS_ROUTES.find((route) => routeMatches(route.href, pathname)) || null;
+  return (
+    APP_ACCESS_ROUTES
+      .filter((route) => routeMatches(route.href, pathname))
+      .sort((a, b) => b.href.length - a.href.length)[0] || null
+  );
 }
 
 export function canAccessAppPath(permissions: readonly AppPermission[], path: string) {

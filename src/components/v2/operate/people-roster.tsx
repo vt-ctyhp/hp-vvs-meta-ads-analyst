@@ -17,7 +17,7 @@ type Props = {
 };
 
 /**
- * People tab — read-only roster of internal teammates.
+ * Users route — read-only roster of internal teammates.
  *
  * Data flows through `analytics.ads_analyst_identity_profiles_v1` so we
  * never read Sales/ERP Core tables directly. The Ads Analyst app does

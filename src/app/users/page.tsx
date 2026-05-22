@@ -1,9 +1,5 @@
-import { UsersClient } from "@/components/users-client";
-import { requirePagePermission } from "@/lib/server-route-auth";
+import { redirect } from "next/navigation";
 
-export const dynamic = "force-dynamic";
-
-export default async function UsersPage() {
-  await requirePagePermission("view_users", "/users");
-  return <UsersClient />;
+export default function UsersRedirectPage() {
+  redirect("/operate/users");
 }

@@ -4,7 +4,7 @@ The inbox AI reply system is human-approved only. The model can draft a reply, b
 
 ## V1 Flow
 
-1. A user selects a Facebook/Instagram message thread or comment in `/inbox`.
+1. A dashboard user selects a Facebook/Instagram message thread or comment in `/convert/inbox`; a sales user uses `/m/inbox`.
 2. The app sends the selected source ID, requested language, brand, and optional staff guidance to `POST /api/social-inbox/suggest-reply`.
 3. The server retrieves Supabase context:
    - selected thread/comment

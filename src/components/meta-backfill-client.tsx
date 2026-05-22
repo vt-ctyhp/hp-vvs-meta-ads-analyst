@@ -588,7 +588,7 @@ export function MetaBackfillClient({
                 <AccessSummary status={access.status} />
                 {access.status === "signed-out" ? (
                   <Link
-                    href="/login?next=/admin/backfill"
+                    href="/login?next=/operate/coverage"
                     className="inline-flex border border-hp-rule px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-hp-body transition-colors hover:border-hp-ink hover:bg-hp-inset"
                   >
                     Sign in for operator access

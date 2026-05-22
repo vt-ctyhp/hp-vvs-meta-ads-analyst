@@ -15,7 +15,7 @@ import { CreativeGrid } from "./creative-grid";
  * that lives in the legacy /creative-analysis surface and is the Phase
  * 5 polish target). It shows what we already have in the dashboard
  * payload — spend, KPI, CTR/CPC, frequency, group, status, brand, plus
- * deep-links to Ads Manager and the existing /creative-analysis room.
+ * deep-links to Ads Manager and the existing creative-analysis room.
  */
 
 type Props = {
@@ -172,7 +172,7 @@ function DetailDrawer({
               </a>
             ) : null}
             <a
-              href={`/creative-analysis?focus=${encodeURIComponent(row.id)}`}
+              href={`/analyst/creative-analysis?focus=${encodeURIComponent(row.id)}`}
               className="inline-flex h-9 w-full items-center justify-center rounded-full bg-stone-900 text-xs font-medium text-stone-50 transition-colors hover:bg-stone-800"
             >
               Open full Creative Analysis →

@@ -126,21 +126,21 @@ export async function getSystemHealth(): Promise<SystemHealthSnapshot> {
         level: "critical",
         title: "Latest sync failed",
         detail: "The most recent Meta sync didn't complete. New data isn't flowing in.",
-        link: { href: "/admin/backfill", label: "Open backfill" },
+        link: { href: "/operate/pipelines", label: "Open pipelines" },
       });
     } else if (latestSync.status === "partial") {
       issues.push({
         level: "warning",
         title: "Latest sync was partial",
         detail: "Some accounts finished but others didn't. Data may be incomplete.",
-        link: { href: "/admin/backfill", label: "Open backfill" },
+        link: { href: "/operate/pipelines", label: "Open pipelines" },
       });
     } else if (ageHours > STALE_SYNC_THRESHOLD_HOURS) {
       issues.push({
         level: "warning",
         title: "Sync is stale",
         detail: `Last successful sync was over ${Math.round(ageHours)} hours ago.`,
-        link: { href: "/admin/backfill", label: "Open backfill" },
+        link: { href: "/operate/pipelines", label: "Open pipelines" },
       });
     }
   } else {
@@ -148,7 +148,7 @@ export async function getSystemHealth(): Promise<SystemHealthSnapshot> {
       level: "warning",
       title: "No sync history",
       detail: "There's no record of a Meta sync yet. Run one to populate the dashboard.",
-      link: { href: "/admin/backfill", label: "Open backfill" },
+      link: { href: "/operate/pipelines", label: "Open pipelines" },
     });
   }
 
@@ -158,7 +158,7 @@ export async function getSystemHealth(): Promise<SystemHealthSnapshot> {
       title: "Website reconciliation failed",
       detail:
         "The most recent appointment-to-website conversion reconciliation did not complete. Convert bookings may lag.",
-      link: { href: "/operate?tab=health", label: "Open health" },
+      link: { href: "/operate/health", label: "Open health" },
     });
   }
 

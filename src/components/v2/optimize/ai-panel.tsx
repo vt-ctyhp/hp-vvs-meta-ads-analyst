@@ -74,6 +74,7 @@ export function OptimizeAiPanel({
   const [analysisActionStatus, setAnalysisActionStatus] = useState("");
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const [editPrompt, setEditPrompt] = useState("");
 
   const requestedRangeLabel = formatRequestedRange(dateRange);
   const runtimeFilters = useMemo<AnalysisFilter[]>(() => {
@@ -200,6 +201,7 @@ export function OptimizeAiPanel({
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Analysis failed");
       setAnalysisResult(payload);
+      setEditPrompt("");
       setAnalysisActionStatus(payload.dashboardId ? "Dashboard saved automatically." : "");
       await refreshSaved();
     } catch (error) {
@@ -225,7 +227,9 @@ export function OptimizeAiPanel({
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Could not load saved dashboard");
       setAnalysisResult(payload);
+      setPrompt(payload.prompt || "");
       setMode(payload.mode || "fast");
+      setEditPrompt("");
     } catch (error) {
       setAnalysisStatus(translateError(error));
     } finally {
@@ -287,12 +291,48 @@ export function OptimizeAiPanel({
       setSaved((dashboards) => dashboards.filter((dashboard) => dashboard.id !== dashboardId));
       if (analysisResult?.dashboardId === payload.id) {
         setAnalysisResult(null);
+        setEditPrompt("");
       }
       setAnalysisActionStatus("Dashboard deleted.");
     } catch (error) {
       setAnalysisStatus(translateError(error));
     } finally {
       setIsDashboardLoading(false);
+    }
+  }
+
+  async function applyDashboardEdit() {
+    const nextPrompt = editPrompt.trim();
+    if (!nextPrompt || !analysisResult?.dashboardId) return;
+
+    setIsBuilding(true);
+    setAnalysisStatus("");
+    setAnalysisActionStatus("");
+    try {
+      const response = await fetch("/api/analysis", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "edit",
+          dashboardId: analysisResult.dashboardId,
+          currentPrompt: analysisResult.prompt,
+          currentSpec: analysisResult.spec,
+          prompt: nextPrompt,
+          mode,
+          runtimeContext,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Dashboard edit failed");
+      setAnalysisResult(payload);
+      setPrompt(payload.prompt || nextPrompt);
+      setEditPrompt("");
+      setAnalysisActionStatus(payload.dashboardId ? "Dashboard updated and saved." : "");
+      await refreshSaved();
+    } catch (error) {
+      setAnalysisStatus(translateError(error));
+    } finally {
+      setIsBuilding(false);
     }
   }
 
@@ -480,6 +520,32 @@ export function OptimizeAiPanel({
               </div>
             </div>
           </section>
+          {analysisResult.dashboardId ? (
+            <section className="rounded-xl border border-stone-200 bg-white p-4">
+              <div className="mb-3 flex items-center gap-2 text-stone-950">
+                <Sparkles size={16} />
+                <h2 className="text-sm font-semibold">Edit saved analysis</h2>
+              </div>
+              <div className="flex flex-col gap-3 lg:flex-row">
+                <textarea
+                  value={editPrompt}
+                  onChange={(event) => setEditPrompt(event.target.value)}
+                  rows={3}
+                  placeholder="Add a comparison, change the grouping, or revise the dashboard layout."
+                  className="min-h-24 flex-1 resize-none rounded-md border border-stone-300 bg-white px-3 py-2 text-sm leading-6 outline-none focus:ring-2 focus:ring-stone-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => void applyDashboardEdit()}
+                  disabled={isBuilding || !editPrompt.trim()}
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-stone-900 px-4 text-sm font-medium text-stone-50 hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300 lg:self-end"
+                >
+                  {isBuilding ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                  Update analysis
+                </button>
+              </div>
+            </section>
+          ) : null}
           <AnalysisOutput result={analysisResult} hideDiagnostics />
         </section>
       ) : null}

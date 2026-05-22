@@ -1,39 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
-import { useMemo } from "react";
 
 /**
- * URL-driven tab navigator for the Operate room.
- *
- * Persists the selected tab in ?tab so links and refreshes are shareable
- * and the server page can render the right panel without client-side
- * routing.
+ * Child-route navigator for the Operate room.
  */
 
-export type OperateTab = "pipelines" | "coverage" | "health" | "people";
+export type OperateTab = "pipelines" | "coverage" | "health" | "users";
 
-const TABS: Array<{ key: OperateTab; label: string; description: string }> = [
-  { key: "pipelines", label: "Pipelines", description: "Sync runs + backfill jobs + manual sync" },
-  { key: "coverage", label: "Coverage", description: "Monthly backfill sync, Supabase load, and lock status" },
-  { key: "health", label: "Health", description: "Meta token, env fence, module credentials, sync freshness" },
-  { key: "people", label: "People", description: "Read-only roster from the analytics identity view" },
+const TABS: Array<{ key: OperateTab; href: string; label: string; description: string }> = [
+  { key: "pipelines", href: "/operate/pipelines", label: "Pipelines", description: "Sync runs + backfill jobs + manual sync" },
+  { key: "coverage", href: "/operate/coverage", label: "Coverage", description: "Monthly backfill sync, Supabase load, and lock status" },
+  { key: "health", href: "/operate/health", label: "Health", description: "Meta token, env fence, module credentials, sync freshness" },
+  { key: "users", href: "/operate/users", label: "Users", description: "Read-only roster from the analytics identity view" },
 ];
 
 export function OperateTabs({ active }: { active: OperateTab }) {
-  const pathname = usePathname() ?? "/operate";
-  const params = useSearchParams();
-
-  const buildHref = useMemo(
-    () => (tab: OperateTab) => {
-      const next = new URLSearchParams(params.toString());
-      next.set("tab", tab);
-      return `${pathname}?${next.toString()}`;
-    },
-    [params, pathname],
-  );
-
   return (
     <nav
       aria-label="Operate tabs"
@@ -44,7 +26,7 @@ export function OperateTabs({ active }: { active: OperateTab }) {
         return (
           <Link
             key={tab.key}
-            href={buildHref(tab.key)}
+            href={tab.href}
             title={tab.description}
             aria-current={isActive ? "page" : undefined}
             className={[

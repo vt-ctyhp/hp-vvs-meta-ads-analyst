@@ -1,235 +1,29 @@
-import { BackfillMonthTable } from "@/components/v2/operate/backfill-month-table";
-import { HealthPanel } from "@/components/v2/operate/health-panel";
-import { OperateTabs, type OperateTab } from "@/components/v2/operate/operate-tabs";
-import {
-  PipelinesPanel,
-  type SyncRunRow,
-} from "@/components/v2/operate/pipelines-panel";
-import {
-  PeopleRoster,
-  type RosterEntry,
-} from "@/components/v2/operate/people-roster";
-import { StatusSentence } from "@/components/v2/status-sentence";
-import { hasPermission, type UserRole } from "@/lib/access-control";
-import { createAdsAnalystClient } from "@/lib/ads-analyst-db";
-import {
-  getMetaAdsBackfillMonthState,
-  getMetaAdsBackfillPipelineState,
-} from "@/lib/meta-backfill";
-import { requirePagePermission } from "@/lib/server-route-auth";
-import { getSystemHealth } from "@/lib/system-health";
+import { redirect } from "next/navigation";
+
+import { hasPermission } from "@/lib/access-control";
+import { firstPermittedAppPath, hasInternalAppAccess } from "@/lib/app-routes";
+import { getServerAccessProfile } from "@/lib/server-route-auth";
 
 export const dynamic = "force-dynamic";
 
-type SearchParams = { tab?: string };
+export default async function OperateRedirectPage() {
+  const profile = await getServerAccessProfile();
 
-const VALID_TABS: OperateTab[] = ["pipelines", "coverage", "health", "people"];
-
-export default async function OperatePage({
-  searchParams,
-}: {
-  searchParams: Promise<SearchParams>;
-}) {
-  const profile = await requirePagePermission("manage_backfill", "/operate");
-  const params = await searchParams;
-  const tab: OperateTab = VALID_TABS.includes(params.tab as OperateTab)
-    ? (params.tab as OperateTab)
-    : "pipelines";
-
-  // Lazy-load only the data the active tab needs. Coverage has its own monthly
-  // rollup so the pipelines tab stays on bounded job/chunk history.
-  const [pipelineState, monthState, syncRuns, health, roster] = await Promise.all([
-    tab === "pipelines"
-      ? getMetaAdsBackfillPipelineState().catch(() => null)
-      : Promise.resolve(null),
-    tab === "coverage"
-      ? getMetaAdsBackfillMonthState().catch(() => null)
-      : Promise.resolve(null),
-    tab === "pipelines" ? fetchSyncRuns().catch(() => []) : Promise.resolve([]),
-    tab === "health" ? getSystemHealth().catch(() => null) : Promise.resolve(null),
-    tab === "people" ? fetchRoster().catch(() => []) : Promise.resolve([]),
-  ]);
-
-  const canRunSync = hasPermission(profile.roles, "run_meta_sync");
-
-  // Status sentence inputs are cheap to compute regardless of tab.
-  const sentence = buildSentence({
-    syncRuns,
-    backfillJobsCount: pipelineState?.jobs.length ?? 0,
-    backfillMonthCount: monthState?.rows.length ?? 0,
-    healthStatus: health?.status ?? null,
-    tab,
-  });
-
-  return (
-    <div className="space-y-6">
-      <StatusSentence sentence={sentence} />
-
-      <OperateTabs active={tab} />
-
-      {tab === "pipelines" ? (
-        <PipelinesPanel
-          canRunSync={canRunSync}
-          syncRuns={syncRuns}
-          backfillJobs={pipelineState?.jobs ?? []}
-          backfillChunks={pipelineState?.chunks ?? []}
-        />
-      ) : null}
-
-      {tab === "coverage" && monthState ? (
-        <BackfillMonthTable
-          rows={monthState.rows}
-          rangeStart={monthState.range.start}
-          rangeEnd={monthState.range.end}
-        />
-      ) : tab === "coverage" ? (
-        <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
-          Backfill month status unavailable. Try refreshing.
-        </p>
-      ) : null}
-
-      {tab === "health" && health ? (
-        <HealthPanel snapshot={health} />
-      ) : tab === "health" ? (
-        <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
-          Health snapshot unavailable. Try refreshing.
-        </p>
-      ) : null}
-
-      {tab === "people" ? <PeopleRoster roster={roster} /> : null}
-    </div>
-  );
-}
-
-// ── data fetchers ──────────────────────────────────────────────────────────
-
-async function fetchSyncRuns(): Promise<SyncRunRow[]> {
-  const supabase = createAdsAnalystClient("web") as unknown as {
-    from: (table: string) => {
-      select: (cols: string) => {
-        order: (
-          col: string,
-          opts: { ascending: boolean; nullsFirst?: boolean },
-        ) => {
-          limit: (n: number) => Promise<{ data: unknown; error: Error | null }>;
-        };
-      };
-    };
-  };
-
-  const { data, error } = await supabase
-    .from("sync_runs")
-    .select("id, trigger, status, started_at, completed_at, metrics, errors")
-    .order("started_at", { ascending: false, nullsFirst: false })
-    .limit(25);
-
-  if (error) throw error;
-  const rows = Array.isArray(data) ? (data as Record<string, unknown>[]) : [];
-  return rows.map((row) => ({
-    id: String(row.id ?? ""),
-    trigger: (row.trigger as string | null) ?? null,
-    status: (row.status as string | null) ?? null,
-    startedAt: (row.started_at as string | null) ?? null,
-    completedAt: (row.completed_at as string | null) ?? null,
-    metrics: row.metrics ?? null,
-    errors: row.errors ?? null,
-  }));
-}
-
-async function fetchRoster(): Promise<RosterEntry[]> {
-  const supabase = createAdsAnalystClient("web") as unknown as {
-    schema: (s: "analytics") => {
-      from: (t: "ads_analyst_identity_profiles_v1") => {
-        select: (cols: string) => Promise<{
-          data: unknown;
-          error: Error | null;
-        }>;
-      };
-    };
-  };
-
-  const { data, error } = await supabase
-    .schema("analytics")
-    .from("ads_analyst_identity_profiles_v1")
-    .select("app_user_id,auth_user_id,email,full_name,initials,active,roles");
-
-  if (error) throw error;
-  const rows = Array.isArray(data) ? (data as Record<string, unknown>[]) : [];
-  return rows.map((row) => ({
-    appUserId: (row.app_user_id as string | null) ?? null,
-    authUserId: (row.auth_user_id as string | null) ?? null,
-    email: String(row.email ?? ""),
-    fullName: String(row.full_name ?? row.email ?? ""),
-    initials: (row.initials as string | null) ?? null,
-    active: Boolean(row.active),
-    roles: parseRoles(row.roles),
-  }));
-}
-
-function parseRoles(value: unknown): UserRole[] {
-  if (Array.isArray(value)) return value.filter((v): v is UserRole => typeof v === "string");
-  if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
-      if (Array.isArray(parsed)) return parsed.filter((v): v is UserRole => typeof v === "string");
-    } catch {
-      // ignore
-    }
-  }
-  return [];
-}
-
-// ── status sentence ─────────────────────────────────────────────────────────
-
-function buildSentence(args: {
-  syncRuns: SyncRunRow[];
-  backfillJobsCount: number;
-  backfillMonthCount: number;
-  healthStatus: string | null;
-  tab: OperateTab;
-}): string {
-  const { syncRuns, backfillJobsCount, backfillMonthCount, healthStatus, tab } = args;
-
-  const latestSync = syncRuns[0];
-  if (tab === "pipelines") {
-    const pieces: string[] = [];
-    if (latestSync) {
-      pieces.push(
-        `Last sync ${relTime(latestSync.startedAt)} — ${latestSync.status ?? "unknown"}.`,
-      );
-    } else {
-      pieces.push("No sync runs yet in this environment.");
-    }
-    if (backfillJobsCount > 0) {
-      pieces.push(
-        `${backfillJobsCount} backfill job${backfillJobsCount === 1 ? "" : "s"} in history.`,
-      );
-    }
-    return pieces.join(" ");
+  if (!profile?.authenticated) {
+    redirect("/login?next=/operate");
   }
 
-  if (tab === "coverage") {
-    return backfillMonthCount > 0
-      ? `${backfillMonthCount} historical backfill months tracked.`
-      : "Historical backfill month status is not available yet.";
+  if (!hasInternalAppAccess(profile)) {
+    redirect("/no-access");
   }
 
-  if (tab === "health") {
-    return healthStatus
-      ? `System health: ${healthStatus}.`
-      : "Health snapshot loading…";
+  if (hasPermission(profile.roles, "view_backfill") || hasPermission(profile.roles, "manage_backfill")) {
+    redirect("/operate/pipelines");
   }
 
-  return "Read-only roster from the analytics identity view.";
-}
+  if (hasPermission(profile.roles, "view_users")) {
+    redirect("/operate/users");
+  }
 
-function relTime(iso: string | null): string {
-  if (!iso) return "—";
-  const ms = Date.now() - Date.parse(iso);
-  if (!Number.isFinite(ms) || ms < 0) return "just now";
-  const mins = Math.round(ms / 60_000);
-  if (mins < 60) return `${mins} min ago`;
-  const hours = Math.round(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
+  redirect(firstPermittedAppPath(profile.permissions) || "/no-access");
 }
