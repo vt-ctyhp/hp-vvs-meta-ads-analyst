@@ -11,9 +11,10 @@ type Props = {
   fullName: string | null;
   initials: string | null;
   roles: UserRole[];
+  compact?: boolean;
 };
 
-export function IdentityMenu({ email, fullName, initials, roles }: Props) {
+export function IdentityMenu({ email, fullName, initials, roles, compact = false }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
@@ -40,12 +41,15 @@ export function IdentityMenu({ email, fullName, initials, roles }: Props) {
         onClick={() => setOpen((value) => !value)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="inline-flex h-10 min-w-[40px] items-center justify-center gap-2 border border-hp-rule bg-hp-card px-3 text-sm font-medium text-hp-ink shadow-sm transition-colors hover:bg-hp-inset"
+        className={[
+          "inline-flex items-center justify-center gap-2 border border-hp-rule bg-hp-card text-sm font-medium text-hp-ink shadow-sm transition-colors hover:bg-hp-inset",
+          compact ? "h-[34px] min-w-[34px] px-0" : "h-10 min-w-[40px] px-3",
+        ].join(" ")}
       >
         <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-hp-ink text-xs font-semibold text-hp-foundation">
           {initials ?? "—"}
         </span>
-        <span className="hidden text-sm sm:inline">{displayName}</span>
+        <span className={compact ? "hidden" : "hidden text-sm sm:inline"}>{displayName}</span>
       </button>
 
       {open ? (

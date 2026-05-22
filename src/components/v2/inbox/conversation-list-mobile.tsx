@@ -138,14 +138,12 @@ function PlatformBadge({
   kind: "thread" | "comment";
 }) {
   const platformLabel = platform === "facebook" ? "FB" : "IG";
-  const platformStyle =
-    platform === "facebook"
-      ? "border-signal-info bg-signal-info-bg text-signal-info"
-      : "border-hp-pink bg-hp-card text-hp-pink";
+  const platformStyle = platformBadgeStyle(platform, kind);
+
   return (
     <div className="flex flex-col items-center gap-0.5">
       <span
-        className={`inline-flex h-7 w-10 items-center justify-center border text-[10px] font-semibold ${platformStyle}`}
+        className={`inline-flex h-7 w-7 items-center justify-center border text-[9px] font-semibold ${platformStyle}`}
       >
         {platformLabel}
       </span>
@@ -154,6 +152,15 @@ function PlatformBadge({
       </span>
     </div>
   );
+}
+
+function platformBadgeStyle(platform: string, kind: "thread" | "comment") {
+  if (kind === "comment") {
+    return "border-hp-rule bg-hp-inset text-hp-muted";
+  }
+  return platform === "facebook"
+    ? "border-signal-info bg-signal-info-bg text-signal-info"
+    : "border-hp-pink bg-hp-card text-hp-pink";
 }
 
 function relTime(iso: string | null): string {

@@ -136,6 +136,7 @@ function Bubble({
             {senderName}
           </p>
         ) : null}
+        {/* TODO: add border-l-2 border-hp-pink when SocialInboxMessage exposes per-message unread state. */}
         <p className="whitespace-pre-wrap">{text}</p>
         <p
           className={[

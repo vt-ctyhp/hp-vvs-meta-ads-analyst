@@ -17,6 +17,7 @@ import {
 import { useMemo, useState } from "react";
 
 import { SYNC, translateError } from "@/lib/glossary";
+import { inferSocialBrand, type BrandLabel } from "@/lib/social-brand";
 import { StatusSentence, type StatusHighlight } from "./status-sentence";
 import type {
   SocialInboxComment,
@@ -63,7 +64,6 @@ export type SocialInboxStatus = {
 };
 
 type BrandFilter = "all" | "HP" | "VVS";
-type BrandLabel = "HP" | "VVS" | "Unassigned";
 type SourceFilter = "all" | "facebook" | "instagram";
 type ItemTypeFilter = "all" | "messages" | "comments";
 type StatusFilter = "all" | "unread" | "needs-reply";
@@ -115,9 +115,6 @@ type SuggestReplyResponse = {
   };
   error?: string;
 };
-
-const HP_SOCIAL_IDS = new Set(["100615618793615", "17841473309777050"]);
-const VVS_SOCIAL_IDS = new Set<string>();
 
 export function SocialInboxClient({
   status,
@@ -574,16 +571,6 @@ export function SocialInboxClient({
       </section>
     </main>
   );
-}
-
-function inferSocialBrand(
-  pageId: string | null | undefined,
-  igUserId: string | null | undefined,
-): BrandLabel {
-  const ids = [pageId, igUserId].filter(Boolean) as string[];
-  if (ids.some((id) => HP_SOCIAL_IDS.has(id))) return "HP";
-  if (ids.some((id) => VVS_SOCIAL_IDS.has(id))) return "VVS";
-  return "Unassigned";
 }
 
 function buildQueue(data: SocialInboxData): QueueDisplayItem[] {

@@ -9,6 +9,7 @@ import {
   isLiveSendEnabled,
   SendReplyError,
 } from "./social-reply-send-flags";
+import type { BrandLabel } from "./social-brand";
 
 /**
  * Phase 11 — real Meta Page send for human-approved replies.
@@ -29,7 +30,6 @@ import {
 
 type Platform = "facebook" | "instagram";
 type SourceType = "message" | "comment";
-type BrandLabel = "HP" | "VVS" | "Unassigned";
 
 export type SendSocialReplyInput = {
   platform: Platform;

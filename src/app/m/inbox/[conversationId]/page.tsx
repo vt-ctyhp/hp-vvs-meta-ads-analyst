@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ConversationDetail } from "@/components/v2/inbox/conversation-detail";
 import { hasPermission } from "@/lib/access-control";
 import { getServerAccessProfile } from "@/lib/server-route-auth";
+import { inferSocialBrand } from "@/lib/social-brand";
 import {
   getSocialInboxData,
   type SocialInboxComment,
@@ -60,7 +61,7 @@ export default async function ConversationDetailPage({
         kind="thread"
         platform={thread.platform}
         sourceId={thread.thread_id}
-        brand="Unassigned"
+        brand={inferSocialBrand(thread.page_id, thread.ig_user_id)}
         participantName={thread.participant_name ?? null}
         messages={messages}
         canSend={canSend}
@@ -78,7 +79,7 @@ export default async function ConversationDetailPage({
         kind="comment"
         platform={comment.platform}
         sourceId={comment.comment_id}
-        brand="Unassigned"
+        brand={inferSocialBrand(comment.page_id, comment.ig_user_id)}
         participantName={comment.author_name ?? null}
         messages={[]}
         commentBody={comment.body}

@@ -47,6 +47,7 @@ export default async function MobileInboxLayout({
               fullName={profile.fullName}
               initials={profile.initials}
               roles={profile.roles}
+              compact
             />
           </div>
         </div>

@@ -2,6 +2,7 @@ import OpenAI from "openai";
 
 import { createAdsAnalystClient, withAdsAnalystEnvironment } from "./ads-analyst-db";
 import { ConfigurationError, getOpenAIModel } from "./env";
+import { inferSocialBrand, type BrandLabel } from "./social-brand";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -41,7 +42,6 @@ type ReplyLanguage = "auto" | "en" | "vi";
 type ResolvedLanguage = "en" | "vi";
 type SocialPlatform = "facebook" | "instagram";
 type SourceType = "message" | "comment";
-type BrandLabel = "HP" | "VVS" | "Unassigned";
 
 type MessageContext = {
   id: string;
@@ -89,8 +89,6 @@ export type SuggestReplyResult = {
   toneNotes: string[];
 };
 
-const HP_SOCIAL_IDS = new Set(["100615618793615", "17841473309777050"]);
-const VVS_SOCIAL_IDS = new Set<string>();
 const MAX_RECENT_MESSAGES = 16;
 const MAX_MESSAGE_CHARS = 900;
 const MAX_PLAYBOOK_ENTRIES = 4;
@@ -406,10 +404,8 @@ function resolveBrand(
   signals: { pageId: string | null; igUserId: string | null },
 ): BrandLabel {
   if (inputBrand === "HP" || inputBrand === "VVS") return inputBrand;
-  const ids = [signals.pageId, signals.igUserId].filter(Boolean) as string[];
-  if (ids.some((id) => HP_SOCIAL_IDS.has(id))) return "HP";
-  if (ids.some((id) => VVS_SOCIAL_IDS.has(id))) return "VVS";
-  return "HP";
+  const inferred = inferSocialBrand(signals.pageId, signals.igUserId);
+  return inferred === "Unassigned" ? "HP" : inferred;
 }
 
 function resolveLanguage(input: ReplyLanguage, values: string[]): ResolvedLanguage {
