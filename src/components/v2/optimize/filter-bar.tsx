@@ -3,8 +3,12 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useState, useTransition } from "react";
 
+import type { OptimizeTab } from "@/components/v2/optimize/optimize-tabs";
 import { OPTIMIZE_DEFAULT_DAYS } from "@/lib/app-routes";
-import { normalizeOptimizeStatusSelection } from "@/lib/optimize-filters";
+import {
+  defaultOptimizeStatusSelection,
+  normalizeOptimizeStatusSelection,
+} from "@/lib/optimize-filters";
 
 /**
  * Optimize-room filter bar. URL-state driven so views are shareable.
@@ -14,7 +18,8 @@ import { normalizeOptimizeStatusSelection } from "@/lib/optimize-filters";
  *   - group   : campaign-umbrella code or "all"
  *   - days    : 7 | 14 | 30 | 90  (mutually exclusive with start/end)
  *   - start, end : custom ISO date range (overrides `days` when set)
- *   - status  : live | paused | off | all   (defaults to "live" on first land)
+ *   - status  : live | paused | off | all
+ *               (Breakdown defaults to "all"; other tabs default to "live")
  *
  * Data filters propagate through the active Optimize tab:
  *   - fetchOptimizeSummaryData for the shared headline + options.
@@ -26,6 +31,7 @@ import { normalizeOptimizeStatusSelection } from "@/lib/optimize-filters";
 type Option = { value: string; label: string };
 
 type Props = {
+  activeTab: OptimizeTab;
   brands: Option[];
   groups: Option[];
 };
@@ -48,11 +54,12 @@ const DATE_PRESETS: Array<{ value: string; label: string }> = [
 const SERVER_DATA_KEYS = new Set(["brand", "group", "days", "start", "end", "status"]);
 const DEFAULT_DAYS_VALUE = String(OPTIMIZE_DEFAULT_DAYS);
 
-export function OptimizeFilterBar({ brands, groups }: Props) {
+export function OptimizeFilterBar({ activeTab, brands, groups }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
   const [pending, startTransition] = useTransition();
+  const defaultStatus = defaultOptimizeStatusSelection(activeTab);
 
   const current = useMemo(() => {
     const brand = params.get("brand") ?? "all";
@@ -60,11 +67,9 @@ export function OptimizeFilterBar({ brands, groups }: Props) {
     const days = params.get("days") ?? DEFAULT_DAYS_VALUE;
     const start = params.get("start") ?? "";
     const end = params.get("end") ?? "";
-    // status defaults to "live" when the URL doesn't pin it. `status=all`
-    // is explicit because deleting the param means "back to Live".
-    const status = normalizeOptimizeStatusSelection(params.get("status")) ?? "live";
+    const status = normalizeOptimizeStatusSelection(params.get("status")) ?? defaultStatus;
     return { brand, group, days, start, end, status };
-  }, [params]);
+  }, [defaultStatus, params]);
 
   const hasCustomUrl = Boolean(current.start && current.end);
   // Local UI state — tracks whether the operator picked "Custom range…"
@@ -203,7 +208,7 @@ export function OptimizeFilterBar({ brands, groups }: Props) {
         value={current.status}
         options={STATUS_OPTIONS}
         disabled={pending}
-        onChange={(value) => update({ status: value === "live" ? null : value })}
+        onChange={(value) => update({ status: value === defaultStatus ? null : value })}
       />
       {pending ? (
         <span

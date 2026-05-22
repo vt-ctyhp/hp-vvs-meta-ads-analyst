@@ -12,6 +12,7 @@ import {
 
 import type {
   CreativeAsset,
+  PeriodMetric,
   PeriodPivotChildrenPayload,
   PeriodPivotParentLevel,
   PeriodPivotPayload,
@@ -235,9 +236,11 @@ export function TreeTable({ payload }: Props) {
             const totals = snapshotMap[row.original.entityId];
             const value = totals ? totals[metric] : undefined;
             return (
-              <span className="block tabular-nums text-right">
-                {value === undefined ? "—" : formatMetric(value, metric)}
-              </span>
+              <MetricValueCell
+                value={value}
+                metric={metric}
+                row={row.original}
+              />
             );
           },
           size: 110,
@@ -258,11 +261,11 @@ export function TreeTable({ payload }: Props) {
             </span>
           ),
           cell: ({ row }) => (
-            <span className="block tabular-nums text-right">
-              {row.original.periodValues[period.key] === undefined
-                ? "—"
-                : formatMetric(row.original.periodValues[period.key], payload.metric)}
-            </span>
+            <MetricValueCell
+              value={row.original.periodValues[period.key]}
+              metric={payload.metric}
+              row={row.original}
+            />
           ),
           size: 110,
         });
@@ -486,6 +489,55 @@ function SkeletonBlock({ className }: { className: string }) {
       className={["block animate-pulse rounded bg-stone-200/80", className].join(" ")}
     />
   );
+}
+
+function MetricValueCell({
+  value,
+  metric,
+  row,
+}: {
+  value: number | undefined;
+  metric: PeriodMetric;
+  row: TreeRow;
+}) {
+  const label = metricCellLabel(row, metric);
+
+  return (
+    <span className="block text-right">
+      <span className="block tabular-nums text-stone-900">
+        {value === undefined ? "—" : formatMetric(value, metric)}
+      </span>
+      <span className="block pt-0.5 text-[10px] uppercase leading-none tracking-wider text-stone-400">
+        {label}
+      </span>
+    </span>
+  );
+}
+
+function metricCellLabel(row: TreeRow, metric: PeriodMetric) {
+  const primary = (row.primaryResultLabel ?? "Messages").toLowerCase();
+  switch (metric) {
+    case "primary_results":
+      return primary;
+    case "cost_per_primary_results":
+      return `per ${singularizeMetricLabel(primary)}`;
+    case "spend":
+      return "spend";
+    case "ctr":
+      return "ctr";
+    case "impressions":
+      return "impressions";
+    case "cpc":
+      return "cpc";
+    default: {
+      const exhaustive: never = metric;
+      return exhaustive;
+    }
+  }
+}
+
+function singularizeMetricLabel(label: string) {
+  return label.endsWith("s") ? label.slice(0, -1) : label;
 }
 
 function NameCell({

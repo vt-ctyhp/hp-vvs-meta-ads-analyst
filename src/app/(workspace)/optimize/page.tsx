@@ -25,6 +25,7 @@ import {
   resolveOptimizeDateRange,
 } from "@/lib/optimize-page-data";
 import {
+  defaultOptimizeStatusSelection,
   normalizeOptimizeDeliveryStatus,
   normalizeOptimizeStatusSelection,
 } from "@/lib/optimize-filters";
@@ -66,10 +67,12 @@ export default async function OptimizePage({
   const focus = firstParam(params.focus) ?? null;
   const days = numberParam(params.days) || OPTIMIZE_DEFAULT_DAYS;
 
-  // Filter-bar inputs. Status defaults to "live" so the operator lands on
-  // currently-active inventory; explicit URL params override.
+  // Filter-bar inputs. Breakdown is a historical period table, so it defaults
+  // to all current delivery statuses; other tabs still default to live
+  // inventory. Explicit URL params override either default.
   const statusFilter =
-    normalizeOptimizeStatusSelection(firstParam(params.status)) ?? "live";
+    normalizeOptimizeStatusSelection(firstParam(params.status)) ??
+    defaultOptimizeStatusSelection(activeTab);
   const deliveryStatusFilter = normalizeOptimizeDeliveryStatus(statusFilter);
   const brandFilter = firstParam(params.brand) ?? "all";
   const groupFilter = firstParam(params.group) ?? "all";

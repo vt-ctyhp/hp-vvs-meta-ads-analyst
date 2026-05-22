@@ -354,10 +354,11 @@ async function fetchCampaignPivotRows(context: PeriodPivotContext) {
     periodKeyField: context.periodDim as keyof MetaInsightAggregateRow,
     valueField: "metricValue",
   });
+  const labeled = withPrimaryResultLabels(pivoted, rows, "campaign_id");
   const snapshotByEntity = context.periods.length === 1
     ? buildSnapshotByEntity(rows, "campaign_id")
     : {};
-  return { pivoted, snapshotByEntity };
+  return { pivoted: labeled, snapshotByEntity };
 }
 
 async function fetchAdSetPivotRows(context: PeriodPivotContext, campaignId: string) {
@@ -382,10 +383,11 @@ async function fetchAdSetPivotRows(context: PeriodPivotContext, campaignId: stri
     valueField: "metricValue",
     parentIdFields: ["campaign_id"],
   });
+  const labeled = withPrimaryResultLabels(pivoted, rows, "ad_set_id");
   const snapshotByEntity = context.periods.length === 1
     ? buildSnapshotByEntity(rows, "ad_set_id")
     : {};
-  return { pivoted, snapshotByEntity };
+  return { pivoted: labeled, snapshotByEntity };
 }
 
 async function fetchCreativePivotRows(context: PeriodPivotContext, adSetId: string) {
@@ -410,10 +412,11 @@ async function fetchCreativePivotRows(context: PeriodPivotContext, adSetId: stri
     valueField: "metricValue",
     parentIdFields: ["campaign_id", "ad_set_id"],
   });
+  const labeled = withPrimaryResultLabels(pivoted, rows, "creative_id");
   const snapshotByEntity = context.periods.length === 1
     ? buildSnapshotByEntity(rows, "creative_id")
     : {};
-  return { pivoted, snapshotByEntity };
+  return { pivoted: labeled, snapshotByEntity };
 }
 
 type DynamicCreativesClient = {
@@ -510,6 +513,31 @@ function resolveMetric(row: MetaInsightAggregateRow, metric: PeriodMetric): numb
       throw new Error(`Unknown metric: ${String(exhaustive)}`);
     }
   }
+}
+
+function withPrimaryResultLabels(
+  pivoted: PivotedRow[],
+  rows: MetaInsightAggregateRow[],
+  entityField: keyof MetaInsightAggregateRow,
+): PivotedRow[] {
+  const labels = new Map<string, string>();
+
+  for (const row of rows) {
+    const id = stringOrNull(row[entityField]);
+    if (!id || labels.has(id)) continue;
+    labels.set(id, resolvePeriodPrimaryResultLabel(row));
+  }
+
+  return pivoted.map((row) => ({
+    ...row,
+    primaryResultLabel: labels.get(row.entityId) ?? "Messages",
+  }));
+}
+
+export function resolvePeriodPrimaryResultLabel(
+  row: Pick<MetaInsightAggregateRow, "campaign_umbrella">,
+) {
+  return row.campaign_umbrella === "Book Appts US" ? "Bookings" : "Messages";
 }
 
 function normalizeDateString(value: string | null | undefined) {
