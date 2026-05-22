@@ -83,6 +83,27 @@ export function roomsForRoles(roles: UserRole[]): Room[] {
   return rooms;
 }
 
+export function firstWorkspaceHref(
+  rooms: readonly Room[],
+  permissions: readonly AppPermission[],
+) {
+  if (rooms.includes("analyst")) {
+    if (permissions.includes("view_dashboard")) return "/analyst";
+    if (permissions.includes("view_creative_analysis")) return "/analyst/creative-analysis";
+    if (permissions.includes("view_ai_analysis")) return "/analysis";
+  }
+
+  if (rooms.includes("operate")) {
+    if (permissions.includes("view_backfill") || permissions.includes("manage_backfill")) {
+      return "/operate/pipelines";
+    }
+    if (permissions.includes("view_users")) return "/operate/users";
+  }
+
+  const firstRoom = rooms[0];
+  return firstRoom ? ROOM_PATHS[firstRoom] : "/no-access";
+}
+
 export function isRoom(value: string): value is Room {
   return value === "analyst" || value === "convert" || value === "operate";
 }

@@ -17,8 +17,8 @@ import { redirect } from "next/navigation";
 import { HealthPill } from "@/components/v2/health-pill";
 import { IdentityMenu } from "@/components/v2/identity-menu";
 import { WorkspaceNav } from "@/components/v2/workspace-nav";
-import { hasPermission, type AppPermission } from "@/lib/access-control";
-import { resolveLandingPath, ROOM_PATHS, roomsForRoles } from "@/lib/permission-routing";
+import { hasPermission } from "@/lib/access-control";
+import { firstWorkspaceHref, resolveLandingPath, roomsForRoles } from "@/lib/permission-routing";
 import { getServerAccessProfile } from "@/lib/server-route-auth";
 
 export const dynamic = "force-dynamic";
@@ -74,18 +74,6 @@ export default async function WorkspaceLayout({
       <main className="mx-auto max-w-7xl px-6 py-6">{children}</main>
     </div>
   );
-}
-
-function firstWorkspaceHref(
-  rooms: ReturnType<typeof roomsForRoles>,
-  permissions: readonly AppPermission[],
-) {
-  if (rooms.includes("analyst")) {
-    if (permissions.includes("view_dashboard")) return "/analyst";
-    if (permissions.includes("view_creative_analysis")) return "/analyst/creative-analysis";
-    if (permissions.includes("view_ai_analysis")) return "/analysis";
-  }
-  return ROOM_PATHS[rooms[0]];
 }
 
 function CommandPaletteTrigger() {
