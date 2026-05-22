@@ -46,6 +46,7 @@ const MAX_BYTES = 5 * 1024 * 1024;
 // Wall-clock cap on the fetch from Meta. Vercel's per-request budget is
 // tight; if Meta is slow, give up and try this creative again next cron.
 const FETCH_TIMEOUT_MS = 10_000;
+const STORAGE_UPLOAD_TIMEOUT_MS = 15_000;
 
 export type ThumbnailKind = "thumbnail" | "image";
 
@@ -117,12 +118,16 @@ export async function cacheCreativeThumbnail(input: {
 
   try {
     const supabase = createAdsAnalystClient("worker") as unknown as StorageClient;
-    const { error } = await supabase.storage.from(BUCKET).upload(objectKey, bytes, {
-      contentType,
-      upsert: true,
-      // 1 year browser cache; we mint a new object key on image_hash change.
-      cacheControl: "31536000",
-    });
+    const { error } = await withTimeout(
+      supabase.storage.from(BUCKET).upload(objectKey, bytes, {
+        contentType,
+        upsert: true,
+        // 1 year browser cache; we mint a new object key on image_hash change.
+        cacheControl: "31536000",
+      }),
+      STORAGE_UPLOAD_TIMEOUT_MS,
+      "Storage upload timed out.",
+    );
     if (error) {
       return { status: "failed", reason: `Storage upload failed: ${error.message}` };
     }
@@ -143,4 +148,15 @@ function extensionFromContentType(contentType: string): string {
   if (lower.includes("gif")) return "gif";
   // jpeg is the safe default; Meta's thumbnails are mostly jpeg.
   return "jpg";
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), ms);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
 }

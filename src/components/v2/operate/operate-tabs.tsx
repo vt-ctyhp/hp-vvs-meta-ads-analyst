@@ -16,7 +16,7 @@ export type OperateTab = "pipelines" | "coverage" | "health" | "people";
 
 const TABS: Array<{ key: OperateTab; label: string; description: string }> = [
   { key: "pipelines", label: "Pipelines", description: "Sync runs + backfill jobs + manual sync" },
-  { key: "coverage", label: "Coverage", description: "Historical insight coverage by month and account" },
+  { key: "coverage", label: "Coverage", description: "Monthly backfill sync, Supabase load, and lock status" },
   { key: "health", label: "Health", description: "Meta token, env fence, module credentials, sync freshness" },
   { key: "people", label: "People", description: "Read-only roster from the analytics identity view" },
 ];

@@ -57,7 +57,15 @@ export function LoginClient() {
 
   useEffect(() => {
     let mounted = true;
-    const supabase = createBrowserClient();
+    let supabase: ReturnType<typeof createBrowserClient>;
+
+    try {
+      supabase = createBrowserClient();
+    } catch {
+      return () => {
+        mounted = false;
+      };
+    }
 
     supabase.auth.getSession().then(({ data }) => {
       if (mounted && data.session) {
@@ -74,15 +82,50 @@ export function LoginClient() {
     };
   }, [establishAppSession]);
 
+  async function establishLocalTestSession(emailValue: string, passwordValue: string) {
+    const response = await fetch("/api/auth/local-test-session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        email: emailValue,
+        password: passwordValue,
+        next: nextPath,
+      }),
+    });
+
+    if (response.status === 401 || response.status === 404) return false;
+
+    const payload = (await response.json().catch(() => ({}))) as {
+      destination?: string;
+      error?: unknown;
+    };
+
+    if (!response.ok || !payload.destination) {
+      const errorMessage =
+        typeof payload.error === "string" && payload.error.trim()
+          ? payload.error
+          : "Local test sign in failed.";
+      throw new Error(errorMessage);
+    }
+
+    router.replace(payload.destination);
+    router.refresh();
+    return true;
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
     setStatus("");
 
     try {
+      const emailValue = email.trim();
+      const localSessionEstablished = await establishLocalTestSession(emailValue, password);
+      if (localSessionEstablished) return;
+
       const supabase = createBrowserClient();
       const { data, error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
+        email: emailValue,
         password,
       });
 
