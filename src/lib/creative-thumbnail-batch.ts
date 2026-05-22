@@ -21,8 +21,9 @@ import { cacheCreativeThumbnail } from "./creative-thumbnail-cache.ts";
  * 87-creative library is fully cached after the first two runs.
  *
  * Failures on either slot are non-fatal: the row's column stays NULL,
- * the next cron run retries. Meta refreshes thumbnail_url/image_url on
- * every catalog-refresh sync, so a transient 403 heals on its own.
+ * and the attempted-at marker moves it behind never-attempted rows. Meta
+ * refreshes thumbnail_url/image_url on every catalog-refresh sync and
+ * clears that marker, so a transient 403 heals on the next fresh URL.
  */
 
 const DEFAULT_LIMIT = 50;
@@ -38,6 +39,8 @@ export type ThumbnailBatchResult = {
 
 type Row = {
   asset_metadata: Record<string, unknown> | null;
+  creative_cache_attempted_at: string | null;
+  creative_cache_error: string | null;
   creative_id: string;
   thumbnail_url: string | null;
   image_url: string | null;
@@ -89,9 +92,10 @@ export async function cacheThumbnailBatch(
   const { data, error } = await supabase
     .from("meta_creatives")
     .select(
-      "creative_id,thumbnail_url,image_url,video_thumbnail_url,asset_metadata,supabase_thumbnail_url,supabase_image_url",
+      "creative_id,thumbnail_url,image_url,video_thumbnail_url,asset_metadata,creative_cache_attempted_at,creative_cache_error,supabase_thumbnail_url,supabase_image_url",
     )
     .or("supabase_thumbnail_url.is.null,supabase_image_url.is.null")
+    .order("creative_cache_attempted_at", { ascending: true, nullsFirst: true })
     .order("last_synced_at", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false, nullsFirst: false })
     .limit(limit);
@@ -111,7 +115,9 @@ export async function cacheThumbnailBatch(
   };
 
   for (const row of rows) {
-    const updates: Record<string, string> = {};
+    const updates: Record<string, unknown> = {};
+    const errors: string[] = [];
+    let attempted = false;
     const imageHash = imageHashFromMetadata(row.asset_metadata);
 
     // ── thumbnail slot ────────────────────────────────────────────────
@@ -119,6 +125,7 @@ export async function cacheThumbnailBatch(
       const sourceUrl =
         row.thumbnail_url || row.image_url || row.video_thumbnail_url;
       if (sourceUrl) {
+        attempted = true;
         const result = await cacheCreative({
           creativeId: row.creative_id,
           sourceUrl,
@@ -130,6 +137,7 @@ export async function cacheThumbnailBatch(
           summary.thumbnailCached += 1;
         } else if (result.status === "failed") {
           summary.failed += 1;
+          errors.push(`thumbnail: ${result.reason}`);
           summary.failures.push({
             creativeId: row.creative_id,
             kind: "thumbnail",
@@ -139,6 +147,8 @@ export async function cacheThumbnailBatch(
           summary.skipped += 1;
         }
       } else {
+        attempted = true;
+        errors.push("thumbnail: missing source URL");
         summary.skipped += 1;
       }
     }
@@ -151,6 +161,7 @@ export async function cacheThumbnailBatch(
       const sourceUrl =
         row.image_url || row.video_thumbnail_url || row.thumbnail_url;
       if (sourceUrl) {
+        attempted = true;
         const result = await cacheCreative({
           creativeId: row.creative_id,
           sourceUrl,
@@ -162,6 +173,7 @@ export async function cacheThumbnailBatch(
           summary.imageCached += 1;
         } else if (result.status === "failed") {
           summary.failed += 1;
+          errors.push(`image: ${result.reason}`);
           summary.failures.push({
             creativeId: row.creative_id,
             kind: "image",
@@ -171,8 +183,15 @@ export async function cacheThumbnailBatch(
           summary.skipped += 1;
         }
       } else {
+        attempted = true;
+        errors.push("image: missing source URL");
         summary.skipped += 1;
       }
+    }
+
+    if (attempted) {
+      updates.creative_cache_attempted_at = new Date().toISOString();
+      updates.creative_cache_error = errors.length ? errors.join("; ") : null;
     }
 
     // ── one update per row carrying whatever slot(s) succeeded ───────

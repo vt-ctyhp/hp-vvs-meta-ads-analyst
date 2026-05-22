@@ -1,4 +1,5 @@
 import { createAdsAnalystClient } from "./ads-analyst-db.ts";
+import { resolveCreativeDisplayMedia } from "./creative-display-media.ts";
 import type {
   CustomerLedgerCreativePreview,
   CustomerLedgerRow,
@@ -251,22 +252,7 @@ function creativePreviewFromRows(
   ad: AdMetadataRow,
   creative: CreativeMetadataRow | null,
 ): CustomerLedgerCreativePreview {
-  const thumbnailUrl =
-    stringOrNull(creative?.supabase_thumbnail_url) ||
-    stringOrNull(creative?.thumbnail_url) ||
-    stringOrNull(creative?.video_thumbnail_url) ||
-    stringOrNull(creative?.supabase_image_url) ||
-    stringOrNull(creative?.image_url) ||
-    stringOrNull(creative?.preview_url) ||
-    stringOrNull(ad.preview_url);
-  const imageUrl =
-    stringOrNull(creative?.supabase_image_url) ||
-    stringOrNull(creative?.image_url) ||
-    stringOrNull(creative?.video_thumbnail_url) ||
-    stringOrNull(creative?.thumbnail_url) ||
-    stringOrNull(creative?.supabase_thumbnail_url) ||
-    stringOrNull(creative?.preview_url) ||
-    stringOrNull(ad.preview_url);
+  const displayMedia = resolveCreativeDisplayMedia(creative);
 
   return {
     adId,
@@ -274,12 +260,12 @@ function creativePreviewFromRows(
     body: stringOrNull(creative?.body),
     creativeId: stringOrNull(ad.creative_id),
     creativeName: stringOrNull(creative?.name),
-    imageUrl,
+    imageUrl: displayMedia.imageUrl,
     previewHtml: stringOrNull(creative?.preview_html) || stringOrNull(ad.preview_html),
     previewSource:
       stringOrNull(creative?.preview_source) || stringOrNull(ad.preview_source),
     previewUrl: stringOrNull(creative?.preview_url) || stringOrNull(ad.preview_url),
-    thumbnailUrl,
+    thumbnailUrl: displayMedia.thumbnailUrl,
     title: stringOrNull(creative?.title),
   };
 }

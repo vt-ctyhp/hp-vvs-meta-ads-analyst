@@ -1,5 +1,9 @@
 import { ConfigurationError, getMetaApiVersion } from "./env";
 import {
+  cacheThumbnailBatch,
+  type ThumbnailBatchResult,
+} from "./creative-thumbnail-batch";
+import {
   classifyCampaignUmbrella,
   isCampaignUmbrella,
   type CampaignUmbrellaClassification,
@@ -15,6 +19,7 @@ import {
 } from "./meta-backfill-utils";
 import { resolveMetaKpi } from "./meta-kpi";
 import {
+  shouldCacheCreativeThumbnailsAfterSync,
   syncOptionsForTrigger,
   type MetaAdsSyncTrigger,
 } from "./meta-sync-options";
@@ -75,6 +80,7 @@ type SyncMetrics = {
   insightRows: number;
   previewRefreshes: number;
   audit?: SyncAuditSummary;
+  thumbnailCache?: ThumbnailBatchResult;
 };
 
 type InsightAggregateSnapshot = {
@@ -281,6 +287,16 @@ export async function syncMetaAds(trigger: MetaAdsSyncTrigger = "manual") {
         auditSummary.warnings.push(...result.audit.warnings);
       } catch (error) {
         errors.push(`${account.brandCode}: ${errorToMessage(error)}`);
+      }
+    }
+
+    if (shouldCacheCreativeThumbnailsAfterSync(trigger) && metrics.creatives > 0) {
+      try {
+        metrics.thumbnailCache = await cacheThumbnailBatch({
+          limit: catalogThumbnailCacheLimit(),
+        });
+      } catch (error) {
+        errors.push(`creative_thumbnail_cache: ${errorToMessage(error)}`);
       }
     }
 
@@ -811,6 +827,8 @@ async function syncAccount(
               preview_url: preview?.previewUrl || null,
               preview_html: preview?.previewHtml || null,
               preview_source: preview?.previewSource || "fallback",
+              creative_cache_attempted_at: null,
+              creative_cache_error: null,
               last_preview_refresh_at: now,
             }
           : {}),
@@ -1899,6 +1917,11 @@ function toGraphDateString(value: Date) {
 function getSyncMaxPages(name: string, fallback: number) {
   const value = Number(process.env[name]);
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
+function catalogThumbnailCacheLimit() {
+  const value = Number(process.env.META_CATALOG_THUMBNAIL_CACHE_LIMIT);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 100;
 }
 
 function graphUrl(path: string, params: Record<string, string | undefined>) {

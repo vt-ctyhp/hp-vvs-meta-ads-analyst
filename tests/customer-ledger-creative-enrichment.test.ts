@@ -90,7 +90,7 @@ describe("customer ledger creative enrichment", () => {
     assert.equal(rows[0].creativePreview?.thumbnailUrl, "https://cache.example/image.jpg");
   });
 
-  it("uses ad-level preview fields when a creative row is missing", async () => {
+  it("keeps ad-level preview fields separate from durable display media", async () => {
     const client = mockCreativeClient({
       meta_ads: [
         {
@@ -113,9 +113,44 @@ describe("customer ledger creative enrichment", () => {
 
     assert.equal(rows[0].creativePreview?.adName, "Ad fallback");
     assert.equal(rows[0].creativePreview?.creativeName, null);
-    assert.equal(rows[0].creativePreview?.thumbnailUrl, "https://meta.example/ad-preview");
+    assert.equal(rows[0].creativePreview?.thumbnailUrl, null);
+    assert.equal(rows[0].creativePreview?.imageUrl, null);
+    assert.equal(rows[0].creativePreview?.previewUrl, "https://meta.example/ad-preview");
     assert.equal(rows[0].creativePreview?.previewHtml, "<iframe />");
     assert.equal(rows[0].creativePreview?.previewSource, "meta_ad");
+  });
+
+  it("does not expose volatile Meta CDN creative URLs as display media", async () => {
+    const client = mockCreativeClient({
+      meta_ads: [
+        {
+          ad_id: "ad-1",
+          creative_id: "creative-1",
+          meta_account_id: "account-1",
+          name: "Ad name",
+          preview_url: "https://meta.example/ad-preview",
+        },
+      ],
+      meta_creatives: [
+        {
+          creative_id: "creative-1",
+          image_url: "https://cdn.example/image.jpg",
+          meta_account_id: "account-1",
+          preview_url: "https://meta.example/creative-preview",
+          thumbnail_url: "https://cdn.example/thumb.jpg",
+          video_thumbnail_url: "https://cdn.example/video.jpg",
+        },
+      ],
+    });
+
+    const rows = await enrichCustomerLedgerRowsWithCreativePreviews(
+      [ledgerRow({ adId: "ad-1" })],
+      { client },
+    );
+
+    assert.equal(rows[0].creativePreview?.thumbnailUrl, null);
+    assert.equal(rows[0].creativePreview?.imageUrl, null);
+    assert.equal(rows[0].creativePreview?.previewUrl, "https://meta.example/creative-preview");
   });
 
   it("does not query metadata when no rows carry ad IDs", async () => {

@@ -70,8 +70,7 @@ function DetailDrawer({
   const adsManagerUrl = row.adId
     ? `https://business.facebook.com/adsmanager/manage/ads/edit?selected_ad_ids=${encodeURIComponent(row.adId)}`
     : null;
-  const previewSrc =
-    row.thumbnailUrl ?? row.imageUrl ?? row.videoThumbnailUrl ?? null;
+  const previewSrc = row.thumbnailUrl ?? row.imageUrl ?? null;
 
   return (
     <div className="fixed inset-0 z-50 flex">

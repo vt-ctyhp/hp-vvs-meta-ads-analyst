@@ -14,6 +14,7 @@ import {
 } from "./meta";
 import { resolveMetaKpi } from "./meta-kpi";
 import { createAdsAnalystClient } from "./ads-analyst-db";
+import { resolveCreativeDisplayMedia } from "./creative-display-media";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -142,6 +143,8 @@ type CreativeRow = {
   body: string | null;
   object_story_id: string | null;
   effective_object_story_id: string | null;
+  supabase_thumbnail_url: string | null;
+  supabase_image_url: string | null;
   thumbnail_url: string | null;
   image_url: string | null;
   video_thumbnail_url: string | null;
@@ -573,6 +576,8 @@ async function fetchCreativeMetadata(
       "body",
       "object_story_id",
       "effective_object_story_id",
+      "supabase_thumbnail_url",
+      "supabase_image_url",
       "thumbnail_url",
       "image_url",
       "video_thumbnail_url",
@@ -613,6 +618,7 @@ function enrichCreativeRow(input: {
     (account?.brand_id && input.brandById.get(account.brand_id)) ||
     null;
   const brandCode = brand?.code || input.row.brandCode;
+  const displayMedia = resolveCreativeDisplayMedia(creative);
 
   return {
     ...input.diagnostic,
@@ -637,12 +643,12 @@ function enrichCreativeRow(input: {
     creativeBody: creative?.body || null,
     objectStoryId: creative?.object_story_id || null,
     effectiveObjectStoryId: creative?.effective_object_story_id || null,
-    previewUrl: creative?.preview_url || ad?.preview_url || creative?.thumbnail_url || creative?.image_url || null,
+    previewUrl: creative?.preview_url || ad?.preview_url || null,
     previewHtml: creative?.preview_html || ad?.preview_html || null,
     previewSource: creative?.preview_source || ad?.preview_source || null,
-    thumbnailUrl: creative?.thumbnail_url || null,
-    imageUrl: creative?.image_url || null,
-    videoThumbnailUrl: creative?.video_thumbnail_url || null,
+    thumbnailUrl: displayMedia.thumbnailUrl,
+    imageUrl: displayMedia.imageUrl,
+    videoThumbnailUrl: null,
     spend: round(input.row.spend),
     impressions: Math.round(input.row.impressions),
     reach: Math.round(input.row.reach),

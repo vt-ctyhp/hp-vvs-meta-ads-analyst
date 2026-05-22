@@ -58,7 +58,6 @@ export function CreativeGrid({ rows, onSelect }: Props) {
             src={
               row.original.thumbnailUrl ??
               row.original.imageUrl ??
-              row.original.videoThumbnailUrl ??
               null
             }
             alt={row.original.name}

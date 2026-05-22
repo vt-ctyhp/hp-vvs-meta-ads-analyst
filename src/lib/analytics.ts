@@ -14,6 +14,7 @@ import {
 } from "./meta-insight-aggregates";
 import { buildSharedInsightFilters } from "./optimize-filters";
 import { createAdsAnalystClient } from "./ads-analyst-db";
+import { resolveCreativeDisplayMedia } from "./creative-display-media";
 
 export type MetricSummary = {
   spend: number;
@@ -217,6 +218,8 @@ type CreativeRow = {
   name: string | null;
   title: string | null;
   body: string | null;
+  supabase_thumbnail_url: string | null;
+  supabase_image_url: string | null;
   thumbnail_url: string | null;
   image_url: string | null;
   video_thumbnail_url: string | null;
@@ -257,7 +260,7 @@ const AD_SET_COLUMNS =
 const AD_COLUMNS =
   "id,brand_id,ad_id,ad_set_id,campaign_id,creative_id,name,status,effective_status,campaign_umbrella,campaign_umbrella_confidence,campaign_umbrella_reason";
 const CREATIVE_COLUMNS =
-  "id,brand_id,creative_id,name,title,body,thumbnail_url,image_url,video_thumbnail_url,preview_url,preview_html,preview_source";
+  "id,brand_id,creative_id,name,title,body,supabase_thumbnail_url,supabase_image_url,thumbnail_url,image_url,video_thumbnail_url,preview_url,preview_html,preview_source";
 
 const EMPTY_METRICS: MetricSummary = {
   spend: 0,
@@ -712,6 +715,7 @@ export async function fetchDashboardData(
         );
         const metrics = summaryFromAggregate(row, classification.umbrella);
         const risk = getFatigueRisk(metrics, overview);
+        const displayMedia = resolveCreativeDisplayMedia(creative);
         return {
           id: creativeId,
           name: creative?.name || ad?.name || row.creative || "Unknown creative",
@@ -724,9 +728,9 @@ export async function fetchDashboardData(
           previewSource: creative?.preview_source,
           previewUrl: creative?.preview_url,
           previewHtml: creative?.preview_html,
-          thumbnailUrl: creative?.thumbnail_url,
-          imageUrl: creative?.image_url,
-          videoThumbnailUrl: creative?.video_thumbnail_url,
+          thumbnailUrl: displayMedia.thumbnailUrl,
+          imageUrl: displayMedia.imageUrl,
+          videoThumbnailUrl: null,
           title: creative?.title,
           body: creative?.body,
           riskLevel: risk.level,

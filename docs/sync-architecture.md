@@ -30,15 +30,15 @@ Current umbrella labels:
 
 ## Preview Refresh
 
-Creative preview metadata is refreshed during sync. Storage priority:
+Creative preview metadata is refreshed during sync. Display images use only
+durable Supabase-cached media:
 
-1. Meta `thumbnail_url`
-2. creative `image_url`
-3. ad preview iframe/html
-4. video thumbnail
-5. fallback placeholder
+1. `supabase_thumbnail_url`
+2. `supabase_image_url`
+3. fallback placeholder
 
-Meta preview/image URLs can expire, so previews are treated as refreshable metadata, not permanent assets.
+Meta preview/image URLs can expire. Keep them as preview/detail links or cache
+sources only; do not feed them directly into image `src` values.
 
 ## Manual Sync
 

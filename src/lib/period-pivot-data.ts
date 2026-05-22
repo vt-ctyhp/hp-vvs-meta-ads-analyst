@@ -28,6 +28,7 @@ import {
   buildSharedInsightFilterContext,
   buildSharedInsightFilters,
 } from "./optimize-filters.ts";
+import { resolveCreativeDisplayMedia } from "./creative-display-media.ts";
 
 /**
  * Metrics exposed in the trend-mode dropdown. Each maps to a single column
@@ -111,19 +112,15 @@ export type CreativeAsset = {
   name: string | null;
   title: string | null;
   /**
-   * Permanent ~150px thumbnail URL backed by Supabase Storage. Tree-table
-   * cell prefers this — never expires. Stamped by /api/cron/cache-thumbnails.
+   * Permanent thumbnail URL backed by Supabase Storage. Never a Meta CDN URL.
+   * Falls back to the cached image URL when the small thumbnail slot is missing.
    */
-  supabaseThumbnailUrl: string | null;
-  /**
-   * Permanent full-resolution image URL backed by Supabase Storage. Drawer
-   * preview prefers this so the larger render stays sharp instead of
-   * pixelating a 150px thumb. Stamped by the same cron job.
-   */
-  supabaseImageUrl: string | null;
   thumbnailUrl: string | null;
+  /**
+   * Permanent full-resolution image URL backed by Supabase Storage. Never a
+   * Meta CDN URL. Falls back to thumbnailUrl when the image slot is missing.
+   */
   imageUrl: string | null;
-  videoThumbnailUrl: string | null;
   previewUrl: string | null;
 };
 
@@ -443,7 +440,7 @@ async function fetchCreativeAssets(
     const { data, error } = await supabase
       .from("meta_creatives")
       .select(
-        "creative_id,name,title,supabase_thumbnail_url,supabase_image_url,thumbnail_url,image_url,video_thumbnail_url,preview_url",
+        "creative_id,name,title,supabase_thumbnail_url,supabase_image_url,preview_url",
       )
       .in("creative_id", unique);
     if (error) {
@@ -455,15 +452,13 @@ async function fetchCreativeAssets(
     for (const row of rows) {
       const id = typeof row.creative_id === "string" ? row.creative_id : null;
       if (!id) continue;
+      const displayMedia = resolveCreativeDisplayMedia(row);
       out[id] = {
         creativeId: id,
         name: stringOrNull(row.name),
         title: stringOrNull(row.title),
-        supabaseThumbnailUrl: stringOrNull(row.supabase_thumbnail_url),
-        supabaseImageUrl: stringOrNull(row.supabase_image_url),
-        thumbnailUrl: stringOrNull(row.thumbnail_url),
-        imageUrl: stringOrNull(row.image_url),
-        videoThumbnailUrl: stringOrNull(row.video_thumbnail_url),
+        thumbnailUrl: displayMedia.thumbnailUrl,
+        imageUrl: displayMedia.imageUrl,
         previewUrl: stringOrNull(row.preview_url),
       };
     }
