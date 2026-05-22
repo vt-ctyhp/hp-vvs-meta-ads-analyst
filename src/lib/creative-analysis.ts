@@ -182,7 +182,7 @@ type StoredInsightRow = {
   cost_per_kpi: number | string | null;
   actions: unknown;
   video_metrics: unknown;
-  raw_json: unknown;
+  raw_json?: unknown;
 };
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -716,7 +716,6 @@ async function fetchStoredInsightRows(
           "cost_per_kpi",
           "actions",
           "video_metrics",
-          "raw_json",
         ].join(","),
       )
       .gte("date_start", range.start)
