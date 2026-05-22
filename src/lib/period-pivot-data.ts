@@ -553,7 +553,8 @@ function normalizeDateString(value: string | null | undefined) {
  * the entity id ("campaign_id" / "ad_set_id" / "creative_id"). All rows
  * sharing the same entity id are summed; cost/CTR derivations are then
  * computed from the totals (the right level of arithmetic — averaging
- * pre-computed CTRs would be incorrect when impressions vary).
+ * pre-computed CTRs would be incorrect when impressions vary). CTR is emitted
+ * as a percent value to match the aggregate RPC and table formatter.
  */
 export function buildSnapshotByEntity(
   rows: MetaInsightAggregateRow[],
@@ -589,7 +590,7 @@ export function buildSnapshotByEntity(
       primary_results: t.primary_results,
       cost_per_primary_results:
         t.primary_results > 0 ? t.spend / t.primary_results : 0,
-      ctr: t.impressions > 0 ? t.clicks / t.impressions : 0,
+      ctr: t.impressions > 0 ? (t.clicks / t.impressions) * 100 : 0,
       impressions: t.impressions,
       cpc: t.clicks > 0 ? t.spend / t.clicks : 0,
     };
