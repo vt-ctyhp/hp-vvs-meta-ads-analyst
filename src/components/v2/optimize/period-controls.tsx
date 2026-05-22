@@ -10,7 +10,7 @@ import type { Frequency } from "@/lib/period-windows";
  * Header controls for the /optimize period-pivot table.
  *
  * Three segmented controls plus a metric dropdown. All four are URL-state
- * (?periods=4&freq=week&metric=primary_results), so deep links bookmark
+ * (?periods=1&freq=week&metric=primary_results), so deep links bookmark
  * the operator's preferred view and a refresh keeps the layout.
  *
  * Per the rebuild PRD §13 spec:

@@ -42,6 +42,8 @@ export type PivotedRow = {
   periodValues: Record<string, number>;
   /** Sum across all `periodValues`, useful for sorting + aggregate display. */
   total: number;
+  /** Human label for the row's primary KPI, when a consumer needs it. */
+  primaryResultLabel?: string | null;
 };
 
 export type PivotOptions<Row> = {

@@ -12,12 +12,14 @@ import {
 
 import type {
   CreativeAsset,
+  PeriodMetric,
   PeriodPivotChildrenPayload,
   PeriodPivotParentLevel,
   PeriodPivotPayload,
   SnapshotMetrics,
 } from "@/lib/period-pivot-data";
 import type { PivotedRow } from "@/lib/pivot-by-period";
+import { periodsNewestFirst } from "@/lib/period-windows";
 
 import { CreativeDetailDrawer } from "./creative-detail-drawer";
 import { formatDelta, formatMetric } from "./metric-format";
@@ -40,8 +42,8 @@ const SNAPSHOT_COLUMNS = [
  * Builds a 3-level tree (Campaign → Ad Set → Creative). Campaigns are in
  * the first server payload; ad sets and creatives/assets are fetched when
  * their parent row is expanded.
- * Renders one row per entity with one column per period plus a Δ
- * column comparing the first → last period.
+ * Renders one row per entity with one column per period, newest period
+ * first, plus a Δ column comparing oldest → newest.
  *
  * Empty cells (no row for that entity-period combination) render as "—".
  * Period values are formatted per the active metric (currency, count,
@@ -51,7 +53,7 @@ const SNAPSHOT_COLUMNS = [
  *   - 3 levels (skip the "ad" envelope; analysts care about creatives).
  *   - Lazy-loaded children on expand.
  *   - Sort: spend-desc inherited from the server.
- *   - Δ is always first → last period, not user-configurable.
+ *   - Δ is always oldest → newest period, not user-configurable.
  *
  * v2:
  *   - Sparkline cell next to the Δ.
@@ -234,16 +236,20 @@ export function TreeTable({ payload }: Props) {
             const totals = snapshotMap[row.original.entityId];
             const value = totals ? totals[metric] : undefined;
             return (
-              <span className="block tabular-nums text-right">
-                {value === undefined ? "—" : formatMetric(value, metric)}
-              </span>
+              <MetricValueCell
+                value={value}
+                metric={metric}
+                row={row.original}
+              />
             );
           },
           size: 110,
         });
       }
     } else {
-      for (const period of payload.periods) {
+      const displayPeriods = periodsNewestFirst(payload.periods);
+
+      for (const period of displayPeriods) {
         cols.push({
           id: `period_${period.key}`,
           header: () => (
@@ -255,30 +261,33 @@ export function TreeTable({ payload }: Props) {
             </span>
           ),
           cell: ({ row }) => (
-            <span className="block tabular-nums text-right">
-              {row.original.periodValues[period.key] === undefined
-                ? "—"
-                : formatMetric(row.original.periodValues[period.key], payload.metric)}
-            </span>
+            <MetricValueCell
+              value={row.original.periodValues[period.key]}
+              metric={payload.metric}
+              row={row.original}
+            />
           ),
           size: 110,
         });
       }
 
       if (payload.periods.length > 1) {
-        const firstKey = payload.periods[0].key;
-        const lastKey = payload.periods[payload.periods.length - 1].key;
+        const newestPeriod = displayPeriods[0];
+        const oldestPeriod = displayPeriods[displayPeriods.length - 1];
         cols.push({
           id: "delta",
           header: () => (
-            <span className="block whitespace-nowrap text-right" title={`${firstKey} → ${lastKey}`}>
-              Δ P1→P{payload.periods.length}
+            <span
+              className="block whitespace-nowrap text-right"
+              title={`${oldestPeriod.start} → ${newestPeriod.end}`}
+            >
+              Δ old→new
             </span>
           ),
           cell: ({ row }) => {
             const delta = formatDelta(
-              row.original.periodValues[lastKey],
-              row.original.periodValues[firstKey],
+              row.original.periodValues[newestPeriod.key],
+              row.original.periodValues[oldestPeriod.key],
             );
             if (!delta) return <span className="block text-right text-stone-400">—</span>;
             return (
@@ -292,7 +301,7 @@ export function TreeTable({ payload }: Props) {
               </span>
             );
           },
-          size: 90,
+          size: 100,
         });
       }
     }
@@ -347,19 +356,25 @@ export function TreeTable({ payload }: Props) {
         className="overflow-hidden rounded-xl border border-stone-200 bg-white"
       >
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full table-fixed text-sm" style={{ minWidth: table.getTotalSize() }}>
             <thead className="bg-stone-50 text-[11px] uppercase tracking-wider text-stone-500">
               {table.getHeaderGroups().map((headerGroup) => (
                 <tr key={headerGroup.id}>
-                  {headerGroup.headers.map((header) => (
-                    <th
-                      key={header.id}
-                      style={{ width: header.getSize() }}
-                      className="border-b border-stone-200 px-3 py-2 text-left first:sticky first:left-0 first:bg-stone-50"
-                    >
-                      {flexRender(header.column.columnDef.header, header.getContext())}
-                    </th>
-                  ))}
+                  {headerGroup.headers.map((header) => {
+                    const isNameColumn = header.column.id === "name";
+                    return (
+                      <th
+                        key={header.id}
+                        style={{ width: header.getSize() }}
+                        className={[
+                          "border-b border-stone-200 px-3 py-2 text-left align-top",
+                          isNameColumn ? "sticky left-0 z-20 bg-stone-50" : "",
+                        ].join(" ")}
+                      >
+                        {flexRender(header.column.columnDef.header, header.getContext())}
+                      </th>
+                    );
+                  })}
                 </tr>
               ))}
             </thead>
@@ -372,14 +387,21 @@ export function TreeTable({ payload }: Props) {
                       row.depth === 0 ? "bg-white" : "bg-stone-50/60",
                     ].join(" ")}
                   >
-                    {row.getVisibleCells().map((cell) => (
-                      <td
-                        key={cell.id}
-                        className="px-3 py-2 align-top first:sticky first:left-0 first:bg-inherit"
-                      >
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
-                    ))}
+                    {row.getVisibleCells().map((cell) => {
+                      const isNameColumn = cell.column.id === "name";
+                      return (
+                        <td
+                          key={cell.id}
+                          style={{ width: cell.column.getSize() }}
+                          className={[
+                            "px-3 py-2 align-top",
+                            isNameColumn ? "sticky left-0 z-10 max-w-0 bg-inherit" : "",
+                          ].join(" ")}
+                        >
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </td>
+                      );
+                    })}
                   </tr>
                   {row.original.childrenLoading && row.getIsExpanded() ? (
                     <TreeLoadingRows
@@ -469,6 +491,55 @@ function SkeletonBlock({ className }: { className: string }) {
   );
 }
 
+function MetricValueCell({
+  value,
+  metric,
+  row,
+}: {
+  value: number | undefined;
+  metric: PeriodMetric;
+  row: TreeRow;
+}) {
+  const label = metricCellLabel(row, metric);
+
+  return (
+    <span className="block text-right">
+      <span className="block tabular-nums text-stone-900">
+        {value === undefined ? "—" : formatMetric(value, metric)}
+      </span>
+      <span className="block pt-0.5 text-[10px] uppercase leading-none tracking-wider text-stone-400">
+        {label}
+      </span>
+    </span>
+  );
+}
+
+function metricCellLabel(row: TreeRow, metric: PeriodMetric) {
+  const primary = (row.primaryResultLabel ?? "Messages").toLowerCase();
+  switch (metric) {
+    case "primary_results":
+      return primary;
+    case "cost_per_primary_results":
+      return `per ${singularizeMetricLabel(primary)}`;
+    case "spend":
+      return "spend";
+    case "ctr":
+      return "ctr";
+    case "impressions":
+      return "impressions";
+    case "cpc":
+      return "cpc";
+    default: {
+      const exhaustive: never = metric;
+      return exhaustive;
+    }
+  }
+}
+
+function singularizeMetricLabel(label: string) {
+  return label.endsWith("s") ? label.slice(0, -1) : label;
+}
+
 function NameCell({
   depth,
   canExpand,
@@ -508,7 +579,7 @@ function NameCell({
     : null;
 
   return (
-    <div style={{ paddingLeft: pad }} className="flex items-center gap-2">
+    <div style={{ paddingLeft: pad }} className="flex min-w-0 max-w-full items-center gap-2">
       {canExpand ? (
         <button
           type="button"
@@ -536,13 +607,17 @@ function NameCell({
         <button
           type="button"
           onClick={onCreativeClick}
-          className="truncate text-left font-medium text-stone-900 hover:text-[#E14B7B] hover:underline"
-          title="Open creative detail"
+          className={[
+            TREE_NAME_LABEL_CLASS,
+            "hover:text-[#E14B7B] hover:underline focus-visible:text-[#E14B7B] focus-visible:underline",
+          ].join(" ")}
+          title={renderedLabel}
+          aria-label={`Open creative detail for ${renderedLabel}`}
         >
           {renderedLabel}
         </button>
       ) : (
-        <span className="truncate font-medium text-stone-900" title={renderedLabel}>
+        <span className={TREE_NAME_LABEL_CLASS} title={renderedLabel}>
           {renderedLabel}
         </span>
       )}
@@ -563,6 +638,9 @@ const LEVEL_BADGE: Record<TreeRow["level"], string> = {
   ad_set: "AS",
   creative: "Cr",
 };
+
+const TREE_NAME_LABEL_CLASS =
+  "breakdown-name-label text-left font-medium leading-snug text-stone-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#E14B7B]";
 
 /**
  * Small img-with-fallback. Sources should already be durable Supabase

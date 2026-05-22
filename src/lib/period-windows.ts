@@ -71,6 +71,10 @@ export function lastNPeriods(
   }
 }
 
+export function periodsNewestFirst(periods: readonly PeriodWindow[]): PeriodWindow[] {
+  return [...periods].sort((a, b) => b.start.localeCompare(a.start));
+}
+
 // ── Day ───────────────────────────────────────────────────────────────────
 
 function lastNDays(now: Date, count: number): PeriodWindow[] {
