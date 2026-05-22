@@ -144,7 +144,6 @@ export default async function OptimizePage({
           days,
           startDate,
           endDate,
-          includeLive: true,
         }).catch((e) => {
           console.error("[optimize] fetchCreativeAnalysisData threw:", e);
           return {
@@ -294,6 +293,7 @@ export default async function OptimizePage({
             group={groupFilter}
             delivery={statusFilter}
             focus={focus}
+            canRefreshDiagnostics={canRunSync}
           />
         ) : (
           <PermissionPanel label="Creative diagnostics" />

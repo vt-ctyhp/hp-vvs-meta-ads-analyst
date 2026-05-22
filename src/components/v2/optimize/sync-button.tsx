@@ -11,7 +11,7 @@ import { useState } from "react";
  * land in the dashboard payload. On failure surfaces the real error
  * (now that the [object Object] bug is fixed everywhere).
  */
-type SyncMode = "incremental" | "catalog";
+type SyncMode = "incremental" | "diagnostics" | "catalog";
 
 type Props = {
   size?: "sm" | "md";
@@ -40,14 +40,14 @@ export function RunSyncButton({
     setStatus("running");
     setError(null);
     try {
-      const isCatalogRefresh = mode === "catalog";
+      const hasExplicitMode = mode !== "incremental";
       const response = await fetch("/api/sync", {
         method: "POST",
         credentials: "same-origin",
-        ...(isCatalogRefresh
+        ...(hasExplicitMode
           ? {
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ mode: "catalog" }),
+              body: JSON.stringify({ mode }),
             }
           : {}),
       });
@@ -70,9 +70,9 @@ export function RunSyncButton({
     variant === "secondary"
       ? "border border-stone-300 bg-white text-stone-800 hover:bg-stone-50"
       : "bg-[#E14B7B] text-white shadow-sm hover:bg-[#C53D6A]";
-  const idleLabel = label ?? (mode === "catalog" ? "Refresh catalog" : "Run Meta sync now");
+  const idleLabel = label ?? defaultIdleLabel(mode);
   const activeLabel =
-    runningLabel ?? (mode === "catalog" ? "Refreshing catalog…" : "Running sync…");
+    runningLabel ?? defaultRunningLabel(mode);
 
   return (
     <div className="flex flex-col items-center gap-2">
@@ -89,4 +89,16 @@ export function RunSyncButton({
       ) : null}
     </div>
   );
+}
+
+function defaultIdleLabel(mode: SyncMode) {
+  if (mode === "catalog") return "Refresh catalog";
+  if (mode === "diagnostics") return "Refresh live diagnostics";
+  return "Run Meta sync now";
+}
+
+function defaultRunningLabel(mode: SyncMode) {
+  if (mode === "catalog") return "Refreshing catalog…";
+  if (mode === "diagnostics") return "Refreshing diagnostics…";
+  return "Running sync…";
 }

@@ -408,6 +408,7 @@ export async function syncMetaAdsAccountRange(input: {
     insights: { kind: "range", since: input.since, until: input.until },
     refreshPreviews: false,
     refreshAdCatalog: false,
+    refreshAdStatusesOnly: false,
     refreshRankingDiagnostics: false,
     includeCreativeDiagnostics: false,
     allowFinalizedInsightUpdates: true,
@@ -588,6 +589,71 @@ export async function fetchMetaAdVideoMetricsForRange(input: {
   };
 }
 
+function activeInventoryFilter() {
+  return JSON.stringify([
+    {
+      field: "effective_status",
+      operator: "IN",
+      value: [
+        "ACTIVE",
+        "PAUSED",
+        "PENDING_REVIEW",
+        "WITH_ISSUES",
+        "CAMPAIGN_PAUSED",
+        "ADSET_PAUSED",
+      ],
+    },
+  ]);
+}
+
+async function fetchMetaAdsForCatalogRefresh(metaAccountId: string) {
+  return graphPages<JsonRecord>(`${metaAccountId}/ads`, {
+    fields:
+      "id,name,campaign_id,adset_id,status,effective_status,created_time,updated_time,creative{id,name,title,body,thumbnail_url,image_url,image_hash,object_type,object_story_id,effective_object_story_id,object_story_spec,asset_feed_spec,call_to_action_type,video_id}",
+    limit: "50",
+    filtering: activeInventoryFilter(),
+  }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_PAGES", 100) });
+}
+
+async function fetchMetaAdsForStatusRefresh(metaAccountId: string) {
+  return graphPages<JsonRecord>(`${metaAccountId}/ads`, {
+    fields:
+      "id,name,campaign_id,adset_id,status,effective_status,created_time,updated_time,creative{id}",
+    limit: "100",
+    filtering: activeInventoryFilter(),
+  }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_STATUS_PAGES", 100) });
+}
+
+async function fetchMetaCampaignsForCatalogRefresh(metaAccountId: string) {
+  return graphPages<JsonRecord>(`${metaAccountId}/campaigns`, {
+    fields:
+      "id,name,objective,status,effective_status,buying_type,start_time,stop_time,created_time,updated_time",
+    limit: "100",
+  }, { maxPages: getSyncMaxPages("META_SYNC_MAX_CAMPAIGN_PAGES", 12) });
+}
+
+async function fetchMetaCampaignsForStatusRefresh(metaAccountId: string) {
+  return graphPages<JsonRecord>(`${metaAccountId}/campaigns`, {
+    fields: "id,name,status,effective_status,created_time,updated_time",
+    limit: "100",
+  }, { maxPages: getSyncMaxPages("META_SYNC_MAX_CAMPAIGN_STATUS_PAGES", 12) });
+}
+
+async function fetchMetaAdSetsForCatalogRefresh(metaAccountId: string) {
+  return graphPages<JsonRecord>(`${metaAccountId}/adsets`, {
+    fields:
+      "id,name,campaign_id,status,effective_status,optimization_goal,billing_event,bid_strategy,daily_budget,lifetime_budget,start_time,end_time,created_time,updated_time,targeting",
+    limit: "100",
+  }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_SET_PAGES", 12) });
+}
+
+async function fetchMetaAdSetsForStatusRefresh(metaAccountId: string) {
+  return graphPages<JsonRecord>(`${metaAccountId}/adsets`, {
+    fields: "id,name,campaign_id,status,effective_status,created_time,updated_time",
+    limit: "100",
+  }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_SET_STATUS_PAGES", 12) });
+}
+
 async function syncAccount(
   account: SyncAccountConfig,
   brandId: string | null,
@@ -595,6 +661,7 @@ async function syncAccount(
     insights?: InsightDateRange;
     refreshPreviews?: boolean;
     refreshAdCatalog?: boolean;
+    refreshAdStatusesOnly?: boolean;
     refreshRankingDiagnostics?: boolean;
     includeCreativeDiagnostics?: boolean;
     allowFinalizedInsightUpdates?: boolean;
@@ -605,6 +672,7 @@ async function syncAccount(
   const now = new Date().toISOString();
   const refreshPreviews = options.refreshPreviews ?? true;
   const refreshAdCatalog = options.refreshAdCatalog ?? true;
+  const refreshAdStatusesOnly = options.refreshAdStatusesOnly ?? false;
   const refreshRankingDiagnostics = options.refreshRankingDiagnostics ?? true;
   const includeCreativeDiagnostics = options.includeCreativeDiagnostics ?? true;
 
@@ -623,17 +691,13 @@ async function syncAccount(
     last_synced_at: now,
   }, "meta_account_id");
 
-  const campaigns = await graphPages<JsonRecord>(`${metaAccountId}/campaigns`, {
-    fields:
-      "id,name,objective,status,effective_status,buying_type,start_time,stop_time,created_time,updated_time",
-    limit: "100",
-  }, { maxPages: getSyncMaxPages("META_SYNC_MAX_CAMPAIGN_PAGES", 12) });
+  const campaigns = refreshAdStatusesOnly
+    ? await fetchMetaCampaignsForStatusRefresh(metaAccountId)
+    : await fetchMetaCampaignsForCatalogRefresh(metaAccountId);
 
-  const adSets = await graphPages<JsonRecord>(`${metaAccountId}/adsets`, {
-    fields:
-      "id,name,campaign_id,status,effective_status,optimization_goal,billing_event,bid_strategy,daily_budget,lifetime_budget,start_time,end_time,created_time,updated_time,targeting",
-    limit: "100",
-  }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_SET_PAGES", 12) });
+  const adSets = refreshAdStatusesOnly
+    ? await fetchMetaAdSetsForStatusRefresh(metaAccountId)
+    : await fetchMetaAdSetsForCatalogRefresh(metaAccountId);
 
   const overrides = await fetchCampaignUmbrellaOverrides(metaAccountId);
   const campaignRawByMetaId = new Map(campaigns.map((campaign) => [String(campaign.id), campaign]));
@@ -660,24 +724,29 @@ async function syncAccount(
       const campaignId = stringField(campaign.id);
       const classification = campaignClassifications.get(campaignId || "") ||
         classifyCampaignUmbrella({ campaignName: stringField(campaign.name) });
-
-      return {
+      const baseRow = {
         brand_id: brandId,
         account_id: accountRow.id,
         meta_account_id: metaAccountId,
         campaign_id: campaignId,
         name: stringField(campaign.name),
-        objective: stringField(campaign.objective),
-        buying_type: stringField(campaign.buying_type),
         status: stringField(campaign.status),
         effective_status: stringField(campaign.effective_status),
-        start_time: stringField(campaign.start_time),
-        stop_time: stringField(campaign.stop_time),
         created_time: stringField(campaign.created_time),
         updated_time: stringField(campaign.updated_time),
         ...umbrellaColumns(classification),
         raw_json: campaign,
         last_synced_at: now,
+      };
+
+      if (refreshAdStatusesOnly) return baseRow;
+
+      return {
+        ...baseRow,
+        objective: stringField(campaign.objective),
+        buying_type: stringField(campaign.buying_type),
+        start_time: stringField(campaign.start_time),
+        stop_time: stringField(campaign.stop_time),
       };
     }),
     "meta_account_id,campaign_id",
@@ -707,8 +776,7 @@ async function syncAccount(
       const adSetId = stringField(adSet.id);
       const classification = adSetClassifications.get(adSetId || "") ||
         classifyCampaignUmbrella({ adSetName: stringField(adSet.name) });
-
-      return {
+      const baseRow = {
         brand_id: brandId,
         account_id: accountRow.id,
         campaign_ref_id: campaignByMetaId.get(String(adSet.campaign_id))?.id || null,
@@ -718,6 +786,17 @@ async function syncAccount(
         name: stringField(adSet.name),
         status: stringField(adSet.status),
         effective_status: stringField(adSet.effective_status),
+        created_time: stringField(adSet.created_time),
+        updated_time: stringField(adSet.updated_time),
+        ...umbrellaColumns(classification),
+        raw_json: adSet,
+        last_synced_at: now,
+      };
+
+      if (refreshAdStatusesOnly) return baseRow;
+
+      return {
+        ...baseRow,
         optimization_goal: stringField(adSet.optimization_goal),
         billing_event: stringField(adSet.billing_event),
         bid_strategy: stringField(adSet.bid_strategy),
@@ -725,12 +804,7 @@ async function syncAccount(
         lifetime_budget: moneyCents(adSet.lifetime_budget),
         start_time: stringField(adSet.start_time),
         end_time: stringField(adSet.end_time),
-        created_time: stringField(adSet.created_time),
-        updated_time: stringField(adSet.updated_time),
         targeting: recordField(adSet.targeting),
-        ...umbrellaColumns(classification),
-        raw_json: adSet,
-        last_synced_at: now,
       };
     }),
     "meta_account_id,ad_set_id",
@@ -747,26 +821,10 @@ async function syncAccount(
   // meta_daily_insights — they're fetched via the /insights endpoint which
   // doesn't honor this filter. The backfill flow is unaffected.
   const ads = refreshAdCatalog
-    ? await graphPages<JsonRecord>(`${metaAccountId}/ads`, {
-        fields:
-          "id,name,campaign_id,adset_id,status,effective_status,created_time,updated_time,creative{id,name,title,body,thumbnail_url,image_url,image_hash,object_type,object_story_id,effective_object_story_id,object_story_spec,asset_feed_spec,call_to_action_type,video_id}",
-        limit: "50",
-        filtering: JSON.stringify([
-          {
-            field: "effective_status",
-            operator: "IN",
-            value: [
-              "ACTIVE",
-              "PAUSED",
-              "PENDING_REVIEW",
-              "WITH_ISSUES",
-              "CAMPAIGN_PAUSED",
-              "ADSET_PAUSED",
-            ],
-          },
-        ]),
-      }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_PAGES", 100) })
-    : [];
+    ? await fetchMetaAdsForCatalogRefresh(metaAccountId)
+    : refreshAdStatusesOnly
+      ? await fetchMetaAdsForStatusRefresh(metaAccountId)
+      : [];
   const storedAdRows = refreshAdCatalog ? [] : await fetchStoredAdRows(metaAccountId);
   const storedCreativeRows = refreshAdCatalog ? [] : await fetchStoredCreativeRows(metaAccountId);
 
@@ -784,47 +842,49 @@ async function syncAccount(
     }
   }
 
-  const creativeRowsInput = ads
-    .map((ad) => {
-      const creative = recordField(ad.creative);
-      const creativeId = stringField(creative.id);
-      if (!creativeId) return null;
-      const adPreview = previewByAdId.get(String(ad.id)) || null;
-      const preview = refreshPreviews ? chooseStoredPreview(creative, adPreview) : null;
-      return {
-        brand_id: brandId,
-        account_id: accountRow.id,
-        meta_account_id: metaAccountId,
-        creative_id: creativeId,
-        name: stringField(creative.name),
-        title: stringField(creative.title),
-        body: stringField(creative.body),
-        call_to_action_type: stringField(creative.call_to_action_type),
-        object_type: stringField(creative.object_type),
-        object_story_id: stringField(creative.object_story_id),
-        effective_object_story_id: stringField(creative.effective_object_story_id),
-        ...(refreshPreviews
-          ? {
-              thumbnail_url: stringField(creative.thumbnail_url),
-              image_url: stringField(creative.image_url),
-              video_thumbnail_url: stringField(creative.video_thumbnail_url),
-              preview_url: preview?.previewUrl || null,
-              preview_html: preview?.previewHtml || null,
-              preview_source: preview?.previewSource || "fallback",
-              last_preview_refresh_at: now,
-            }
-          : {}),
-        asset_metadata: {
-          image_hash: creative.image_hash || null,
-          video_id: creative.video_id || null,
-        },
-        object_story_spec: recordField(creative.object_story_spec),
-        asset_feed_spec: recordField(creative.asset_feed_spec),
-        raw_json: creative,
-        last_synced_at: now,
-      };
-    })
-    .filter(Boolean) as JsonRecord[];
+  const creativeRowsInput = refreshAdCatalog
+    ? ads
+        .map((ad) => {
+          const creative = recordField(ad.creative);
+          const creativeId = stringField(creative.id);
+          if (!creativeId) return null;
+          const adPreview = previewByAdId.get(String(ad.id)) || null;
+          const preview = refreshPreviews ? chooseStoredPreview(creative, adPreview) : null;
+          return {
+            brand_id: brandId,
+            account_id: accountRow.id,
+            meta_account_id: metaAccountId,
+            creative_id: creativeId,
+            name: stringField(creative.name),
+            title: stringField(creative.title),
+            body: stringField(creative.body),
+            call_to_action_type: stringField(creative.call_to_action_type),
+            object_type: stringField(creative.object_type),
+            object_story_id: stringField(creative.object_story_id),
+            effective_object_story_id: stringField(creative.effective_object_story_id),
+            ...(refreshPreviews
+              ? {
+                  thumbnail_url: stringField(creative.thumbnail_url),
+                  image_url: stringField(creative.image_url),
+                  video_thumbnail_url: stringField(creative.video_thumbnail_url),
+                  preview_url: preview?.previewUrl || null,
+                  preview_html: preview?.previewHtml || null,
+                  preview_source: preview?.previewSource || "fallback",
+                  last_preview_refresh_at: now,
+                }
+              : {}),
+            asset_metadata: {
+              image_hash: creative.image_hash || null,
+              video_id: creative.video_id || null,
+            },
+            object_story_spec: recordField(creative.object_story_spec),
+            asset_feed_spec: recordField(creative.asset_feed_spec),
+            raw_json: creative,
+            last_synced_at: now,
+          };
+        })
+        .filter(Boolean) as JsonRecord[]
+    : [];
 
   const creativeRows = await upsertMany(
     "meta_creatives",
@@ -835,7 +895,7 @@ async function syncAccount(
   const creativeByMetaId = new Map(activeCreativeRows.map((row) => [String(row.creative_id), row]));
 
   const adClassifications = new Map<string, CampaignUmbrellaClassification>();
-  if (refreshAdCatalog) {
+  if (refreshAdCatalog || refreshAdStatusesOnly) {
     for (const ad of ads) {
       const adId = stringField(ad.id);
       if (!adId) continue;
@@ -904,6 +964,42 @@ async function syncAccount(
         }),
         "meta_account_id,ad_id",
       )
+    : refreshAdStatusesOnly
+      ? mergeRowsByKey(
+          storedAdRows,
+          await upsertMany(
+            "meta_ads",
+            ads.map((ad) => {
+              const creative = recordField(ad.creative);
+              const creativeId = stringField(creative.id);
+              const adId = stringField(ad.id);
+              const classification = adClassifications.get(adId || "") ||
+                classifyCampaignUmbrella({ campaignName: stringField(ad.name) });
+              return {
+                brand_id: brandId,
+                account_id: accountRow.id,
+                campaign_ref_id: campaignByMetaId.get(String(ad.campaign_id))?.id || null,
+                ad_set_ref_id: adSetByMetaId.get(String(ad.adset_id))?.id || null,
+                creative_ref_id: creativeByMetaId.get(creativeId || "")?.id || null,
+                meta_account_id: metaAccountId,
+                campaign_id: stringField(ad.campaign_id),
+                ad_set_id: stringField(ad.adset_id),
+                ad_id: adId,
+                creative_id: creativeId,
+                name: stringField(ad.name),
+                status: stringField(ad.status),
+                effective_status: stringField(ad.effective_status),
+                created_time: stringField(ad.created_time),
+                updated_time: stringField(ad.updated_time),
+                ...umbrellaColumns(classification),
+                raw_json: ad,
+                last_synced_at: now,
+              };
+            }),
+            "meta_account_id,ad_id",
+          ),
+          "ad_id",
+        )
     : storedAdRows;
   const adByMetaId = new Map(adRows.map((row) => [String(row.ad_id), row]));
 
@@ -2057,6 +2153,26 @@ async function upsertMany(table: string, rows: JsonRecord[], onConflict: string)
   }
 
   return results;
+}
+
+function mergeRowsByKey(
+  storedRows: JsonRecord[],
+  refreshedRows: JsonRecord[],
+  key: string,
+) {
+  const rowsByKey = new Map<string, JsonRecord>();
+
+  for (const row of storedRows) {
+    const value = stringField(row[key]);
+    if (value) rowsByKey.set(value, row);
+  }
+
+  for (const row of refreshedRows) {
+    const value = stringField(row[key]);
+    if (value) rowsByKey.set(value, row);
+  }
+
+  return Array.from(rowsByKey.values());
 }
 
 function normalizeAccountId(accountId: string) {

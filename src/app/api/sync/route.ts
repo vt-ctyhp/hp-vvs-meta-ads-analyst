@@ -16,7 +16,7 @@ export async function POST(request: Request) {
     const trigger = await parseSyncTrigger(request);
     if (!trigger) {
       return Response.json(
-        { error: "Unsupported sync mode. Use incremental or catalog." },
+        { error: "Unsupported sync mode. Use incremental, diagnostics, or catalog." },
         { status: 400 },
       );
     }
@@ -38,6 +38,7 @@ async function parseSyncTrigger(request: Request): Promise<MetaAdsSyncTrigger | 
   }
 
   if (mode === "catalog") return "manual_catalog";
+  if (mode === "diagnostics") return "manual_diagnostics";
 
   return null;
 }

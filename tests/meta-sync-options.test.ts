@@ -8,6 +8,7 @@ describe("syncOptionsForTrigger", () => {
     assert.deepEqual(syncOptionsForTrigger("manual"), {
       refreshPreviews: false,
       refreshAdCatalog: false,
+      refreshAdStatusesOnly: false,
       refreshRankingDiagnostics: false,
       includeCreativeDiagnostics: false,
     });
@@ -21,6 +22,7 @@ describe("syncOptionsForTrigger", () => {
     assert.deepEqual(syncOptionsForTrigger("manual_catalog"), {
       refreshPreviews: true,
       refreshAdCatalog: true,
+      refreshAdStatusesOnly: false,
       refreshRankingDiagnostics: true,
       includeCreativeDiagnostics: true,
     });
@@ -31,5 +33,15 @@ describe("syncOptionsForTrigger", () => {
       syncOptionsForTrigger("cron_catalog"),
       syncOptionsForTrigger("manual_catalog"),
     );
+  });
+
+  it("refreshes live diagnostics without refreshing creative media", () => {
+    assert.deepEqual(syncOptionsForTrigger("manual_diagnostics"), {
+      refreshPreviews: false,
+      refreshAdCatalog: false,
+      refreshAdStatusesOnly: true,
+      refreshRankingDiagnostics: true,
+      includeCreativeDiagnostics: true,
+    });
   });
 });
