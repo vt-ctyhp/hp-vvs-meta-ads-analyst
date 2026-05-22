@@ -1,0 +1,4 @@
+interface:
+  display_name: "Meta Ads Data Accuracy"
+  short_description: "Audit Meta Ads AI numbers end-to-end"
+  default_prompt: "Use $meta-ads-data-accuracy to audit dashboard, AI, and export numbers against Supabase."
