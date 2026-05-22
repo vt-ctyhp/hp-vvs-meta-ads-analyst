@@ -504,14 +504,17 @@ function CapiChip({
 }) {
   if (!hasConversion) {
     return (
-      <span className="inline-flex h-[22px] items-center border border-hp-rule bg-hp-card px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-hp-muted">
+      <span
+        title="No booking conversion"
+        className="inline-flex h-7 items-center justify-center whitespace-nowrap border border-hp-rule bg-hp-card px-2 text-[9px] font-bold uppercase leading-none tracking-[0.06em] text-hp-muted"
+      >
         no booking
       </span>
     );
   }
   if (!status)
     return (
-      <span className="inline-flex h-[22px] items-center border border-hp-rule bg-hp-card px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-hp-muted">
+      <span className="inline-flex h-[22px] items-center whitespace-nowrap border border-hp-rule bg-hp-card px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-hp-muted">
         none
       </span>
     );
@@ -524,7 +527,7 @@ function CapiChip({
         : "border-signal-danger bg-signal-danger-bg text-signal-danger";
   return (
     <span
-      className={`inline-flex h-[22px] items-center border px-2 text-[10px] font-bold uppercase tracking-[0.14em] ${style}`}
+      className={`inline-flex h-[22px] items-center whitespace-nowrap border px-2 text-[10px] font-bold uppercase tracking-[0.14em] ${style}`}
     >
       {status}
     </span>

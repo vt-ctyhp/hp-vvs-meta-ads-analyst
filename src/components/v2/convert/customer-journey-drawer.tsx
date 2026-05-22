@@ -76,8 +76,12 @@ export function CustomerJourneyDrawer({
       >
         <header className="border-b border-hp-rule bg-hp-inset px-5 py-4">
           <div className="flex items-start justify-between gap-4">
-            <div className="flex min-w-0 gap-3">
-              <CreativeHeroThumb row={row} />
+            <div className="flex min-w-0 gap-4">
+              <CreativePreview
+                className="h-28 w-28 shrink-0 border border-hp-rule bg-hp-card"
+                preview={row.creativePreview}
+                title={title}
+              />
               <div className="min-w-0">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-hp-muted">
                   Customer journey
@@ -97,6 +101,10 @@ export function CustomerJourneyDrawer({
                   </span>
                   {row.customerEmail ? <span>{row.customerEmail}</span> : null}
                   {row.customerPhone ? <span>{row.customerPhone}</span> : null}
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {row.brand ? <BrandChip value={row.brand} /> : null}
+                  <CapiStatusChip status={detail?.capi.status || row.capiStatus} />
                 </div>
               </div>
             </div>
@@ -278,10 +286,10 @@ function CreativePreviewPanel({ row }: { row: CustomerLedgerRow }) {
 
   return (
     <section className="grid gap-4 border-b border-hp-rule p-5 lg:grid-cols-[220px_1fr]">
-      <CreativeMedia
-        alt={title}
+      <CreativePreview
         className="aspect-[4/3] w-full border border-hp-rule bg-hp-inset"
-        src={preview?.imageUrl || preview?.thumbnailUrl}
+        preview={preview}
+        title={title}
       />
       <div className="min-w-0">
         <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-hp-muted">
@@ -309,52 +317,83 @@ function CreativePreviewPanel({ row }: { row: CustomerLedgerRow }) {
   );
 }
 
-function CreativeHeroThumb({ row }: { row: CustomerLedgerRow }) {
-  const preview = row.creativePreview;
-  const label =
-    preview?.creativeName ||
-    preview?.title ||
-    preview?.adName ||
-    row.paidTouchCampaign ||
-    "Creative preview";
-
-  return (
-    <CreativeMedia
-      alt={label}
-      className="h-14 w-14 shrink-0 border border-hp-rule bg-hp-inset"
-      src={preview?.thumbnailUrl || preview?.imageUrl}
-    />
-  );
-}
-
-function CreativeMedia({
-  alt,
+function CreativePreview({
   className,
-  src,
+  preview,
+  title,
 }: {
-  alt: string;
   className: string;
-  src?: string | null;
+  preview: CustomerLedgerRow["creativePreview"];
+  title: string;
 }) {
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
-  const failed = Boolean(src && failedSrc === src);
+  const imageSrc = preview?.thumbnailUrl || preview?.imageUrl;
+  const failed = Boolean(imageSrc && failedSrc === imageSrc);
 
-  if (!src || failed) {
+  if (preview?.previewHtml && preview.previewSource === "ad_preview") {
     return (
-      <div className={`flex items-center justify-center text-hp-muted ${className}`}>
-        <ImageIcon size={20} aria-hidden />
-      </div>
+      <iframe
+        title={`${title} preview`}
+        srcDoc={preview.previewHtml}
+        sandbox=""
+        className={className}
+      />
+    );
+  }
+
+  if (imageSrc && !failed) {
+    return (
+      <img
+        src={imageSrc}
+        alt={title}
+        className={`object-cover ${className}`}
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        onError={() => setFailedSrc(imageSrc)}
+      />
     );
   }
 
   return (
-    <img
-      alt={alt}
-      className={`object-cover ${className}`}
-      onError={() => setFailedSrc(src)}
-      src={src}
-    />
+    <div className={`flex items-center justify-center text-hp-muted ${className}`}>
+      <ImageIcon size={20} aria-hidden />
+    </div>
   );
+}
+
+function BrandChip({ value }: { value: string }) {
+  return (
+    <span className="inline-flex h-6 items-center border border-hp-rule bg-hp-card px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-hp-ink">
+      {value}
+    </span>
+  );
+}
+
+function CapiStatusChip({ status }: { status: string | null | undefined }) {
+  const label = status || "n/a";
+  return (
+    <span
+      className={`inline-flex h-6 items-center border px-2 text-[10px] font-bold uppercase tracking-[0.14em] ${capiStatusClass(
+        label,
+      )}`}
+    >
+      CAPI {label}
+    </span>
+  );
+}
+
+function capiStatusClass(status: string) {
+  const value = status.toLowerCase();
+  if (value === "success" || value === "sent") {
+    return "border-signal-positive bg-signal-positive-bg text-signal-positive";
+  }
+  if (value === "queued" || value === "pending") {
+    return "border-signal-warning bg-signal-warning-bg text-signal-warning";
+  }
+  if (value === "error" || value === "failed" || value === "missing") {
+    return "border-signal-danger bg-signal-danger-bg text-signal-danger";
+  }
+  return "border-hp-rule bg-hp-card text-hp-muted";
 }
 
 function DetailMiniMetric({
@@ -375,7 +414,7 @@ function DetailMiniMetric({
         </p>
         <Icon size={15} className="text-hp-muted" />
       </div>
-      <p className="mt-2 truncate font-[family-name:var(--font-title)] text-lg text-hp-ink" title={title}>
+      <p className="mt-2 truncate font-[family-name:var(--font-title)] text-[22px] leading-none text-hp-ink" title={title}>
         {value}
       </p>
     </div>
@@ -474,7 +513,7 @@ function TimelineSection({ events }: { events: CustomerJourneyLedgerTimelineEven
       </div>
 
       {events.length ? (
-        <ol className="mt-4 overflow-hidden border border-hp-rule bg-hp-card">
+        <ol className="mt-5">
           {events.map((event, index) => (
             <TimelineEventItem
               key={`${event.occurredAt}-${event.eventId || event.label}-${index}`}
@@ -512,27 +551,31 @@ function TimelineEventItem({
   ].filter(Boolean);
 
   return (
-    <li
-      className={`grid gap-3 px-4 py-4 sm:grid-cols-[112px_1fr] ${
-        isLast ? "" : "border-b border-hp-rule-soft"
-      }`}
-    >
-      <time className="text-xs leading-5 text-hp-muted" dateTime={event.occurredAt}>
+    <li className="grid grid-cols-[78px_22px_1fr] gap-3">
+      <time
+        className="pt-0.5 text-[10px] uppercase leading-5 tracking-[0.12em] text-hp-muted"
+        dateTime={event.occurredAt}
+      >
         {formatTimelineDate(event.occurredAt)}
       </time>
-      <div className="min-w-0">
+      <div className="relative flex justify-center">
+        {!isLast ? (
+          <span aria-hidden className="absolute top-5 bottom-0 w-px bg-hp-rule-soft" />
+        ) : null}
+        <span
+          aria-hidden
+          className={`relative z-10 mt-1 h-3 w-3 border ${timelineDotClass(event.category)}`}
+        />
+      </div>
+      <div className={`min-w-0 pb-5 ${isLast ? "" : "border-b border-hp-rule-soft"}`}>
         <div className="flex flex-wrap items-center gap-2">
-          <span
-            className={`border px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em] ${timelineTone(
-              event.category,
-            )}`}
-          >
+          <h5 className="font-[family-name:var(--font-title)] text-base text-hp-ink">{event.label}</h5>
+          <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
             {categoryLabel(event.category)}
           </span>
-          <h5 className="font-[family-name:var(--font-title)] text-base text-hp-ink">{event.label}</h5>
         </div>
 
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-hp-muted">
+        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs leading-5 text-hp-muted">
           <span>
             {joinedDetail(event.source, event.medium, event.content, event.placement) ||
               "No source detail"}
@@ -693,17 +736,14 @@ function categoryLabel(category: CustomerJourneyLedgerTimelineEvent["category"])
   return labels[category];
 }
 
-function timelineTone(category: CustomerJourneyLedgerTimelineEvent["category"]) {
+function timelineDotClass(category: CustomerJourneyLedgerTimelineEvent["category"]) {
   if (category === "ad_touch") {
-    return "border-hp-pink bg-hp-card text-hp-pink";
+    return "border-hp-pink bg-hp-pink";
   }
   if (category === "booking" || category === "conversion") {
-    return "border-signal-positive bg-signal-positive-bg text-signal-positive";
+    return "border-signal-positive bg-signal-positive";
   }
-  if (category === "capi") {
-    return "border-signal-warning bg-signal-warning-bg text-signal-warning";
-  }
-  return "border-hp-rule bg-hp-card text-hp-muted";
+  return "border-hp-rule bg-hp-card";
 }
 
 function joinedDetail(...values: Array<string | null | undefined>) {

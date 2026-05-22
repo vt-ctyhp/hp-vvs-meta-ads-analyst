@@ -269,7 +269,7 @@ export function AnalysisClient({
       <header
         className={
           isPanel
-            ? "flex flex-col gap-4 rounded-xl border border-hp-rule bg-hp-card p-4 md:flex-row md:items-end md:justify-between"
+            ? "flex flex-col gap-4 border border-hp-rule bg-hp-card p-4 md:flex-row md:items-end md:justify-between"
             : "mx-auto flex max-w-7xl flex-col gap-5 border-b border-hp-rule pb-6 md:flex-row md:items-end md:justify-between"
         }
       >
@@ -782,7 +782,7 @@ function MetricWidget({
           <div className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
             {labelFor(metric)}
           </div>
-          <div className="mt-3 text-2xl tabular-nums text-hp-ink">
+          <div className="mt-3 font-[family-name:var(--font-title)] text-3xl leading-none tabular-nums text-hp-ink">
             {formatMetricValue(result.totals[metric], metric)}
           </div>
         </div>
@@ -891,7 +891,7 @@ function TableWidget({
                         </span>
                       </td>
                       {groupedTable.subtotalColumn ? (
-                        <td className="px-3 py-3 text-right tabular-nums text-hp-ink">
+                        <td className="px-3 py-3 text-right font-[family-name:var(--font-title)] text-[17px] tabular-nums text-hp-ink">
                           {formatCell(group.subtotal, groupedTable.subtotalColumn)}
                         </td>
                       ) : null}
@@ -904,7 +904,7 @@ function TableWidget({
                             className={`px-3 py-3 ${
                               column.type === "text"
                                 ? "max-w-[420px] pl-6 text-hp-ink"
-                                : "text-right tabular-nums"
+                                : "text-right font-[family-name:var(--font-title)] text-[17px] tabular-nums text-hp-ink"
                             }`}
                           >
                             {formatCell(row[column.key], column)}
@@ -922,7 +922,7 @@ function TableWidget({
                         className={`px-3 py-3 ${
                           column.type === "text"
                             ? "max-w-[360px] text-hp-ink"
-                            : "text-right tabular-nums"
+                            : "text-right font-[family-name:var(--font-title)] text-[17px] tabular-nums text-hp-ink"
                         }`}
                       >
                         {formatCell(row[column.key], column)}
@@ -1011,7 +1011,7 @@ function SectionTitle({ icon, title }: { icon: React.ReactNode; title: string })
 const tooltipStyle = {
   background: "#FBF7F1",
   border: "1px solid #D4CFC4",
-  borderRadius: 2,
+  borderRadius: 0,
   color: "#2A2725",
 };
 

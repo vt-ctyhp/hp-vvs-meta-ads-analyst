@@ -95,25 +95,27 @@ export function WorkspaceNav({ rooms, permissions }: Props) {
               <ChevronDown size={14} aria-hidden />
             </Link>
             {visibleItems.length ? (
-              <div className="invisible absolute left-0 top-full z-50 mt-2 w-56 border border-hp-rule bg-hp-card p-1 opacity-0 shadow-lg transition group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
-                {visibleItems.map((item) => {
-                  const itemActive = activeItemHref === item.href;
-                  return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      aria-current={itemActive ? "page" : undefined}
-                      className={[
-                        "block px-3 py-2 text-sm transition-colors",
-                        itemActive
-                          ? "bg-hp-ink text-hp-foundation"
-                          : "text-hp-body hover:bg-hp-inset hover:text-hp-ink",
-                      ].join(" ")}
-                    >
-                      {item.label}
-                    </Link>
-                  );
-                })}
+              <div className="invisible absolute left-0 top-full z-50 pt-2 opacity-0 transition group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
+                <div className="w-56 border border-hp-rule bg-hp-card p-1 shadow-lg">
+                  {visibleItems.map((item) => {
+                    const itemActive = activeItemHref === item.href;
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        aria-current={itemActive ? "page" : undefined}
+                        className={[
+                          "block px-3 py-2 text-sm transition-colors",
+                          itemActive
+                            ? "bg-hp-ink text-hp-foundation"
+                            : "text-hp-body hover:bg-hp-inset hover:text-hp-ink",
+                        ].join(" ")}
+                      >
+                        {item.label}
+                      </Link>
+                    );
+                  })}
+                </div>
               </div>
             ) : null}
           </div>

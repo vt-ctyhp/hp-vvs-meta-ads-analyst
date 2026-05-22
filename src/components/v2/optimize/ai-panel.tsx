@@ -338,35 +338,61 @@ export function OptimizeAiPanel({
 
   if (!canUseAdHocAnalysis) {
     return (
-      <section className="rounded-xl border border-stone-200 bg-white p-6 text-sm text-stone-600">
+      <section className="border border-hp-rule bg-hp-card p-6 text-sm text-hp-muted">
         AI analysis tools require AI Analysis access.
       </section>
     );
   }
 
   return (
-    <section className="space-y-5">
-      <section className="rounded-xl border border-stone-200 bg-white p-4">
+    <section className="space-y-6">
+      <header className="border-b border-hp-rule pb-6">
+        <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+              Analyst room
+            </p>
+            <h1 className="mt-2 font-[family-name:var(--font-title)] text-4xl leading-tight text-hp-ink md:text-5xl">
+              AI Analysis
+            </h1>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-hp-body">
+              Ask ad-hoc Meta Ads questions, build reusable dashboard specs, and load saved analysis against the selected data range.
+            </p>
+          </div>
+          <div className="border border-hp-rule bg-hp-card px-4 py-3">
+            <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+              Selected range
+            </p>
+            <p className="mt-1 font-[family-name:var(--font-title)] text-2xl leading-none text-hp-ink">
+              {requestedRangeLabel}
+            </p>
+          </div>
+        </div>
+      </header>
+
+      <section className="border border-hp-rule bg-hp-card p-5 sm:p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0 flex-1">
-            <div className="mb-3 flex items-center gap-2 text-stone-950">
+            <div className="mb-4 flex items-center gap-2 text-hp-ink">
               <Bot size={18} />
-              <h2 className="text-sm font-semibold">Decision copilot</h2>
+              <h2 className="font-[family-name:var(--font-title)] text-2xl leading-tight">
+                Decision copilot
+              </h2>
             </div>
             <textarea
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
               rows={4}
-              className="w-full resize-none rounded-md border border-stone-300 bg-white px-3 py-2 text-sm leading-6 outline-none focus:ring-2 focus:ring-stone-400"
+              className="w-full resize-none border border-hp-rule bg-hp-inset px-3 py-2 text-sm leading-6 text-hp-body outline-none placeholder:text-hp-muted focus:border-hp-pink"
               placeholder="Ask a question or describe the analysis to build"
             />
           </div>
 
           <div className="w-full space-y-3 lg:w-80">
             <RangeBadge label={requestedRangeLabel} />
-            <div className="relative rounded-lg border border-stone-200 p-3">
+            <div className="relative border border-hp-rule p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.14em] text-stone-500">
+                <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.14em] text-hp-muted">
                   <Sparkles size={15} />
                   Build depth
                 </div>
@@ -375,20 +401,20 @@ export function OptimizeAiPanel({
                   aria-expanded={showModeHelp}
                   aria-label="Show mode help"
                   onClick={() => setShowModeHelp((value) => !value)}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-md text-stone-500 hover:bg-stone-100 hover:text-stone-950"
+                  className="inline-flex h-7 w-7 items-center justify-center text-hp-muted hover:bg-hp-inset hover:text-hp-ink"
                 >
                   <HelpCircle size={15} />
                 </button>
               </div>
-              <div className="grid grid-cols-2 overflow-hidden rounded-md border border-stone-200">
+              <div className="grid grid-cols-2 border border-hp-rule">
                 <button
                   type="button"
                   onClick={() => setMode("fast")}
                   className={[
                     "h-9 text-sm font-medium transition-colors",
                     mode === "fast"
-                      ? "bg-stone-900 text-stone-50"
-                      : "bg-white text-stone-700 hover:bg-stone-100",
+                      ? "bg-hp-ink text-hp-foundation"
+                      : "bg-hp-card text-hp-body hover:bg-hp-inset",
                   ].join(" ")}
                 >
                   Fast
@@ -397,23 +423,23 @@ export function OptimizeAiPanel({
                   type="button"
                   onClick={() => setMode("deep")}
                   className={[
-                    "h-9 border-l border-stone-200 text-sm font-medium transition-colors",
+                    "h-9 border-l border-hp-rule text-sm font-medium transition-colors",
                     mode === "deep"
-                      ? "bg-stone-900 text-stone-50"
-                      : "bg-white text-stone-700 hover:bg-stone-100",
+                      ? "bg-hp-ink text-hp-foundation"
+                      : "bg-hp-card text-hp-body hover:bg-hp-inset",
                   ].join(" ")}
                 >
                   Deep
                 </button>
               </div>
               {showModeHelp ? (
-                <div className="absolute right-3 top-10 z-10 w-72 rounded-lg border border-stone-200 bg-white p-3 text-xs leading-5 text-stone-600 shadow-lg">
+                <div className="absolute right-3 top-10 z-10 w-72 border border-hp-rule bg-hp-card p-3 text-xs leading-5 text-hp-body shadow-lg">
                   <p>
-                    <span className="font-medium text-stone-950">Fast</span> is for simple cuts,
+                    <span className="font-medium text-hp-ink">Fast</span> is for simple cuts,
                     quick comparisons, and normal dashboard builds.
                   </p>
                   <p className="mt-2">
-                    <span className="font-medium text-stone-950">Deep</span> is for
+                    <span className="font-medium text-hp-ink">Deep</span> is for
                     interpretation-heavy or multi-step analysis.
                   </p>
                 </div>
@@ -427,7 +453,7 @@ export function OptimizeAiPanel({
             type="button"
             onClick={() => void sendChatMessage()}
             disabled={isChatting || !prompt.trim()}
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-stone-900 px-4 text-sm font-medium text-stone-50 hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
+            className="inline-flex h-10 items-center justify-center gap-2 bg-hp-ink px-4 text-sm font-medium text-hp-foundation transition-colors hover:bg-hp-pink disabled:cursor-not-allowed disabled:bg-hp-inset disabled:text-hp-muted disabled:hover:bg-hp-inset"
           >
             {isChatting ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
             Ask
@@ -436,7 +462,7 @@ export function OptimizeAiPanel({
             type="button"
             onClick={() => void buildAnalysis()}
             disabled={isBuilding || !prompt.trim()}
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-stone-900 px-4 text-sm font-medium text-stone-900 hover:bg-stone-900 hover:text-stone-50 disabled:cursor-not-allowed disabled:border-stone-300 disabled:text-stone-400 disabled:hover:bg-white"
+            className="inline-flex h-10 items-center justify-center gap-2 border border-hp-ink px-4 text-sm font-medium text-hp-ink transition-colors hover:bg-hp-ink hover:text-hp-foundation disabled:cursor-not-allowed disabled:border-hp-rule disabled:text-hp-muted disabled:hover:bg-transparent disabled:hover:text-hp-muted"
           >
             {isBuilding ? <Loader2 size={16} className="animate-spin" /> : <BarChart3 size={16} />}
             Build analysis
@@ -464,25 +490,25 @@ export function OptimizeAiPanel({
       />
 
       {chatMessages.length ? (
-        <section className="rounded-xl border border-stone-200 bg-white p-4">
-          <div className="mb-4 flex items-center gap-2 text-stone-950">
+        <section className="border border-hp-rule bg-hp-card p-5">
+          <div className="mb-4 flex items-center gap-2 text-hp-ink">
             <Bot size={18} />
-            <h2 className="text-sm font-semibold">Ask AI</h2>
+            <h2 className="font-[family-name:var(--font-title)] text-2xl leading-tight">Ask AI</h2>
           </div>
           <div className="space-y-3">
             {chatMessages.map((message, index) => (
               <article
                 key={`${message.role}-${index}`}
                 className={[
-                  "rounded-lg border p-3 text-sm leading-6 [overflow-wrap:anywhere]",
+                  "border p-3 text-sm leading-6 [overflow-wrap:anywhere]",
                   message.role === "user"
-                    ? "border-stone-200 bg-stone-50 text-stone-950"
-                    : "border-stone-200 bg-white text-stone-700",
+                    ? "border-hp-rule bg-hp-inset text-hp-ink"
+                    : "border-hp-rule bg-hp-card text-hp-body",
                 ].join(" ")}
               >
-                <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-wider text-stone-400">
+                <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-wider text-hp-muted">
                   <span>{message.role}</span>
-                  <span className="h-1 w-1 rounded-full bg-stone-300" />
+                  <span className="h-1 w-1 bg-hp-rule" />
                   <span>{message.rangeLabel}</span>
                 </div>
                 {message.content}
@@ -495,10 +521,10 @@ export function OptimizeAiPanel({
       {analysisActionStatus || analysisStatus ? (
         <section
           className={[
-            "rounded-xl border p-4 text-sm",
+            "border p-4 text-sm",
             analysisStatus
-              ? "border-rose-200 bg-rose-50 text-rose-900"
-              : "border-emerald-200 bg-emerald-50 text-emerald-900",
+              ? "border-signal-danger bg-signal-danger-bg text-signal-danger"
+              : "border-signal-positive bg-signal-positive-bg text-signal-positive",
           ].join(" ")}
         >
           {analysisStatus || analysisActionStatus}
@@ -507,24 +533,28 @@ export function OptimizeAiPanel({
 
       {analysisResult ? (
         <section className="space-y-5">
-          <section className="rounded-xl border border-stone-200 bg-white p-4">
+          <section className="border border-hp-rule bg-hp-card p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="text-sm font-semibold text-stone-950">Built analysis</h2>
-                <p className="mt-1 text-xs text-stone-500">
+                <h2 className="font-[family-name:var(--font-title)] text-2xl leading-tight text-hp-ink">
+                  Built analysis
+                </h2>
+                <p className="mt-1 text-xs text-hp-muted">
                   Data range: {formatAnalysisRange(analysisResult)}
                 </p>
               </div>
-              <div className="rounded-full border border-stone-200 px-3 py-1 text-xs uppercase tracking-[0.14em] text-stone-500">
+              <div className="border border-hp-rule px-3 py-1 text-xs uppercase tracking-[0.14em] text-hp-muted">
                 {analysisResult.mode}
               </div>
             </div>
           </section>
           {analysisResult.dashboardId ? (
-            <section className="rounded-xl border border-stone-200 bg-white p-4">
-              <div className="mb-3 flex items-center gap-2 text-stone-950">
+            <section className="border border-hp-rule bg-hp-card p-4">
+              <div className="mb-3 flex items-center gap-2 text-hp-ink">
                 <Sparkles size={16} />
-                <h2 className="text-sm font-semibold">Edit saved analysis</h2>
+                <h2 className="font-[family-name:var(--font-title)] text-2xl leading-tight">
+                  Edit saved analysis
+                </h2>
               </div>
               <div className="flex flex-col gap-3 lg:flex-row">
                 <textarea
@@ -532,13 +562,13 @@ export function OptimizeAiPanel({
                   onChange={(event) => setEditPrompt(event.target.value)}
                   rows={3}
                   placeholder="Add a comparison, change the grouping, or revise the dashboard layout."
-                  className="min-h-24 flex-1 resize-none rounded-md border border-stone-300 bg-white px-3 py-2 text-sm leading-6 outline-none focus:ring-2 focus:ring-stone-400"
+                  className="min-h-24 flex-1 resize-none border border-hp-rule bg-hp-inset px-3 py-2 text-sm leading-6 text-hp-body outline-none placeholder:text-hp-muted focus:border-hp-pink"
                 />
                 <button
                   type="button"
                   onClick={() => void applyDashboardEdit()}
                   disabled={isBuilding || !editPrompt.trim()}
-                  className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-stone-900 px-4 text-sm font-medium text-stone-50 hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300 lg:self-end"
+                  className="inline-flex h-10 items-center justify-center gap-2 bg-hp-ink px-4 text-sm font-medium text-hp-foundation transition-colors hover:bg-hp-pink disabled:cursor-not-allowed disabled:bg-hp-inset disabled:text-hp-muted disabled:hover:bg-hp-inset lg:self-end"
                 >
                   {isBuilding ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
                   Update analysis
@@ -577,35 +607,35 @@ function SavedAnalysisDrawer({
   onDelete: (dashboardId: string) => void;
 }) {
   return (
-    <details className="group rounded-xl border border-stone-200 bg-white">
+    <details className="group border border-hp-rule bg-hp-card">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
-        <div className="flex items-center gap-2 text-stone-950">
+        <div className="flex items-center gap-2 text-hp-ink">
           <History size={18} />
-          <span className="text-sm font-semibold">Saved analyses</span>
-          <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-500">
+          <span className="font-[family-name:var(--font-title)] text-xl leading-tight">Saved analyses</span>
+          <span className="border border-hp-rule bg-hp-inset px-2 py-0.5 text-xs text-hp-muted">
             {saved.length}
           </span>
         </div>
         <ChevronDown
           size={17}
-          className="text-stone-500 transition-transform group-open:rotate-180"
+          className="text-hp-muted transition-transform group-open:rotate-180"
         />
       </summary>
-      <div className="border-t border-stone-200 p-4">
+      <div className="border-t border-hp-rule p-4">
         {saved.length ? (
           <div className="grid gap-3 lg:grid-cols-2">
             {saved.map((dashboard) => (
-              <article key={dashboard.id} className="rounded-lg border border-stone-200 p-3">
+              <article key={dashboard.id} className="border border-hp-rule p-3">
                 <button
                   type="button"
                   onClick={() => onLoad(dashboard.id)}
                   disabled={isLoading}
                   className="block w-full text-left disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <div className="line-clamp-2 text-sm font-medium text-stone-950">
+                  <div className="line-clamp-2 text-sm font-medium text-hp-ink">
                     {dashboard.title}
                   </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-stone-500">
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
                     <span>{dashboard.mode}</span>
                     <span>{new Date(dashboard.updatedAt).toLocaleDateString()}</span>
                   </div>
@@ -615,7 +645,7 @@ function SavedAnalysisDrawer({
                     <input
                       value={renameDraft}
                       onChange={(event) => onRenameDraftChange(event.target.value)}
-                      className="min-w-0 flex-1 rounded-md border border-stone-300 px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-stone-400"
+                      className="min-w-0 flex-1 border border-hp-rule bg-hp-inset px-2 py-1 text-sm text-hp-body outline-none focus:border-hp-pink"
                       aria-label="Rename saved dashboard"
                     />
                     <button
@@ -623,7 +653,7 @@ function SavedAnalysisDrawer({
                       onClick={() => onSaveRename(dashboard.id)}
                       disabled={isLoading || !renameDraft.trim()}
                       title="Save name"
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-stone-900 text-stone-900 hover:bg-stone-900 hover:text-stone-50 disabled:cursor-not-allowed disabled:border-stone-300 disabled:text-stone-400"
+                      className="inline-flex h-8 w-8 items-center justify-center border border-hp-ink text-hp-ink hover:bg-hp-ink hover:text-hp-foundation disabled:cursor-not-allowed disabled:border-hp-rule disabled:text-hp-muted"
                     >
                       <Check size={14} />
                     </button>
@@ -631,7 +661,7 @@ function SavedAnalysisDrawer({
                       type="button"
                       onClick={onCancelRename}
                       title="Cancel rename"
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-stone-300 text-stone-600 hover:border-stone-900 hover:text-stone-950"
+                      className="inline-flex h-8 w-8 items-center justify-center border border-hp-rule text-hp-muted hover:border-hp-ink hover:text-hp-ink"
                     >
                       <X size={14} />
                     </button>
@@ -641,7 +671,7 @@ function SavedAnalysisDrawer({
                     <button
                       type="button"
                       onClick={() => onStartRename(dashboard)}
-                      className="inline-flex h-8 flex-1 items-center justify-center gap-2 rounded-md border border-stone-200 text-xs text-stone-600 hover:border-stone-900 hover:text-stone-950"
+                      className="inline-flex h-8 flex-1 items-center justify-center gap-2 border border-hp-rule text-xs text-hp-muted hover:border-hp-ink hover:text-hp-ink"
                     >
                       <Pencil size={13} />
                       Rename
@@ -649,7 +679,7 @@ function SavedAnalysisDrawer({
                     <button
                       type="button"
                       onClick={() => onDelete(dashboard.id)}
-                      className="inline-flex h-8 flex-1 items-center justify-center gap-2 rounded-md border border-stone-200 text-xs text-rose-700 hover:border-rose-300 hover:bg-rose-50"
+                      className="inline-flex h-8 flex-1 items-center justify-center gap-2 border border-hp-rule text-xs text-signal-danger hover:border-signal-danger hover:bg-signal-danger-bg"
                     >
                       <Trash2 size={13} />
                       Delete
@@ -660,7 +690,7 @@ function SavedAnalysisDrawer({
             ))}
           </div>
         ) : (
-          <p className="text-sm text-stone-500">No saved analyses yet.</p>
+          <p className="text-sm text-hp-muted">No saved analyses yet.</p>
         )}
       </div>
     </details>
@@ -669,8 +699,8 @@ function SavedAnalysisDrawer({
 
 function RangeBadge({ label }: { label: string }) {
   return (
-    <div className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-600">
-      <span className="font-medium text-stone-950">Selected data range:</span> {label}
+    <div className="border border-hp-rule bg-hp-inset px-3 py-2 text-xs text-hp-body">
+      <span className="font-medium text-hp-ink">Selected data range:</span> {label}
     </div>
   );
 }
