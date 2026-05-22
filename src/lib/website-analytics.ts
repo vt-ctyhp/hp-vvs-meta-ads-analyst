@@ -31,6 +31,8 @@ const DEFAULT_ALLOWED_ORIGINS = [
 ];
 const DEFAULT_ALLOWED_WILDCARDS = ["*.shopifypreview.com"];
 const MAX_EVENTS = 15000;
+const MAX_META_INSIGHT_ROWS = 50000;
+const SUPABASE_PAGE_SIZE = 1000;
 const MAX_APPOINTMENT_CONVERSIONS = 2000;
 
 const jsonObjectSchema = z.record(z.string(), z.unknown()).catch({});
@@ -447,6 +449,7 @@ type WebsiteSelectChain<T> = PromiseLike<{ data: T | null; error: Error | null }
   lte: (column: string, value: unknown) => WebsiteSelectChain<T>;
   order: (column: string, options: { ascending: boolean }) => WebsiteSelectChain<T>;
   limit: (count: number) => WebsiteSelectChain<T>;
+  range: (from: number, to: number) => WebsiteSelectChain<T>;
   maybeSingle: () => Promise<{
     data: T extends Array<infer Row> ? Row | null : T | null;
     error: Error | null;
@@ -844,55 +847,59 @@ export async function fetchWebsiteFunnelData(input: {
   const startIso = `${range.start}T00:00:00.000Z`;
   const endIso = `${range.end}T23:59:59.999Z`;
 
-  const [eventsResult, metaResult] = await Promise.all([
-    client
-      .from("website_events")
-      .select(
-        [
-          "event_id",
-          "session_id",
-          "visitor_id",
-          "source",
-          "event_name",
-          "event_type",
-          "occurred_at",
-          "page_url",
-          "page_path",
-          "page_title",
-          "page_group",
-          "source_type",
-          "utm_campaign_id",
-          "utm_adset_id",
-          "utm_ad_id",
-          "meta_event_id",
-          "acuity_appointment_id",
-          "customer_name",
-          "customer_email",
-          "customer_phone",
-          "geo_country",
-          "geo_region",
-          "geo_city",
-          "geo_timezone",
-          "properties",
-        ].join(","),
-      )
-      .gte("occurred_at", startIso)
-      .lte("occurred_at", endIso)
-      .order("occurred_at", { ascending: false })
-      .limit(MAX_EVENTS),
-    client
-      .from("meta_daily_insights")
-      .select("date_start,bookings,conversions,actions")
-      .gte("date_start", range.start)
-      .lte("date_start", range.end)
-      .limit(50000),
+  const eventColumns = [
+    "event_id",
+    "session_id",
+    "visitor_id",
+    "source",
+    "event_name",
+    "meta_event_name",
+    "event_type",
+    "occurred_at",
+    "page_url",
+    "page_path",
+    "page_title",
+    "page_group",
+    "source_type",
+    "utm_campaign_id",
+    "utm_adset_id",
+    "utm_ad_id",
+    "meta_event_id",
+    "acuity_appointment_id",
+    "customer_name",
+    "customer_email",
+    "customer_phone",
+    "geo_country",
+    "geo_region",
+    "geo_city",
+    "geo_timezone",
+    "properties",
+  ].join(",");
+
+  const [events, metaRows] = await Promise.all([
+    fetchWebsiteRows(
+      () =>
+        client
+          .from("website_events")
+          .select(eventColumns)
+          .eq("environment", websiteAttributionEnvironment())
+          .gte("occurred_at", startIso)
+          .lte("occurred_at", endIso)
+          .order("occurred_at", { ascending: false }),
+      MAX_EVENTS,
+    ),
+    fetchWebsiteRows(
+      () =>
+        client
+          .from("meta_daily_insights")
+          .select("date_start,bookings,conversions,actions")
+          .eq("environment", getAdsAnalystEnvironment())
+          .gte("date_start", range.start)
+          .lte("date_start", range.end)
+          .order("date_start", { ascending: false }),
+      MAX_META_INSIGHT_ROWS,
+    ),
   ]);
-
-  if (eventsResult.error) throw eventsResult.error;
-  if (metaResult.error) throw metaResult.error;
-
-  const events = (eventsResult.data || []) as WebsiteEventRow[];
-  const metaRows = (metaResult.data || []) as MetaInsightRow[];
   const sessions = new Set(events.map((event) => event.session_id).filter(Boolean));
   const engagedSessions = new Set(
     events
@@ -962,6 +969,27 @@ export async function fetchWebsiteFunnelData(input: {
       acuityAppointmentId: event.acuity_appointment_id,
     })),
   };
+}
+
+async function fetchWebsiteRows<T>(
+  buildQuery: () => WebsiteSelectChain<T[]>,
+  limit: number,
+): Promise<T[]> {
+  const rows: T[] = [];
+
+  for (let from = 0; from < limit; from += SUPABASE_PAGE_SIZE) {
+    const to = Math.min(from + SUPABASE_PAGE_SIZE - 1, limit - 1);
+    const result = await buildQuery().range(from, to);
+
+    if (result.error) throw result.error;
+
+    const page = result.data || [];
+    rows.push(...page);
+
+    if (page.length < to - from + 1) break;
+  }
+
+  return rows;
 }
 
 export async function reconcileAppointmentConversionsToWebsiteEvents(input: {

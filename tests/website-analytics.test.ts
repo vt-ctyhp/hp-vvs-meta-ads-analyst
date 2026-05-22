@@ -123,6 +123,98 @@ describe("website analytics appointment reconciliation", () => {
     assert.equal(data.sourceTransparency.recordCounts.appointment_events_checked, undefined);
   });
 
+  it("paginates website funnel reads before calculating totals", async () => {
+    const events = [
+      ...Array.from({ length: 1001 }, (_, index) =>
+        websiteEvent({
+          event_id: `page-view-${index}`,
+          event_name: "PageView",
+          event_type: "page",
+          occurred_at: `2026-05-01T00:${String(index % 60).padStart(2, "0")}:00.000Z`,
+          page_group: "booking",
+          session_id: `session-${index}`,
+        }),
+      ),
+      websiteEvent({
+        event_id: "schedule-meta-event",
+        event_name: "BookingComplete",
+        meta_event_name: "Schedule",
+        event_type: "conversion",
+        occurred_at: "2026-05-01T02:00:00.000Z",
+        page_group: "booking",
+        properties: { trackingCompleteness: { complete: true } },
+        session_id: "schedule-session",
+        source_type: "paid_meta",
+      }),
+    ];
+    const metaRows = Array.from({ length: 1001 }, (_, index) => ({
+      actions: [],
+      bookings: 1,
+      conversions: 0,
+      date_start: "2026-05-01",
+      id: `meta-${index}`,
+    }));
+    const rangeCalls: Record<string, Array<[number, number]>> = {
+      meta_daily_insights: [],
+      website_events: [],
+    };
+    const eqCalls: Record<string, Array<[string, unknown]>> = {
+      meta_daily_insights: [],
+      website_events: [],
+    };
+    const selectedColumns: Record<string, string[]> = {};
+    const client = {
+      from(table: "website_events" | "meta_daily_insights") {
+        return {
+          select(columns: string) {
+            selectedColumns[table] ||= [];
+            selectedColumns[table].push(columns);
+            return resolvedSelect(
+              table === "website_events" ? events : metaRows,
+              rangeCalls[table],
+              eqCalls[table],
+            );
+          },
+        };
+      },
+    };
+
+    const data = await fetchWebsiteFunnelData(
+      { startDate: "2026-05-01", endDate: "2026-05-01" },
+      { client: client as never },
+    );
+
+    assert.deepEqual(rangeCalls.website_events, [
+      [0, 999],
+      [1000, 1999],
+    ]);
+    assert.deepEqual(rangeCalls.meta_daily_insights, [
+      [0, 999],
+      [1000, 1999],
+    ]);
+    assert.deepEqual(eqCalls.website_events, [
+      ["environment", "production"],
+      ["environment", "production"],
+    ]);
+    assert.deepEqual(eqCalls.meta_daily_insights, [
+      ["environment", "production"],
+      ["environment", "production"],
+    ]);
+    assert.match(selectedColumns.website_events[0], /meta_event_name/);
+    assert.equal(data.sourceTransparency.recordCounts.website_events, 1002);
+    assert.equal(data.sourceTransparency.recordCounts.meta_daily_insights, 1001);
+    assert.equal(data.overview.sessions, 1002);
+    assert.equal(data.overview.pageViews, 1001);
+    assert.equal(data.overview.schedules, 1);
+    assert.equal(data.overview.completeTrackingConversions, 1);
+    assert.equal(data.overview.metaAttributedBookings, 1001);
+    assert.equal(data.overview.discrepancy, -1000);
+    assert.equal(data.funnel.at(-1)?.count, 1);
+    assert.equal(data.trend[0]?.pageViews, 1001);
+    assert.equal(data.trend[0]?.schedules, 1);
+    assert.equal(data.trend[0]?.metaAttributedBookings, 1001);
+  });
+
   it("treats Meta click identifiers and ad IDs as paid touches", () => {
     assert.equal(
       isPaidTouch({
@@ -581,8 +673,17 @@ describe("website analytics appointment reconciliation", () => {
   });
 });
 
-function resolvedSelect(data: unknown[]) {
+function resolvedSelect(
+  data: unknown[],
+  rangeCalls: Array<[number, number]> = [],
+  eqCalls: Array<[string, unknown]> = [],
+) {
+  let selected = data;
   const chain = {
+    eq(column: string, value: unknown) {
+      eqCalls.push([column, value]);
+      return chain;
+    },
     gte() {
       return chain;
     },
@@ -595,11 +696,48 @@ function resolvedSelect(data: unknown[]) {
     limit() {
       return chain;
     },
+    range(from: number, to: number) {
+      rangeCalls.push([from, to]);
+      selected = data.slice(from, to + 1);
+      return chain;
+    },
     then(resolve: (value: { data: unknown[]; error: null }) => unknown, reject?: (reason: unknown) => unknown) {
-      return Promise.resolve({ data, error: null }).then(resolve, reject);
+      return Promise.resolve({ data: selected, error: null }).then(resolve, reject);
     },
   };
   return chain;
+}
+
+function websiteEvent(overrides: Record<string, unknown>) {
+  return {
+    acuity_appointment_id: null,
+    customer_email: null,
+    customer_name: null,
+    customer_phone: null,
+    event_id: "event-id",
+    event_name: "PageView",
+    event_type: "page",
+    geo_city: null,
+    geo_country: null,
+    geo_region: null,
+    geo_timezone: null,
+    meta_event_id: null,
+    meta_event_name: null,
+    occurred_at: "2026-05-01T00:00:00.000Z",
+    page_group: "other",
+    page_path: "/",
+    page_title: "Page",
+    page_url: "https://www.hungphatusa.com/",
+    properties: {},
+    session_id: "session-id",
+    source: "shopify_browser",
+    source_type: "direct",
+    utm_ad_id: null,
+    utm_adset_id: null,
+    utm_campaign_id: null,
+    visitor_id: null,
+    ...overrides,
+  };
 }
 
 function locationEvent(overrides: Partial<WebsiteLocationEventInput>): WebsiteLocationEventInput {

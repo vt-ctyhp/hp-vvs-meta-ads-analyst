@@ -9,11 +9,15 @@ import {
   buildCustomerLedgerStatusSentence,
   countCustomerLedgerCapiGaps,
   customerJourneyLedgerRequestFromSearchParams,
+  type CustomerJourneyLedgerRequest,
   customerLedgerRowsFromJourneys,
   type CustomerLedgerRow,
 } from "@/lib/convert-customer-ledger";
 import { enrichCustomerLedgerRowsWithCreativePreviews } from "@/lib/customer-ledger-creative-enrichment";
-import { fetchCustomerJourneyLedgerData } from "@/lib/customer-journey-ledger";
+import {
+  fetchCustomerJourneyLedgerData,
+  normalizeCustomerJourneyLedgerDateRange,
+} from "@/lib/customer-journey-ledger";
 import { requirePagePermission } from "@/lib/server-route-auth";
 import {
   fetchWebsiteFunnelData,
@@ -32,14 +36,14 @@ export default async function ConvertPage({
   await requirePagePermission("view_dashboard", "/convert");
 
   const params = await searchParams;
-  const days = Number.isFinite(Number(params.days)) ? Number(params.days) : 30;
+  const rangeRequest = customerJourneyLedgerRequestFromSearchParams(params);
 
   const data = {
-    funnel: fetchWebsiteFunnelData({ days }).catch((e) => {
+    funnel: fetchWebsiteFunnelData(rangeRequest).catch((e) => {
       console.error("[convert] fetchWebsiteFunnelData failed:", e);
-      return emptyFunnel(days);
+      return emptyFunnel(rangeRequest);
     }),
-    ledger: fetchLedger(params).catch((e) => {
+    ledger: fetchLedger(rangeRequest).catch((e) => {
       console.error("[convert] fetchLedger failed:", e);
       return [] as CustomerLedgerRow[];
     }),
@@ -114,10 +118,8 @@ async function ConvertLedger({ data }: { data: ConvertData }) {
 
 // ── data fetchers ──────────────────────────────────────────────────────────
 
-async function fetchLedger(params: SearchParams): Promise<CustomerLedgerRow[]> {
-  const data = await fetchCustomerJourneyLedgerData(
-    customerJourneyLedgerRequestFromSearchParams(params),
-  );
+async function fetchLedger(rangeRequest: CustomerJourneyLedgerRequest): Promise<CustomerLedgerRow[]> {
+  const data = await fetchCustomerJourneyLedgerData(rangeRequest);
   return enrichCustomerLedgerRowsWithCreativePreviews(
     customerLedgerRowsFromJourneys(data.rows),
   );
@@ -125,14 +127,12 @@ async function fetchLedger(params: SearchParams): Promise<CustomerLedgerRow[]> {
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
-function emptyFunnel(days: number): WebsiteFunnelData {
-  const end = new Date().toISOString().slice(0, 10);
-  const startD = new Date();
-  startD.setUTCDate(startD.getUTCDate() - days);
+function emptyFunnel(rangeRequest: CustomerJourneyLedgerRequest): WebsiteFunnelData {
+  const range = normalizeCustomerJourneyLedgerDateRange(rangeRequest);
   return {
     configured: false,
     sourceTransparency: {
-      timeRange: { start: startD.toISOString().slice(0, 10), end, days },
+      timeRange: range,
       recordCounts: {},
     },
     overview: {
