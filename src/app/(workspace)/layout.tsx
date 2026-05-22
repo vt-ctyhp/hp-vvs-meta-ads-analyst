@@ -1,5 +1,5 @@
 /**
- * Workspace layout for the 3-room IA (/optimize, /convert, /operate).
+ * Workspace layout for the 3-room IA (/analyst, /convert, /operate).
  *
  * Server-side responsibilities:
  *   - Resolve the current user's roles and permissions.
@@ -18,7 +18,7 @@ import { HealthPill } from "@/components/v2/health-pill";
 import { IdentityMenu } from "@/components/v2/identity-menu";
 import { WorkspaceNav } from "@/components/v2/workspace-nav";
 import { hasPermission } from "@/lib/access-control";
-import { resolveLandingPath, roomsForRoles } from "@/lib/permission-routing";
+import { firstWorkspaceHref, resolveLandingPath, roomsForRoles } from "@/lib/permission-routing";
 import { getServerAccessProfile } from "@/lib/server-route-auth";
 
 export const dynamic = "force-dynamic";
@@ -31,9 +31,7 @@ export default async function WorkspaceLayout({
   const profile = await getServerAccessProfile();
 
   if (!profile?.authenticated) {
-    // /sign-in is the PRD-canonical name. /login is the route that exists today.
-    // Phase 10/12 swaps the route name; until then, redirect to /login.
-    redirect("/login?next=/optimize");
+    redirect("/login?next=/analyst");
   }
 
   if (!profile.active || profile.missingAppProfile) {
@@ -46,18 +44,19 @@ export default async function WorkspaceLayout({
     // the landing path their roles do open (mobile inbox, or no-access).
     redirect(resolveLandingPath(profile.roles));
   }
+  const homeHref = firstWorkspaceHref(rooms, profile.permissions);
 
   return (
     <div className="min-h-screen bg-[#F8F4EE] text-stone-900">
       <header className="sticky top-0 z-30 border-b border-stone-200 bg-white/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-7xl items-center gap-4 px-6">
           <a
-            href={rooms.includes("optimize") ? "/optimize" : `/${rooms[0]}`}
+            href={homeHref}
             className="font-[family-name:var(--font-title)] text-lg font-medium tracking-tight"
           >
             HP / VVS
           </a>
-          <WorkspaceNav rooms={rooms} />
+          <WorkspaceNav rooms={rooms} permissions={profile.permissions} />
           <div className="ml-auto flex items-center gap-2">
             {hasPermission(profile.roles, "view_dashboard") ? (
               <CommandPaletteTrigger />

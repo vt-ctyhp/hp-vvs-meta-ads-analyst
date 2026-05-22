@@ -156,7 +156,7 @@ export function CreativeDetailDrawer({
               </a>
             ) : null}
             <Link
-              href={`/creative-analysis?creative=${encodeURIComponent(creativeId)}`}
+              href={`/analyst/creative-analysis?creative=${encodeURIComponent(creativeId)}`}
               className="inline-flex h-9 items-center justify-center rounded-md bg-stone-900 px-3 text-xs font-medium text-stone-50 hover:bg-stone-800"
             >
               Open in Creative Analysis →

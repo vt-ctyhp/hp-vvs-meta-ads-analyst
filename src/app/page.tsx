@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
  * Root entry — Phase 12 cutover landing.
  *
  * Routes every authenticated user to the room their roles open by default:
- *   - Admin / Marketing / read-only      → /optimize
+ *   - Admin / Marketing / read-only      → /analyst
  *   - Sales-frontline / client_advisor / joc → /m/inbox
  *   - View-inbox-only roles              → /m/inbox
  *   - No roles                           → /no-access
@@ -17,10 +17,6 @@ export const dynamic = "force-dynamic";
  * Unauthenticated visitors are pushed to /login with a `next=/` hint so the
  * resolver runs again after they sign in. (The hint is `/` itself rather
  * than a specific room so we don't have to know the user's role yet.)
- *
- * The legacy Performance Broadsheet that used to render here moved to
- * /broadsheet (preserved for direct URL access + as a fallback during the
- * early cutover monitoring window).
  *
  * This page never renders UI — every code path ends in a redirect.
  */

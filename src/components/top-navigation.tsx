@@ -30,9 +30,15 @@ import type { SystemHealthSnapshot } from "@/lib/system-health";
 const NAV_ICONS: Record<string, typeof BarChart3> = {
   "/": BarChart3,
   "/analyst": LineChartIcon,
+  "/analyst/creative-analysis": Gauge,
+  "/convert": Target,
+  "/convert/inbox": Inbox,
+  "/operate/pipelines": Database,
+  "/operate/coverage": Database,
+  "/operate/health": BarChart3,
+  "/operate/users": Users,
   "/review": ClipboardCheck,
   "/outcomes": Target,
-  "/creative-analysis": Gauge,
   "/analysis": Brain,
   "/website-funnel": MousePointerClick,
   "/attribution-ledger": Database,
@@ -64,6 +70,10 @@ export function TopNavigation() {
   // those routes so we don't show double chrome. The sales mobile shell is
   // also self-contained.
   const isV2Path =
+    pathname === "/analyst" ||
+    pathname.startsWith("/analyst/") ||
+    pathname === "/analysis" ||
+    pathname.startsWith("/analysis/") ||
     pathname === "/optimize" ||
     pathname.startsWith("/optimize/") ||
     pathname === "/convert" ||

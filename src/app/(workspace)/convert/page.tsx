@@ -1,9 +1,6 @@
 import { Suspense } from "react";
 
 import {
-  ConversationQueue,
-} from "@/components/v2/convert/conversation-queue";
-import {
   CustomerLedger,
 } from "@/components/v2/convert/customer-ledger";
 import { FunnelViz } from "@/components/v2/convert/funnel-viz";
@@ -11,7 +8,6 @@ import { StatusSentence } from "@/components/v2/status-sentence";
 import {
   buildCustomerLedgerStatusSentence,
   countCustomerLedgerCapiGaps,
-  countUnreadThreads,
   customerJourneyLedgerRequestFromSearchParams,
   customerLedgerRowsFromJourneys,
   type CustomerLedgerRow,
@@ -20,20 +16,9 @@ import { enrichCustomerLedgerRowsWithCreativePreviews } from "@/lib/customer-led
 import { fetchCustomerJourneyLedgerData } from "@/lib/customer-journey-ledger";
 import { requirePagePermission } from "@/lib/server-route-auth";
 import {
-  getSocialInboxData,
-  type SocialInboxData,
-} from "@/lib/social-inbox";
-import {
   fetchWebsiteFunnelData,
   type WebsiteFunnelData,
 } from "@/lib/website-analytics";
-
-const emptyInbox: SocialInboxData = {
-  threads: [],
-  messages: [],
-  comments: [],
-  syncRuns: [],
-};
 
 export const dynamic = "force-dynamic";
 
@@ -54,10 +39,6 @@ export default async function ConvertPage({
       console.error("[convert] fetchWebsiteFunnelData failed:", e);
       return emptyFunnel(days);
     }),
-    inbox: getSocialInboxData().catch((e) => {
-      console.error("[convert] getSocialInboxData failed:", e);
-      return emptyInbox;
-    }),
     ledger: fetchLedger(params).catch((e) => {
       console.error("[convert] fetchLedger failed:", e);
       return [] as CustomerLedgerRow[];
@@ -74,40 +55,28 @@ export default async function ConvertPage({
         <ConvertFunnel data={data} />
       </Suspense>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
-        <div className="lg:col-span-3">
-          <Suspense fallback={<CustomerLedgerFallback />}>
-            <ConvertLedger data={data} />
-          </Suspense>
-        </div>
-        <div className="lg:col-span-2">
-          <Suspense fallback={<ConversationQueueFallback />}>
-            <ConvertConversations data={data} />
-          </Suspense>
-        </div>
-      </div>
+      <Suspense fallback={<CustomerLedgerFallback />}>
+        <ConvertLedger data={data} />
+      </Suspense>
     </div>
   );
 }
 
 type ConvertData = {
   funnel: Promise<WebsiteFunnelData>;
-  inbox: Promise<SocialInboxData>;
   ledger: Promise<CustomerLedgerRow[]>;
 };
 
 async function ConvertStatus({ data }: { data: ConvertData }) {
-  const [funnel, inbox, ledger] = await Promise.all([
+  const [funnel, ledger] = await Promise.all([
     data.funnel,
-    data.inbox,
     data.ledger,
   ]);
-  const unread = countUnreadThreads(inbox.threads);
   const sentence = buildCustomerLedgerStatusSentence({
     bookings: funnel.overview.schedules,
     rows: ledger,
     sessions: funnel.overview.sessions,
-    unreadConversations: unread,
+    unreadConversations: 0,
   });
 
   return (
@@ -121,10 +90,6 @@ async function ConvertStatus({ data }: { data: ConvertData }) {
         {
           label: "Bookings",
           value: funnel.overview.schedules.toLocaleString(),
-        },
-        {
-          label: "Unread conversations",
-          value: String(unread),
         },
         {
           label: "CAPI gaps",
@@ -143,11 +108,6 @@ async function ConvertFunnel({ data }: { data: ConvertData }) {
 async function ConvertLedger({ data }: { data: ConvertData }) {
   const ledger = await data.ledger;
   return <CustomerLedger rows={ledger} />;
-}
-
-async function ConvertConversations({ data }: { data: ConvertData }) {
-  const inbox = await data.inbox;
-  return <ConversationQueue threads={inbox.threads} comments={inbox.comments} />;
 }
 
 // ── data fetchers ──────────────────────────────────────────────────────────
@@ -214,7 +174,7 @@ function StatusSentenceFallback() {
         <Skeleton className="h-6 w-[min(36rem,72vw)]" />
       </div>
       <div className="grid grid-cols-2 gap-4 pl-3 sm:flex sm:pl-0">
-        {["customers", "bookings", "conversations", "gaps"].map((item) => (
+        {["customers", "bookings", "gaps"].map((item) => (
           <div key={item} className="min-w-[88px] space-y-2">
             <Skeleton className="h-2 w-20" />
             <Skeleton className="h-5 w-12" />
@@ -267,32 +227,6 @@ function CustomerLedgerFallback() {
             </div>
             <Skeleton className="h-4 w-16" />
             <Skeleton className="h-7 w-16 rounded-full" />
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function ConversationQueueFallback() {
-  return (
-    <section
-      aria-label="Loading conversation queue"
-      className="overflow-hidden rounded-xl border border-stone-200 bg-white"
-    >
-      <div className="flex items-center justify-between border-b border-stone-200 bg-stone-50 px-4 py-3">
-        <Skeleton className="h-4 w-36" />
-        <Skeleton className="h-7 w-16" />
-      </div>
-      <div className="divide-y divide-stone-100">
-        {Array.from({ length: 5 }).map((_, index) => (
-          <div key={index} className="space-y-2 px-4 py-3">
-            <div className="flex items-center justify-between gap-3">
-              <Skeleton className="h-4 w-32" />
-              <Skeleton className="h-3 w-12" />
-            </div>
-            <Skeleton className="h-3 w-full" />
-            <Skeleton className="h-3 w-2/3" />
           </div>
         ))}
       </div>

@@ -1,91 +1,29 @@
-import { SocialInboxClient, type SocialInboxStatus } from "@/components/social-inbox-client";
-import { getMissingRequiredEnv } from "@/lib/env";
-import { getMetaPermissionHealth, validateConfiguredMetaAccounts } from "@/lib/meta";
-import { requirePagePermission } from "@/lib/server-route-auth";
-import { getSocialInboxData, type SocialInboxData } from "@/lib/social-inbox";
+import { redirect } from "next/navigation";
+
+import { hasPermission } from "@/lib/access-control";
+import { firstPermittedAppPath, hasInternalAppAccess } from "@/lib/app-routes";
+import { getServerAccessProfile } from "@/lib/server-route-auth";
 
 export const dynamic = "force-dynamic";
 
-export default async function InboxPage() {
-  await requirePagePermission("view_inbox", "/inbox");
-  const [status, inboxData] = await Promise.all([getSocialInboxStatus(), getSafeSocialInboxData()]);
-  return <SocialInboxClient status={status} initialData={inboxData.data} dataError={inboxData.error} />;
-}
+export default async function InboxRedirectPage() {
+  const profile = await getServerAccessProfile();
 
-async function getSafeSocialInboxData(): Promise<{ data: SocialInboxData; error: string | null }> {
-  try {
-    return { data: await getSocialInboxData(), error: null };
-  } catch (error) {
-    return {
-      data: emptySocialInboxData(),
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
-
-function emptySocialInboxData(): SocialInboxData {
-  return {
-    threads: [],
-    messages: [],
-    comments: [],
-    syncRuns: [],
-  };
-}
-
-async function getSocialInboxStatus(): Promise<SocialInboxStatus> {
-  const missingEnv = getMissingRequiredEnv();
-  const metaIncomplete =
-    missingEnv.includes("META_ACCESS_TOKEN") || missingEnv.includes("META_HP_AD_ACCOUNT_ID");
-
-  if (metaIncomplete) {
-    return {
-      ok: false,
-      missingEnv,
-      permissions: null,
-      accounts: [],
-      readiness: {
-        adsSync: false,
-        socialInbox: false,
-        socialReply: false,
-      },
-      error: "Meta environment variables are incomplete.",
-    };
+  if (!profile?.authenticated) {
+    redirect("/login?next=/inbox");
   }
 
-  try {
-    const [permissions, accounts] = await Promise.all([
-      getMetaPermissionHealth(),
-      validateConfiguredMetaAccounts(),
-    ]);
-
-    return {
-      ok:
-        missingEnv.length === 0 &&
-        accounts.every((account) => account.ok) &&
-        permissions.forbiddenGranted.length === 0 &&
-        permissions.socialInbox.ok,
-      missingEnv,
-      permissions,
-      accounts,
-      readiness: {
-        adsSync: permissions.adsSync.ok && accounts.every((account) => account.ok),
-        socialInbox: permissions.socialInbox.ok,
-        socialReply: permissions.socialReply.ok,
-      },
-      error: null,
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      missingEnv,
-      permissions: null,
-      accounts: [],
-      readiness: {
-        adsSync: false,
-        socialInbox: false,
-        socialReply: false,
-      },
-      error: error instanceof Error ? error.message : String(error),
-    };
+  if (!hasInternalAppAccess(profile)) {
+    redirect("/no-access");
   }
+
+  if (hasPermission(profile.roles, "view_dashboard")) {
+    redirect("/convert/inbox");
+  }
+
+  if (hasPermission(profile.roles, "view_inbox")) {
+    redirect("/m/inbox");
+  }
+
+  redirect(firstPermittedAppPath(profile.permissions) || "/no-access");
 }

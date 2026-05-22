@@ -1,40 +1,25 @@
-import { CreativeAnalysisClient } from "@/components/creative-analysis-client";
-import { fetchCreativeAnalysisData } from "@/lib/creative-analysis";
-import { requirePagePermission } from "@/lib/server-route-auth";
-
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-export const maxDuration = 120;
+import { redirect } from "next/navigation";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
-export default async function CreativeAnalysisPage({
+export default async function CreativeAnalysisRedirectPage({
   searchParams,
 }: {
   searchParams?: SearchParams;
 }) {
-  const params = searchParams ? await searchParams : {};
-  await requirePagePermission("view_creative_analysis", "/creative-analysis");
-  const dashboard = await fetchCreativeAnalysisData({
-    startDate: firstParam(params.start),
-    endDate: firstParam(params.end),
-    days: numberParam(params.days) || 30,
-    includeLive: booleanParam(params.live),
-  });
-
-  return <CreativeAnalysisClient initialData={dashboard} />;
+  const query = searchParams ? queryString(await searchParams) : "";
+  redirect(query ? `/analyst/creative-analysis?${query}` : "/analyst/creative-analysis");
 }
 
-function firstParam(value: string | string[] | undefined) {
-  return Array.isArray(value) ? value[0] : value;
-}
-
-function numberParam(value: string | string[] | undefined) {
-  const parsed = Number(firstParam(value));
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-}
-
-function booleanParam(value: string | string[] | undefined) {
-  const param = firstParam(value);
-  return param === "1" || param === "true";
+function queryString(params: Record<string, string | string[] | undefined>) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined) continue;
+    if (Array.isArray(value)) {
+      for (const item of value) query.append(key, item);
+    } else {
+      query.set(key, value);
+    }
+  }
+  return query.toString();
 }

@@ -4,11 +4,10 @@ import {
   AlertTriangle,
   Check,
   Shield,
-  UserPlus,
   Users,
 } from "lucide-react";
 import Link from "next/link";
-import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
   APP_PERMISSIONS,
@@ -71,18 +70,14 @@ const ROLE_ORDER: UserRole[] = [
   "read_only",
 ];
 
-export function UsersClient() {
+const CAN_EDIT_USERS = false;
+
+export function UsersClient({ loginNextPath = "/users" }: { loginNextPath?: string } = {}) {
   const [profile, setProfile] = useState<AccessProfile | null>(null);
   const [payload, setPayload] = useState<UsersPayload | null>(null);
   const [users, setUsers] = useState<EditableUser[]>([]);
   const [loading, setLoading] = useState(true);
-  const [savingUserId, setSavingUserId] = useState<string | null>(null);
   const [status, setStatus] = useState("");
-  const [inviteStatus, setInviteStatus] = useState("");
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteName, setInviteName] = useState("");
-  const [inviteNotes, setInviteNotes] = useState("");
-  const [inviteRoles, setInviteRoles] = useState<UserRole[]>(["marketing"]);
 
   const roleLabels = useMemo(
     () =>
@@ -91,7 +86,6 @@ export function UsersClient() {
       ) as Partial<typeof ROLE_LABELS>,
     [payload?.roleOptions],
   );
-
   const loadUsers = useCallback(async function loadUsers() {
     await Promise.resolve();
     setLoading(true);
@@ -136,76 +130,6 @@ export function UsersClient() {
     return () => window.clearTimeout(timeout);
   }, [loadUsers]);
 
-  async function saveUser(user: EditableUser) {
-    setSavingUserId(user.id);
-    setStatus("");
-
-    try {
-      const token = await currentAccessToken();
-      if (!token) throw new Error("Sign in is required.");
-
-      const response = await fetch("/api/users", {
-        method: "PATCH",
-        headers: {
-          authorization: `Bearer ${token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          userId: user.id,
-          fullName: user.draftFullName,
-          active: user.draftActive,
-          notes: user.draftNotes,
-          roles: user.draftRoles,
-        }),
-      });
-      const nextPayload = await response.json();
-      if (!response.ok) throw new Error(nextPayload.error || "Could not save user.");
-      setPayload(nextPayload);
-      setUsers(nextPayload.users.map(toEditableUser));
-      setStatus(`${user.draftFullName} updated.`);
-    } catch (error) {
-      setStatus(translateError(error));
-    } finally {
-      setSavingUserId(null);
-    }
-  }
-
-  async function inviteUser(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setInviteStatus("");
-    setStatus("");
-
-    try {
-      const token = await currentAccessToken();
-      if (!token) throw new Error("Sign in is required.");
-
-      const response = await fetch("/api/users", {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          email: inviteEmail,
-          fullName: inviteName,
-          notes: inviteNotes,
-          roles: inviteRoles,
-        }),
-      });
-      const nextPayload = await response.json();
-      if (!response.ok) throw new Error(nextPayload.error || "Could not invite user.");
-      setPayload(nextPayload);
-      setUsers(nextPayload.users.map(toEditableUser));
-      setInviteEmail("");
-      setInviteName("");
-      setInviteNotes("");
-      setInviteRoles(["marketing"]);
-      setInviteStatus(`Invitation prepared for ${inviteEmail}.`);
-    } catch (error) {
-      setInviteStatus(translateError(error));
-    }
-  }
-
   function patchUser(userId: string, patch: Partial<EditableUser>) {
     setUsers((current) =>
       current.map((user) => (user.id === userId ? { ...user, ...patch } : user)),
@@ -229,7 +153,7 @@ export function UsersClient() {
       <AccessMessage
         title={`${AUTH.signIn} required`}
         body="The users page requires an approved internal account."
-        actionHref="/login?next=/users"
+        actionHref={`/login?next=${encodeURIComponent(loginNextPath)}`}
         actionLabel={AUTH.signIn}
       />
     );
@@ -257,8 +181,8 @@ export function UsersClient() {
             Users & Permissions
           </h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-hp-body">
-            Manage Supabase-backed app users and assign the roles that control internal dashboard
-            access.
+            Review Supabase-backed app users and the roles that control internal dashboard
+            access. User and role changes are managed outside this app.
           </p>
         </div>
         <div className="border border-hp-rule bg-hp-card p-4 text-sm leading-6">
@@ -288,44 +212,6 @@ export function UsersClient() {
           </div>
         ))}
       </section>
-
-      {payload.canManageUsers ? (
-        <section className="mx-auto mt-6 max-w-7xl border border-hp-rule bg-hp-card p-4">
-          <div className="mb-4 flex items-center gap-2 text-hp-ink">
-            <UserPlus size={18} />
-            <span className="text-[11px] uppercase tracking-[0.14em]">Invite user</span>
-          </div>
-          <form onSubmit={inviteUser} className="grid gap-4 lg:grid-cols-[1fr_1fr_1.2fr_auto]">
-            <TextInput label="Full name" value={inviteName} onChange={setInviteName} required />
-            <TextInput label="Email" value={inviteEmail} onChange={setInviteEmail} type="email" required />
-            <RoleCheckboxes
-              label="Roles"
-              roles={inviteRoles}
-              roleOptions={payload.roleOptions}
-              roleLabels={roleLabels}
-              onChange={setInviteRoles}
-            />
-            <button
-              type="submit"
-              className="self-end bg-hp-ink px-5 py-3 text-[11px] uppercase tracking-[0.14em] text-hp-foundation transition-colors hover:bg-hp-pink"
-            >
-              Invite
-            </button>
-          </form>
-          <label className="mt-4 block">
-            <span className="mb-2 block text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-              Notes
-            </span>
-            <textarea
-              value={inviteNotes}
-              onChange={(event) => setInviteNotes(event.target.value)}
-              rows={2}
-              className="w-full resize-none border border-hp-rule bg-hp-inset p-3 text-sm outline-none focus:border-hp-pink"
-            />
-          </label>
-          {inviteStatus ? <p className="mt-3 text-sm text-hp-body">{inviteStatus}</p> : null}
-        </section>
-      ) : null}
 
       <section className="mx-auto mt-6 max-w-7xl border border-hp-rule bg-hp-card">
         <div className="flex items-center gap-2 border-b border-hp-rule p-4 text-hp-ink">
@@ -359,7 +245,7 @@ export function UsersClient() {
                   label="Full name"
                   value={user.draftFullName}
                   onChange={(value) => patchUser(user.id, { draftFullName: value })}
-                  disabled={!payload.canManageUsers}
+                  disabled={!CAN_EDIT_USERS}
                 />
                 <label className="block">
                   <span className="mb-2 block text-[10px] uppercase tracking-[0.14em] text-hp-muted">
@@ -370,7 +256,7 @@ export function UsersClient() {
                     onChange={(event) =>
                       patchUser(user.id, { draftActive: event.target.value === "active" })
                     }
-                    disabled={!payload.canManageUsers}
+                    disabled={!CAN_EDIT_USERS}
                     className="h-10 w-full border border-hp-rule bg-hp-inset px-3 text-sm outline-none focus:border-hp-pink disabled:opacity-60"
                   >
                     <option value="active">Active</option>
@@ -385,7 +271,7 @@ export function UsersClient() {
                     value={user.draftNotes}
                     onChange={(event) => patchUser(user.id, { draftNotes: event.target.value })}
                     rows={2}
-                    disabled={!payload.canManageUsers}
+                    disabled={!CAN_EDIT_USERS}
                     className="w-full resize-none border border-hp-rule bg-hp-inset p-3 text-sm outline-none focus:border-hp-pink disabled:opacity-60"
                   />
                 </label>
@@ -397,16 +283,8 @@ export function UsersClient() {
                 roleOptions={payload.roleOptions}
                 roleLabels={roleLabels}
                 onChange={(roles) => patchUser(user.id, { draftRoles: roles })}
-                disabled={!payload.canManageUsers}
+                disabled={!CAN_EDIT_USERS}
               />
-
-              <button
-                onClick={() => saveUser(user)}
-                disabled={!payload.canManageUsers || savingUserId === user.id}
-                className="self-start border border-hp-ink px-4 py-3 text-[11px] uppercase tracking-[0.14em] text-hp-ink transition-colors hover:bg-hp-ink hover:text-hp-foundation disabled:opacity-60"
-              >
-                {savingUserId === user.id ? "Saving" : "Save"}
-              </button>
             </article>
           ))}
         </div>

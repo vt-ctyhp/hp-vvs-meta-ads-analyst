@@ -48,16 +48,23 @@ vercel --prod
 
 ## Runtime Routes
 
-- `/` executive dashboard, creative leaderboard, gallery, report controls, chat
-- `/creative-analysis` internal creative scorecard using visible Meta Ads Insights metrics, creative previews, ad relevance diagnostics where available, and an Internal Creative Diagnostic Score
+- `/` role-based redirect into the final IA
+- `/analyst` canonical performance dashboard with nested campaign → ad set → creative reporting
+- `/analyst/creative-analysis` internal creative scorecard using visible Meta Ads Insights metrics, creative previews, ad relevance diagnostics where available, and an Internal Creative Diagnostic Score
 - `/website-funnel` first-party Shopify website and booking funnel events, kept separate from Meta Ads API reporting for discrepancy checks
-- `/analysis` ad-hoc Meta Ads analysis over stored Supabase history
-- `/admin/backfill` surfaced Meta Ads historical backfill page, admin-managed and marketing read-only
+- `/analysis` AI analysis over stored Supabase history, including saved dashboard load, rename, delete, and edit
+- `/convert` customer funnel and ledger
+- `/convert/inbox` Facebook/Instagram desktop inbox readiness page and human-approved reply UI shell
+- `/m/inbox` sales-first mobile inbox shell
+- `/operate/pipelines` sync runs, manual sync, catalog refresh, backfill jobs, and chunks
+- `/operate/coverage` Operate coverage tab with monthly backfill sync, Supabase load, and lock status
+- `/operate/health` system and data health
+- `/operate/users` legacy Users & Permissions page
+- `/admin/backfill` legacy historical backfill monitor with live coverage, jobs, and data-health actions
+- `/optimize`, `/creative-analysis`, `/inbox`, `/users`, and `/broadsheet` redirect to their cutover targets
 - `/login` Supabase Auth login screen for internal users
-- `/users` user and role management for admin, marketing, and sales permissions
-- `/inbox` Facebook/Instagram inbox readiness page and human-approved reply UI shell
 - `/api/auth/me` current signed-in access profile derived from Supabase Auth and app roles
-- `/api/users` admin user list, invite, and role management API
+- `/api/users` read-only user list API; user-management writes stay disabled in this app
 - `/api/sync` manual read-only Meta sync
 - `/api/meta/backfill` protected backfill job, chunk, and coverage API
 - `/api/meta/backfill/run` protected manual backfill batch runner
@@ -87,7 +94,7 @@ It is not Meta's secret algorithm, private ranking model, or an official Meta sc
 
 ## Internal Access
 
-Login uses Supabase Auth. App permissions come from `public.users` and `public.user_roles`; the `/users` page lets admins invite users, activate/deactivate access, and assign roles. Admin has full access. Marketing can access the dashboard, Creative Analysis, AI Analysis, inbox visibility, and read-only Backfill. Sales has inbox-only access.
+Login uses Supabase Auth. App permissions come from `public.users` and `public.user_roles`; `/operate/users` is read-only because ERP remains the source of truth for roster and role changes. Admin has full access. Marketing can access the dashboard, Creative Analysis, AI Analysis, inbox visibility, and read-only Backfill. Sales has inbox-only access and lands in `/m/inbox`.
 
 Apply the Supabase migrations before assigning the `marketing` or `sales` roles, because they are first-class `public.user_role` enum values.
 
