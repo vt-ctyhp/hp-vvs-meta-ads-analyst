@@ -4,17 +4,10 @@
 
 import {
   AlertTriangle,
-  BarChart3,
-  Bot,
   CalendarRange,
   ChevronRight,
   FileDown,
-  GalleryHorizontalEnd,
-  MessageSquare,
-  RefreshCw,
   Search,
-  Send,
-  Table2,
 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import {
@@ -37,24 +30,28 @@ import {
 } from "recharts";
 
 import type { AppPermission } from "@/lib/access-control";
-import type { ActionBucket, ActionItem, DashboardPayload, PerformanceRow } from "@/lib/analytics";
-import { TERMS, translateError } from "@/lib/glossary";
+import {
+  ANALYST_PERIOD_COUNTS,
+  rollingAnalystPeriods,
+  type AnalystPeriodCount,
+} from "@/lib/analyst-periods";
+import type { DashboardPayload, PerformanceRow } from "@/lib/analytics";
+import {
+  buildPerformanceTree,
+  type PerformanceTreeAdSetNode,
+  type PerformanceTreeCampaignNode,
+} from "@/lib/dashboard-performance-tree";
+import { TERMS } from "@/lib/glossary";
 import { StatusSentence, type StatusHighlight } from "./status-sentence";
 import { TechnicalId } from "./technical-id";
 
-type ViewMode = "table" | "cards" | "gallery";
 type SortKey = "spend" | "primaryResults" | "ctr" | "cpc" | "newMessagingContacts" | "frequency";
-type CreativeBucket = "winners" | "losers" | "all";
 type DeliveryFilter = "all" | "active" | "paused";
 
 type Props = {
   initialData: DashboardPayload;
   permissions: AppPermission[];
-};
-
-type ChatMessage = {
-  role: "user" | "assistant";
-  content: string;
+  initialPeriodCount?: AnalystPeriodCount;
 };
 
 const SORT_LABELS: Record<SortKey, string> = {
@@ -78,7 +75,10 @@ const MONEY_FORMATTER_WHOLE = new Intl.NumberFormat("en-US", {
 });
 const NUMBER_FORMATTER = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
-export function DashboardClient({ initialData, permissions }: Props) {
+export function DashboardClient({
+  initialData,
+  initialPeriodCount = 2,
+}: Props) {
   const data = initialData;
   const searchParams = useSearchParams();
   // Seed filter state from URL params on initial mount so deep links from the
@@ -93,32 +93,19 @@ export function DashboardClient({ initialData, permissions }: Props) {
   const [endDate, setEndDate] = useState(data.sourceTransparency.timeRange.end || "");
   const [isApplyingRange, setIsApplyingRange] = useState(false);
   const [query, setQuery] = useState(() => searchParams.get("query") || "");
-  const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [sortKey, setSortKey] = useState<SortKey>("spend");
   const [compareEnabled, setCompareEnabled] = useState(true);
-  const [creativeBucket, setCreativeBucket] = useState<CreativeBucket>("all");
+  const [periodCount, setPeriodCount] = useState<AnalystPeriodCount>(initialPeriodCount);
   const [delivery, setDelivery] = useState<DeliveryFilter>("all");
   const [drawerCreativeId, setDrawerCreativeId] = useState<string | null>(null);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [isReporting, setIsReporting] = useState(false);
-  const [reportStatus, setReportStatus] = useState("");
-  const [chatInput, setChatInput] = useState("");
-  const [chatSessionId, setChatSessionId] = useState<string | null>(null);
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [isChatting, setIsChatting] = useState(false);
   const [hidePdfFinancials, setHidePdfFinancials] = useState(false);
+  const [expandedCampaignIds, setExpandedCampaignIds] = useState<Set<string>>(() => new Set());
+  const [expandedAdSetIds, setExpandedAdSetIds] = useState<Set<string>>(() => new Set());
   const deferredQuery = useDeferredValue(query);
-  const canRunMetaSync = permissions.includes("run_meta_sync");
   const normalizedQuery = useMemo(
     () => deferredQuery.trim().toLowerCase(),
     [deferredQuery],
   );
-
-  useEffect(() => {
-    setStartDate(data.sourceTransparency.timeRange.start || "");
-    setEndDate(data.sourceTransparency.timeRange.end || "");
-    setIsApplyingRange(false);
-  }, [data.sourceTransparency.timeRange.end, data.sourceTransparency.timeRange.start]);
 
   useEffect(() => {
     if (!drawerCreativeId) return;
@@ -139,74 +126,51 @@ export function DashboardClient({ initialData, permissions }: Props) {
     [data.campaignUmbrellas],
   );
 
-  const filteredCampaigns = useMemo(
+  const baseCampaigns = useMemo(
     () =>
-      filterAndSortRows(data.campaigns, brand, umbrella, normalizedQuery, sortKey, delivery),
-    [brand, data.campaigns, delivery, normalizedQuery, sortKey, umbrella],
+      filterAndSortRows(data.campaigns, brand, umbrella, "", sortKey, delivery),
+    [brand, data.campaigns, delivery, sortKey, umbrella],
   );
 
-  const filteredAdSets = useMemo(
+  const baseAdSets = useMemo(
     () =>
-      filterAndSortRows(data.adSets, brand, umbrella, normalizedQuery, sortKey, delivery),
-    [brand, data.adSets, delivery, normalizedQuery, sortKey, umbrella],
+      filterAndSortRows(data.adSets, brand, umbrella, "", sortKey, delivery),
+    [brand, data.adSets, delivery, sortKey, umbrella],
   );
 
-  const filteredCreatives = useMemo(() => {
-    const base = filterAndSortRows(data.creatives, brand, umbrella, normalizedQuery, sortKey, delivery);
-    if (creativeBucket === "all") return base;
-    const benchmarkCtr = data.overview.ctr;
-    const spendThreshold = Math.max(data.overview.spend * 0.01, 50);
-    if (creativeBucket === "winners") {
-      return base.filter(
-        (creative) =>
-          creative.primaryResults > 0 &&
-          (benchmarkCtr === 0 ? creative.ctr > 0 : creative.ctr >= benchmarkCtr),
-      );
-    }
-    return base.filter(
-      (creative) =>
-        creative.spend >= spendThreshold &&
-        (creative.primaryResults === 0 ||
-          (benchmarkCtr > 0 && creative.ctr < benchmarkCtr * 0.75)),
-    );
-  }, [
-    brand,
-    creativeBucket,
-    data.creatives,
-    data.overview.ctr,
-    data.overview.spend,
-    delivery,
-    normalizedQuery,
-    sortKey,
-    umbrella,
-  ]);
+  const baseCreatives = useMemo(
+    () =>
+      filterAndSortRows(data.creatives, brand, umbrella, "", sortKey, delivery),
+    [brand, data.creatives, delivery, sortKey, umbrella],
+  );
 
-  const creativeBucketCounts = useMemo(() => {
-    const base = filterAndSortRows(data.creatives, brand, umbrella, normalizedQuery, sortKey, delivery);
-    const benchmarkCtr = data.overview.ctr;
-    const spendThreshold = Math.max(data.overview.spend * 0.01, 50);
-    const winners = base.filter(
-      (creative) =>
-        creative.primaryResults > 0 &&
-        (benchmarkCtr === 0 ? creative.ctr > 0 : creative.ctr >= benchmarkCtr),
-    ).length;
-    const losers = base.filter(
-      (creative) =>
-        creative.spend >= spendThreshold &&
-        (creative.primaryResults === 0 ||
-          (benchmarkCtr > 0 && creative.ctr < benchmarkCtr * 0.75)),
-    ).length;
-    return { all: base.length, winners, losers };
-  }, [
-    brand,
-    data.creatives,
-    data.overview.ctr,
-    data.overview.spend,
-    delivery,
-    normalizedQuery,
-    sortKey,
-    umbrella,
-  ]);
+  const performanceTree = useMemo(
+    () =>
+      filterPerformanceTree(
+        buildPerformanceTree({
+          campaigns: baseCampaigns,
+          adSets: baseAdSets,
+          creatives: baseCreatives,
+        }),
+        normalizedQuery,
+      ),
+    [baseAdSets, baseCampaigns, baseCreatives, normalizedQuery],
+  );
+
+  const filteredCreatives = useMemo(
+    () => collectTreeCreatives(performanceTree),
+    [performanceTree],
+  );
+
+  const treeCounts = useMemo(
+    () => countPerformanceTree(performanceTree),
+    [performanceTree],
+  );
+
+  const periodWindows = useMemo(
+    () => rollingAnalystPeriods(data.sourceTransparency.timeRange, periodCount),
+    [data.sourceTransparency.timeRange, periodCount],
+  );
 
   const creativeById = useMemo(() => {
     const map = new Map<string, PerformanceRow>();
@@ -218,35 +182,10 @@ export function DashboardClient({ initialData, permissions }: Props) {
 
   const drawerCreative = drawerCreativeId ? creativeById.get(drawerCreativeId) || null : null;
 
-  const filteredActionQueue = useMemo(() => {
-    if (delivery === "all") return data.actionQueue;
-    return data.actionQueue.filter((item) => {
-      if (item.entityType !== "creative") return true;
-      const creative = creativeById.get(item.entityId);
-      if (!creative) return true;
-      return rowMatchesDelivery(creative, delivery);
-    });
-  }, [data.actionQueue, creativeById, delivery]);
-
   const openCreativeDrawer = useCallback((creativeId: string) => {
     setDrawerCreativeId(creativeId);
   }, []);
   const closeCreativeDrawer = useCallback(() => setDrawerCreativeId(null), []);
-
-  const visibleCampaigns = useMemo(() => filteredCampaigns.slice(0, 10), [filteredCampaigns]);
-  const visibleAdSets = useMemo(() => filteredAdSets.slice(0, 10), [filteredAdSets]);
-  const visibleCreativeTableRows = useMemo(
-    () => filteredCreatives.slice(0, 50),
-    [filteredCreatives],
-  );
-  const visibleCreativeCardRows = useMemo(
-    () => filteredCreatives.slice(0, 18),
-    [filteredCreatives],
-  );
-  const visibleCreativeGalleryRows = useMemo(
-    () => filteredCreatives.slice(0, 24),
-    [filteredCreatives],
-  );
 
   const overviewSparklines = useMemo(() => {
     const byDate = new Map<
@@ -314,15 +253,6 @@ export function DashboardClient({ initialData, permissions }: Props) {
       }
     }
 
-    const scaleCount = filteredActionQueue.filter((item) => item.bucket === "scale").length;
-    const fixCount = filteredActionQueue.filter((item) => item.bucket === "fix").length;
-    if (scaleCount > 0 || fixCount > 0) {
-      const parts: string[] = [];
-      if (scaleCount > 0) parts.push(`${scaleCount} to scale`);
-      if (fixCount > 0) parts.push(`${fixCount} to fix`);
-      highlights.push({ text: parts.join(", "), tone: fixCount > 0 ? "warning" : "positive" });
-    }
-
     const topUmbrella = [...data.byUmbrella]
       .filter((row) => row.spend > 0)
       .sort((a, b) => b.primaryResults - a.primaryResults || b.spend - a.spend)[0];
@@ -339,7 +269,6 @@ export function DashboardClient({ initialData, permissions }: Props) {
 
     return { context, highlights };
   }, [
-    filteredActionQueue,
     data.byUmbrella,
     data.comparison.overview,
     data.overview,
@@ -381,83 +310,6 @@ export function DashboardClient({ initialData, permissions }: Props) {
     });
   }, [brand, data.comparison.dailyTrend, data.dailyTrend, umbrella]);
 
-  const runManualSync = useCallback(async function runManualSync() {
-    setIsSyncing(true);
-    try {
-      const response = await fetch("/api/sync", { method: "POST" });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Sync failed");
-      window.location.reload();
-    } catch (error) {
-      setReportStatus(translateError(error));
-    } finally {
-      setIsSyncing(false);
-    }
-  }, []);
-
-  const generateReport = useCallback(async function generateReport() {
-    setIsReporting(true);
-    setReportStatus("");
-    try {
-      const response = await fetch("/api/reports", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          days: data.sourceTransparency.timeRange.days,
-          startDate,
-          endDate,
-        }),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Report generation failed");
-      setReportStatus(`Report generated: ${payload.title}`);
-      window.location.reload();
-    } catch (error) {
-      setReportStatus(translateError(error));
-    } finally {
-      setIsReporting(false);
-    }
-  }, [data.sourceTransparency.timeRange.days, endDate, startDate]);
-
-  const sendChatMessage = useCallback(async function sendChatMessage() {
-    const message = chatInput.trim();
-    if (!message) return;
-    setChatInput("");
-    setChatMessages((messages) => [...messages, { role: "user", content: message }]);
-    setIsChatting(true);
-
-    try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          sessionId: chatSessionId,
-          message,
-          days: data.sourceTransparency.timeRange.days,
-          startDate,
-          endDate,
-        }),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Chat failed");
-      setChatSessionId(payload.sessionId);
-      setChatMessages((messages) => [
-        ...messages,
-        { role: "assistant", content: payload.answer },
-      ]);
-    } catch (error) {
-      setChatMessages((messages) => [
-        ...messages,
-        {
-          role: "assistant",
-          content: translateError(error),
-        },
-      ]);
-    } finally {
-      setIsChatting(false);
-    }
-  }, [chatInput, chatSessionId, data.sourceTransparency.timeRange.days, endDate, startDate]);
-
   const applyDateRange = useCallback(function applyDateRange(nextStart = startDate, nextEnd = endDate) {
     if (!nextStart || !nextEnd) return;
     const url = new URL(window.location.href);
@@ -475,6 +327,21 @@ export function DashboardClient({ initialData, permissions }: Props) {
     setEndDate(end);
     applyDateRange(start, end);
   }, [applyDateRange, data.sourceTransparency.timeRange.end]);
+
+  const changePeriodCount = useCallback(function changePeriodCount(nextPeriodCount: AnalystPeriodCount) {
+    setPeriodCount(nextPeriodCount);
+    const url = new URL(window.location.href);
+    url.searchParams.set("periods", String(nextPeriodCount));
+    window.history.replaceState({}, "", url.toString());
+  }, []);
+
+  const toggleCampaign = useCallback(function toggleCampaign(campaignId: string) {
+    setExpandedCampaignIds((current) => toggleSetValue(current, campaignId));
+  }, []);
+
+  const toggleAdSet = useCallback(function toggleAdSet(adSetId: string) {
+    setExpandedAdSetIds((current) => toggleSetValue(current, adSetId));
+  }, []);
 
   const exportCreativesPdf = useCallback(async function exportCreativesPdf() {
     const activeRange = data.sourceTransparency.timeRange;
@@ -621,6 +488,9 @@ export function DashboardClient({ initialData, permissions }: Props) {
           isApplying={isApplyingRange}
           compareEnabled={compareEnabled}
           onCompareChange={setCompareEnabled}
+          periodCount={periodCount}
+          onPeriodCountChange={changePeriodCount}
+          periodWindows={periodWindows}
           comparisonRange={data.comparison.timeRange}
         />
       </section>
@@ -633,21 +503,7 @@ export function DashboardClient({ initialData, permissions }: Props) {
         />
       </section>
 
-      {umbrella === "all" ? (
-        <section className="mx-auto mt-6 max-w-7xl border border-hp-rule bg-hp-card p-6 sm:p-8">
-          <SectionHeader
-            eyebrow={`${TERMS.campaignUmbrella}s`}
-            title="Performance scorecard"
-          />
-          <UmbrellaScorecard
-            rows={umbrellaScorecard}
-            showComparison={compareEnabled}
-            onSelect={setUmbrella}
-          />
-        </section>
-      ) : null}
-
-      <section className="mx-auto mt-8 grid w-full max-w-7xl min-w-0 gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+      <section className="mx-auto mt-6 w-full max-w-7xl min-w-0">
         <div className="min-w-0 border border-hp-rule bg-hp-card p-6">
           <SectionHeader eyebrow="Trend Analysis" title="Filtered spend and response" />
           <div className="h-72 min-w-0">
@@ -700,75 +556,27 @@ export function DashboardClient({ initialData, permissions }: Props) {
             </ResponsiveContainer>
           </div>
         </div>
-
-        <div className="min-w-0 border border-hp-rule bg-hp-card p-6">
-          <SectionHeader eyebrow="Executive Overview" title="Brand comparison" />
-          <div className="space-y-3">
-            {data.byBrand.map((row) => (
-              <div key={row.id} className="border-b border-hp-rule pb-4 last:border-b-0">
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <div className="font-title text-2xl text-hp-ink">{row.name}</div>
-                    <div className="text-sm text-hp-muted">
-                      {formatMetric(row.impressions, "number")} impressions
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-xl tabular-nums text-hp-ink">
-                      {formatMetric(row.spend, "money")}
-                    </div>
-                    <div className="text-sm text-hp-muted">{formatMetric(row.ctr, "percent")} CTR</div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
       </section>
 
-
-      <section className="mx-auto mt-8 grid w-full max-w-7xl min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,360px)]">
-        <div className="min-w-0 space-y-8">
-          <PerformanceSection title="Campaign Performance" rows={visibleCampaigns} />
-          <PerformanceSection title="Ad Set Performance" rows={visibleAdSets} />
-        </div>
-
-        <aside className="min-w-0 space-y-6">
-          <ActionPanel
-            canRunMetaSync={canRunMetaSync}
-            isSyncing={isSyncing}
-            isReporting={isReporting}
-            reportStatus={reportStatus}
-            onSync={runManualSync}
-            onReport={generateReport}
+      {umbrella === "all" ? (
+        <section className="mx-auto mt-6 max-w-7xl border border-hp-rule bg-hp-card p-6 sm:p-8">
+          <SectionHeader
+            eyebrow={`${TERMS.campaignUmbrella}s`}
+            title="Performance scorecard"
           />
-
-          <ActionQueue
-            items={filteredActionQueue}
-            onSelect={(item) => {
-              if (item.entityType === "creative") {
-                openCreativeDrawer(item.entityId);
-              }
-            }}
+          <UmbrellaScorecard
+            rows={umbrellaScorecard}
+            showComparison={compareEnabled}
+            onSelect={setUmbrella}
           />
-
-          <ChatPanel
-            messages={chatMessages}
-            value={chatInput}
-            isLoading={isChatting}
-            onChange={setChatInput}
-            onSend={sendChatMessage}
-          />
-
-          <SourcePanel data={data} />
-        </aside>
-      </section>
+        </section>
+      ) : null}
 
       <section className="mx-auto mt-8 w-full max-w-7xl min-w-0">
         <div className="min-w-0 border border-hp-rule bg-hp-card p-4 sm:p-6">
           <SectionHeader
-            eyebrow="Creative Leaderboard"
-            title="Creative performance"
+            eyebrow="Performance"
+            title="Campaign, ad set, and creative performance"
             actions={
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <label className="flex h-10 items-center gap-2 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
@@ -792,11 +600,11 @@ export function DashboardClient({ initialData, permissions }: Props) {
           />
 
           <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <CreativeBucketTabs
-              value={creativeBucket}
-              onChange={setCreativeBucket}
-              counts={creativeBucketCounts}
-            />
+            <div className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+              {formatMetric(treeCounts.campaigns, "number")} campaigns ·{" "}
+              {formatMetric(treeCounts.adSets, "number")} ad sets ·{" "}
+              {formatMetric(treeCounts.creatives, "number")} creatives
+            </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <label className="flex min-w-0 items-center gap-2 border-b border-hp-rule px-1 py-2 focus-within:border-hp-pink sm:w-64">
                 <Search size={16} className="text-hp-muted" />
@@ -818,19 +626,18 @@ export function DashboardClient({ initialData, permissions }: Props) {
                   </option>
                 ))}
               </select>
-              <SegmentedView value={viewMode} onChange={setViewMode} />
             </div>
           </div>
 
-          {viewMode === "table" && (
-            <CreativeTable rows={visibleCreativeTableRows} onSelect={openCreativeDrawer} />
-          )}
-          {viewMode === "cards" && (
-            <CreativeCards rows={visibleCreativeCardRows} onSelect={openCreativeDrawer} />
-          )}
-          {viewMode === "gallery" && (
-            <CreativeGallery rows={visibleCreativeGalleryRows} onSelect={openCreativeDrawer} />
-          )}
+          <NestedPerformanceTable
+            tree={performanceTree}
+            expandedCampaignIds={expandedCampaignIds}
+            expandedAdSetIds={expandedAdSetIds}
+            forceExpanded={Boolean(normalizedQuery)}
+            onToggleCampaign={toggleCampaign}
+            onToggleAdSet={toggleAdSet}
+            onSelectCreative={openCreativeDrawer}
+          />
         </div>
       </section>
 
@@ -1013,6 +820,9 @@ const DateRangeControls = memo(function DateRangeControls({
   isApplying,
   compareEnabled,
   onCompareChange,
+  periodCount,
+  onPeriodCountChange,
+  periodWindows,
   comparisonRange,
 }: {
   startDate: string;
@@ -1024,6 +834,9 @@ const DateRangeControls = memo(function DateRangeControls({
   isApplying: boolean;
   compareEnabled: boolean;
   onCompareChange: (value: boolean) => void;
+  periodCount: AnalystPeriodCount;
+  onPeriodCountChange: (value: AnalystPeriodCount) => void;
+  periodWindows: ReturnType<typeof rollingAnalystPeriods>;
   comparisonRange: { start: string; end: string; days: number };
 }) {
   function submitDateRange(event: FormEvent<HTMLFormElement>) {
@@ -1093,6 +906,40 @@ const DateRangeControls = memo(function DateRangeControls({
         />
         vs Prev
       </label>
+      {compareEnabled ? (
+        <label className="flex h-8 items-center gap-2 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+          <span>Periods</span>
+          <select
+            value={periodCount}
+            onChange={(event) =>
+              onPeriodCountChange(Number(event.target.value) as AnalystPeriodCount)
+            }
+            className="h-6 bg-transparent text-hp-ink outline-none"
+          >
+            {ANALYST_PERIOD_COUNTS.map((count) => (
+              <option key={count} value={count}>
+                {count}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+      {compareEnabled && periodWindows.length ? (
+        <div className="flex min-h-8 max-w-full items-center gap-2 overflow-x-auto text-[10px] uppercase tracking-[0.12em] text-hp-muted lg:max-w-[360px]">
+          {periodWindows.map((period) => (
+            <span
+              key={period.key}
+              className={`shrink-0 border px-2 py-1 ${
+                period.isCurrent
+                  ? "border-hp-ink text-hp-ink"
+                  : "border-hp-rule text-hp-muted"
+              }`}
+            >
+              {period.label}
+            </span>
+          ))}
+        </div>
+      ) : null}
     </form>
   );
 });
@@ -1271,12 +1118,6 @@ const ScorecardCell = memo(function ScorecardCell({
   );
 });
 
-const CREATIVE_BUCKETS: { key: CreativeBucket; label: string }[] = [
-  { key: "winners", label: "Winners" },
-  { key: "losers", label: "Losers" },
-  { key: "all", label: "All" },
-];
-
 const FilterChipGroup = memo(function FilterChipGroup({
   label,
   value,
@@ -1305,46 +1146,6 @@ const FilterChipGroup = memo(function FilterChipGroup({
             }`}
           >
             {option.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-});
-
-const CreativeBucketTabs = memo(function CreativeBucketTabs({
-  value,
-  onChange,
-  counts,
-}: {
-  value: CreativeBucket;
-  onChange: (value: CreativeBucket) => void;
-  counts: { winners: number; losers: number; all: number };
-}) {
-  return (
-    <div className="flex items-center gap-1">
-      {CREATIVE_BUCKETS.map((bucket) => {
-        const isActive = value === bucket.key;
-        const count = counts[bucket.key];
-        const indicator =
-          bucket.key === "winners"
-            ? "border-l-[3px] border-l-[#245D4D]"
-            : bucket.key === "losers"
-              ? "border-l-[3px] border-l-[#8D2E2E]"
-              : "border-l-[3px] border-l-hp-rule";
-        return (
-          <button
-            key={bucket.key}
-            type="button"
-            onClick={() => onChange(bucket.key)}
-            className={`h-9 ${indicator} px-3 text-xs uppercase tracking-[0.14em] transition-colors duration-150 ${
-              isActive
-                ? "bg-hp-ink text-hp-foundation"
-                : "border-y border-r border-hp-rule text-hp-body hover:border-hp-ink"
-            }`}
-          >
-            <span>{bucket.label}</span>
-            <span className="ml-2 text-[10px] opacity-70 tabular-nums">{count}</span>
           </button>
         );
       })}
@@ -1390,166 +1191,68 @@ const UmbrellaTabs = memo(function UmbrellaTabs({
   );
 });
 
-const SegmentedView = memo(function SegmentedView({
-  value,
-  onChange,
+const NestedPerformanceTable = memo(function NestedPerformanceTable({
+  tree,
+  expandedCampaignIds,
+  expandedAdSetIds,
+  forceExpanded,
+  onToggleCampaign,
+  onToggleAdSet,
+  onSelectCreative,
 }: {
-  value: ViewMode;
-  onChange: (value: ViewMode) => void;
-}) {
-  const options: { value: ViewMode; icon: React.ReactNode; label: string }[] = [
-    { value: "table", icon: <Table2 size={16} />, label: "Table" },
-    { value: "cards", icon: <BarChart3 size={16} />, label: "Cards" },
-    { value: "gallery", icon: <GalleryHorizontalEnd size={16} />, label: "Gallery" },
-  ];
-
-  return (
-    <div className="flex border border-hp-rule">
-      {options.map((option) => (
-        <button
-          key={option.value}
-          title={option.label}
-          onClick={() => onChange(option.value)}
-          className={`flex h-10 w-11 items-center justify-center border-r border-hp-rule last:border-r-0 ${
-            value === option.value ? "bg-hp-ink text-hp-foundation" : "text-hp-body hover:bg-hp-inset"
-          }`}
-        >
-          {option.icon}
-        </button>
-      ))}
-    </div>
-  );
-});
-
-const PerformanceSection = memo(function PerformanceSection({ title, rows }: { title: string; rows: PerformanceRow[] }) {
-  return (
-    <div className="min-w-0 border border-hp-rule bg-hp-card p-4 sm:p-6">
-      <SectionHeader eyebrow="Performance" title={title} />
-      <div className="w-full overflow-x-auto">
-        <table className="w-full min-w-[760px] table-fixed border-collapse text-sm">
-          <colgroup>
-            <col className="w-[31%]" />
-            <col className="w-[7%]" />
-            <col className="w-[16%]" />
-            <col className="w-[9%]" />
-            <col className="w-[8%]" />
-            <col className="w-[8%]" />
-            <col className="w-[21%]" />
-          </colgroup>
-          <thead>
-            <tr className="bg-hp-inset text-left text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-              <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Name</th>
-              <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Brand</th>
-              <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">{TERMS.umbrellaShort}</th>
-              <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">Spend</th>
-              <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">CTR</th>
-              <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">CPC</th>
-              <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">{TERMS.primaryKpi}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.id} className="border-b border-hp-rule align-top last:border-b-0">
-                <td className="px-3 py-4 text-hp-ink">
-                  <div className="max-w-full leading-6 [overflow-wrap:anywhere]">{row.name}</div>
-                </td>
-                <td className="px-3 py-4">{row.brandCode}</td>
-                <td className="px-3 py-4 text-xs leading-5 text-hp-muted [overflow-wrap:anywhere]">
-                  {row.campaignUmbrella}
-                </td>
-                <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.spend, "money")}</td>
-                <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.ctr, "percent")}</td>
-                <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.cpc, "money")}</td>
-                <td className="px-3 py-4 text-right">
-                  <ResultCell row={row} align="right" />
-                </td>
-              </tr>
-            ))}
-            {!rows.length ? (
-              <tr>
-                <td colSpan={7} className="px-3 py-8 text-center text-sm text-hp-muted">
-                  No rows match the selected filters.
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-});
-
-const CreativeTable = memo(function CreativeTable({
-  rows,
-  onSelect,
-}: {
-  rows: PerformanceRow[];
-  onSelect: (id: string) => void;
+  tree: PerformanceTreeCampaignNode[];
+  expandedCampaignIds: Set<string>;
+  expandedAdSetIds: Set<string>;
+  forceExpanded: boolean;
+  onToggleCampaign: (id: string) => void;
+  onToggleAdSet: (id: string) => void;
+  onSelectCreative: (id: string) => void;
 }) {
   return (
     <div className="w-full overflow-x-auto">
-      <table className="w-full min-w-[900px] table-fixed border-collapse text-sm">
+      <table className="w-full min-w-[1040px] table-fixed border-collapse text-sm">
         <colgroup>
-          <col className="w-[24%]" />
-          <col className="w-[8%]" />
-          <col className="w-[6%]" />
-          <col className="w-[12%]" />
-          <col className="w-[8%]" />
+          <col className="w-[34%]" />
           <col className="w-[7%]" />
-          <col className="w-[7%]" />
-          <col className="w-[11%]" />
+          <col className="w-[13%]" />
+          <col className="w-[9%]" />
+          <col className="w-[13%]" />
           <col className="w-[10%]" />
+          <col className="w-[7%]" />
           <col className="w-[7%]" />
         </colgroup>
         <thead>
           <tr className="bg-hp-inset text-left text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-            <th className="whitespace-nowrap border-b border-hp-rule px-4 py-3">Creative</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-4 py-3">Preview</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-4 py-3">Brand</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-4 py-3">{TERMS.umbrellaShort}</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-4 py-3 text-right">Spend</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-4 py-3 text-right">CTR</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-4 py-3 text-right">CPC</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-4 py-3 text-right">{TERMS.primaryKpi}</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-4 py-3 text-right">Cost / Result</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-4 py-3">Risk</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Name</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Brand</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">{TERMS.umbrellaShort}</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">Spend</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">{TERMS.primaryKpi}</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">Cost / Result</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">CTR</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">CPC</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr
-              key={row.id}
-              className="cursor-pointer border-b border-hp-rule align-top transition-colors duration-150 last:border-b-0 hover:bg-hp-inset"
-              onClick={() => onSelect(row.id)}
-            >
-              <td className="px-4 py-4">
-                <div className="max-w-full break-words text-hp-ink">{row.name}</div>
-              </td>
-              <td className="px-4 py-4">
-                <CreativePreview creative={row} compact />
-              </td>
-              <td className="px-4 py-4">{row.brandCode}</td>
-              <td className="px-4 py-4 text-xs leading-5 text-hp-muted">
-                <span className="break-words">{row.campaignUmbrella}</span>
-              </td>
-              <td className="px-4 py-4 text-right tabular-nums">{formatMetric(row.spend, "money")}</td>
-              <td className="px-4 py-4 text-right tabular-nums">{formatMetric(row.ctr, "percent")}</td>
-              <td className="px-4 py-4 text-right tabular-nums">{formatMetric(row.cpc, "money")}</td>
-              <td className="px-4 py-4 text-right">
-                <ResultCell row={row} align="right" />
-              </td>
-              <td className="px-4 py-4 text-right tabular-nums">
-                {formatMetric(row.costPerPrimaryResult, "money")}
-              </td>
-              <td className="px-4 py-4">
-                <RiskBadge level={row.riskLevel} />
-              </td>
-            </tr>
-          ))}
-          {!rows.length ? (
+          {tree.map((campaign) => {
+            const campaignExpanded = forceExpanded || expandedCampaignIds.has(campaign.id);
+            return (
+              <NestedCampaignRows
+                key={campaign.id}
+                node={campaign}
+                expanded={campaignExpanded}
+                expandedAdSetIds={expandedAdSetIds}
+                forceExpanded={forceExpanded}
+                onToggleCampaign={onToggleCampaign}
+                onToggleAdSet={onToggleAdSet}
+                onSelectCreative={onSelectCreative}
+              />
+            );
+          })}
+          {!tree.length ? (
             <tr>
-              <td colSpan={10} className="px-4 py-8 text-center text-sm text-hp-muted">
-                No creatives match the selected filters.
+              <td colSpan={8} className="px-3 py-8 text-center text-sm text-hp-muted">
+                No rows match the selected filters.
               </td>
             </tr>
           ) : null}
@@ -1559,87 +1262,165 @@ const CreativeTable = memo(function CreativeTable({
   );
 });
 
-const CreativeCards = memo(function CreativeCards({
-  rows,
-  onSelect,
+const NestedCampaignRows = memo(function NestedCampaignRows({
+  node,
+  expanded,
+  expandedAdSetIds,
+  forceExpanded,
+  onToggleCampaign,
+  onToggleAdSet,
+  onSelectCreative,
 }: {
-  rows: PerformanceRow[];
-  onSelect: (id: string) => void;
+  node: PerformanceTreeCampaignNode;
+  expanded: boolean;
+  expandedAdSetIds: Set<string>;
+  forceExpanded: boolean;
+  onToggleCampaign: (id: string) => void;
+  onToggleAdSet: (id: string) => void;
+  onSelectCreative: (id: string) => void;
 }) {
   return (
-    <div className="grid gap-4 md:grid-cols-2">
-      {rows.map((row) => (
-        <article
-          key={row.id}
-          className="cursor-pointer border border-hp-rule bg-hp-card p-4 transition-colors duration-150 hover:bg-hp-inset"
-          onClick={() => onSelect(row.id)}
-        >
-          <div className="grid grid-cols-[112px_1fr] gap-4">
-            <CreativePreview creative={row} />
-            <div>
-              <div className="flex items-start justify-between gap-3">
-                <h3 className="font-title text-xl leading-tight text-hp-ink">{row.name}</h3>
-                <RiskBadge level={row.riskLevel} />
-              </div>
-              <div className="mt-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-                {row.campaignUmbrella}
-              </div>
-              <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                <MiniMetric label="Spend" value={formatMetric(row.spend, "money")} />
-                <MiniMetric label="CTR" value={formatMetric(row.ctr, "percent")} />
-                <MiniMetric label={row.primaryResultLabel} value={formatMetric(row.primaryResults, "number")} />
-              </div>
-              {row.secondaryResultLabel && row.secondaryResults !== null ? (
-                <div className="mt-2 text-xs text-hp-muted">
-                  {formatMetric(row.secondaryResults, "number")} {row.secondaryResultLabel}
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </article>
-      ))}
-    </div>
+    <>
+      <MetricTreeRow
+        row={node.campaign}
+        level="campaign"
+        childCount={node.adSets.length}
+        expanded={expanded}
+        onToggle={() => onToggleCampaign(node.id)}
+      />
+      {expanded
+        ? node.adSets.map((adSet) => {
+            const adSetExpanded = forceExpanded || expandedAdSetIds.has(adSet.id);
+            return (
+              <NestedAdSetRows
+                key={adSet.id}
+                node={adSet}
+                expanded={adSetExpanded}
+                onToggleAdSet={onToggleAdSet}
+                onSelectCreative={onSelectCreative}
+              />
+            );
+          })
+        : null}
+    </>
   );
 });
 
-const CreativeGallery = memo(function CreativeGallery({
-  rows,
-  onSelect,
+const NestedAdSetRows = memo(function NestedAdSetRows({
+  node,
+  expanded,
+  onToggleAdSet,
+  onSelectCreative,
 }: {
-  rows: PerformanceRow[];
-  onSelect: (id: string) => void;
+  node: PerformanceTreeAdSetNode;
+  expanded: boolean;
+  onToggleAdSet: (id: string) => void;
+  onSelectCreative: (id: string) => void;
 }) {
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {rows.map((row) => (
-        <article
-          key={row.id}
-          className="cursor-pointer border border-hp-rule bg-hp-card transition-colors duration-150 hover:bg-hp-inset"
-          onClick={() => onSelect(row.id)}
-        >
-          <CreativePreview creative={row} gallery />
-          <div className="border-t border-hp-rule p-4">
-            <div className="flex items-start justify-between gap-3">
-              <h3 className="font-title text-xl leading-tight text-hp-ink">{row.name}</h3>
-              <span className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">{row.brandCode}</span>
+    <>
+      <MetricTreeRow
+        row={node.adSet}
+        level="adSet"
+        childCount={node.creatives.length}
+        expanded={expanded}
+        onToggle={() => onToggleAdSet(node.id)}
+      />
+      {expanded
+        ? node.creatives.map((creative) => (
+            <MetricTreeRow
+              key={creative.id}
+              row={creative}
+              level="creative"
+              onSelectCreative={onSelectCreative}
+            />
+          ))
+        : null}
+    </>
+  );
+});
+
+const MetricTreeRow = memo(function MetricTreeRow({
+  row,
+  level,
+  childCount = 0,
+  expanded = false,
+  onToggle,
+  onSelectCreative,
+}: {
+  row: PerformanceRow;
+  level: "campaign" | "adSet" | "creative";
+  childCount?: number;
+  expanded?: boolean;
+  onToggle?: () => void;
+  onSelectCreative?: (id: string) => void;
+}) {
+  const hasChildren = level !== "creative" && childCount > 0;
+  const isCreative = level === "creative";
+  const rowClass =
+    level === "campaign"
+      ? "bg-hp-card font-body text-hp-ink"
+      : level === "adSet"
+        ? "bg-hp-card text-hp-body"
+        : "cursor-pointer bg-hp-card text-hp-body transition-colors duration-150 hover:bg-hp-inset";
+  const namePadding =
+    level === "campaign" ? "pl-3" : level === "adSet" ? "pl-8" : "pl-14";
+
+  return (
+    <tr
+      className={`border-b border-hp-rule align-top last:border-b-0 ${rowClass}`}
+      onClick={isCreative && onSelectCreative ? () => onSelectCreative(row.id) : undefined}
+    >
+      <td className={`py-4 pr-3 ${namePadding}`}>
+        <div className="flex min-w-0 items-start gap-3">
+          {hasChildren ? (
+            <button
+              type="button"
+              aria-label={`${expanded ? "Collapse" : "Expand"} ${row.name}`}
+              aria-expanded={expanded}
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggle?.();
+              }}
+              className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center border border-hp-rule text-hp-muted transition-colors hover:border-hp-ink hover:text-hp-ink"
+            >
+              <ChevronRight
+                size={13}
+                className={`transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}
+              />
+            </button>
+          ) : (
+            <span className="mt-0.5 h-5 w-5 shrink-0" />
+          )}
+          {isCreative ? (
+            <CreativePreview creative={row} compact />
+          ) : null}
+          <div className="min-w-0">
+            <div className="leading-6 text-hp-ink [overflow-wrap:anywhere]">{row.name}</div>
+            <div className="mt-1 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+              {level === "campaign"
+                ? `${formatMetric(childCount, "number")} ad sets`
+                : level === "adSet"
+                  ? `${formatMetric(childCount, "number")} creatives`
+                  : row.adName || "Creative"}
             </div>
-            <div className="mt-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-              {row.campaignUmbrella}
-            </div>
-            <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-              <MiniMetric label="Spend" value={formatMetric(row.spend, "money")} />
-              <MiniMetric label="CTR" value={formatMetric(row.ctr, "percent")} />
-              <MiniMetric label={row.primaryResultLabel} value={formatMetric(row.primaryResults, "number")} />
-            </div>
-            {row.secondaryResultLabel && row.secondaryResults !== null ? (
-              <div className="mt-3 text-xs text-hp-muted">
-                {formatMetric(row.secondaryResults, "number")} {row.secondaryResultLabel}
-              </div>
-            ) : null}
           </div>
-        </article>
-      ))}
-    </div>
+        </div>
+      </td>
+      <td className="px-3 py-4">{row.brandCode}</td>
+      <td className="px-3 py-4 text-xs leading-5 text-hp-muted [overflow-wrap:anywhere]">
+        {row.campaignUmbrella}
+      </td>
+      <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.spend, "money")}</td>
+      <td className="px-3 py-4 text-right">
+        <ResultCell row={row} align="right" />
+      </td>
+      <td className="px-3 py-4 text-right tabular-nums">
+        {formatMetric(row.costPerPrimaryResult, "money")}
+      </td>
+      <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.ctr, "percent")}</td>
+      <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.cpc, "money")}</td>
+    </tr>
   );
 });
 
@@ -1868,274 +1649,6 @@ const MiniMetric = memo(function MiniMetric({ label, value }: { label: string; v
       <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{label}</div>
       <div className="mt-1 tabular-nums text-hp-ink">{value}</div>
     </div>
-  );
-});
-
-const ACTION_BUCKETS: { key: ActionBucket; label: string; description: string; tone: string }[] = [
-  {
-    key: "scale",
-    label: "Scale",
-    description: "Allocate more budget",
-    tone: "border-l-[3px] border-l-[#245D4D]",
-  },
-  {
-    key: "fix",
-    label: "Fix",
-    description: "Refresh or rotate",
-    tone: "border-l-[3px] border-l-[#8D2E2E]",
-  },
-  {
-    key: "watch",
-    label: "Watch",
-    description: "Spending without efficiency",
-    tone: "border-l-[3px] border-l-hp-platinum",
-  },
-];
-
-const BUCKET_TEXT_TONE: Record<ActionBucket, string> = {
-  scale: "text-[#245D4D]",
-  fix: "text-[#8D2E2E]",
-  watch: "text-hp-muted",
-};
-
-const ActionQueue = memo(function ActionQueue({
-  items,
-  onSelect,
-}: {
-  items: ActionItem[];
-  onSelect: (item: ActionItem) => void;
-}) {
-  const grouped = useMemo(() => {
-    const map: Record<ActionBucket, ActionItem[]> = { scale: [], fix: [], watch: [] };
-    for (const item of items) {
-      if (map[item.bucket].length < 3) {
-        map[item.bucket].push(item);
-      }
-    }
-    return map;
-  }, [items]);
-
-  return (
-    <section className="border border-hp-rule bg-hp-card">
-      <header className="flex items-center justify-between border-b border-hp-rule px-5 py-4">
-        <span className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-          Action Queue
-        </span>
-        <span className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-          {items.length} signals
-        </span>
-      </header>
-      {items.length === 0 ? (
-        <div className="p-5 text-sm text-hp-muted">No current signals in this period.</div>
-      ) : (
-        <div className="divide-y divide-hp-rule">
-          {ACTION_BUCKETS.map((bucket) => (
-            <ActionBucketBlock
-              key={bucket.key}
-              bucket={bucket}
-              items={grouped[bucket.key]}
-              onClick={onSelect}
-            />
-          ))}
-        </div>
-      )}
-    </section>
-  );
-});
-
-const ActionBucketBlock = memo(function ActionBucketBlock({
-  bucket,
-  items,
-  onClick,
-}: {
-  bucket: { key: ActionBucket; label: string; description: string; tone: string };
-  items: ActionItem[];
-  onClick: (item: ActionItem) => void;
-}) {
-  return (
-    <div className="p-5">
-      <div className="mb-3 flex items-baseline justify-between gap-3">
-        <span
-          className={`text-[11px] uppercase tracking-[0.14em] ${BUCKET_TEXT_TONE[bucket.key]}`}
-        >
-          {bucket.label}
-          <span className="ml-2 text-hp-muted">{items.length}</span>
-        </span>
-        <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-          {bucket.description}
-        </span>
-      </div>
-      {items.length === 0 ? (
-        <p className="text-xs text-hp-muted">No items.</p>
-      ) : (
-        <ul className="space-y-2">
-          {items.map((item) => (
-            <li key={item.id}>
-              <button
-                type="button"
-                onClick={() => onClick(item)}
-                className={`group flex w-full items-start gap-3 bg-hp-card px-3 py-3 text-left transition-colors duration-150 hover:bg-hp-inset ${bucket.tone}`}
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 text-sm text-hp-ink">
-                    <span className="truncate font-body">{item.entityName}</span>
-                    {item.campaignUmbrella ? (
-                      <span className="shrink-0 border border-hp-rule px-1.5 py-0.5 text-[10px] uppercase tracking-[0.12em] text-hp-muted">
-                        {item.campaignUmbrella}
-                      </span>
-                    ) : null}
-                  </div>
-                  <div className="mt-1 text-xs text-hp-body tabular-nums">{item.headline}</div>
-                  <div className="mt-0.5 text-[11px] text-hp-muted tabular-nums">
-                    {item.supporting}
-                  </div>
-                </div>
-                <ChevronRight
-                  size={14}
-                  className="mt-1 shrink-0 text-hp-muted transition-colors group-hover:text-hp-ink"
-                />
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-});
-
-const ActionPanel = memo(function ActionPanel({
-  canRunMetaSync,
-  isSyncing,
-  isReporting,
-  reportStatus,
-  onSync,
-  onReport,
-}: {
-  canRunMetaSync: boolean;
-  isSyncing: boolean;
-  isReporting: boolean;
-  reportStatus: string;
-  onSync: () => void;
-  onReport: () => void;
-}) {
-  return (
-    <section className="border border-hp-rule bg-hp-card p-4">
-      <div className={`grid gap-3 ${canRunMetaSync ? "grid-cols-2" : "grid-cols-1"}`}>
-        {canRunMetaSync ? (
-          <button
-            onClick={onSync}
-            disabled={isSyncing}
-            className="flex items-center justify-center gap-2 rounded-sm bg-hp-ink px-4 py-3 text-xs uppercase tracking-[0.14em] text-hp-foundation transition-colors hover:bg-hp-pink"
-          >
-            <RefreshCw size={15} className={isSyncing ? "animate-spin" : ""} />
-            Sync
-          </button>
-        ) : null}
-        <button
-          onClick={onReport}
-          disabled={isReporting}
-          className="flex items-center justify-center gap-2 rounded-sm border border-hp-ink px-4 py-3 text-xs uppercase tracking-[0.14em] text-hp-ink transition-colors hover:bg-hp-ink hover:text-hp-foundation"
-        >
-          <Bot size={15} />
-          Report
-        </button>
-      </div>
-      {reportStatus ? <p className="mt-3 text-sm text-hp-muted">{reportStatus}</p> : null}
-    </section>
-  );
-});
-
-const ChatPanel = memo(function ChatPanel({
-  messages,
-  value,
-  isLoading,
-  onChange,
-  onSend,
-}: {
-  messages: ChatMessage[];
-  value: string;
-  isLoading: boolean;
-  onChange: (value: string) => void;
-  onSend: () => void;
-}) {
-  return (
-    <section className="border border-hp-rule bg-hp-card p-4">
-      <div className="mb-4 flex items-center gap-2 text-hp-ink">
-        <MessageSquare size={18} />
-        <span className="text-[11px] uppercase tracking-[0.14em]">AI Chat</span>
-      </div>
-      <div className="scrollbar-thin max-h-80 space-y-3 overflow-y-auto border-y border-hp-rule py-4">
-        {messages.length ? (
-          messages.map((message, index) => (
-            <div
-              key={`${message.role}-${index}`}
-              className={`text-sm leading-6 [overflow-wrap:anywhere] ${
-                message.role === "user" ? "text-hp-ink" : "text-hp-body"
-              }`}
-            >
-              <span className="mr-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-                {message.role}
-              </span>
-              {message.content}
-            </div>
-          ))
-        ) : (
-          <p className="text-sm text-hp-muted">Ask about spend, fatigue, winners, or risks.</p>
-        )}
-      </div>
-      <div className="mt-4 flex gap-2">
-        <input
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") onSend();
-          }}
-          className="min-w-0 flex-1 border-b border-hp-rule bg-transparent px-1 py-2 text-sm outline-none focus:border-hp-pink"
-          placeholder="Ask an executive question"
-        />
-        <button
-          onClick={onSend}
-          disabled={isLoading}
-          title="Send"
-          className="flex h-10 w-10 items-center justify-center border border-hp-ink text-hp-ink transition-colors hover:bg-hp-ink hover:text-hp-foundation"
-        >
-          <Send size={16} />
-        </button>
-      </div>
-    </section>
-  );
-});
-
-const SourcePanel = memo(function SourcePanel({ data }: { data: DashboardPayload }) {
-  const counts = Object.entries(data.sourceTransparency.recordCounts);
-  const coverage = data.sourceTransparency.dataCoverage;
-  return (
-    <section className="border border-hp-rule bg-hp-card p-4">
-      <div className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-        Source Transparency
-      </div>
-      <div className="mt-3 space-y-2 text-sm">
-        <div>{data.sourceTransparency.timeRange.days} day window</div>
-        <div>{data.sourceTransparency.adAccountsAnalyzed.join(", ") || "No accounts"}</div>
-        <div className="flex justify-between gap-4 border-t border-hp-rule pt-2">
-          <span>stored_days</span>
-          <span className="tabular-nums">
-            {formatMetric(coverage.storedDays, "number")} /{" "}
-            {formatMetric(coverage.expectedDays, "number")}
-          </span>
-        </div>
-        <div className="flex justify-between gap-4 border-t border-hp-rule pt-2">
-          <span>missing_days</span>
-          <span className="tabular-nums">{formatMetric(coverage.missingDays, "number")}</span>
-        </div>
-        {counts.map(([key, value]) => (
-          <div key={key} className="flex justify-between gap-4 border-t border-hp-rule pt-2">
-            <span>{key}</span>
-            <span className="tabular-nums">{formatMetric(Number(value), "number")}</span>
-          </div>
-        ))}
-      </div>
-    </section>
   );
 });
 
@@ -2618,6 +2131,72 @@ function escapeHtml(value: string | number | null | undefined) {
   });
 }
 
+function filterPerformanceTree(
+  tree: PerformanceTreeCampaignNode[],
+  normalizedQuery: string,
+): PerformanceTreeCampaignNode[] {
+  if (!normalizedQuery) return tree;
+
+  return tree
+    .map((campaignNode) => {
+      const campaignMatches = rowMatchesSearch(campaignNode.campaign, normalizedQuery);
+      const adSets = campaignNode.adSets
+        .map((adSetNode) => {
+          const adSetMatches = rowMatchesSearch(adSetNode.adSet, normalizedQuery);
+          const creatives = campaignMatches || adSetMatches
+            ? adSetNode.creatives
+            : adSetNode.creatives.filter((creative) =>
+                rowMatchesSearch(creative, normalizedQuery),
+              );
+          if (!campaignMatches && !adSetMatches && creatives.length === 0) return null;
+          return {
+            ...adSetNode,
+            creatives,
+          };
+        })
+        .filter((adSetNode): adSetNode is PerformanceTreeAdSetNode => adSetNode !== null);
+
+      if (!campaignMatches && adSets.length === 0) return null;
+      return {
+        ...campaignNode,
+        adSets: campaignMatches ? campaignNode.adSets : adSets,
+      };
+    })
+    .filter((campaignNode): campaignNode is PerformanceTreeCampaignNode => campaignNode !== null);
+}
+
+function collectTreeCreatives(tree: PerformanceTreeCampaignNode[]) {
+  const creatives: PerformanceRow[] = [];
+  for (const campaignNode of tree) {
+    for (const adSetNode of campaignNode.adSets) {
+      creatives.push(...adSetNode.creatives);
+    }
+  }
+  return creatives;
+}
+
+function countPerformanceTree(tree: PerformanceTreeCampaignNode[]) {
+  let adSets = 0;
+  let creatives = 0;
+  for (const campaignNode of tree) {
+    adSets += campaignNode.adSets.length;
+    for (const adSetNode of campaignNode.adSets) {
+      creatives += adSetNode.creatives.length;
+    }
+  }
+  return { campaigns: tree.length, adSets, creatives };
+}
+
+function toggleSetValue(current: Set<string>, value: string) {
+  const next = new Set(current);
+  if (next.has(value)) {
+    next.delete(value);
+  } else {
+    next.add(value);
+  }
+  return next;
+}
+
 function filterAndSortRows(
   rows: PerformanceRow[],
   brand: string,
@@ -2629,6 +2208,23 @@ function filterAndSortRows(
   return rows
     .filter((row) => rowMatchesFilters(row, brand, umbrella, normalizedQuery, delivery))
     .sort((a, b) => Number(b[sortKey] || 0) - Number(a[sortKey] || 0));
+}
+
+function rowMatchesSearch(row: PerformanceRow, normalizedQuery: string) {
+  if (!normalizedQuery) return true;
+  return (
+    searchValueMatches(row.name, normalizedQuery) ||
+    searchValueMatches(row.title, normalizedQuery) ||
+    searchValueMatches(row.body, normalizedQuery) ||
+    searchValueMatches(row.brandCode, normalizedQuery) ||
+    searchValueMatches(row.campaignUmbrella, normalizedQuery) ||
+    searchValueMatches(row.objective, normalizedQuery) ||
+    searchValueMatches(row.status, normalizedQuery) ||
+    searchValueMatches(row.effectiveStatus, normalizedQuery) ||
+    searchValueMatches(row.campaignName, normalizedQuery) ||
+    searchValueMatches(row.adSetName, normalizedQuery) ||
+    searchValueMatches(row.adName, normalizedQuery)
+  );
 }
 
 function rowMatchesFilters(
@@ -2644,16 +2240,7 @@ function rowMatchesFilters(
 
   if (!normalizedQuery) return true;
 
-  return (
-    searchValueMatches(row.name, normalizedQuery) ||
-    searchValueMatches(row.title, normalizedQuery) ||
-    searchValueMatches(row.body, normalizedQuery) ||
-    searchValueMatches(row.brandCode, normalizedQuery) ||
-    searchValueMatches(row.campaignUmbrella, normalizedQuery) ||
-    searchValueMatches(row.objective, normalizedQuery) ||
-    searchValueMatches(row.status, normalizedQuery) ||
-    searchValueMatches(row.effectiveStatus, normalizedQuery)
-  );
+  return rowMatchesSearch(row, normalizedQuery);
 }
 
 function rowMatchesDelivery(row: PerformanceRow, delivery: DeliveryFilter) {

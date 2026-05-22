@@ -11,6 +11,10 @@
 
 import { fetchDashboardData, type DashboardPayload } from "./analytics";
 import type { AppPermission } from "./access-control";
+import {
+  normalizeAnalystPeriodCount,
+  type AnalystPeriodCount,
+} from "./analyst-periods";
 import { requirePagePermission } from "./server-route-auth";
 import { isWowMode, resolveWowWindow, type WowMode } from "./wow-window";
 
@@ -19,6 +23,7 @@ export type DashboardPageSearchParams = Record<string, string | string[] | undef
 export type DashboardPageResult = {
   dashboard: DashboardPayload;
   permissions: AppPermission[];
+  analystPeriodCount: AnalystPeriodCount;
   /**
    * The active week-over-week mode if one was applied (via `?wow=cal|rolling`
    * or via `defaultWow`). Null when the legacy days/start/end input was used.
@@ -48,6 +53,7 @@ export async function loadDashboardPagePayload(
 
   const wowParam = firstParam(params.wow);
   const wow = isWowMode(wowParam) ? wowParam : options.defaultWow ?? null;
+  const analystPeriodCount = normalizeAnalystPeriodCount(firstParam(params.periods));
 
   if (wow) {
     const window = resolveWowWindow(wow);
@@ -55,7 +61,7 @@ export async function loadDashboardPagePayload(
       startDate: window.start,
       endDate: window.end,
     });
-    return { dashboard, permissions: profile.permissions, wow };
+    return { dashboard, permissions: profile.permissions, analystPeriodCount, wow };
   }
 
   const dashboard = await fetchDashboardData({
@@ -63,7 +69,7 @@ export async function loadDashboardPagePayload(
     endDate: firstParam(params.end),
     days: numberParam(params.days) || 30,
   });
-  return { dashboard, permissions: profile.permissions, wow: null };
+  return { dashboard, permissions: profile.permissions, analystPeriodCount, wow: null };
 }
 
 export function firstParam(value: string | string[] | undefined) {

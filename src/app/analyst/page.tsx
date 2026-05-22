@@ -14,6 +14,15 @@ export default async function AnalystDashboardPage({
   searchParams?: SearchParams;
 }) {
   const params = searchParams ? await searchParams : {};
-  const { dashboard, permissions } = await loadDashboardPagePayload(params, "/analyst");
-  return <DashboardClient initialData={dashboard} permissions={permissions} />;
+  const { dashboard, permissions, analystPeriodCount } = await loadDashboardPagePayload(
+    params,
+    "/analyst",
+  );
+  return (
+    <DashboardClient
+      initialData={dashboard}
+      permissions={permissions}
+      initialPeriodCount={analystPeriodCount}
+    />
+  );
 }
