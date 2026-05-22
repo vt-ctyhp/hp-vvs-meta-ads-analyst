@@ -3,7 +3,7 @@ import { revalidateTag } from "next/cache";
 import { requirePermissionFromRequest } from "@/lib/app-auth";
 import { CREATIVE_ANALYSIS_CACHE_TAG } from "@/lib/creative-analysis";
 import { jsonError } from "@/lib/http";
-import { META_INSIGHT_AGGREGATES_CACHE_TAG } from "@/lib/meta-insight-aggregates";
+import { revalidateAndWarmMetaInsightAggregateCache } from "@/lib/meta-insight-cache-warmup";
 import { syncMetaAds } from "@/lib/meta";
 import type { MetaAdsSyncTrigger } from "@/lib/meta-sync-options";
 
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
     }
 
     const result = await syncMetaAds(trigger);
-    revalidateTag(META_INSIGHT_AGGREGATES_CACHE_TAG, { expire: 0 });
+    await revalidateAndWarmMetaInsightAggregateCache();
     revalidateTag(CREATIVE_ANALYSIS_CACHE_TAG, { expire: 0 });
     return Response.json(result);
   } catch (error) {

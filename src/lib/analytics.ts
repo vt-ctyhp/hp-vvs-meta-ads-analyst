@@ -17,10 +17,12 @@ import {
   buildAnalystPeriodBreakdown,
   type AnalystPeriodAggregateBucket,
   type AnalystPeriodBreakdown,
+  type AnalystPeriodEntityValues,
 } from "./analyst-period-breakdown";
 import { ConfigurationError, getMissingDashboardEnv } from "./env";
 import {
   cachedAggregateMetaInsights as aggregateMetaInsights,
+  type MetaInsightDimension,
   type MetaInsightAggregateRow,
   type MetaInsightFilter,
 } from "./meta-insight-aggregates";
@@ -135,6 +137,10 @@ export type ComparisonPayload = {
 export type DashboardPayload = {
   configured: boolean;
   missingEnv: string[];
+  hierarchyLoading: {
+    mode: "eager" | "lazy";
+    loadedLevels: Array<"campaign" | "ad_set" | "creative">;
+  };
   sourceTransparency: SourceTransparency;
   overview: MetricSummary;
   byBrand: PerformanceRow[];
@@ -164,6 +170,25 @@ export type DashboardDateRangeInput = {
   group?: string | null;
   status?: string | null;
   periodCount?: AnalystPeriodCount | null;
+  includeLowerLevels?: boolean;
+};
+
+export type DashboardPerformanceChildrenInput = Omit<
+  DashboardDateRangeInput,
+  "includeLowerLevels"
+> & {
+  parentLevel: "campaign" | "ad_set";
+  parentId: string;
+};
+
+export type DashboardPerformanceChildrenPayload = {
+  configured: boolean;
+  missingEnv: string[];
+  parentLevel: "campaign" | "ad_set";
+  parentId: string;
+  level: "ad_set" | "creative";
+  rows: PerformanceRow[];
+  periodValuesByEntity: AnalystPeriodEntityValues;
 };
 
 export type StoredReport = {
@@ -315,6 +340,10 @@ export function emptyDashboardPayload(missingEnv = getMissingDashboardEnv()): Da
   return {
     configured: missingEnv.length === 0,
     missingEnv,
+    hierarchyLoading: {
+      mode: "eager",
+      loadedLevels: ["campaign", "ad_set", "creative"],
+    },
     sourceTransparency: {
       timeRange: { start: null, end: null, days: 30 },
       adAccountsAnalyzed: [],
@@ -371,6 +400,10 @@ export async function fetchDashboardData(
     const filters = buildSharedInsightFilters(
       typeof dateRangeInput === "number" ? {} : dateRangeInput,
     );
+    const includeLowerLevels =
+      typeof dateRangeInput === "number"
+        ? true
+        : dateRangeInput.includeLowerLevels !== false;
     const requestedPeriodCount = typeof dateRangeInput === "number"
       ? undefined
       : dateRangeInput.periodCount;
@@ -441,25 +474,29 @@ export async function fetchDashboardData(
           limit: 5000,
         }),
       () =>
-        aggregateMetaInsights({
-          start: dateRange.start,
-          end: dateRange.end,
-          dimensions: ["ad_set"],
-          filters,
-          sortField: "spend",
-          sortDirection: "desc",
-          limit: 5000,
-        }),
+        includeLowerLevels
+          ? aggregateMetaInsights({
+              start: dateRange.start,
+              end: dateRange.end,
+              dimensions: ["ad_set"],
+              filters,
+              sortField: "spend",
+              sortDirection: "desc",
+              limit: 5000,
+            })
+          : Promise.resolve([]),
       () =>
-        aggregateMetaInsights({
-          start: dateRange.start,
-          end: dateRange.end,
-          dimensions: ["creative"],
-          filters,
-          sortField: "spend",
-          sortDirection: "desc",
-          limit: 5000,
-        }),
+        includeLowerLevels
+          ? aggregateMetaInsights({
+              start: dateRange.start,
+              end: dateRange.end,
+              dimensions: ["creative"],
+              filters,
+              sortField: "spend",
+              sortDirection: "desc",
+              limit: 5000,
+            })
+          : Promise.resolve([]),
       () =>
         aggregateMetaInsights({
           start: dateRange.start,
@@ -623,6 +660,7 @@ export async function fetchDashboardData(
           campaignRows: priorCampaignAggregateRows,
         },
       },
+      { includeLowerLevels },
     );
 
     const brands = rows<BrandRow>(brandsRes.data);
@@ -951,6 +989,12 @@ export async function fetchDashboardData(
     return {
       configured: true,
       missingEnv: [],
+      hierarchyLoading: {
+        mode: includeLowerLevels ? "eager" : "lazy",
+        loadedLevels: includeLowerLevels
+          ? ["campaign", "ad_set", "creative"]
+          : ["campaign"],
+      },
       sourceTransparency,
       overview,
       byBrand,
@@ -1005,14 +1049,95 @@ export async function fetchDashboardData(
   }
 }
 
+export async function fetchDashboardPerformanceChildren(
+  input: DashboardPerformanceChildrenInput,
+): Promise<DashboardPerformanceChildrenPayload> {
+  const missingEnv = getMissingDashboardEnv();
+  const level = input.parentLevel === "campaign" ? "ad_set" : "creative";
+  const empty: DashboardPerformanceChildrenPayload = {
+    configured: missingEnv.length === 0,
+    missingEnv,
+    parentLevel: input.parentLevel,
+    parentId: input.parentId,
+    level,
+    rows: [],
+    periodValuesByEntity: {},
+  };
+
+  if (missingEnv.length) return empty;
+
+  const parentId = input.parentId.trim();
+  if (!parentId) return empty;
+
+  const supabase = createAdsAnalystClient("web");
+  const dateRange = resolveDashboardDateRange(input);
+  const filters = [
+    ...buildSharedInsightFilters(input),
+    parentFilter(input.parentLevel, parentId),
+  ];
+  const periodCount = normalizeAnalystPeriodCount(input.periodCount);
+  const periods = rollingAnalystPeriods(dateRange, periodCount);
+  const dimensions: MetaInsightDimension[] = input.parentLevel === "campaign"
+    ? ["brand", "campaign", "ad_set"]
+    : ["brand", "campaign", "ad_set", "creative"];
+
+  const aggregateRows = await aggregateMetaInsights({
+    start: dateRange.start,
+    end: dateRange.end,
+    dimensions,
+    filters,
+    sortField: "spend",
+    sortDirection: "desc",
+    limit: 5000,
+  });
+
+  const metadata = await fetchTargetedDashboardMetadata({
+    supabase,
+    campaignAggregateRows: [],
+    adSetAggregateRows: input.parentLevel === "campaign" ? aggregateRows : [],
+    creativeAggregateRows: input.parentLevel === "ad_set" ? aggregateRows : [],
+  });
+  const firstMetadataError = [
+    metadata.adsRes,
+    metadata.adSetsRes,
+    metadata.campaignsRes,
+    metadata.creativesRes,
+  ].find((res) => res.error)?.error;
+  if (firstMetadataError) throw firstMetadataError;
+
+  const rows = input.parentLevel === "campaign"
+    ? mapDashboardAdSetRows(aggregateRows, metadata)
+    : mapDashboardCreativeRows(aggregateRows, metadata);
+  const periodValuesByEntity = await fetchDashboardChildPeriodValues({
+    dateRange,
+    periods,
+    dimensions,
+    filters,
+    currentRows: aggregateRows,
+    level,
+  });
+
+  return {
+    configured: true,
+    missingEnv: [],
+    parentLevel: input.parentLevel,
+    parentId,
+    level,
+    rows,
+    periodValuesByEntity,
+  };
+}
+
 async function fetchAnalystPeriodBreakdown(
   periods: AnalystPeriodWindow[],
   filters: MetaInsightFilter[],
   seedRows?: AnalystPeriodSeedRows,
+  options: { includeLowerLevels?: boolean } = {},
 ): Promise<AnalystPeriodBreakdown> {
   if (!periods.length) return EMPTY_PERIOD_BREAKDOWN;
 
   const buckets: AnalystPeriodAggregateBucket[] = [];
+  const includeLowerLevels = options.includeLowerLevels !== false;
 
   for (const period of periods) {
     const seed = seedRowsForPeriod(period, seedRows);
@@ -1046,26 +1171,30 @@ async function fetchAnalystPeriodBreakdown(
           }),
       seed.adSetRows
         ? Promise.resolve(seed.adSetRows)
-        : aggregateMetaInsights({
-            start: period.start,
-            end: period.end,
-            dimensions: ["ad_set"],
-            filters,
-            sortField: "spend",
-            sortDirection: "desc",
-            limit: 5000,
-          }),
+        : includeLowerLevels
+          ? aggregateMetaInsights({
+              start: period.start,
+              end: period.end,
+              dimensions: ["ad_set"],
+              filters,
+              sortField: "spend",
+              sortDirection: "desc",
+              limit: 5000,
+            })
+          : Promise.resolve([]),
       seed.creativeRows
         ? Promise.resolve(seed.creativeRows)
-        : aggregateMetaInsights({
-            start: period.start,
-            end: period.end,
-            dimensions: ["creative"],
-            filters,
-            sortField: "spend",
-            sortDirection: "desc",
-            limit: 5000,
-          }),
+        : includeLowerLevels
+          ? aggregateMetaInsights({
+              start: period.start,
+              end: period.end,
+              dimensions: ["creative"],
+              filters,
+              sortField: "spend",
+              sortDirection: "desc",
+              limit: 5000,
+            })
+          : Promise.resolve([]),
     ]);
 
     buckets.push({
@@ -1136,8 +1265,15 @@ async function fetchTargetedDashboardMetadata({
   creativeAggregateRows: MetaInsightAggregateRow[];
 }) {
   const creativeIds = uniqueRemoteIds(creativeAggregateRows.map((row) => row.creative_id));
-  const campaignAggregateIds = uniqueRemoteIds(campaignAggregateRows.map((row) => row.campaign_id));
-  const adSetAggregateIds = uniqueRemoteIds(adSetAggregateRows.map((row) => row.ad_set_id));
+  const campaignAggregateIds = uniqueRemoteIds([
+    ...campaignAggregateRows.map((row) => row.campaign_id),
+    ...adSetAggregateRows.map((row) => row.campaign_id),
+    ...creativeAggregateRows.map((row) => row.campaign_id),
+  ]);
+  const adSetAggregateIds = uniqueRemoteIds([
+    ...adSetAggregateRows.map((row) => row.ad_set_id),
+    ...creativeAggregateRows.map((row) => row.ad_set_id),
+  ]);
 
   const [adsRes, creativesRes] = await Promise.all([
     selectRowsByRemoteId<AdRow>(supabase, "meta_ads", AD_COLUMNS, "creative_id", creativeIds),
@@ -1183,6 +1319,176 @@ async function fetchTargetedDashboardMetadata({
     campaignsRes,
     creativesRes,
   };
+}
+
+async function fetchDashboardChildPeriodValues({
+  dateRange,
+  periods,
+  dimensions,
+  filters,
+  currentRows,
+  level,
+}: {
+  dateRange: PeriodSeedRange;
+  periods: AnalystPeriodWindow[];
+  dimensions: MetaInsightDimension[];
+  filters: MetaInsightFilter[];
+  currentRows: MetaInsightAggregateRow[];
+  level: "ad_set" | "creative";
+}): Promise<AnalystPeriodEntityValues> {
+  if (!periods.length) return {};
+
+  const buckets: AnalystPeriodAggregateBucket[] = [];
+  for (const period of periods) {
+    const rowsForPeriod = samePeriodWindow(period, dateRange)
+      ? currentRows
+      : await aggregateMetaInsights({
+          start: period.start,
+          end: period.end,
+          dimensions,
+          filters,
+          sortField: "spend",
+          sortDirection: "desc",
+          limit: 5000,
+        });
+
+    buckets.push({
+      period,
+      byUmbrellaRows: [],
+      campaignRows: [],
+      adSetRows: level === "ad_set" ? rowsForPeriod : [],
+      creativeRows: level === "creative" ? rowsForPeriod : [],
+    });
+  }
+
+  const breakdown = buildAnalystPeriodBreakdown(buckets);
+  return level === "ad_set" ? breakdown.adSets : breakdown.creatives;
+}
+
+function mapDashboardAdSetRows(
+  adSetAggregateRows: MetaInsightAggregateRow[],
+  metadata: Awaited<ReturnType<typeof fetchTargetedDashboardMetadata>>,
+): PerformanceRow[] {
+  const adSets = rows<AdSetRow>(metadata.adSetsRes.data);
+  const campaigns = rows<CampaignRow>(metadata.campaignsRes.data);
+  const adSetById = new Map(adSets.map((adSet) => [adSet.ad_set_id, adSet]));
+  const campaignById = new Map(campaigns.map((campaign) => [campaign.campaign_id, campaign]));
+
+  return adSetAggregateRows
+    .map((row) => {
+      const adSetId = row.ad_set_id || "unknown";
+      const adSet = adSetById.get(adSetId);
+      const campaignId = adSet?.campaign_id || row.campaign_id || null;
+      const campaign = campaignId ? campaignById.get(campaignId) : undefined;
+      const classification = resolveCampaignClassification(
+        {
+          umbrella: adSet?.campaign_umbrella || campaign?.campaign_umbrella,
+          confidence:
+            adSet?.campaign_umbrella_confidence || campaign?.campaign_umbrella_confidence,
+          reason:
+            adSet?.campaign_umbrella_reason || campaign?.campaign_umbrella_reason,
+        },
+        classifyCampaignUmbrella({
+          campaignName: campaign?.name || row.campaign,
+          adSetName: adSet?.name || row.ad_set,
+        }),
+      );
+      return {
+        id: adSetId,
+        name: adSet?.name || row.ad_set || "Unknown ad set",
+        brandCode: row.brand || "Unassigned",
+        status: adSet?.status,
+        effectiveStatus: adSet?.effective_status,
+        campaignUmbrella: classification.umbrella,
+        campaignUmbrellaConfidence: classification.confidence,
+        campaignUmbrellaReason: classification.reason,
+        campaignId,
+        campaignName: campaign?.name || row.campaign || null,
+        ...summaryFromAggregate(row, classification.umbrella),
+      };
+    })
+    .sort(bySpendDesc);
+}
+
+function mapDashboardCreativeRows(
+  creativeAggregateRows: MetaInsightAggregateRow[],
+  metadata: Awaited<ReturnType<typeof fetchTargetedDashboardMetadata>>,
+): PerformanceRow[] {
+  const campaigns = rows<CampaignRow>(metadata.campaignsRes.data);
+  const adSets = rows<AdSetRow>(metadata.adSetsRes.data);
+  const ads = rows<AdRow>(metadata.adsRes.data);
+  const creatives = rows<CreativeRow>(metadata.creativesRes.data);
+  const campaignById = new Map(campaigns.map((campaign) => [campaign.campaign_id, campaign]));
+  const adSetById = new Map(adSets.map((adSet) => [adSet.ad_set_id, adSet]));
+  const creativeById = new Map(creatives.map((creative) => [creative.creative_id, creative]));
+  const adByCreativeId = new Map(
+    ads.filter((ad) => ad.creative_id).map((ad) => [ad.creative_id as string, ad]),
+  );
+
+  return creativeAggregateRows
+    .map((row) => {
+      const creativeId = row.creative_id || "unknown";
+      const ad = adByCreativeId.get(creativeId);
+      const adSetId = ad?.ad_set_id || row.ad_set_id || null;
+      const campaignId = ad?.campaign_id || row.campaign_id || null;
+      const adSet = adSetId ? adSetById.get(adSetId) : undefined;
+      const campaign = campaignId ? campaignById.get(campaignId) : undefined;
+      const creative = creativeById.get(creativeId || ad?.creative_id || "");
+      const classification = resolveCampaignClassification(
+        {
+          umbrella: ad?.campaign_umbrella || adSet?.campaign_umbrella || campaign?.campaign_umbrella,
+          confidence:
+            ad?.campaign_umbrella_confidence ||
+            adSet?.campaign_umbrella_confidence ||
+            campaign?.campaign_umbrella_confidence,
+          reason:
+            ad?.campaign_umbrella_reason ||
+            adSet?.campaign_umbrella_reason ||
+            campaign?.campaign_umbrella_reason,
+        },
+        classifyCampaignUmbrella({
+          campaignName: campaign?.name || row.campaign,
+          adSetName: adSet?.name || row.ad_set,
+        }),
+      );
+      const metrics = summaryFromAggregate(row, classification.umbrella);
+      const displayMedia = resolveCreativeDisplayMedia(creative);
+      return {
+        id: creativeId,
+        name: creative?.name || ad?.name || row.creative || "Unknown creative",
+        brandCode: row.brand || "Unassigned",
+        status: ad?.status,
+        effectiveStatus: ad?.effective_status,
+        campaignUmbrella: classification.umbrella,
+        campaignUmbrellaConfidence: ad?.campaign_umbrella_confidence || null,
+        campaignUmbrellaReason: ad?.campaign_umbrella_reason || null,
+        previewSource: creative?.preview_source,
+        previewUrl: creative?.preview_url,
+        previewHtml: creative?.preview_html,
+        thumbnailUrl: displayMedia.thumbnailUrl,
+        imageUrl: displayMedia.imageUrl,
+        videoThumbnailUrl: null,
+        title: creative?.title,
+        body: creative?.body,
+        adId: ad?.ad_id || null,
+        adName: ad?.name || null,
+        adSetId,
+        adSetName: adSet?.name || row.ad_set || null,
+        campaignId,
+        campaignName: campaign?.name || row.campaign || null,
+        ...metrics,
+      };
+    })
+    .sort(bySpendDesc);
+}
+
+function parentFilter(
+  parentLevel: DashboardPerformanceChildrenInput["parentLevel"],
+  parentId: string,
+): MetaInsightFilter {
+  return parentLevel === "campaign"
+    ? { field: "campaign", operator: "contains", value: parentId }
+    : { field: "ad_set", operator: "contains", value: parentId };
 }
 
 type MetadataQueryResult<T> = {

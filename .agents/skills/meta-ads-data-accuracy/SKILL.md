@@ -39,14 +39,25 @@ node .agents/skills/meta-ads-data-accuracy/scripts/reconcile-meta-ads-data.mjs \
 
 Required env: `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. Optional env: `ADS_ANALYST_ENVIRONMENT` defaults to `production`.
 
-5. Run targeted app tests for changed code:
+5. Run the live end-to-end truth test for Analyst, Optimize, AI, report, or export changes:
 
 ```bash
-node --test --experimental-strip-types tests/meta-insight-aggregates.test.ts tests/analysis-route.test.ts tests/period-pivot-data.test.ts tests/optimize-ai-panel.test.ts
+set -a
+source .env.local
+set +a
+node --test --experimental-strip-types tests/meta-ads-e2e-truth.test.ts
 ```
 
-6. For UI changes, start the app and use Browser to inspect the affected screen. Capture screenshot(s), visible numbers, and any API payload that feeds the surface.
-7. For AI chat, ad-hoc analysis, reports, or exports, save the output text/JSON/CSV and scan numeric claims:
+This test uses the latest synced production window by default. It proves raw `meta_daily_insights` totals match `aggregate_meta_daily_insights`, verifies a real campaign-umbrella filter, and checks campaign -> ad-set -> creative rollups for the same date/filter scope. It skips when live Supabase env vars are unavailable.
+
+6. Run targeted app tests for changed code:
+
+```bash
+node --test --experimental-strip-types tests/meta-insight-aggregates.test.ts tests/meta-ads-e2e-truth.test.ts tests/analysis-route.test.ts tests/period-pivot-data.test.ts tests/optimize-ai-panel.test.ts
+```
+
+7. For UI changes, start the app and use Browser to inspect the affected screen. Capture screenshot(s), visible numbers, and any API payload that feeds the surface.
+8. For AI chat, ad-hoc analysis, reports, or exports, save the output text/JSON/CSV and scan numeric claims:
 
 ```bash
 node .agents/skills/meta-ads-data-accuracy/scripts/scan-ai-numeric-claims.mjs \
@@ -55,9 +66,9 @@ node .agents/skills/meta-ads-data-accuracy/scripts/scan-ai-numeric-claims.mjs \
   --out .codex/meta-ads-accuracy/latest
 ```
 
-8. Fix mismatches at the earliest wrong layer: SQL/RPC, data mapper, API route, AI prompt/context, formatter, export serializer, or UI rendering.
-9. Add or update automated tests that would have failed before the fix.
-10. Return an audit report with failing test list, fixes made, tests run, screenshots captured, and reconciliation CSV path.
+9. Fix mismatches at the earliest wrong layer: SQL/RPC, data mapper, API route, AI prompt/context, formatter, export serializer, or UI rendering.
+10. Add or update automated tests that would have failed before the fix.
+11. Return an audit report with failing test list, fixes made, tests run, screenshots captured, and reconciliation CSV path.
 
 ## What To Check
 
@@ -67,6 +78,7 @@ node .agents/skills/meta-ads-data-accuracy/scripts/scan-ai-numeric-claims.mjs \
 - Dates: inclusive `date_start >= start` and `date_start <= end`; preserve California calendar-date semantics used by sync/backfill.
 - Filters: brand, campaign umbrella/group, delivery status, search, campaign, ad set, ad, creative.
 - Hierarchy: campaign totals must equal child ad-set totals; ad-set totals must equal child ad/creative totals for the same filters and date range.
+- Data-flow scope: the page header, API query, table rows, charts, lazy child rows, and AI context must all use the same date range, filters, environment, hierarchy level, and status default. Do not mix "last 7 days" totals with "current week" tables unless the UI says those are different scopes.
 - AI claims: every numeric claim needs backing rows in the table/totals provided to the model. Flag claims that use stale dates, different filters, unsupported metrics, or ambiguous attribution wording.
 - Exports/reports: values must match UI/API source data, not a separately recomputed or differently filtered dataset.
 
