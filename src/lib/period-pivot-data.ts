@@ -535,9 +535,17 @@ function withPrimaryResultLabels(
 }
 
 export function resolvePeriodPrimaryResultLabel(
-  row: Pick<MetaInsightAggregateRow, "campaign_umbrella">,
+  row: Partial<Pick<MetaInsightAggregateRow, "campaign_umbrella" | "campaign" | "ad_set">>,
 ) {
-  return row.campaign_umbrella === "Book Appts US" ? "Bookings" : "Messages";
+  const text = [row.campaign_umbrella, row.campaign, row.ad_set]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return row.campaign_umbrella === "Book Appts US" ||
+    /appointment|book|schedule|calendly|acuity/.test(text)
+    ? "Bookings"
+    : "Messages";
 }
 
 function normalizeDateString(value: string | null | undefined) {

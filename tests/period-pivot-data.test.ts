@@ -59,6 +59,15 @@ describe("period pivot controls", () => {
     );
   });
 
+  it("labels appointment campaign rows as bookings even when umbrella is not returned", () => {
+    assert.equal(
+      resolvePeriodPrimaryResultLabel({
+        campaign: "Broad Audience - Scheduled Test BookAppointment Prospecting",
+      }),
+      "Bookings",
+    );
+  });
+
   it("labels non-appointment primary-result cells as messages", () => {
     assert.equal(
       resolvePeriodPrimaryResultLabel({

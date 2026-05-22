@@ -4,6 +4,10 @@
 -- insight rows and every joined metadata table. Without the join predicates,
 -- production insight rows can join to both production and staging campaign,
 -- ad-set, and ad rows, multiplying spend by 2 x 2 x 2.
+--
+-- Meta action families often include overlapping aliases for the same event.
+-- Resolve each family by priority with coalesce(...) instead of summing every
+-- alias, or leads/messages/conversions get overstated.
 
 create or replace function public.aggregate_meta_daily_insights(
   p_start date,
@@ -135,18 +139,108 @@ as $$
       coalesce((
         select sum((a ->> 'value')::numeric)
         from jsonb_array_elements(e.actions) a
-        where a ->> 'action_type' in ('offsite_conversion.fb_pixel_custom')
+        where a ->> 'action_type' = 'offsite_conversion.fb_pixel_custom'
+      ), (
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(e.actions) a
+        where a ->> 'action_type' = 'schedule'
+      ), (
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(e.actions) a
+        where a ->> 'action_type' = 'submit_application'
+      ), (
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(e.actions) a
+        where a ->> 'action_type' = 'booking'
+      ), (
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(e.actions) a
+        where a ->> 'action_type' = 'appointment'
       ), 0) as website_bookings_raw,
       coalesce((
         select sum((a ->> 'value')::numeric)
         from jsonb_array_elements(e.actions) a
-        where a ->> 'action_type' in ('onsite_conversion.total_messaging_connection')
+        where a ->> 'action_type' = 'onsite_conversion.messaging_conversation_started_7d'
+      ), (
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(e.actions) a
+        where a ->> 'action_type' = 'onsite_conversion.total_messaging_connection'
+      ), (
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(e.actions) a
+        where a ->> 'action_type' = 'onsite_conversion.messaging_first_reply'
       ), 0) as messaging_contacts_raw,
       coalesce((
         select sum((a ->> 'value')::numeric)
         from jsonb_array_elements(e.actions) a
-        where a ->> 'action_type' in ('onsite_conversion.messaging_first_reply')
-      ), 0) as new_messaging_contacts_raw
+        where a ->> 'action_type' = 'onsite_conversion.messaging_first_reply'
+      ), 0) as new_messaging_contacts_raw,
+      coalesce((
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(e.actions) a
+        where a ->> 'action_type' = 'lead'
+      ), (
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(e.actions) a
+        where a ->> 'action_type' = 'onsite_conversion.lead'
+      ), (
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(e.actions) a
+        where a ->> 'action_type' = 'onsite_conversion.lead_grouped'
+      ), (
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(e.actions) a
+        where a ->> 'action_type' = 'onsite_web_lead'
+      ), (
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(e.actions) a
+        where a ->> 'action_type' = 'offsite_conversion.fb_pixel_lead'
+      ), (
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(e.actions) a
+        where a ->> 'action_type' = 'offsite_complete_registration_add_meta_leads'
+      ), 0) as leads_raw,
+      coalesce((
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(e.actions) a
+        where a ->> 'action_type' = 'omni_purchase'
+      ), (
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(e.actions) a
+        where a ->> 'action_type' = 'purchase'
+      ), (
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(e.actions) a
+        where a ->> 'action_type' = 'onsite_conversion.purchase'
+      ), (
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(e.actions) a
+        where a ->> 'action_type' = 'onsite_app_purchase'
+      ), (
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(e.actions) a
+        where a ->> 'action_type' = 'onsite_web_purchase'
+      ), (
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(e.actions) a
+        where a ->> 'action_type' = 'onsite_web_app_purchase'
+      ), (
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(e.actions) a
+        where a ->> 'action_type' = 'offsite_conversion.fb_pixel_purchase'
+      ), 0) + coalesce((
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(e.actions) a
+        where a ->> 'action_type' = 'complete_registration'
+      ), (
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(e.actions) a
+        where a ->> 'action_type' = 'offsite_conversion.fb_pixel_complete_registration'
+      ), (
+        select sum((a ->> 'value')::numeric)
+        from jsonb_array_elements(e.actions) a
+        where a ->> 'action_type' = 'offsite_complete_registration_add_meta_leads'
+      ), 0) as conversions_raw
     from enriched e
     where not exists (
       select 1
@@ -229,9 +323,9 @@ as $$
       sum(impressions)::bigint as impressions,
       sum(reach)::bigint as reach,
       sum(clicks)::bigint as clicks,
-      sum(leads)::bigint as leads,
-      sum(bookings)::bigint as bookings,
-      sum(conversions)::bigint as conversions,
+      round(sum(leads_raw), 0)::bigint as leads,
+      round(sum(website_bookings_raw), 0)::bigint as bookings,
+      round(sum(conversions_raw), 0)::bigint as conversions,
       round(sum(website_bookings_raw), 2) as website_bookings,
       round(sum(messaging_contacts_raw), 2) as messaging_contacts,
       round(sum(new_messaging_contacts_raw), 2) as new_messaging_contacts,

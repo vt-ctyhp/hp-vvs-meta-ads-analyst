@@ -436,6 +436,19 @@ describe("aggregate Meta insights environment scoping", () => {
     assert.doesNotMatch(migration, /\btruncate\s+table\b/i);
     assert.match(migration, /to ads_analyst_web, ads_analyst_worker, ads_analyst_ingest, authenticated, service_role/);
   });
+
+  it("uses canonical Meta action fallbacks instead of summing overlapping action families", () => {
+    assert.match(
+      migration,
+      /messaging_conversation_started_7d[\s\S]+total_messaging_connection[\s\S]+messaging_first_reply/,
+    );
+    assert.match(
+      migration,
+      /where a ->> 'action_type' = 'lead'[\s\S]+where a ->> 'action_type' = 'onsite_conversion\.lead'/,
+    );
+    assert.doesNotMatch(migration, /sum\(leads\)::bigint/);
+    assert.doesNotMatch(migration, /sum\(conversions\)::bigint/);
+  });
 });
 
 function sourceFiles(dir: string): string[] {
