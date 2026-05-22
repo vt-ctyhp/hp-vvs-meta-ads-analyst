@@ -61,6 +61,7 @@ export async function loadDashboardPagePayload(
       startDate: window.start,
       endDate: window.end,
       periodCount: analystPeriodCount,
+      includeLowerLevels: false,
     });
     return { dashboard, permissions: profile.permissions, analystPeriodCount, wow };
   }
@@ -70,6 +71,7 @@ export async function loadDashboardPagePayload(
     endDate: firstParam(params.end),
     days: numberParam(params.days) || 30,
     periodCount: analystPeriodCount,
+    includeLowerLevels: false,
   });
   return { dashboard, permissions: profile.permissions, analystPeriodCount, wow: null };
 }

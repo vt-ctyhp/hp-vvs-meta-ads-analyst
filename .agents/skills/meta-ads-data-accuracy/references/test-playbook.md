@@ -36,12 +36,32 @@ node .agents/skills/meta-ads-data-accuracy/scripts/reconcile-meta-ads-data.mjs \
 
 If env vars are missing, say live reconciliation was not run and fall back to local tests/static checks.
 
+## End-To-End Truth Tests
+
+Run the live truth test before trusting Analyst, Optimize, AI, report, or export changes:
+
+```bash
+set -a
+source .env.local
+set +a
+node --test --experimental-strip-types tests/meta-ads-e2e-truth.test.ts
+```
+
+What it proves:
+
+- Raw `meta_daily_insights` totals equal `aggregate_meta_daily_insights` for the latest synced 7-day production window.
+- A real campaign-umbrella filter returns the same totals in raw rows and the RPC.
+- Campaign totals equal matching ad-set child totals, and ad-set totals equal matching creative child totals, with one date/filter scope.
+
+Use this as the minimum live gate for data-flow work. If `/optimize` or another page has separate header totals, trend charts, tree tables, lazy children, and AI context, add tests that compare each payload against the same source window. A passing helper test is not enough when the page can accidentally mix "last 7 days" and "current week" data.
+
 ## Targeted Unit Tests
 
 Use direct `node --test` commands for narrow test sets:
 
 ```bash
 node --test --experimental-strip-types tests/meta-insight-aggregates.test.ts
+node --test --experimental-strip-types tests/meta-ads-e2e-truth.test.ts
 node --test --experimental-strip-types tests/analysis-route.test.ts
 node --test --experimental-strip-types tests/period-pivot-data.test.ts tests/pivot-by-period.test.ts tests/snapshot-by-entity.test.ts
 node --test --experimental-strip-types tests/optimize-ai-panel.test.ts tests/ad-hoc-analytics.test.ts

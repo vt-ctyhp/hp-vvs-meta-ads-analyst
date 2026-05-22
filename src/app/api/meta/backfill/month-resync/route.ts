@@ -1,7 +1,5 @@
-import { revalidateTag } from "next/cache";
-
 import { isAuthorizedCronRequest, jsonError } from "@/lib/http";
-import { META_INSIGHT_AGGREGATES_CACHE_TAG } from "@/lib/meta-insight-aggregates";
+import { revalidateAndWarmMetaInsightAggregateCache } from "@/lib/meta-insight-cache-warmup";
 import { resyncMetaAdsMonth } from "@/lib/meta-backfill";
 
 export const runtime = "nodejs";
@@ -16,7 +14,7 @@ export async function POST(request: Request) {
   try {
     const body = (await request.json().catch(() => ({}))) as { month?: string | null };
     const result = await resyncMetaAdsMonth({ month: body.month });
-    revalidateTag(META_INSIGHT_AGGREGATES_CACHE_TAG, { expire: 0 });
+    await revalidateAndWarmMetaInsightAggregateCache();
     return Response.json(result);
   } catch (error) {
     return jsonError(error);
