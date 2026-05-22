@@ -11,6 +11,9 @@ import {
   customerLedgerRowsFromJourneys,
 } from "../src/lib/convert-customer-ledger.ts";
 import type { CustomerJourneyLedgerRow } from "../src/lib/customer-journey-ledger.ts";
+import type { fetchWebsiteFunnelData } from "../src/lib/website-analytics.ts";
+
+type WebsiteFunnelRequest = Parameters<typeof fetchWebsiteFunnelData>[0];
 
 describe("Convert customer ledger adapter", () => {
   it("maps conversion journeys to the table row shape", () => {
@@ -144,7 +147,7 @@ describe("Convert customer ledger adapter", () => {
     assert.equal(countCustomerLedgerCapiGaps(rows), 3);
   });
 
-  it("maps Convert search params to shared ledger date input", () => {
+  it("maps Convert search params to the shared ledger and funnel date input", () => {
     assert.deepEqual(
       customerJourneyLedgerRequestFromSearchParams({
         days: "14",
@@ -160,6 +163,16 @@ describe("Convert customer ledger adapter", () => {
       }),
       { days: undefined, endDate: "2026-05-21", startDate: "2026-05-01" },
     );
+
+    const sharedRequest: WebsiteFunnelRequest = customerJourneyLedgerRequestFromSearchParams({
+      end: "2026-05-21",
+      start: "2026-05-01",
+    });
+    assert.deepEqual(sharedRequest, {
+      days: undefined,
+      endDate: "2026-05-21",
+      startDate: "2026-05-01",
+    });
   });
 
   it("parses Convert detail identity params and builds drawer URLs", () => {
