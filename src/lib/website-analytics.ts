@@ -138,6 +138,13 @@ const conversionEventSchema = websiteEventSchema.extend({
 export type WebsiteEventInput = z.input<typeof websiteEventSchema>;
 export type WebsiteConversionInput = z.input<typeof conversionEventSchema>;
 
+export type WebsiteGeo = {
+  geo_country: string | null;
+  geo_region: string | null;
+  geo_city: string | null;
+  geo_timezone: string | null;
+};
+
 type WebsiteEventRow = {
   event_id: string;
   environment: string;
@@ -183,6 +190,10 @@ type WebsiteEventRow = {
   customer_phone: string | null;
   conversion_event_id: string | null;
   ip_hash: string | null;
+  geo_country: string | null;
+  geo_region: string | null;
+  geo_city: string | null;
+  geo_timezone: string | null;
   meta_event_name: string | null;
   meta_event_id: string | null;
   acuity_appointment_id: string | null;
@@ -233,6 +244,10 @@ type WebsiteSessionRow = {
   customer_phone: string | null;
   conversion_event_id: string | null;
   ip_hash: string | null;
+  geo_country: string | null;
+  geo_region: string | null;
+  geo_city: string | null;
+  geo_timezone: string | null;
   raw_json: Record<string, unknown>;
 };
 
@@ -259,6 +274,10 @@ type WebsiteVisitorRow = {
   customer_phone: string | null;
   conversion_event_id: string | null;
   ip_hash: string | null;
+  geo_country: string | null;
+  geo_region: string | null;
+  geo_city: string | null;
+  geo_timezone: string | null;
   raw_json: Record<string, unknown>;
 };
 
@@ -296,6 +315,10 @@ type WebsiteConversionRow = {
   browser_name: string | null;
   os_name: string | null;
   ip_hash: string | null;
+  geo_country: string | null;
+  geo_region: string | null;
+  geo_city: string | null;
+  geo_timezone: string | null;
   first_touch: AttributionTouch | null;
   last_touch: AttributionTouch | null;
   last_paid_touch: AttributionTouch | null;
@@ -485,6 +508,7 @@ export type WebsiteFunnelData = {
     maxScrollDepth: number;
     schedules: number;
   }>;
+  locations: WebsiteFunnelLocation[];
   trend: Array<{
     date: string;
     pageViews: number;
@@ -508,6 +532,24 @@ export type WebsiteFunnelData = {
     metaEventId: string | null;
     acuityAppointmentId: string | null;
   }>;
+};
+
+export type WebsiteFunnelLocation = {
+  city: string | null;
+  country: string | null;
+  region: string | null;
+  scheduleRate: number | null;
+  schedules: number;
+  sessions: number;
+};
+
+export type WebsiteLocationEventInput = {
+  event_name: string;
+  geo_city: string | null;
+  geo_country: string | null;
+  geo_region: string | null;
+  meta_event_name: string | null;
+  session_id: string | null;
 };
 
 export type WebsiteConversionReconciliationResult = {
@@ -809,6 +851,10 @@ export async function fetchWebsiteFunnelData(input: {
           "customer_name",
           "customer_email",
           "customer_phone",
+          "geo_country",
+          "geo_region",
+          "geo_city",
+          "geo_timezone",
           "properties",
         ].join(","),
       )
@@ -882,6 +928,7 @@ export async function fetchWebsiteFunnelData(input: {
     },
     funnel: buildFunnel(events, schedules.length),
     pages: buildPages(events),
+    locations: buildWebsiteLocationBreakdown(events),
     trend: buildTrend(events, metaRows, range.start, range.end),
     recentEvents: events.slice(0, 50).map((event) => ({
       adId: event.utm_ad_id,
@@ -1182,6 +1229,7 @@ async function recordWebsiteEvent(
   const eventType = input.eventType || inferEventType(eventName);
   const eventId = input.eventId || `${options.source}-${randomUUID()}`;
   const ipHash = hashIpAddress(requestIpAddress(options.request));
+  const geo = websiteGeoFromRequest(options.request, options.source);
   const userAgent = input.userAgent || options.request.headers.get("user-agent") || null;
   const brand = input.brand || "HP";
   const device = parseDevice(userAgent);
@@ -1232,6 +1280,10 @@ async function recordWebsiteEvent(
     customer_phone: customer.phone || null,
     conversion_event_id: isConversionEventName(eventName, input.metaEventName) ? eventId : null,
     ip_hash: ipHash,
+    geo_country: geo.geo_country,
+    geo_region: geo.geo_region,
+    geo_city: geo.geo_city,
+    geo_timezone: geo.geo_timezone,
     meta_event_name: input.metaEventName || (eventName === "Schedule" ? "Schedule" : null),
     meta_event_id: input.metaEventId || (isConversionEventName(eventName, input.metaEventName) ? eventId : null),
     acuity_appointment_id: input.acuityAppointmentId || null,
@@ -1246,9 +1298,11 @@ async function recordWebsiteEvent(
   const client = createWebsiteClient();
   const touch = attributionTouch(row);
   const visitor = row.visitor_id ? await upsertWebsiteVisitor(client, row, touch) : null;
+  let session: WebsiteSessionRow | null = null;
   if (row.session_id) {
-    await upsertWebsiteSession(client, row, touch);
+    session = await upsertWebsiteSession(client, row, touch);
   }
+  applyResolvedWebsiteGeo(row, visitor, session);
   const lastPaidTouch = selectBestPaidTouch([touchWithUrlUtmFallback(visitor?.last_paid_touch), touch], {
     maxCapturedAt: row.occurred_at,
   });
@@ -1316,7 +1370,7 @@ function createWebsiteClient(role: "web" | "worker" | "ingest" = "web") {
 async function findVisitor(client: WebsiteSupabaseClient, visitorId: string) {
   const { data, error } = await client
     .from("website_visitors")
-    .select("visitor_id,brand,first_seen_at,last_seen_at,first_page_url,last_page_url,first_referrer,last_referrer,first_touch,last_touch,last_paid_touch,fbp,fbc,user_agent,device_category,browser_name,os_name,customer_name,customer_email,customer_phone,conversion_event_id,ip_hash,raw_json")
+    .select("visitor_id,brand,first_seen_at,last_seen_at,first_page_url,last_page_url,first_referrer,last_referrer,first_touch,last_touch,last_paid_touch,fbp,fbc,user_agent,device_category,browser_name,os_name,customer_name,customer_email,customer_phone,conversion_event_id,ip_hash,geo_country,geo_region,geo_city,geo_timezone,raw_json")
     .eq("visitor_id", visitorId)
     .maybeSingle();
   if (error) throw error;
@@ -1326,7 +1380,7 @@ async function findVisitor(client: WebsiteSupabaseClient, visitorId: string) {
 async function findSession(client: WebsiteSupabaseClient, sessionId: string, environment: string) {
   const { data, error } = await client
     .from("website_sessions")
-    .select("environment,session_id,visitor_id,brand,first_seen_at,last_seen_at,first_page_url,last_page_url,first_referrer,last_referrer,utm_source,utm_medium,utm_campaign,utm_content,utm_term,utm_id,utm_campaign_id,utm_creative,utm_ad,utm_ad_id,utm_adset,utm_adset_id,utm_placement,fbclid,gclid,msclkid,ttclid,fbp,fbc,user_agent,device_category,browser_name,os_name,first_touch,last_touch,last_paid_touch,customer_name,customer_email,customer_phone,conversion_event_id,ip_hash,raw_json")
+    .select("environment,session_id,visitor_id,brand,first_seen_at,last_seen_at,first_page_url,last_page_url,first_referrer,last_referrer,utm_source,utm_medium,utm_campaign,utm_content,utm_term,utm_id,utm_campaign_id,utm_creative,utm_ad,utm_ad_id,utm_adset,utm_adset_id,utm_placement,fbclid,gclid,msclkid,ttclid,fbp,fbc,user_agent,device_category,browser_name,os_name,first_touch,last_touch,last_paid_touch,customer_name,customer_email,customer_phone,conversion_event_id,ip_hash,geo_country,geo_region,geo_city,geo_timezone,raw_json")
     .eq("environment", environment)
     .eq("session_id", sessionId)
     .maybeSingle();
@@ -1365,6 +1419,10 @@ async function upsertWebsiteVisitor(
     customer_phone: row.customer_phone || existing?.customer_phone || null,
     conversion_event_id: row.conversion_event_id || existing?.conversion_event_id || null,
     ip_hash: row.ip_hash || existing?.ip_hash || null,
+    geo_country: row.geo_country || existing?.geo_country || null,
+    geo_region: row.geo_region || existing?.geo_region || null,
+    geo_city: row.geo_city || existing?.geo_city || null,
+    geo_timezone: row.geo_timezone || existing?.geo_timezone || null,
     raw_json: {
       ...(existing?.raw_json || {}),
       latestEventId: row.event_id,
@@ -1428,6 +1486,10 @@ async function upsertWebsiteSession(
     customer_phone: row.customer_phone || existing?.customer_phone || null,
     conversion_event_id: row.conversion_event_id || existing?.conversion_event_id || null,
     ip_hash: row.ip_hash || existing?.ip_hash || null,
+    geo_country: row.geo_country || existing?.geo_country || null,
+    geo_region: row.geo_region || existing?.geo_region || null,
+    geo_city: row.geo_city || existing?.geo_city || null,
+    geo_timezone: row.geo_timezone || existing?.geo_timezone || null,
     raw_json: {
       ...(existing?.raw_json || {}),
       latestEventId: row.event_id,
@@ -1491,6 +1553,10 @@ async function upsertWebsiteConversion(
     browser_name: row.browser_name,
     os_name: row.os_name,
     ip_hash: row.ip_hash,
+    geo_country: row.geo_country,
+    geo_region: row.geo_region,
+    geo_city: row.geo_city,
+    geo_timezone: row.geo_timezone,
     first_touch: context.firstTouch,
     last_touch: context.lastTouch,
     last_paid_touch: context.lastPaidTouch,
@@ -1877,6 +1943,51 @@ function requestIpAddress(request: Request) {
   );
 }
 
+export function websiteGeoFromRequest(request: Request, source = "shopify_browser"): WebsiteGeo {
+  if (source !== "shopify_browser") return emptyWebsiteGeo();
+
+  return {
+    geo_country: geoHeaderValue(request, "x-vercel-ip-country", 8)?.toUpperCase() || null,
+    geo_region: geoHeaderValue(request, "x-vercel-ip-country-region", 24)?.toUpperCase() || null,
+    geo_city: geoHeaderValue(request, "x-vercel-ip-city", 120),
+    geo_timezone: geoHeaderValue(request, "x-vercel-ip-timezone", 80),
+  };
+}
+
+function applyResolvedWebsiteGeo(
+  row: WebsiteEventRow,
+  visitor: WebsiteVisitorRow | null,
+  session: WebsiteSessionRow | null,
+) {
+  row.geo_country = row.geo_country || visitor?.geo_country || session?.geo_country || null;
+  row.geo_region = row.geo_region || visitor?.geo_region || session?.geo_region || null;
+  row.geo_city = row.geo_city || visitor?.geo_city || session?.geo_city || null;
+  row.geo_timezone = row.geo_timezone || visitor?.geo_timezone || session?.geo_timezone || null;
+}
+
+function emptyWebsiteGeo(): WebsiteGeo {
+  return {
+    geo_country: null,
+    geo_region: null,
+    geo_city: null,
+    geo_timezone: null,
+  };
+}
+
+function geoHeaderValue(request: Request, header: string, maxLength: number) {
+  const raw = firstHeaderValue(request.headers.get(header));
+  if (!raw) return null;
+
+  let decoded = raw;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    decoded = raw;
+  }
+
+  return decoded.trim().slice(0, maxLength) || null;
+}
+
 function firstHeaderValue(value: string | null) {
   return value?.split(",")[0]?.trim() || null;
 }
@@ -1992,6 +2103,56 @@ function buildPages(events: WebsiteEventRow[]) {
     }))
     .sort((a, b) => b.pageViews - a.pageViews)
     .slice(0, 100);
+}
+
+export function buildWebsiteLocationBreakdown(events: WebsiteLocationEventInput[]): WebsiteFunnelLocation[] {
+  const locations = new Map<
+    string,
+    {
+      city: string | null;
+      country: string | null;
+      region: string | null;
+      schedules: number;
+      sessions: Set<string>;
+    }
+  >();
+
+  for (const event of events) {
+    const city = event.geo_city || null;
+    const country = event.geo_country || null;
+    const region = event.geo_region || null;
+    if (!city && !country && !region) continue;
+
+    const key = [country || "", region || "", city || ""].join(":");
+    const current =
+      locations.get(key) ||
+      {
+        city,
+        country,
+        region,
+        schedules: 0,
+        sessions: new Set<string>(),
+      };
+
+    if (event.session_id) current.sessions.add(event.session_id);
+    if (event.event_name === "Schedule" || event.meta_event_name === "Schedule") current.schedules += 1;
+    locations.set(key, current);
+  }
+
+  return Array.from(locations.values())
+    .map((location) => {
+      const sessions = location.sessions.size;
+      return {
+        city: location.city,
+        country: location.country,
+        region: location.region,
+        schedules: location.schedules,
+        sessions,
+        scheduleRate: sessions ? location.schedules / sessions : null,
+      };
+    })
+    .sort((a, b) => b.schedules - a.schedules || b.sessions - a.sessions)
+    .slice(0, 10);
 }
 
 function buildTrend(events: WebsiteEventRow[], metaRows: MetaInsightRow[], start: string, end: string) {

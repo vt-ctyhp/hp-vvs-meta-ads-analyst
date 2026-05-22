@@ -15,6 +15,11 @@ Social inbox permissions are validated separately from ads sync. Message/comment
 
 The social inbox sync stores message/comment content and metadata in Supabase. Page access tokens are used server-side only to call Meta and are redacted before Page metadata is stored.
 
+Website event ingestion stores approximate IP-derived country, region, city, and
+timezone for aggregate funnel analytics. Raw IP addresses are not stored; the
+existing `ip_hash` remains a salted one-way hash. The app does not store
+postal code, latitude, longitude, or browser-supplied location payloads.
+
 AI reply suggestions are generated server-side only. The browser sends the selected source ID and optional staff guidance; the server retrieves compact Supabase context, applies the active brand voice prompt, calls OpenAI, stores the draft in `ai_reply_suggestions`, and returns it for human editing. The OpenAI API key, Supabase service role key, and Meta tokens are never exposed to the browser.
 
 The Meta webhook endpoint verifies `X-Hub-Signature-256` with `META_APP_SECRET` before storing inbound event payloads. The webhook verification token is stored only as `META_WEBHOOK_VERIFY_TOKEN` in the runtime environment.

@@ -35,6 +35,10 @@ export type CustomerJourneyLedgerRow = {
   fbc: string | null;
   fbp: string | null;
   firstPage: string | null;
+  geoCity: string | null;
+  geoCountry: string | null;
+  geoRegion: string | null;
+  geoTimezone: string | null;
   hasConversion: boolean;
   hasPaidTouch: boolean;
   lastPaidSource: string | null;
@@ -119,6 +123,10 @@ export type CustomerJourneyLedgerDetailData = {
     signals: string[];
   };
   creditedTouch: CustomerJourneyLedgerTouchSummary | null;
+  geoCity: string | null;
+  geoCountry: string | null;
+  geoRegion: string | null;
+  geoTimezone: string | null;
   returnTouch: CustomerJourneyLedgerTouchSummary | null;
   summary: string | null;
   timeline: CustomerJourneyLedgerTimelineEvent[];
@@ -148,6 +156,10 @@ export type CustomerJourneyLedgerEventRow = {
   fbc: string | null;
   fbp: string | null;
   fbclid: string | null;
+  geo_city: string | null;
+  geo_country: string | null;
+  geo_region: string | null;
+  geo_timezone: string | null;
   occurred_at: string;
   os_name: string | null;
   page_url: string | null;
@@ -185,6 +197,10 @@ export type CustomerJourneyLedgerVisitorRow = {
   first_page_url: string | null;
   first_seen_at: string;
   first_touch: JsonRecord | null;
+  geo_city: string | null;
+  geo_country: string | null;
+  geo_region: string | null;
+  geo_timezone: string | null;
   last_page_url: string | null;
   last_paid_touch: JsonRecord | null;
   last_seen_at: string;
@@ -204,6 +220,10 @@ export type CustomerJourneyLedgerSessionRow = {
   fbc: string | null;
   fbp: string | null;
   first_page_url: string | null;
+  geo_city: string | null;
+  geo_country: string | null;
+  geo_region: string | null;
+  geo_timezone: string | null;
   last_page_url: string | null;
   last_paid_touch: JsonRecord | null;
   last_seen_at: string;
@@ -227,6 +247,10 @@ export type CustomerJourneyLedgerConversionRow = {
   fbc: string | null;
   fbp: string | null;
   first_touch: JsonRecord | null;
+  geo_city: string | null;
+  geo_country: string | null;
+  geo_region: string | null;
+  geo_timezone: string | null;
   last_paid_touch: JsonRecord | null;
   last_touch: JsonRecord | null;
   meta_capi_status: string | null;
@@ -287,6 +311,10 @@ const VISITOR_COLUMNS = [
   "device_category",
   "browser_name",
   "os_name",
+  "geo_country",
+  "geo_region",
+  "geo_city",
+  "geo_timezone",
   "customer_name",
   "customer_email",
   "customer_phone",
@@ -306,6 +334,10 @@ const SESSION_COLUMNS = [
   "device_category",
   "browser_name",
   "os_name",
+  "geo_country",
+  "geo_region",
+  "geo_city",
+  "geo_timezone",
   "customer_name",
   "customer_email",
   "customer_phone",
@@ -337,6 +369,10 @@ const EVENT_COLUMNS = [
   "fbclid",
   "fbp",
   "fbc",
+  "geo_country",
+  "geo_region",
+  "geo_city",
+  "geo_timezone",
   "device_category",
   "browser_name",
   "os_name",
@@ -363,6 +399,10 @@ const CONVERSION_COLUMNS = [
   "meta_capi_test_mode",
   "fbp",
   "fbc",
+  "geo_country",
+  "geo_region",
+  "geo_city",
+  "geo_timezone",
   "user_agent",
   "device_category",
   "browser_name",
@@ -671,6 +711,7 @@ export function buildCustomerJourneyLedgerDetailData(input: {
     events: input.events,
     returnEvent,
   });
+  const geo = geoFromRecords(conversion, input.visitor, session, ...input.events);
   const booking = conversion
     ? {
         appointmentType: conversion.appointment_type,
@@ -691,6 +732,10 @@ export function buildCustomerJourneyLedgerDetailData(input: {
     },
     confidence: confidenceForDetail(input.visitor, conversion, session),
     creditedTouch: summarizeTouch(creditedTouch),
+    geoCity: geo.geoCity,
+    geoCountry: geo.geoCountry,
+    geoRegion: geo.geoRegion,
+    geoTimezone: geo.geoTimezone,
     returnTouch: summarizeTouch(returnTouch),
     summary: summarizePath(creditedTouch, returnTouch, conversion),
     timeline,
@@ -716,6 +761,7 @@ export function buildCustomerJourneyLedgerConversionOnlyDetailData(input: {
     events: [],
     returnEvent: null,
   });
+  const geo = geoFromRecords(conversion);
 
   return {
     acuityAppointmentId: conversion.acuity_appointment_id || null,
@@ -733,6 +779,10 @@ export function buildCustomerJourneyLedgerConversionOnlyDetailData(input: {
     },
     confidence: confidenceForConversionOnly(conversion),
     creditedTouch: summarizeTouch(creditedTouch),
+    geoCity: geo.geoCity,
+    geoCountry: geo.geoCountry,
+    geoRegion: geo.geoRegion,
+    geoTimezone: geo.geoTimezone,
     returnTouch: null,
     summary: summarizeConversionOnlyPath(creditedTouch, conversion),
     timeline,
@@ -790,7 +840,8 @@ export function buildCustomerJourneyLedgerRows(input: {
         latestSession: sessionsByVisitor.get(visitor.visitor_id) || null,
         sessionsById: sessionsByVisitorAndId.get(visitor.visitor_id),
       });
-      const eventTouches = (eventsByVisitor.get(visitor.visitor_id) || []).flatMap(eventAttributionTouches);
+      const visitorEvents = eventsByVisitor.get(visitor.visitor_id) || [];
+      const eventTouches = visitorEvents.flatMap(eventAttributionTouches);
       const paidTouch = selectBestPaidTouch(
         [
           attributionTouch(visitor.last_paid_touch),
@@ -821,6 +872,7 @@ export function buildCustomerJourneyLedgerRows(input: {
         paidTouch?.browserName ||
         null;
       const osName = conversion?.os_name || visitor.os_name || session?.os_name || paidTouch?.osName || null;
+      const geo = geoFromRecords(conversion, visitor, session, ...visitorEvents);
 
       return {
         adId,
@@ -844,6 +896,10 @@ export function buildCustomerJourneyLedgerRows(input: {
         fbc: conversion?.fbc || visitor.fbc || session?.fbc || paidTouch?.fbc || null,
         fbp: conversion?.fbp || visitor.fbp || session?.fbp || paidTouch?.fbp || null,
         firstPage: visitor.first_page_url || session?.first_page_url || null,
+        geoCity: geo.geoCity,
+        geoCountry: geo.geoCountry,
+        geoRegion: geo.geoRegion,
+        geoTimezone: geo.geoTimezone,
         hasConversion: Boolean(conversion),
         hasPaidTouch: Boolean(paidTouch),
         lastPaidSource: source,
@@ -894,6 +950,7 @@ function conversionOnlyLedgerRow(
   const deviceCategory = conversion.device_category || paidTouch?.deviceCategory || null;
   const browserName = conversion.browser_name || paidTouch?.browserName || null;
   const osName = conversion.os_name || paidTouch?.osName || null;
+  const geo = geoFromRecords(conversion, ...events);
 
   return {
     adId,
@@ -914,6 +971,10 @@ function conversionOnlyLedgerRow(
     fbc: conversion.fbc || paidTouch?.fbc || null,
     fbp: conversion.fbp || paidTouch?.fbp || null,
     firstPage: conversion.page_url || paidTouch?.pageUrl || null,
+    geoCity: geo.geoCity,
+    geoCountry: geo.geoCountry,
+    geoRegion: geo.geoRegion,
+    geoTimezone: geo.geoTimezone,
     hasConversion: true,
     hasPaidTouch: Boolean(paidTouch),
     lastPaidSource: source,
@@ -1584,6 +1645,39 @@ function sanitizeUrl(value: string | null | undefined) {
   } catch {
     return value.replace(/((?:fbclid|gclid|msclkid|ttclid)=)[^&\s]+/gi, "$1redacted");
   }
+}
+
+function geoFromRecords(
+  ...records: Array<
+    | {
+        geo_city: string | null;
+        geo_country: string | null;
+        geo_region: string | null;
+        geo_timezone: string | null;
+      }
+    | null
+    | undefined
+  >
+) {
+  for (const record of records) {
+    if (!record) continue;
+    if (!record.geo_city && !record.geo_region && !record.geo_country && !record.geo_timezone) {
+      continue;
+    }
+    return {
+      geoCity: record.geo_city || null,
+      geoCountry: record.geo_country || null,
+      geoRegion: record.geo_region || null,
+      geoTimezone: record.geo_timezone || null,
+    };
+  }
+
+  return {
+    geoCity: null,
+    geoCountry: null,
+    geoRegion: null,
+    geoTimezone: null,
+  };
 }
 
 function timestampValue(value: unknown) {

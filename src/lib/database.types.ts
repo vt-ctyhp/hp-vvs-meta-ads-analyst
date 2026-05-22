@@ -7451,6 +7451,10 @@ export type Database = {
           fbc: string | null
           fbp: string | null
           first_touch: Json | null
+          geo_city: string | null
+          geo_country: string | null
+          geo_region: string | null
+          geo_timezone: string | null
           id: string
           ip_hash: string | null
           last_paid_touch: Json | null
@@ -7498,6 +7502,10 @@ export type Database = {
           fbc?: string | null
           fbp?: string | null
           first_touch?: Json | null
+          geo_city?: string | null
+          geo_country?: string | null
+          geo_region?: string | null
+          geo_timezone?: string | null
           id?: string
           ip_hash?: string | null
           last_paid_touch?: Json | null
@@ -7545,6 +7553,10 @@ export type Database = {
           fbc?: string | null
           fbp?: string | null
           first_touch?: Json | null
+          geo_city?: string | null
+          geo_country?: string | null
+          geo_region?: string | null
+          geo_timezone?: string | null
           id?: string
           ip_hash?: string | null
           last_paid_touch?: Json | null
@@ -7589,6 +7601,10 @@ export type Database = {
           fbc: string | null
           fbclid: string | null
           fbp: string | null
+          geo_city: string | null
+          geo_country: string | null
+          geo_region: string | null
+          geo_timezone: string | null
           gclid: string | null
           id: string
           ip_hash: string | null
@@ -7644,6 +7660,10 @@ export type Database = {
           fbc?: string | null
           fbclid?: string | null
           fbp?: string | null
+          geo_city?: string | null
+          geo_country?: string | null
+          geo_region?: string | null
+          geo_timezone?: string | null
           gclid?: string | null
           id?: string
           ip_hash?: string | null
@@ -7699,6 +7719,10 @@ export type Database = {
           fbc?: string | null
           fbclid?: string | null
           fbp?: string | null
+          geo_city?: string | null
+          geo_country?: string | null
+          geo_region?: string | null
+          geo_timezone?: string | null
           gclid?: string | null
           id?: string
           ip_hash?: string | null
@@ -7752,6 +7776,10 @@ export type Database = {
           fbc: string | null
           fbclid: string | null
           fbp: string | null
+          geo_city: string | null
+          geo_country: string | null
+          geo_region: string | null
+          geo_timezone: string | null
           first_page_url: string | null
           first_referrer: string | null
           first_seen_at: string
@@ -7799,6 +7827,10 @@ export type Database = {
           fbc?: string | null
           fbclid?: string | null
           fbp?: string | null
+          geo_city?: string | null
+          geo_country?: string | null
+          geo_region?: string | null
+          geo_timezone?: string | null
           first_page_url?: string | null
           first_referrer?: string | null
           first_seen_at?: string
@@ -7846,6 +7878,10 @@ export type Database = {
           fbc?: string | null
           fbclid?: string | null
           fbp?: string | null
+          geo_city?: string | null
+          geo_country?: string | null
+          geo_region?: string | null
+          geo_timezone?: string | null
           first_page_url?: string | null
           first_referrer?: string | null
           first_seen_at?: string
@@ -7894,6 +7930,10 @@ export type Database = {
           device_category: string | null
           fbc: string | null
           fbp: string | null
+          geo_city: string | null
+          geo_country: string | null
+          geo_region: string | null
+          geo_timezone: string | null
           first_page_url: string | null
           first_referrer: string | null
           first_seen_at: string
@@ -7922,6 +7962,10 @@ export type Database = {
           device_category?: string | null
           fbc?: string | null
           fbp?: string | null
+          geo_city?: string | null
+          geo_country?: string | null
+          geo_region?: string | null
+          geo_timezone?: string | null
           first_page_url?: string | null
           first_referrer?: string | null
           first_seen_at?: string
@@ -7950,6 +7994,10 @@ export type Database = {
           device_category?: string | null
           fbc?: string | null
           fbp?: string | null
+          geo_city?: string | null
+          geo_country?: string | null
+          geo_region?: string | null
+          geo_timezone?: string | null
           first_page_url?: string | null
           first_referrer?: string | null
           first_seen_at?: string

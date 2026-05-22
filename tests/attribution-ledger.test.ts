@@ -61,6 +61,46 @@ describe("attribution ledger row merging", () => {
     assert.equal(rows[0].hasConversion, true);
   });
 
+  it("surfaces approximate website location in ledger rows and detail", () => {
+    const conversion = conversionRow({
+      geo_city: "Oakland",
+      geo_country: "US",
+      geo_region: "CA",
+      geo_timezone: "America/Los_Angeles",
+    });
+    const visitor = visitorRow({
+      geo_city: "San Jose",
+      geo_country: "US",
+      geo_region: "CA",
+      geo_timezone: "America/Los_Angeles",
+    });
+    const session = sessionRow({
+      geo_city: "San Francisco",
+      geo_country: "US",
+      geo_region: "CA",
+      geo_timezone: "America/Los_Angeles",
+    });
+
+    const rows = buildAttributionLedgerRows({
+      conversions: [conversion],
+      sessions: [session],
+      visitors: [visitor],
+    });
+    const detail = buildAttributionLedgerDetailData({
+      conversions: [conversion],
+      events: [],
+      sessions: [session],
+      visitor,
+    });
+
+    assert.equal(rows[0].geoCity, "Oakland");
+    assert.equal(rows[0].geoRegion, "CA");
+    assert.equal(rows[0].geoCountry, "US");
+    assert.equal(rows[0].geoTimezone, "America/Los_Angeles");
+    assert.equal(detail.geoCity, "Oakland");
+    assert.equal(detail.geoRegion, "CA");
+  });
+
   it("appends conversion-only bookings that have no visitor record", () => {
     const rows = buildAttributionLedgerRows({
       conversions: [
@@ -848,6 +888,10 @@ function visitorRow(
     first_page_url: "https://www.hungphatusa.com/",
     first_seen_at: "2026-05-19T17:00:00.000Z",
     first_touch: null,
+    geo_city: "San Jose",
+    geo_country: "US",
+    geo_region: "CA",
+    geo_timezone: "America/Los_Angeles",
     last_page_url: "https://www.hungphatusa.com/pages/book-an-appointment",
     last_paid_touch: {
       source: "shopify_browser",
@@ -882,6 +926,10 @@ function sessionRow(
     fbc: null,
     fbp: null,
     first_page_url: "https://www.hungphatusa.com/",
+    geo_city: "San Jose",
+    geo_country: "US",
+    geo_region: "CA",
+    geo_timezone: "America/Los_Angeles",
     last_page_url: "https://www.hungphatusa.com/pages/book-an-appointment",
     last_paid_touch: null,
     last_seen_at: "2026-05-19T18:00:00.000Z",
@@ -910,6 +958,10 @@ function conversionRow(
     fbc: null,
     fbp: null,
     first_touch: null,
+    geo_city: "San Jose",
+    geo_country: "US",
+    geo_region: "CA",
+    geo_timezone: "America/Los_Angeles",
     last_paid_touch: null,
     last_touch: null,
     meta_capi_status: null,
@@ -940,6 +992,10 @@ function eventRow(overrides: Partial<AttributionLedgerEventRow> = {}): Attributi
     fbc: "fb.1.1.click",
     fbp: "fb.1.1.browser",
     fbclid: "link-in-bio-click",
+    geo_city: "San Jose",
+    geo_country: "US",
+    geo_region: "CA",
+    geo_timezone: "America/Los_Angeles",
     occurred_at: "2026-05-20T23:48:27.772Z",
     os_name: "iOS",
     page_url: "https://www.hungphatusa.com/pages/book-an-appointment",

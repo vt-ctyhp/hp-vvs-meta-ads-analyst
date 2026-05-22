@@ -4,12 +4,15 @@ import { describe, it } from "node:test";
 
 import {
   appointmentEventToWebsiteConversionInput,
+  buildWebsiteLocationBreakdown,
   isAuthorizedConversionRequest,
   isPaidTouch,
   normalizeBookingAttributionPayload,
   normalizeBookingConversionPayload,
   selectLastPaidTouch,
+  websiteGeoFromRequest,
   type AppointmentEventConversionRow,
+  type WebsiteLocationEventInput,
 } from "../src/lib/website-analytics.ts";
 import { selectBestPaidTouch } from "../src/lib/attribution-touch-selection.ts";
 
@@ -275,6 +278,108 @@ describe("website analytics appointment reconciliation", () => {
     else process.env.WEBSITE_EVENT_SHARED_SECRET = previous;
   });
 
+  it("extracts approximate browser geo from Vercel headers", () => {
+    const geo = websiteGeoFromRequest(
+      new Request("https://example.com", {
+        headers: {
+          "x-vercel-ip-city": "San%20Jose",
+          "x-vercel-ip-country": "us",
+          "x-vercel-ip-country-region": "ca",
+          "x-vercel-ip-latitude": "37.3382",
+          "x-vercel-ip-longitude": "-121.8863",
+          "x-vercel-ip-timezone": "America/Los_Angeles",
+        },
+      }),
+    );
+
+    assert.deepEqual(geo, {
+      geo_city: "San Jose",
+      geo_country: "US",
+      geo_region: "CA",
+      geo_timezone: "America/Los_Angeles",
+    });
+  });
+
+  it("does not use booking API request geo as customer location", () => {
+    const geo = websiteGeoFromRequest(
+      new Request("https://example.com", {
+        headers: {
+          "x-vercel-ip-city": "Dallas",
+          "x-vercel-ip-country": "US",
+          "x-vercel-ip-country-region": "TX",
+          "x-vercel-ip-timezone": "America/Chicago",
+        },
+      }),
+      "booking_api",
+    );
+
+    assert.deepEqual(geo, {
+      geo_city: null,
+      geo_country: null,
+      geo_region: null,
+      geo_timezone: null,
+    });
+  });
+
+  it("aggregates website sessions and schedules by approximate location", () => {
+    const locations = buildWebsiteLocationBreakdown([
+      locationEvent({
+        event_name: "PageView",
+        geo_city: "San Jose",
+        geo_country: "US",
+        geo_region: "CA",
+        session_id: "session-1",
+      }),
+      locationEvent({
+        event_name: "Engaged60Seconds",
+        geo_city: "San Jose",
+        geo_country: "US",
+        geo_region: "CA",
+        session_id: "session-1",
+      }),
+      locationEvent({
+        event_name: "Schedule",
+        geo_city: "San Jose",
+        geo_country: "US",
+        geo_region: "CA",
+        session_id: "session-1",
+      }),
+      locationEvent({
+        event_name: "PageView",
+        geo_city: "Oakland",
+        geo_country: "US",
+        geo_region: "CA",
+        session_id: "session-2",
+      }),
+      locationEvent({
+        event_name: "PageView",
+        geo_city: null,
+        geo_country: null,
+        geo_region: null,
+        session_id: "session-3",
+      }),
+    ]);
+
+    assert.deepEqual(locations, [
+      {
+        city: "San Jose",
+        country: "US",
+        region: "CA",
+        scheduleRate: 1,
+        schedules: 1,
+        sessions: 1,
+      },
+      {
+        city: "Oakland",
+        country: "US",
+        region: "CA",
+        scheduleRate: 0,
+        schedules: 0,
+        sessions: 1,
+      },
+    ]);
+  });
+
   it("normalizes the live booking API payload into a Schedule conversion with full tracking", () => {
     const conversion = normalizeBookingConversionPayload({
       appointment: {
@@ -435,4 +540,27 @@ describe("website analytics appointment reconciliation", () => {
     assert.match(migration, /interval '24 months'/);
     assert.match(migration, /anonymize_expired_website_attribution/);
   });
+
+  it("clears stored location during website attribution anonymization", async () => {
+    const migration = await readFile(
+      new URL("../supabase/migrations/20260522090000_website_geo_location_fields.sql", import.meta.url),
+      "utf8",
+    );
+
+    assert.match(migration, /interval '24 months'/);
+    assert.match(migration, /geo_city = null/);
+    assert.match(migration, /geo_timezone = null/);
+  });
 });
+
+function locationEvent(overrides: Partial<WebsiteLocationEventInput>): WebsiteLocationEventInput {
+  return {
+    event_name: "PageView",
+    geo_city: null,
+    geo_country: null,
+    geo_region: null,
+    meta_event_name: null,
+    session_id: "session-1",
+    ...overrides,
+  };
+}
