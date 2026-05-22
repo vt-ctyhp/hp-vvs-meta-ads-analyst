@@ -1,12 +1,19 @@
 import { ConfigurationError, getOptionalEnv } from "./env";
 import { getConfiguredAccounts, syncMetaAdsAccountRange, validateMetaAdsSyncPermissions } from "./meta";
 import {
+  finalizedInsightCutoffDate,
   monthDateRange,
   monthlyDateChunks,
   normalizeDateInput,
   todayString,
   type DateChunk,
 } from "./meta-backfill-utils";
+import {
+  buildMetaAdsBackfillMonthRows,
+  type BackfillMonthAccount,
+  type BackfillMonthSyncRun,
+  type MetaAdsBackfillMonthRow,
+} from "./meta-backfill-months";
 import { createAdsAnalystClient, withAdsAnalystEnvironment, withAdsAnalystEnvironmentRows } from "./ads-analyst-db";
 
 type JsonRecord = Record<string, unknown>;
@@ -74,6 +81,11 @@ type SupabaseAny = {
   rpc: (name: string, args?: Record<string, unknown>) => Promise<{ data: unknown; error: Error | null }>;
 };
 
+export type MetaAdsBackfillMonthState = {
+  range: { start: string; end: string };
+  rows: MetaAdsBackfillMonthRow[];
+};
+
 export async function getMetaAdsBackfillState(input: {
   startDate?: string | null;
   endDate?: string | null;
@@ -109,17 +121,74 @@ export async function getMetaAdsBackfillState(input: {
   };
 }
 
+export async function getMetaAdsBackfillPipelineState() {
+  const supabase = createAdsAnalystClient("web") as unknown as SupabaseAny;
+  const [jobsRes, chunksRes] = await Promise.all([
+    supabase
+      .from("meta_ads_backfill_jobs")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(10),
+    supabase
+      .from("meta_ads_backfill_chunks")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(250),
+  ]);
+
+  const firstError = [jobsRes, chunksRes].find((res) => res.error)?.error;
+  if (firstError) throw firstError;
+
+  return {
+    jobs: rows<JsonRecord>(jobsRes.data).map(mapJob),
+    chunks: rows<JsonRecord>(chunksRes.data).map(mapChunk),
+  };
+}
+
+export async function getMetaAdsBackfillMonthState(input: {
+  startDate?: string | null;
+  endDate?: string | null;
+} = {}): Promise<MetaAdsBackfillMonthState> {
+  const supabase = createAdsAnalystClient("worker") as unknown as SupabaseAny;
+  const { start, end } = resolveBackfillRange(input.startDate, input.endDate);
+  const accounts = configuredBackfillAccounts();
+  const [chunksRes, resyncRunsRes] = await Promise.all([
+    supabase
+      .from("meta_ads_backfill_chunks")
+      .select("*")
+      .order("start_date", { ascending: true })
+      .limit(5000),
+    supabase
+      .from("sync_runs")
+      .select("id, trigger, status, started_at, completed_at, metrics, errors")
+      .eq("trigger", "manual_month_resync")
+      .order("started_at", { ascending: false, nullsFirst: false })
+      .limit(500),
+  ]);
+
+  const firstError = [chunksRes, resyncRunsRes].find((res) => res.error)?.error;
+  if (firstError) throw firstError;
+
+  return {
+    range: { start, end },
+    rows: buildMetaAdsBackfillMonthRows({
+      startDate: start,
+      endDate: end,
+      finalizedCutoffDate: finalizedInsightCutoffDate(),
+      accounts,
+      chunks: rows<JsonRecord>(chunksRes.data).map(mapChunk),
+      coverage: [],
+      syncRuns: rows<JsonRecord>(resyncRunsRes.data).map(mapBackfillMonthSyncRun),
+    }),
+  };
+}
+
 export async function createMetaAdsBackfillJob(input: {
   startDate?: string | null;
   endDate?: string | null;
 } = {}) {
   const supabase = createAdsAnalystClient("worker") as unknown as SupabaseAny;
-  const accounts = getConfiguredAccounts().map((account) => ({
-    brandCode: account.brandCode,
-    brandName: account.brandName,
-    accountId: account.accountId,
-    metaAccountId: `act_${normalizeAccountId(account.accountId)}`,
-  }));
+  const accounts = configuredBackfillAccounts();
   const { start, end } = resolveBackfillRange(input.startDate, input.endDate);
   const monthChunks = monthlyDateChunks(start, end);
   const chunkRows = accounts.flatMap((account) =>
@@ -507,6 +576,17 @@ function getRateLimitRetryDelayMs() {
   return retryMinutes * 60 * 1000;
 }
 
+function configuredBackfillAccounts(): Array<
+  BackfillMonthAccount & { brandCode: string; brandName: string; accountId: string }
+> {
+  return getConfiguredAccounts().map((account) => ({
+    brandCode: account.brandCode,
+    brandName: account.brandName,
+    accountId: account.accountId,
+    metaAccountId: `act_${normalizeAccountId(account.accountId)}`,
+  }));
+}
+
 function isMetaRateLimitError(message: string) {
   return /rate[- ]?limit|too many calls|application request limit/i.test(message);
 }
@@ -593,6 +673,16 @@ function mapCoverage(row: JsonRecord): MetaAdsHistoryCoverage {
     insightRows: numberField(row.insight_rows),
     firstDate: stringField(row.first_date),
     lastDate: stringField(row.last_date),
+  };
+}
+
+function mapBackfillMonthSyncRun(row: JsonRecord): BackfillMonthSyncRun {
+  return {
+    trigger: stringField(row.trigger),
+    status: stringField(row.status),
+    startedAt: stringField(row.started_at),
+    completedAt: stringField(row.completed_at),
+    metrics: row.metrics ?? null,
   };
 }
 

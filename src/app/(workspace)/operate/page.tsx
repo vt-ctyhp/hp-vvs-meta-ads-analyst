@@ -1,4 +1,4 @@
-import { CoverageHeatmap } from "@/components/v2/operate/coverage-heatmap";
+import { BackfillMonthTable } from "@/components/v2/operate/backfill-month-table";
 import { HealthPanel } from "@/components/v2/operate/health-panel";
 import { OperateTabs, type OperateTab } from "@/components/v2/operate/operate-tabs";
 import {
@@ -12,7 +12,10 @@ import {
 import { StatusSentence } from "@/components/v2/status-sentence";
 import { hasPermission, type UserRole } from "@/lib/access-control";
 import { createAdsAnalystClient } from "@/lib/ads-analyst-db";
-import { getMetaAdsBackfillState } from "@/lib/meta-backfill";
+import {
+  getMetaAdsBackfillMonthState,
+  getMetaAdsBackfillPipelineState,
+} from "@/lib/meta-backfill";
 import { requirePagePermission } from "@/lib/server-route-auth";
 import { getSystemHealth } from "@/lib/system-health";
 
@@ -33,12 +36,14 @@ export default async function OperatePage({
     ? (params.tab as OperateTab)
     : "pipelines";
 
-  // Lazy-load only the data the active tab needs. Pipelines + Coverage share
-  // getMetaAdsBackfillState so we always run it for those two; Health and
-  // People each do their own server call.
-  const [backfillState, syncRuns, health, roster] = await Promise.all([
-    tab === "pipelines" || tab === "coverage"
-      ? getMetaAdsBackfillState().catch(() => null)
+  // Lazy-load only the data the active tab needs. Coverage has its own monthly
+  // rollup so the pipelines tab stays on bounded job/chunk history.
+  const [pipelineState, monthState, syncRuns, health, roster] = await Promise.all([
+    tab === "pipelines"
+      ? getMetaAdsBackfillPipelineState().catch(() => null)
+      : Promise.resolve(null),
+    tab === "coverage"
+      ? getMetaAdsBackfillMonthState().catch(() => null)
       : Promise.resolve(null),
     tab === "pipelines" ? fetchSyncRuns().catch(() => []) : Promise.resolve([]),
     tab === "health" ? getSystemHealth().catch(() => null) : Promise.resolve(null),
@@ -50,7 +55,8 @@ export default async function OperatePage({
   // Status sentence inputs are cheap to compute regardless of tab.
   const sentence = buildSentence({
     syncRuns,
-    backfillJobsCount: backfillState?.jobs.length ?? 0,
+    backfillJobsCount: pipelineState?.jobs.length ?? 0,
+    backfillMonthCount: monthState?.rows.length ?? 0,
     healthStatus: health?.status ?? null,
     tab,
   });
@@ -65,17 +71,21 @@ export default async function OperatePage({
         <PipelinesPanel
           canRunSync={canRunSync}
           syncRuns={syncRuns}
-          backfillJobs={backfillState?.jobs ?? []}
-          backfillChunks={backfillState?.chunks ?? []}
+          backfillJobs={pipelineState?.jobs ?? []}
+          backfillChunks={pipelineState?.chunks ?? []}
         />
       ) : null}
 
-      {tab === "coverage" ? (
-        <CoverageHeatmap
-          coverage={backfillState?.coverage ?? []}
-          rangeStart={backfillState?.coverageRange.start ?? "—"}
-          rangeEnd={backfillState?.coverageRange.end ?? "—"}
+      {tab === "coverage" && monthState ? (
+        <BackfillMonthTable
+          rows={monthState.rows}
+          rangeStart={monthState.range.start}
+          rangeEnd={monthState.range.end}
         />
+      ) : tab === "coverage" ? (
+        <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+          Backfill month status unavailable. Try refreshing.
+        </p>
       ) : null}
 
       {tab === "health" && health ? (
@@ -174,10 +184,11 @@ function parseRoles(value: unknown): UserRole[] {
 function buildSentence(args: {
   syncRuns: SyncRunRow[];
   backfillJobsCount: number;
+  backfillMonthCount: number;
   healthStatus: string | null;
   tab: OperateTab;
 }): string {
-  const { syncRuns, backfillJobsCount, healthStatus, tab } = args;
+  const { syncRuns, backfillJobsCount, backfillMonthCount, healthStatus, tab } = args;
 
   const latestSync = syncRuns[0];
   if (tab === "pipelines") {
@@ -198,9 +209,9 @@ function buildSentence(args: {
   }
 
   if (tab === "coverage") {
-    return backfillJobsCount > 0
-      ? "Historical coverage by month and account."
-      : "Run a sync or queue a backfill job to populate coverage.";
+    return backfillMonthCount > 0
+      ? `${backfillMonthCount} historical backfill months tracked.`
+      : "Historical backfill month status is not available yet.";
   }
 
   if (tab === "health") {
