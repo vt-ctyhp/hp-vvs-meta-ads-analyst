@@ -7,6 +7,7 @@ const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_LEDGER_DAYS = 30;
 const MAX_LEDGER_VISITORS = 500;
 const MAX_RELATED_ROWS = 2500;
+const VISITOR_ID_QUERY_BATCH_SIZE = 100;
 const DETAIL_EVENT_WINDOW_AFTER_BOOKING_MS = 60_000;
 
 type JsonRecord = Record<string, unknown>;
@@ -417,18 +418,22 @@ const CONVERSION_COLUMNS = [
   "raw_json",
 ].join(",");
 
-export async function fetchCustomerJourneyLedgerData(input: {
-  days?: number | null;
-  endDate?: string | null;
-  startDate?: string | null;
-}): Promise<CustomerJourneyLedgerData> {
+export async function fetchCustomerJourneyLedgerData(
+  input: {
+    days?: number | null;
+    endDate?: string | null;
+    startDate?: string | null;
+  },
+  client: CustomerJourneyLedgerClient = createAdsAnalystClient(
+    "web",
+  ) as unknown as CustomerJourneyLedgerClient,
+): Promise<CustomerJourneyLedgerData> {
   const range = normalizeCustomerJourneyLedgerDateRange(input);
   // Use the limited-mode web client. In limited-access mode (staging today,
   // production after cutover) SUPABASE_SERVICE_ROLE_KEY is intentionally
   // absent — `createServiceClient()` would throw. The web role's RLS still
   // permits reads on website_visitors / website_sessions / website_events /
   // website_conversions for the current ads-analyst environment.
-  const client = createAdsAnalystClient("web") as unknown as CustomerJourneyLedgerClient;
   const startIso = `${range.start}T00:00:00.000Z`;
   const endIso = `${range.end}T23:59:59.999Z`;
 
@@ -487,41 +492,70 @@ export async function fetchCustomerJourneyLedgerData(input: {
     });
   }
 
-  const [sessionsResult, eventsResult, conversionsResult] = await Promise.all([
-    client
-      .from("website_sessions")
-      .select(SESSION_COLUMNS)
-      .in("visitor_id", visitorIds)
-      .order("last_seen_at", { ascending: false })
-      .limit(MAX_RELATED_ROWS),
-    client
-      .from("website_events")
-      .select(EVENT_COLUMNS)
-      .in("visitor_id", visitorIds)
-      .order("occurred_at", { ascending: false })
-      .limit(MAX_RELATED_ROWS),
-    client
-      .from("website_conversions")
-      .select(CONVERSION_COLUMNS)
-      .in("visitor_id", visitorIds)
-      .order("occurred_at", { ascending: false })
-      .limit(MAX_RELATED_ROWS),
+  const [sessions, events, conversions] = await Promise.all([
+    fetchRowsByVisitorIds<CustomerJourneyLedgerSessionRow>(
+      visitorIds,
+      (batch) =>
+        client
+          .from("website_sessions")
+          .select(SESSION_COLUMNS)
+          .in("visitor_id", batch)
+          .order("last_seen_at", { ascending: false })
+          .limit(MAX_RELATED_ROWS),
+      "last_seen_at",
+    ),
+    fetchRowsByVisitorIds<CustomerJourneyLedgerEventRow>(
+      visitorIds,
+      (batch) =>
+        client
+          .from("website_events")
+          .select(EVENT_COLUMNS)
+          .in("visitor_id", batch)
+          .order("occurred_at", { ascending: false })
+          .limit(MAX_RELATED_ROWS),
+      "occurred_at",
+    ),
+    fetchRowsByVisitorIds<CustomerJourneyLedgerConversionRow>(
+      visitorIds,
+      (batch) =>
+        client
+          .from("website_conversions")
+          .select(CONVERSION_COLUMNS)
+          .in("visitor_id", batch)
+          .order("occurred_at", { ascending: false })
+          .limit(MAX_RELATED_ROWS),
+      "occurred_at",
+    ),
   ]);
-
-  if (sessionsResult.error) throw sessionsResult.error;
-  if (eventsResult.error) throw eventsResult.error;
-  if (conversionsResult.error) throw conversionsResult.error;
 
   return buildCustomerJourneyLedgerData({
     conversions: uniqueConversions([
       ...rangeConversions,
-      ...(conversionsResult.data || []),
+      ...conversions,
     ]),
-    events: eventsResult.data || [],
+    events,
     range,
-    sessions: sessionsResult.data || [],
+    sessions,
     visitors,
   });
+}
+
+async function fetchRowsByVisitorIds<Row>(
+  visitorIds: string[],
+  queryBatch: (visitorIdBatch: string[]) => LedgerSelectChain<Row[]>,
+  timestampColumn: keyof Row,
+) {
+  const rows: Row[] = [];
+
+  for (const batch of chunks(visitorIds, VISITOR_ID_QUERY_BATCH_SIZE)) {
+    const result = await queryBatch(batch);
+    if (result.error) throw result.error;
+    rows.push(...(result.data || []));
+  }
+
+  return rows
+    .sort((left, right) => timestampValue(right[timestampColumn]) - timestampValue(left[timestampColumn]))
+    .slice(0, MAX_RELATED_ROWS);
 }
 
 export async function fetchCustomerJourneyLedgerDetail(
@@ -1331,6 +1365,14 @@ function sentenceCase(value: string) {
 
 function uniqueStrings(values: string[]) {
   return Array.from(new Set(values));
+}
+
+function chunks<T>(values: T[], size: number) {
+  const result: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    result.push(values.slice(index, index + size));
+  }
+  return result;
 }
 
 function uniqueVisitors(rows: CustomerJourneyLedgerVisitorRow[]) {

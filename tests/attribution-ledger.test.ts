@@ -12,6 +12,7 @@ import {
   type AttributionLedgerVisitorRow,
 } from "../src/lib/attribution-ledger.ts";
 import {
+  fetchCustomerJourneyLedgerData,
   fetchCustomerJourneyLedgerDetail,
   normalizeCustomerJourneyLedgerDateRange,
   type CustomerJourneyLedgerClient,
@@ -164,6 +165,47 @@ describe("attribution ledger row merging", () => {
     assert.equal(rows[0].customerPhone, "555-0199");
     assert.equal(rows[0].firstPage, "https://www.hungphatusa.com/pages/book-an-appointment");
     assert.equal(rows[0].hasConversion, false);
+  });
+
+  it("batches related visitor lookups so Supabase request URLs stay bounded", async () => {
+    const inFilters: Array<{ table: string; values: unknown[] }> = [];
+    const visitors = Array.from({ length: 240 }, (_, index) =>
+      visitorRow({
+        last_seen_at: `2026-05-19T20:${String(index % 60).padStart(2, "0")}:00.000Z`,
+        visitor_id: `visitor-${index}`,
+      }),
+    );
+    const sessions = visitors.map((visitor) =>
+      sessionRow({
+        last_seen_at: visitor.last_seen_at,
+        session_id: `session-${visitor.visitor_id}`,
+        visitor_id: visitor.visitor_id,
+      }),
+    );
+
+    const data = await fetchCustomerJourneyLedgerData(
+      {
+        endDate: "2026-05-19",
+        startDate: "2026-05-19",
+      },
+      mockCustomerJourneyClient(
+        {
+          website_conversions: [],
+          website_events: [],
+          website_sessions: sessions,
+          website_visitors: visitors,
+        },
+        {
+          onInFilter: (table, values) => inFilters.push({ table, values }),
+        },
+      ),
+    );
+
+    assert.equal(data.rows.length, 240);
+    assert.equal(inFilters.filter((filter) => filter.table === "website_sessions").length, 3);
+    assert.equal(inFilters.filter((filter) => filter.table === "website_events").length, 3);
+    assert.equal(inFilters.filter((filter) => filter.table === "website_conversions").length, 3);
+    assert.ok(inFilters.every((filter) => filter.values.length <= 100));
   });
 
   it("uses the conversion session before a later visitor session for paid touch context", () => {
@@ -818,19 +860,25 @@ function mockCustomerJourneyClient(input: {
   website_events?: AttributionLedgerEventRow[];
   website_sessions?: AttributionLedgerSessionRow[];
   website_visitors?: AttributionLedgerVisitorRow[];
+}, options?: {
+  onInFilter?: (table: string, values: unknown[]) => void;
 }): CustomerJourneyLedgerClient {
   return {
     from(table: keyof typeof input) {
       return {
         select() {
-          return mockLedgerSelectChain(input[table] || []);
+          return mockLedgerSelectChain(input[table] || [], {
+            onInFilter: (values) => options?.onInFilter?.(String(table), values),
+          });
         },
       };
     },
   } as unknown as CustomerJourneyLedgerClient;
 }
 
-function mockLedgerSelectChain(sourceRows: object[]) {
+function mockLedgerSelectChain(sourceRows: object[], options?: {
+  onInFilter?: (values: unknown[]) => void;
+}) {
   type MockLedgerResult = { data: Array<Record<string, unknown>>; error: Error | null };
 
   let rows = sourceRows.map((row) => row as Record<string, unknown>);
@@ -844,6 +892,7 @@ function mockLedgerSelectChain(sourceRows: object[]) {
       return chain;
     },
     in(column: string, values: unknown[]) {
+      options?.onInFilter?.(values);
       rows = rows.filter((row) => values.includes(row[column]));
       return chain;
     },
