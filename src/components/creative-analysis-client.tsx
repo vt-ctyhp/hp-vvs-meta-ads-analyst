@@ -860,7 +860,7 @@ function KpiResultCell({ row }: { row: CreativeAnalysisRow }) {
 
 function PreviewThumb({ row }: { row: CreativeAnalysisRow }) {
   const [failed, setFailed] = useState(false);
-  const src = row.thumbnailUrl || row.imageUrl || row.videoThumbnailUrl || row.previewUrl;
+  const src = row.thumbnailUrl || row.imageUrl;
 
   if (!src || failed) {
     return (
@@ -1443,7 +1443,7 @@ function DetailKvRow({
 
 function LargePreview({ row }: { row: CreativeAnalysisRow }) {
   const [failed, setFailed] = useState(false);
-  const src = row.imageUrl || row.thumbnailUrl || row.videoThumbnailUrl || row.previewUrl;
+  const src = row.imageUrl || row.thumbnailUrl;
 
   if (!src || failed) {
     return (

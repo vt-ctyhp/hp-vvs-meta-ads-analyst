@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Clock3,
   type LucideIcon,
+  MapPin,
   MousePointerClick,
   TrendingUp,
 } from "lucide-react";
@@ -202,6 +203,61 @@ export function WebsiteFunnelClient({ initialData }: Props) {
             events show what happened on the website and booking API.
           </p>
         </div>
+
+        <section className="mt-8 border border-hp-rule bg-white">
+          <div className="border-b border-hp-rule p-5">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.16em] text-hp-muted">
+                  Visitor geography
+                </p>
+                <h2 className="mt-1 font-title text-2xl font-normal text-hp-ink">
+                  Top locations by session
+                </h2>
+              </div>
+              <MapPin className="text-hp-pink" size={22} />
+            </div>
+          </div>
+          {data.locations.length ? (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="bg-hp-inset text-left text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+                  <tr>
+                    <th className="px-5 py-3 font-normal">Location</th>
+                    <th className="px-5 py-3 text-right font-normal">Sessions</th>
+                    <th className="px-5 py-3 text-right font-normal">Schedule</th>
+                    <th className="px-5 py-3 text-right font-normal">Rate</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.locations.map((location) => (
+                    <tr key={locationKey(location)} className="border-t border-hp-rule">
+                      <td className="px-5 py-4 text-hp-ink">
+                        <div>{formatLocation(location)}</div>
+                        <div className="mt-1 text-xs text-hp-muted">
+                          {formatRegionCountry(location)}
+                        </div>
+                      </td>
+                      <td className="px-5 py-4 text-right">
+                        {formatNumber(location.sessions)}
+                      </td>
+                      <td className="px-5 py-4 text-right">
+                        {formatNumber(location.schedules)}
+                      </td>
+                      <td className="px-5 py-4 text-right">
+                        {location.scheduleRate === null ? "n/a" : formatPercent(location.scheduleRate)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="px-5 py-8 text-sm text-hp-muted">
+              No location data in this range yet.
+            </div>
+          )}
+        </section>
 
         <div className="mt-8 grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)]">
           <section className="min-w-0 border border-hp-rule bg-white p-5">
@@ -426,4 +482,16 @@ function formatNumber(value: number) {
 
 function formatPercent(value: number) {
   return PERCENT_FORMATTER.format(value);
+}
+
+function formatLocation(location: WebsiteFunnelData["locations"][number]) {
+  return location.city || "Unknown";
+}
+
+function formatRegionCountry(location: WebsiteFunnelData["locations"][number]) {
+  return [location.region, location.country].filter(Boolean).join(", ") || "Approximate IP-derived";
+}
+
+function locationKey(location: WebsiteFunnelData["locations"][number]) {
+  return [location.country || "unknown", location.region || "unknown", location.city || "unknown"].join(":");
 }

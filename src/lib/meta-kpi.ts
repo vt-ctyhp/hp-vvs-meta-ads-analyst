@@ -52,8 +52,8 @@ export const PURCHASE_ACTION_TYPES = [
 ];
 
 export const MESSAGE_ACTION_TYPES = [
-  "onsite_conversion.total_messaging_connection",
   "onsite_conversion.messaging_conversation_started_7d",
+  "onsite_conversion.total_messaging_connection",
   "onsite_conversion.messaging_first_reply",
 ];
 
@@ -100,15 +100,14 @@ export function resolveMetaKpi(input: MetaKpiInput): ResolvedMetaKpi {
   const costActions = actionArray(input.costPerActionType);
 
   for (const candidate of preferredKpiCandidates(input)) {
-    const resultCount = exactActionCount(actions, candidate.types);
-    const costFromMeta = firstExactActionValue(costActions, candidate.types);
-    if (costFromMeta !== null || resultCount > 0) {
+    const result = resolveCandidateKpi(candidate, actions, costActions, input.spend);
+    if (result) {
       return {
         resultKpiLabel: candidate.resultKpiLabel,
         resultLabel: candidate.resultLabel,
-        resultActionType: firstMatchingActionType(actions, costActions, candidate.types),
-        resultCount,
-        costPerResult: costFromMeta !== null ? costFromMeta : safeCost(input.spend, resultCount),
+        resultActionType: result.actionType,
+        resultCount: result.count,
+        costPerResult: result.costPerResult,
       };
     }
   }
@@ -197,30 +196,41 @@ export function actionCount(actions: MetaKpiAction[], actionTypes: string[]) {
   }, 0);
 }
 
-function exactActionCount(actions: MetaKpiAction[], actionTypes: string[]) {
+function resolveCandidateKpi(
+  candidate: KpiCandidate,
+  actions: MetaKpiAction[],
+  costActions: MetaKpiAction[],
+  spend: number,
+) {
+  for (const actionType of candidate.types) {
+    const resultCount = exactActionCount(actions, actionType);
+    const costFromMeta = exactActionValue(costActions, actionType);
+    if (costFromMeta !== null || resultCount > 0) {
+      return {
+        actionType,
+        count: resultCount,
+        costPerResult: costFromMeta !== null ? costFromMeta : safeCost(spend, resultCount),
+      };
+    }
+  }
+
+  return null;
+}
+
+function exactActionCount(actions: MetaKpiAction[], actionType: string) {
   return actions.reduce((sum, action) => {
-    if (!action.action_type || !actionTypes.includes(action.action_type)) return sum;
+    if (action.action_type !== actionType) return sum;
     return sum + numberValue(action.value);
   }, 0);
 }
 
-function firstExactActionValue(actions: MetaKpiAction[], actionTypes: string[]) {
+function exactActionValue(actions: MetaKpiAction[], actionType: string) {
   for (const action of actions) {
-    if (action.action_type && actionTypes.includes(action.action_type)) {
+    if (action.action_type === actionType) {
       return numberValue(action.value);
     }
   }
   return null;
-}
-
-function firstMatchingActionType(
-  actions: MetaKpiAction[],
-  costActions: MetaKpiAction[],
-  actionTypes: string[],
-) {
-  const combined = [...actions, ...costActions];
-  return combined.find((action) => action.action_type && actionTypes.includes(action.action_type))
-    ?.action_type || actionTypes[0] || null;
 }
 
 function safeCost(spend: number, resultCount: number) {

@@ -65,7 +65,7 @@ describe("buildSnapshotByEntity", () => {
     assert.equal(c1.primary_results, 5);
     assert.equal(c1.cost_per_primary_results, 30);
     assert.equal(c1.impressions, 1500);
-    assert.equal(Math.round(c1.ctr * 10000) / 10000, 0.0167);
+    assert.equal(Math.round(c1.ctr * 100) / 100, 1.67);
     assert.equal(c1.cpc, 6);
 
     // c2: spend 200, primary 0 → cost_per_primary_results is 0 (guard against ÷0)

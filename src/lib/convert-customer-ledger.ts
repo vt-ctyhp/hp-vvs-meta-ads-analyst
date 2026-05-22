@@ -35,6 +35,10 @@ export type CustomerLedgerRow = {
   deviceBrowser: string | null;
   eventId: string | null;
   firstPage: string | null;
+  geoCity: string | null;
+  geoCountry: string | null;
+  geoRegion: string | null;
+  geoTimezone: string | null;
   hasConversion: boolean;
   hasPaidTouch: boolean;
   occurredAt: string;
@@ -99,6 +103,10 @@ export function customerLedgerRowsFromJourneys(
       deviceBrowser: row.deviceBrowser,
       eventId,
       firstPage: row.firstPage,
+      geoCity: row.geoCity,
+      geoCountry: row.geoCountry,
+      geoRegion: row.geoRegion,
+      geoTimezone: row.geoTimezone,
       hasConversion: row.hasConversion,
       hasPaidTouch: row.hasPaidTouch,
       occurredAt: row.bookingTime || row.lastSeen,

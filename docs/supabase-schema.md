@@ -58,7 +58,7 @@ Important indexes:
 - latest reports
 - latest ad-hoc analysis dashboards and run history
 - social inbox platform/thread/comment lookups
-- website funnel date, event name, page group, session, and Meta event lookups
+- website funnel date, event name, page group, session, approximate location, and Meta event lookups
 - active brand voice prompt lookup by brand/language
 - saved reply suggestion lookup by source thread/comment
 

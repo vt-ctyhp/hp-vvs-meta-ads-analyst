@@ -46,6 +46,10 @@ describe("Convert customer ledger adapter", () => {
       deviceBrowser: "mobile / Mobile Safari / iOS",
       eventId: "conversion-1",
       firstPage: "https://www.hungphatusa.com/",
+      geoCity: "San Jose",
+      geoCountry: "US",
+      geoRegion: "CA",
+      geoTimezone: "America/Los_Angeles",
       hasConversion: true,
       hasPaidTouch: true,
       occurredAt: "2026-05-20T23:49:18.756Z",
@@ -103,6 +107,22 @@ describe("Convert customer ledger adapter", () => {
     assert.equal(rows[0].placement, null);
     assert.equal(rows[0].creativePreview, null);
     assert.equal(rows[0].hasPaidTouch, false);
+  });
+
+  it("passes approximate location through to customer ledger rows", () => {
+    const rows = customerLedgerRowsFromJourneys([
+      journeyRow({
+        geoCity: "Oakland",
+        geoCountry: "US",
+        geoRegion: "CA",
+        geoTimezone: "America/Los_Angeles",
+      }),
+    ]);
+
+    assert.equal(rows[0].geoCity, "Oakland");
+    assert.equal(rows[0].geoRegion, "CA");
+    assert.equal(rows[0].geoCountry, "US");
+    assert.equal(rows[0].geoTimezone, "America/Los_Angeles");
   });
 
   it("counts CAPI gaps only for conversion rows with missing or failed statuses", () => {
@@ -254,6 +274,10 @@ function journeyRow(
     fbc: "fb.1.1.click",
     fbp: "fb.1.1.browser",
     firstPage: "https://www.hungphatusa.com/",
+    geoCity: "San Jose",
+    geoCountry: "US",
+    geoRegion: "CA",
+    geoTimezone: "America/Los_Angeles",
     hasConversion: true,
     hasPaidTouch: true,
     lastPaidSource: "ig",

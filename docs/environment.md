@@ -47,4 +47,9 @@ Optional:
 | `ADS_ANALYST_ENFORCE_LIMITED_DB_ACCESS` | unset | Set to `true` after module credentials replace service-role access. Health fails while service-role access remains configured. |
 | `ADS_ANALYST_USE_ENVIRONMENT_SCOPED_UPSERTS` | unset | Keep unset until Phase 5 has replaced unique constraints with environment-scoped keys. When true, write payloads and upsert conflict targets include `environment`. |
 
+Website event ingestion also reads Vercel's approximate IP geolocation headers
+for browser-originated events. The app stores only country, region, city, and
+timezone for aggregate analytics; it does not store raw IP, postal code,
+latitude, or longitude.
+
 Do not commit `.env`, `.env.local`, or downloaded key material.

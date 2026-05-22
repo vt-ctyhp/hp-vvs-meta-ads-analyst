@@ -196,6 +196,8 @@ function CustomerJourneyDetailContent({
         </DetailPanel>
         <DetailPanel title="Browser context" icon={UserRound}>
           <DetailField label="Device" value={row.deviceBrowser} />
+          <DetailField label="Approx. location" value={formatApproxLocation(detail, row)} />
+          <DetailField label="Timezone" value={detail.geoTimezone || row.geoTimezone} />
           <DetailUrl label="First page" value={row.firstPage} />
           <DetailIdField label="Visitor ID" value={row.visitorId} />
           <DetailIdField label="Session ID" value={detail.booking?.sessionId || row.sessionId} />
@@ -668,6 +670,16 @@ function timelineTone(category: CustomerJourneyLedgerTimelineEvent["category"]) 
 
 function joinedDetail(...values: Array<string | null | undefined>) {
   return values.filter(Boolean).join(" / ") || null;
+}
+
+function formatApproxLocation(
+  detail: CustomerJourneyLedgerDetailData,
+  row: CustomerLedgerRow,
+) {
+  const city = detail.geoCity || row.geoCity;
+  const region = detail.geoRegion || row.geoRegion;
+  const country = detail.geoCountry || row.geoCountry;
+  return [city, region, country].filter(Boolean).join(", ") || null;
 }
 
 function formatTimelineDate(value: string) {

@@ -592,7 +592,7 @@ function Td({
 
 function Preview({ row }: { row: CreativeAnalysisRow }) {
   const [failed, setFailed] = useState(false);
-  const src = failed ? null : row.thumbnailUrl ?? row.imageUrl ?? row.videoThumbnailUrl;
+  const src = failed ? null : row.thumbnailUrl ?? row.imageUrl;
   if (!src) {
     return (
       <div className="grid h-11 w-11 shrink-0 place-items-center rounded-md border border-stone-200 bg-stone-100 text-stone-400">
@@ -614,7 +614,7 @@ function Preview({ row }: { row: CreativeAnalysisRow }) {
 
 function LargePreview({ row }: { row: CreativeAnalysisRow }) {
   const [failed, setFailed] = useState(false);
-  const src = failed ? null : row.imageUrl ?? row.thumbnailUrl ?? row.videoThumbnailUrl;
+  const src = failed ? null : row.imageUrl ?? row.thumbnailUrl;
   if (!src) {
     return (
       <div className="grid aspect-square w-full place-items-center rounded-lg border border-dashed border-stone-300 text-stone-400">

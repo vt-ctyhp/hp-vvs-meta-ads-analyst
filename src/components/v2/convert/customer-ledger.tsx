@@ -8,7 +8,7 @@ import {
   type ColumnDef,
   type SortingState,
 } from "@tanstack/react-table";
-import { ImageIcon } from "lucide-react";
+import { ImageIcon, MapPin } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
@@ -184,6 +184,13 @@ export function CustomerLedger({ rows }: Props) {
         ),
       },
       {
+        id: "location",
+        header: "Location",
+        size: 130,
+        enableSorting: false,
+        cell: ({ row }) => <LocationCell row={row.original} />,
+      },
+      {
         accessorKey: "brand",
         header: "Brand",
         size: 70,
@@ -265,7 +272,7 @@ export function CustomerLedger({ rows }: Props) {
           <span>{rows.length}</span>
         </header>
         <div className="max-h-[520px] overflow-auto">
-          <table className="w-full min-w-[920px] border-collapse text-sm">
+          <table className="w-full min-w-[1040px] border-collapse text-sm">
             <thead className="sticky top-0 z-10 bg-stone-50">
               {table.getHeaderGroups().map((hg) => (
                 <tr key={hg.id} className="border-b border-stone-200">
@@ -337,6 +344,31 @@ export function CustomerLedger({ rows }: Props) {
         timelineLink={timelineLink}
       />
     </>
+  );
+}
+
+function LocationCell({ row }: { row: CustomerLedgerRow }) {
+  const primary = formatLocationPrimary(row);
+  const secondary = formatLocationSecondary(row);
+
+  if (!primary) {
+    return <span className="text-xs text-stone-400">n/a</span>;
+  }
+
+  return (
+    <div className="flex min-w-0 items-start gap-2">
+      <MapPin className="mt-0.5 shrink-0 text-stone-400" size={13} aria-hidden />
+      <div className="min-w-0">
+        <span className="line-clamp-1 text-xs font-medium text-stone-800">
+          {primary}
+        </span>
+        {secondary ? (
+          <span className="line-clamp-1 text-[10px] text-stone-500">
+            {secondary}
+          </span>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -525,6 +557,10 @@ function emptyJourneyRow(
     deviceBrowser: null,
     eventId,
     firstPage: null,
+    geoCity: null,
+    geoCountry: null,
+    geoRegion: null,
+    geoTimezone: null,
     hasConversion: Boolean(acuityAppointmentId || eventId),
     hasPaidTouch: false,
     occurredAt: "",
@@ -581,6 +617,16 @@ function clearJourneyUrl() {
 
 function joinedDetail(...values: Array<string | null | undefined>) {
   return values.filter(Boolean).join(" / ") || null;
+}
+
+function formatLocationPrimary(row: CustomerLedgerRow) {
+  if (row.geoCity && row.geoRegion) return `${row.geoCity}, ${row.geoRegion}`;
+  return row.geoCity || row.geoRegion || row.geoCountry || null;
+}
+
+function formatLocationSecondary(row: CustomerLedgerRow) {
+  if (row.geoCity || row.geoRegion) return row.geoCountry;
+  return null;
 }
 
 function formatDate(value: string) {

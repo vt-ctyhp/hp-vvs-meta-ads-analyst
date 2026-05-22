@@ -12,6 +12,7 @@ import {
   type AttributionLedgerVisitorRow,
 } from "../src/lib/attribution-ledger.ts";
 import {
+  fetchCustomerJourneyLedgerData,
   fetchCustomerJourneyLedgerDetail,
   normalizeCustomerJourneyLedgerDateRange,
   type CustomerJourneyLedgerClient,
@@ -59,6 +60,46 @@ describe("attribution ledger row merging", () => {
     assert.equal(rows[0].metaEventId, "meta-event-1");
     assert.equal(rows[0].capiStatus, "sent");
     assert.equal(rows[0].hasConversion, true);
+  });
+
+  it("surfaces approximate website location in ledger rows and detail", () => {
+    const conversion = conversionRow({
+      geo_city: "Oakland",
+      geo_country: "US",
+      geo_region: "CA",
+      geo_timezone: "America/Los_Angeles",
+    });
+    const visitor = visitorRow({
+      geo_city: "San Jose",
+      geo_country: "US",
+      geo_region: "CA",
+      geo_timezone: "America/Los_Angeles",
+    });
+    const session = sessionRow({
+      geo_city: "San Francisco",
+      geo_country: "US",
+      geo_region: "CA",
+      geo_timezone: "America/Los_Angeles",
+    });
+
+    const rows = buildAttributionLedgerRows({
+      conversions: [conversion],
+      sessions: [session],
+      visitors: [visitor],
+    });
+    const detail = buildAttributionLedgerDetailData({
+      conversions: [conversion],
+      events: [],
+      sessions: [session],
+      visitor,
+    });
+
+    assert.equal(rows[0].geoCity, "Oakland");
+    assert.equal(rows[0].geoRegion, "CA");
+    assert.equal(rows[0].geoCountry, "US");
+    assert.equal(rows[0].geoTimezone, "America/Los_Angeles");
+    assert.equal(detail.geoCity, "Oakland");
+    assert.equal(detail.geoRegion, "CA");
   });
 
   it("appends conversion-only bookings that have no visitor record", () => {
@@ -124,6 +165,47 @@ describe("attribution ledger row merging", () => {
     assert.equal(rows[0].customerPhone, "555-0199");
     assert.equal(rows[0].firstPage, "https://www.hungphatusa.com/pages/book-an-appointment");
     assert.equal(rows[0].hasConversion, false);
+  });
+
+  it("batches related visitor lookups so Supabase request URLs stay bounded", async () => {
+    const inFilters: Array<{ table: string; values: unknown[] }> = [];
+    const visitors = Array.from({ length: 240 }, (_, index) =>
+      visitorRow({
+        last_seen_at: `2026-05-19T20:${String(index % 60).padStart(2, "0")}:00.000Z`,
+        visitor_id: `visitor-${index}`,
+      }),
+    );
+    const sessions = visitors.map((visitor) =>
+      sessionRow({
+        last_seen_at: visitor.last_seen_at,
+        session_id: `session-${visitor.visitor_id}`,
+        visitor_id: visitor.visitor_id,
+      }),
+    );
+
+    const data = await fetchCustomerJourneyLedgerData(
+      {
+        endDate: "2026-05-19",
+        startDate: "2026-05-19",
+      },
+      mockCustomerJourneyClient(
+        {
+          website_conversions: [],
+          website_events: [],
+          website_sessions: sessions,
+          website_visitors: visitors,
+        },
+        {
+          onInFilter: (table, values) => inFilters.push({ table, values }),
+        },
+      ),
+    );
+
+    assert.equal(data.rows.length, 240);
+    assert.equal(inFilters.filter((filter) => filter.table === "website_sessions").length, 3);
+    assert.equal(inFilters.filter((filter) => filter.table === "website_events").length, 3);
+    assert.equal(inFilters.filter((filter) => filter.table === "website_conversions").length, 3);
+    assert.ok(inFilters.every((filter) => filter.values.length <= 100));
   });
 
   it("uses the conversion session before a later visitor session for paid touch context", () => {
@@ -778,19 +860,25 @@ function mockCustomerJourneyClient(input: {
   website_events?: AttributionLedgerEventRow[];
   website_sessions?: AttributionLedgerSessionRow[];
   website_visitors?: AttributionLedgerVisitorRow[];
+}, options?: {
+  onInFilter?: (table: string, values: unknown[]) => void;
 }): CustomerJourneyLedgerClient {
   return {
     from(table: keyof typeof input) {
       return {
         select() {
-          return mockLedgerSelectChain(input[table] || []);
+          return mockLedgerSelectChain(input[table] || [], {
+            onInFilter: (values) => options?.onInFilter?.(String(table), values),
+          });
         },
       };
     },
   } as unknown as CustomerJourneyLedgerClient;
 }
 
-function mockLedgerSelectChain(sourceRows: object[]) {
+function mockLedgerSelectChain(sourceRows: object[], options?: {
+  onInFilter?: (values: unknown[]) => void;
+}) {
   type MockLedgerResult = { data: Array<Record<string, unknown>>; error: Error | null };
 
   let rows = sourceRows.map((row) => row as Record<string, unknown>);
@@ -804,6 +892,7 @@ function mockLedgerSelectChain(sourceRows: object[]) {
       return chain;
     },
     in(column: string, values: unknown[]) {
+      options?.onInFilter?.(values);
       rows = rows.filter((row) => values.includes(row[column]));
       return chain;
     },
@@ -848,6 +937,10 @@ function visitorRow(
     first_page_url: "https://www.hungphatusa.com/",
     first_seen_at: "2026-05-19T17:00:00.000Z",
     first_touch: null,
+    geo_city: "San Jose",
+    geo_country: "US",
+    geo_region: "CA",
+    geo_timezone: "America/Los_Angeles",
     last_page_url: "https://www.hungphatusa.com/pages/book-an-appointment",
     last_paid_touch: {
       source: "shopify_browser",
@@ -882,6 +975,10 @@ function sessionRow(
     fbc: null,
     fbp: null,
     first_page_url: "https://www.hungphatusa.com/",
+    geo_city: "San Jose",
+    geo_country: "US",
+    geo_region: "CA",
+    geo_timezone: "America/Los_Angeles",
     last_page_url: "https://www.hungphatusa.com/pages/book-an-appointment",
     last_paid_touch: null,
     last_seen_at: "2026-05-19T18:00:00.000Z",
@@ -910,6 +1007,10 @@ function conversionRow(
     fbc: null,
     fbp: null,
     first_touch: null,
+    geo_city: "San Jose",
+    geo_country: "US",
+    geo_region: "CA",
+    geo_timezone: "America/Los_Angeles",
     last_paid_touch: null,
     last_touch: null,
     meta_capi_status: null,
@@ -940,6 +1041,10 @@ function eventRow(overrides: Partial<AttributionLedgerEventRow> = {}): Attributi
     fbc: "fb.1.1.click",
     fbp: "fb.1.1.browser",
     fbclid: "link-in-bio-click",
+    geo_city: "San Jose",
+    geo_country: "US",
+    geo_region: "CA",
+    geo_timezone: "America/Los_Angeles",
     occurred_at: "2026-05-20T23:48:27.772Z",
     os_name: "iOS",
     page_url: "https://www.hungphatusa.com/pages/book-an-appointment",

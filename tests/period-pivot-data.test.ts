@@ -5,6 +5,7 @@ import {
   buildPeriodPivotInsightFilters,
   isPeriodMetric,
   normalizePeriodCount,
+  resolvePeriodPrimaryResultLabel,
 } from "../src/lib/period-pivot-data.ts";
 
 describe("period pivot controls", () => {
@@ -46,6 +47,24 @@ describe("period pivot controls", () => {
         status: "all",
       }),
       [],
+    );
+  });
+
+  it("labels primary-result cells as bookings for appointment campaigns", () => {
+    assert.equal(
+      resolvePeriodPrimaryResultLabel({
+        campaign_umbrella: "Book Appts US",
+      }),
+      "Bookings",
+    );
+  });
+
+  it("labels non-appointment primary-result cells as messages", () => {
+    assert.equal(
+      resolvePeriodPrimaryResultLabel({
+        campaign_umbrella: "Cash for Gold US",
+      }),
+      "Messages",
     );
   });
 });

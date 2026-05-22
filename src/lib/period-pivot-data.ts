@@ -28,6 +28,7 @@ import {
   buildSharedInsightFilterContext,
   buildSharedInsightFilters,
 } from "./optimize-filters.ts";
+import { resolveCreativeDisplayMedia } from "./creative-display-media.ts";
 
 /**
  * Metrics exposed in the trend-mode dropdown. Each maps to a single column
@@ -111,19 +112,15 @@ export type CreativeAsset = {
   name: string | null;
   title: string | null;
   /**
-   * Permanent ~150px thumbnail URL backed by Supabase Storage. Tree-table
-   * cell prefers this — never expires. Stamped by /api/cron/cache-thumbnails.
+   * Permanent thumbnail URL backed by Supabase Storage. Never a Meta CDN URL.
+   * Falls back to the cached image URL when the small thumbnail slot is missing.
    */
-  supabaseThumbnailUrl: string | null;
-  /**
-   * Permanent full-resolution image URL backed by Supabase Storage. Drawer
-   * preview prefers this so the larger render stays sharp instead of
-   * pixelating a 150px thumb. Stamped by the same cron job.
-   */
-  supabaseImageUrl: string | null;
   thumbnailUrl: string | null;
+  /**
+   * Permanent full-resolution image URL backed by Supabase Storage. Never a
+   * Meta CDN URL. Falls back to thumbnailUrl when the image slot is missing.
+   */
   imageUrl: string | null;
-  videoThumbnailUrl: string | null;
   previewUrl: string | null;
 };
 
@@ -357,10 +354,11 @@ async function fetchCampaignPivotRows(context: PeriodPivotContext) {
     periodKeyField: context.periodDim as keyof MetaInsightAggregateRow,
     valueField: "metricValue",
   });
+  const labeled = withPrimaryResultLabels(pivoted, rows, "campaign_id");
   const snapshotByEntity = context.periods.length === 1
     ? buildSnapshotByEntity(rows, "campaign_id")
     : {};
-  return { pivoted, snapshotByEntity };
+  return { pivoted: labeled, snapshotByEntity };
 }
 
 async function fetchAdSetPivotRows(context: PeriodPivotContext, campaignId: string) {
@@ -385,10 +383,11 @@ async function fetchAdSetPivotRows(context: PeriodPivotContext, campaignId: stri
     valueField: "metricValue",
     parentIdFields: ["campaign_id"],
   });
+  const labeled = withPrimaryResultLabels(pivoted, rows, "ad_set_id");
   const snapshotByEntity = context.periods.length === 1
     ? buildSnapshotByEntity(rows, "ad_set_id")
     : {};
-  return { pivoted, snapshotByEntity };
+  return { pivoted: labeled, snapshotByEntity };
 }
 
 async function fetchCreativePivotRows(context: PeriodPivotContext, adSetId: string) {
@@ -413,10 +412,11 @@ async function fetchCreativePivotRows(context: PeriodPivotContext, adSetId: stri
     valueField: "metricValue",
     parentIdFields: ["campaign_id", "ad_set_id"],
   });
+  const labeled = withPrimaryResultLabels(pivoted, rows, "creative_id");
   const snapshotByEntity = context.periods.length === 1
     ? buildSnapshotByEntity(rows, "creative_id")
     : {};
-  return { pivoted, snapshotByEntity };
+  return { pivoted: labeled, snapshotByEntity };
 }
 
 type DynamicCreativesClient = {
@@ -443,7 +443,7 @@ async function fetchCreativeAssets(
     const { data, error } = await supabase
       .from("meta_creatives")
       .select(
-        "creative_id,name,title,supabase_thumbnail_url,supabase_image_url,thumbnail_url,image_url,video_thumbnail_url,preview_url",
+        "creative_id,name,title,supabase_thumbnail_url,supabase_image_url,preview_url",
       )
       .in("creative_id", unique);
     if (error) {
@@ -455,15 +455,13 @@ async function fetchCreativeAssets(
     for (const row of rows) {
       const id = typeof row.creative_id === "string" ? row.creative_id : null;
       if (!id) continue;
+      const displayMedia = resolveCreativeDisplayMedia(row);
       out[id] = {
         creativeId: id,
         name: stringOrNull(row.name),
         title: stringOrNull(row.title),
-        supabaseThumbnailUrl: stringOrNull(row.supabase_thumbnail_url),
-        supabaseImageUrl: stringOrNull(row.supabase_image_url),
-        thumbnailUrl: stringOrNull(row.thumbnail_url),
-        imageUrl: stringOrNull(row.image_url),
-        videoThumbnailUrl: stringOrNull(row.video_thumbnail_url),
+        thumbnailUrl: displayMedia.thumbnailUrl,
+        imageUrl: displayMedia.imageUrl,
         previewUrl: stringOrNull(row.preview_url),
       };
     }
@@ -517,6 +515,31 @@ function resolveMetric(row: MetaInsightAggregateRow, metric: PeriodMetric): numb
   }
 }
 
+function withPrimaryResultLabels(
+  pivoted: PivotedRow[],
+  rows: MetaInsightAggregateRow[],
+  entityField: keyof MetaInsightAggregateRow,
+): PivotedRow[] {
+  const labels = new Map<string, string>();
+
+  for (const row of rows) {
+    const id = stringOrNull(row[entityField]);
+    if (!id || labels.has(id)) continue;
+    labels.set(id, resolvePeriodPrimaryResultLabel(row));
+  }
+
+  return pivoted.map((row) => ({
+    ...row,
+    primaryResultLabel: labels.get(row.entityId) ?? "Messages",
+  }));
+}
+
+export function resolvePeriodPrimaryResultLabel(
+  row: Pick<MetaInsightAggregateRow, "campaign_umbrella">,
+) {
+  return row.campaign_umbrella === "Book Appts US" ? "Bookings" : "Messages";
+}
+
 function normalizeDateString(value: string | null | undefined) {
   return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
 }
@@ -530,7 +553,8 @@ function normalizeDateString(value: string | null | undefined) {
  * the entity id ("campaign_id" / "ad_set_id" / "creative_id"). All rows
  * sharing the same entity id are summed; cost/CTR derivations are then
  * computed from the totals (the right level of arithmetic — averaging
- * pre-computed CTRs would be incorrect when impressions vary).
+ * pre-computed CTRs would be incorrect when impressions vary). CTR is emitted
+ * as a percent value to match the aggregate RPC and table formatter.
  */
 export function buildSnapshotByEntity(
   rows: MetaInsightAggregateRow[],
@@ -566,7 +590,7 @@ export function buildSnapshotByEntity(
       primary_results: t.primary_results,
       cost_per_primary_results:
         t.primary_results > 0 ? t.spend / t.primary_results : 0,
-      ctr: t.impressions > 0 ? t.clicks / t.impressions : 0,
+      ctr: t.impressions > 0 ? (t.clicks / t.impressions) * 100 : 0,
       impressions: t.impressions,
       cpc: t.clicks > 0 ? t.spend / t.clicks : 0,
     };

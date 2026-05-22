@@ -2,6 +2,11 @@ import type { MetaInsightFilter } from "./meta-insight-aggregates.ts";
 
 export type OptimizeDeliveryStatus = "live" | "paused" | "off";
 export type OptimizeStatusSelection = OptimizeDeliveryStatus | "all";
+export type OptimizeStatusDefaultSurface =
+  | "breakdown"
+  | "creatives"
+  | "triage"
+  | "ai";
 export type SharedOptimizeFilterInput = {
   brand?: string | null;
   group?: string | null;
@@ -37,6 +42,12 @@ export function normalizeOptimizeDeliveryStatus(
 ): OptimizeDeliveryStatus | null {
   const selection = normalizeOptimizeStatusSelection(value);
   return selection === "all" ? null : selection;
+}
+
+export function defaultOptimizeStatusSelection(
+  surface: OptimizeStatusDefaultSurface,
+): OptimizeStatusSelection {
+  return surface === "breakdown" ? "all" : "live";
 }
 
 export function buildSharedInsightFilterContext(

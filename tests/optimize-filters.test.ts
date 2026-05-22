@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   buildSharedInsightFilterContext,
   buildSharedInsightFilters,
+  defaultOptimizeStatusSelection,
   normalizeOptimizeDeliveryStatus,
   normalizeOptimizeStatusSelection,
 } from "../src/lib/optimize-filters.ts";
@@ -21,6 +22,13 @@ describe("optimize filter normalization", () => {
   it("treats all-status as no delivery-status filter", () => {
     assert.equal(normalizeOptimizeDeliveryStatus("all"), null);
     assert.equal(normalizeOptimizeDeliveryStatus("live"), "live");
+  });
+
+  it("defaults historical breakdown tables to all current statuses", () => {
+    assert.equal(defaultOptimizeStatusSelection("breakdown"), "all");
+    assert.equal(defaultOptimizeStatusSelection("creatives"), "live");
+    assert.equal(defaultOptimizeStatusSelection("triage"), "live");
+    assert.equal(defaultOptimizeStatusSelection("ai"), "live");
   });
 
   it("builds the shared aggregate filter set", () => {

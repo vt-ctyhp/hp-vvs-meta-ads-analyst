@@ -151,6 +151,7 @@ function emptyFunnel(days: number): WebsiteFunnelData {
     },
     funnel: [],
     pages: [],
+    locations: [],
     trend: [],
     recentEvents: [],
   };

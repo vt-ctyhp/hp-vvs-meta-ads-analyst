@@ -34,7 +34,7 @@ export function OptimizeControls({
       }
       className="overflow-hidden rounded-xl border border-stone-200 bg-white"
     >
-      <OptimizeFilterBar brands={brands} groups={groups} />
+      <OptimizeFilterBar activeTab={activeTab} brands={brands} groups={groups} />
       {showPeriodControls ? (
         <>
           <div className="border-t border-stone-200" />

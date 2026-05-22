@@ -61,20 +61,9 @@ export function CreativeDetailDrawer({
 
   if (!open || !creativeId) return null;
 
-  // Prefer the permanent Supabase Storage URLs (never expire).
-  //   - supabaseImageUrl is the full-resolution copy — best for the
-  //     drawer's ~400px preview.
-  //   - supabaseThumbnailUrl falls back when the image slot hasn't
-  //     been cached yet (lower-res but still permanent).
-  //   - Meta CDN URLs only serve as a final fallback for creatives the
-  //     cron hasn't reached. They expire in 24-48h.
-  const previewSrc =
-    asset?.supabaseImageUrl ??
-    asset?.supabaseThumbnailUrl ??
-    asset?.imageUrl ??
-    asset?.thumbnailUrl ??
-    asset?.videoThumbnailUrl ??
-    null;
+  // These display URLs are Supabase-cached only. Meta CDN URLs stay out of
+  // image src values because they expire and produce broken previews.
+  const previewSrc = asset?.imageUrl ?? asset?.thumbnailUrl ?? null;
   const previewLink = asset?.previewUrl ?? null;
   const headline = asset?.name ?? asset?.title ?? displayName ?? "Untitled creative";
 
@@ -180,10 +169,8 @@ export function CreativeDetailDrawer({
 }
 
 /**
- * Drawer preview with onError fallback. Same reason as the tree-table's
- * ThumbnailWithFallback — the Meta CDN URL can be expired before the
- * cache cron has populated supabase_thumbnail_url, and we'd rather show
- * a clean "No preview" tile than Chrome's torn-photo icon.
+ * Drawer preview with onError fallback. Sources should already be durable
+ * Supabase Storage URLs; failures render a clean "No preview" tile.
  */
 function PreviewWithFallback({ src }: { src: string | null }) {
   const [failed, setFailed] = useState(false);

@@ -63,3 +63,9 @@ export function syncOptionsForTrigger(
     includeCreativeDiagnostics: false,
   };
 }
+
+export function shouldCacheCreativeThumbnailsAfterSync(
+  trigger: MetaAdsSyncTrigger,
+) {
+  return trigger === "manual_catalog" || trigger === "cron_catalog";
+}
