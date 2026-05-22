@@ -605,8 +605,19 @@ export function CreativeAnalysisClient({ initialData }: Props) {
         </div>
 
         {filteredRows.length ? (
-          <div className="mt-6 overflow-x-auto scrollbar-thin">
-            <table className="w-full min-w-[1180px] border-collapse">
+          <div className="mt-6 overflow-hidden">
+            <table className="w-full table-fixed border-collapse text-[13px]">
+              <colgroup>
+                <col className="w-[5%]" />
+                <col className="w-[28%]" />
+                <col className="w-[13%]" />
+                <col className="w-[11%]" />
+                <col className="w-[8%]" />
+                <col className="w-[8%]" />
+                <col className="w-[8%]" />
+                <col className="w-[8%]" />
+                <col className="w-[11%]" />
+              </colgroup>
               <thead>
                 <tr className="bg-hp-inset">
                   {[
@@ -622,7 +633,7 @@ export function CreativeAnalysisClient({ initialData }: Props) {
                   ].map((column) => (
                     <th
                       key={column}
-                      className="border-b border-hp-rule px-4 py-3 text-left text-[10px] uppercase tracking-[0.14em] text-hp-muted"
+                      className="border-b border-hp-rule px-2 py-3 text-left text-[9px] uppercase tracking-[0.12em] text-hp-muted xl:px-3 xl:text-[10px]"
                     >
                       {column}
                     </th>
@@ -635,11 +646,11 @@ export function CreativeAnalysisClient({ initialData }: Props) {
                     key={row.id}
                     className="border-b border-hp-rule transition-colors hover:bg-hp-card"
                   >
-                    <td className="px-4 py-4 text-lg italic tabular-nums text-hp-muted">
+                    <td className="px-2 py-4 text-base italic tabular-nums text-hp-muted xl:px-3 xl:text-lg">
                       #{index + 1}
                     </td>
-                    <td className="px-4 py-4">
-                      <div className="flex items-center gap-4">
+                    <td className="px-2 py-4 xl:px-3">
+                      <div className="flex min-w-0 items-center gap-3">
                         <button
                           onClick={() => setSelectedId(row.id)}
                           className="shrink-0 text-left focus:outline-none focus:ring-1 focus:ring-hp-pink"
@@ -650,27 +661,27 @@ export function CreativeAnalysisClient({ initialData }: Props) {
                         <div className="min-w-0">
                           <button
                             onClick={() => setSelectedId(row.id)}
-                            className="block max-w-[280px] break-words text-left text-lg leading-6 text-hp-ink underline-offset-4 hover:underline focus:outline-none focus:ring-1 focus:ring-hp-pink md:max-w-[320px]"
+                            className="block max-w-full break-words text-left text-base leading-5 text-hp-ink underline-offset-4 hover:underline focus:outline-none focus:ring-1 focus:ring-hp-pink xl:text-lg xl:leading-6"
                           >
                             {row.adName}
                           </button>
-                          <p className="mt-1 max-w-[280px] break-words text-sm italic text-hp-muted md:max-w-[320px]">
+                          <p className="mt-1 max-w-full break-words text-xs italic leading-4 text-hp-muted xl:text-sm">
                             {row.brandCode} · {adDeliveryLabel(row)} · {row.campaignUmbrella || row.adSetName}
                           </p>
                         </div>
                       </div>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-2 py-3 xl:px-3">
                       <ScoreMeter score={row.internalScore} />
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-2 py-3 xl:px-3">
                       <KpiResultCell row={row} />
                     </td>
                     <TableMetric>{formatMoney(row.spend, true)}</TableMetric>
                     <TableMetric>{formatMoney(row.costPerResult)}</TableMetric>
                     <TableMetric>{formatRate(row.hookRate)}</TableMetric>
                     <TableMetric>{formatRate(row.holdRate)}</TableMetric>
-                    <td className="px-4 py-3">
+                    <td className="px-2 py-3 xl:px-3">
                       <StatusBadge status={row.status} />
                     </td>
                   </tr>
@@ -836,19 +847,23 @@ function FeatureCard({
 }
 
 function TableMetric({ children }: { children: ReactNode }) {
-  return <td className="px-4 py-3 text-sm tabular-nums text-hp-ink">{children}</td>;
+  return (
+    <td className="px-2 py-3 text-right text-[13px] tabular-nums text-hp-ink xl:px-3 xl:text-sm">
+      {children}
+    </td>
+  );
 }
 
 function KpiResultCell({ row }: { row: CreativeAnalysisRow }) {
   return (
     <div>
       <p className="text-right text-sm tabular-nums text-hp-ink">{formatNumber(row.resultCount)}</p>
-      <p className="mt-0.5 max-w-[170px] truncate text-right text-xs italic text-hp-muted">
+      <p className="mt-0.5 max-w-full truncate text-right text-xs italic text-hp-muted">
         {row.resultKpiLabel}
       </p>
       {row.resultActionType ? (
         <p
-          className="mt-0.5 max-w-[170px] truncate text-right text-[10px] text-hp-muted"
+          className="mt-0.5 max-w-full truncate text-right text-[10px] text-hp-muted"
           title={row.resultActionType}
         >
           {friendlyActionType(row.resultActionType)}
@@ -882,9 +897,9 @@ function PreviewThumb({ row }: { row: CreativeAnalysisRow }) {
 
 function ScoreMeter({ score }: { score: number }) {
   return (
-    <div className="w-52">
+    <div className="w-full min-w-0">
       <div className="flex items-baseline gap-1 text-hp-ink">
-        <span className="font-title text-3xl leading-none tabular-nums">{score}</span>
+        <span className="font-title text-2xl leading-none tabular-nums xl:text-3xl">{score}</span>
         <span className="text-hp-muted">/100</span>
       </div>
       <div className="mt-2 h-1.5 bg-hp-inset">
@@ -915,7 +930,7 @@ function StatusBadge({
 
   return (
     <span
-      className={`inline-flex whitespace-nowrap border px-3 py-1 text-[11px] ${
+      className={`inline-flex max-w-full justify-center border px-2 py-1 text-center text-[10px] leading-tight ${
         compact ? "text-[10px]" : ""
       } ${className}`}
     >
