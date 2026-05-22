@@ -55,6 +55,7 @@ import {
   type PeriodMetric,
 } from "@/lib/period-pivot-data";
 import { TERMS } from "@/lib/glossary";
+import { AnalystFilterBar } from "./analyst-filter-bar";
 import { StatusSentence, type StatusHighlight } from "./status-sentence";
 import { TechnicalId } from "./technical-id";
 import {
@@ -481,55 +482,68 @@ export function DashboardClient({
         </div>
       </section>
 
-      <section className="mx-auto mt-6 flex max-w-7xl flex-col gap-4 border-y border-hp-rule py-4 xl:flex-row xl:flex-wrap xl:items-center xl:justify-between xl:gap-x-6">
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-          <FilterChipGroup
-            label="Brand"
-            value={brand}
-            onChange={setBrand}
-            options={brands.map((option) => ({
-              value: option,
-              label: option === "all" ? "All Brands" : option,
-            }))}
-          />
-          <FilterChipGroup
-            label="Delivery"
-            value={delivery}
-            onChange={(value) => setDelivery(value as DeliveryFilter)}
-            options={[
-              { value: "all", label: "All" },
-              { value: "active", label: "Active" },
-              { value: "paused", label: "Paused" },
-            ]}
-          />
-        </div>
+      <AnalystFilterBar
+        filters={{
+          brand,
+          delivery,
+          startDate,
+          endDate,
+          compareEnabled,
+          periodCount,
+          periodMetric,
+          umbrella,
+        }}
+      >
+        <section className="mx-auto mt-6 flex max-w-7xl flex-col gap-4 border-y border-hp-rule py-4 xl:flex-row xl:flex-wrap xl:items-center xl:justify-between xl:gap-x-6">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+            <FilterChipGroup
+              label="Brand"
+              value={brand}
+              onChange={setBrand}
+              options={brands.map((option) => ({
+                value: option,
+                label: option === "all" ? "All Brands" : option,
+              }))}
+            />
+            <FilterChipGroup
+              label="Delivery"
+              value={delivery}
+              onChange={(value) => setDelivery(value as DeliveryFilter)}
+              options={[
+                { value: "all", label: "All" },
+                { value: "active", label: "Active" },
+                { value: "paused", label: "Paused" },
+              ]}
+            />
+          </div>
 
-        <DateRangeControls
-          startDate={startDate}
-          endDate={endDate}
-          onStartDateChange={setStartDate}
-          onEndDateChange={setEndDate}
-          onApply={applyDateRange}
-          onQuickRange={applyQuickRange}
-          isApplying={isApplyingRange}
-          compareEnabled={compareEnabled}
-          onCompareChange={setCompareEnabled}
-          periodCount={periodCount}
-          onPeriodCountChange={changePeriodCount}
-          periodMetric={periodMetric}
-          onPeriodMetricChange={changePeriodMetric}
-          periodWindows={periodWindows}
-          comparisonRange={data.comparison.timeRange}
-        />
-      </section>
+          <DateRangeControls
+            startDate={startDate}
+            endDate={endDate}
+            onStartDateChange={setStartDate}
+            onEndDateChange={setEndDate}
+            onApply={applyDateRange}
+            onQuickRange={applyQuickRange}
+            isApplying={isApplyingRange}
+            compareEnabled={compareEnabled}
+            onCompareChange={setCompareEnabled}
+            periodCount={periodCount}
+            onPeriodCountChange={changePeriodCount}
+            periodMetric={periodMetric}
+            onPeriodMetricChange={changePeriodMetric}
+            periodWindows={periodWindows}
+            comparisonRange={data.comparison.timeRange}
+          />
+        </section>
 
-      <section className="mx-auto mt-6 max-w-7xl">
-        <UmbrellaTabs
-          umbrellas={umbrellaOptions}
-          value={umbrella}
-          onChange={setUmbrella}
-        />
-      </section>
+        <section className="mx-auto mt-6 max-w-7xl">
+          <UmbrellaTabs
+            umbrellas={umbrellaOptions}
+            value={umbrella}
+            onChange={setUmbrella}
+          />
+        </section>
+      </AnalystFilterBar>
 
       <section className="mx-auto mt-6 w-full max-w-7xl min-w-0">
         <div className="min-w-0 border border-hp-rule bg-hp-card p-6">

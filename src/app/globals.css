@@ -184,6 +184,31 @@ button:disabled {
 }
 
 /*
+ * Sticky filter bar fade-in. Triggered when the /analyst page's
+ * collapsed filter bar appears on scroll-past.
+ */
+@keyframes hp-bar-fade-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -4px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.hp-bar-fade-in {
+  animation: hp-bar-fade-in 120ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hp-bar-fade-in {
+    animation: none;
+  }
+}
+
+/*
  * Ornamental rule. Hairline with a centered gilt mark — used between the
  * three sections of the Executive Snapshot in place of a flat divider.
  */
