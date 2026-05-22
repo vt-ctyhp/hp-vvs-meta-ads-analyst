@@ -38,7 +38,7 @@ export function HealthPanel({ snapshot }: Props) {
             </span>
           ) : null}
         </header>
-        <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs md:grid-cols-4">
+        <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs md:grid-cols-5">
           <Stat
             label="Latest sync"
             value={
@@ -48,6 +48,14 @@ export function HealthPanel({ snapshot }: Props) {
             }
           />
           <Stat label="Sync status" value={snapshot.latestSync.status ?? "—"} />
+          <Stat
+            label="Website reconcile"
+            value={
+              snapshot.latestWebsiteReconciliation.at
+                ? new Date(snapshot.latestWebsiteReconciliation.at).toLocaleString()
+                : "—"
+            }
+          />
           <Stat
             label="Missing env"
             value={

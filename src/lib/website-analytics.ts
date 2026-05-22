@@ -15,6 +15,10 @@ import {
   selectLastPaidTouch as selectBestLastPaidTouch,
 } from "./attribution-touch-selection.ts";
 import { BOOKING_ACTION_TYPES, actionArray, actionCount } from "./meta-kpi.ts";
+import {
+  WEBSITE_RECONCILIATION_CRON_TRIGGER,
+  WEBSITE_RECONCILIATION_MANUAL_TRIGGER,
+} from "./website-reconciliation-triggers.ts";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_ALLOWED_ORIGINS = [
@@ -559,6 +563,19 @@ export type WebsiteConversionReconciliationResult = {
   skippedExistingConversions: number;
 };
 
+export type WebsiteConversionReconciliationTrigger =
+  | typeof WEBSITE_RECONCILIATION_CRON_TRIGGER
+  | typeof WEBSITE_RECONCILIATION_MANUAL_TRIGGER;
+
+export type WebsiteConversionReconciliationRunResult = {
+  errors: string[];
+  metrics: WebsiteConversionReconciliationResult & {
+    range: { start: string; end: string; days: number };
+  };
+  status: "success" | "failed";
+  syncRunId: string;
+};
+
 export type WebsiteAttributionResolution = {
   bestTouch: AttributionTouch | null;
   eventSourceUrl?: string;
@@ -819,10 +836,11 @@ export async function fetchWebsiteFunnelData(input: {
   startDate?: string | null;
   endDate?: string | null;
   days?: number | null;
-}): Promise<WebsiteFunnelData> {
+}, options: {
+  client?: WebsiteSupabaseClient;
+} = {}): Promise<WebsiteFunnelData> {
   const range = normalizeDateRange(input);
-  const reconciliation = await reconcileAppointmentConversionsForRange(range);
-  const client = createWebsiteClient("ingest");
+  const client = options.client || createWebsiteClient("ingest");
   const startIso = `${range.start}T00:00:00.000Z`;
   const endIso = `${range.end}T23:59:59.999Z`;
 
@@ -904,9 +922,6 @@ export async function fetchWebsiteFunnelData(input: {
     sourceTransparency: {
       timeRange: range,
       recordCounts: {
-        appointment_events_checked: reconciliation.checkedAppointments,
-        appointment_events_eligible: reconciliation.eligibleAppointments,
-        appointment_events_reconciled: reconciliation.insertedConversions,
         meta_daily_insights: metaRows.length,
         website_events: events.length,
       },
@@ -955,6 +970,72 @@ export async function reconcileAppointmentConversionsToWebsiteEvents(input: {
   days?: number | null;
 }): Promise<WebsiteConversionReconciliationResult> {
   return reconcileAppointmentConversionsForRange(normalizeDateRange(input));
+}
+
+export async function runWebsiteConversionReconciliation(
+  input: {
+    startDate?: string | null;
+    endDate?: string | null;
+    days?: number | null;
+  },
+  trigger: WebsiteConversionReconciliationTrigger = WEBSITE_RECONCILIATION_CRON_TRIGGER,
+): Promise<WebsiteConversionReconciliationRunResult> {
+  const range = normalizeDateRange(input);
+  const supabase = createAdsAnalystClient("worker");
+  const startedAt = new Date().toISOString();
+  const runInsert = await supabase
+    .from("sync_runs")
+    .insert(withAdsAnalystEnvironment({
+      trigger,
+      status: "running",
+      started_at: startedAt,
+      metrics: { range },
+    }))
+    .select("id")
+    .single();
+
+  if (runInsert.error) throw runInsert.error;
+
+  const syncRunId = String(runInsert.data.id);
+  const errors: string[] = [];
+  let metrics: WebsiteConversionReconciliationRunResult["metrics"] = {
+    range,
+    checkedAppointments: 0,
+    eligibleAppointments: 0,
+    insertedConversions: 0,
+    skippedExistingConversions: 0,
+  };
+
+  try {
+    metrics = {
+      range,
+      ...(await reconcileAppointmentConversionsForRange(range)),
+    };
+    await supabase
+      .from("sync_runs")
+      .update(withAdsAnalystEnvironment({
+        status: "success",
+        completed_at: new Date().toISOString(),
+        metrics,
+        errors,
+      }))
+      .eq("id", syncRunId);
+
+    return { status: "success", metrics, errors, syncRunId };
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : String(error));
+    await supabase
+      .from("sync_runs")
+      .update(withAdsAnalystEnvironment({
+        status: "failed",
+        completed_at: new Date().toISOString(),
+        metrics,
+        errors,
+      }))
+      .eq("id", syncRunId);
+
+    return { status: "failed", metrics, errors, syncRunId };
+  }
 }
 
 async function reconcileAppointmentConversionsForRange(range: {

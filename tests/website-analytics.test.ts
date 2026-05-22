@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 import {
   appointmentEventToWebsiteConversionInput,
   buildWebsiteLocationBreakdown,
+  fetchWebsiteFunnelData,
   isAuthorizedConversionRequest,
   isPaidTouch,
   normalizeBookingAttributionPayload,
@@ -93,6 +94,33 @@ describe("website analytics appointment reconciliation", () => {
     });
 
     assert.equal(conversion, null);
+  });
+
+  it("keeps funnel reads separate from appointment reconciliation", async () => {
+    const selectedTables: string[] = [];
+    const client = {
+      from(table: string) {
+        selectedTables.push(table);
+        if (table === "website_events" || table === "meta_daily_insights") {
+          return {
+            select() {
+              return resolvedSelect([]);
+            },
+          };
+        }
+        throw new Error(`Unexpected table read: ${table}`);
+      },
+    };
+
+    const data = await fetchWebsiteFunnelData(
+      { startDate: "2026-05-01", endDate: "2026-05-01" },
+      { client: client as never },
+    );
+
+    assert.deepEqual(selectedTables, ["website_events", "meta_daily_insights"]);
+    assert.equal(data.sourceTransparency.recordCounts.website_events, 0);
+    assert.equal(data.sourceTransparency.recordCounts.meta_daily_insights, 0);
+    assert.equal(data.sourceTransparency.recordCounts.appointment_events_checked, undefined);
   });
 
   it("treats Meta click identifiers and ad IDs as paid touches", () => {
@@ -552,6 +580,27 @@ describe("website analytics appointment reconciliation", () => {
     assert.match(migration, /geo_timezone = null/);
   });
 });
+
+function resolvedSelect(data: unknown[]) {
+  const chain = {
+    gte() {
+      return chain;
+    },
+    lte() {
+      return chain;
+    },
+    order() {
+      return chain;
+    },
+    limit() {
+      return chain;
+    },
+    then(resolve: (value: { data: unknown[]; error: null }) => unknown, reject?: (reason: unknown) => unknown) {
+      return Promise.resolve({ data, error: null }).then(resolve, reject);
+    },
+  };
+  return chain;
+}
 
 function locationEvent(overrides: Partial<WebsiteLocationEventInput>): WebsiteLocationEventInput {
   return {

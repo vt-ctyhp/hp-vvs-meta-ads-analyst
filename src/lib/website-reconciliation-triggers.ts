@@ -1,0 +1,7 @@
+export const WEBSITE_RECONCILIATION_CRON_TRIGGER = "cron_website_reconciliation";
+export const WEBSITE_RECONCILIATION_MANUAL_TRIGGER = "manual_website_reconciliation";
+
+export const WEBSITE_RECONCILIATION_TRIGGERS = [
+  WEBSITE_RECONCILIATION_CRON_TRIGGER,
+  WEBSITE_RECONCILIATION_MANUAL_TRIGGER,
+] as const;

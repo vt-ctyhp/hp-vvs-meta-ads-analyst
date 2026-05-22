@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { AuthorizationError } from "./app-auth";
+export { isAuthorizedCronRequest } from "./cron-auth";
 import { ConfigurationError } from "./env";
 import { safeErrorMessage } from "./error-message";
 
@@ -22,13 +23,4 @@ export function jsonError(error: unknown, status = 500) {
   }
 
   return NextResponse.json({ error: safeErrorMessage(error) }, { status });
-}
-
-export function isAuthorizedCronRequest(request: Request) {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) return false;
-
-  const authHeader = request.headers.get("authorization");
-  const cronHeader = request.headers.get("x-cron-secret");
-  return authHeader === `Bearer ${cronSecret}` || cronHeader === cronSecret;
 }

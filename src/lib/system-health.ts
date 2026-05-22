@@ -12,6 +12,11 @@
 
 import { ConfigurationError, getMissingRequiredEnv } from "./env";
 import { createAdsAnalystClient } from "./ads-analyst-db";
+import {
+  WEBSITE_RECONCILIATION_CRON_TRIGGER,
+  WEBSITE_RECONCILIATION_MANUAL_TRIGGER,
+  WEBSITE_RECONCILIATION_TRIGGERS,
+} from "./website-reconciliation-triggers";
 
 export type SystemHealthStatus = "ok" | "warning" | "critical";
 
@@ -30,6 +35,11 @@ export type SystemHealthSnapshot = {
   generatedAt: string;
   missingEnv: string[];
   latestSync: {
+    at: string | null;
+    status: "success" | "partial" | "failed" | "running" | null;
+    trigger: string | null;
+  };
+  latestWebsiteReconciliation: {
     at: string | null;
     status: "success" | "partial" | "failed" | "running" | null;
     trigger: string | null;
@@ -55,6 +65,7 @@ export async function getSystemHealth(): Promise<SystemHealthSnapshot> {
       generatedAt: new Date().toISOString(),
       missingEnv,
       latestSync: { at: null, status: null, trigger: null },
+      latestWebsiteReconciliation: { at: null, status: null, trigger: null },
       issues,
     };
   }
@@ -64,31 +75,42 @@ export async function getSystemHealth(): Promise<SystemHealthSnapshot> {
     status: null,
     trigger: null,
   };
+  let latestWebsiteReconciliation: SystemHealthSnapshot["latestWebsiteReconciliation"] = {
+    at: null,
+    status: null,
+    trigger: null,
+  };
 
   try {
     const supabase = createAdsAnalystClient("web");
-    const { data, error } = await supabase
-      .from("sync_runs")
-      .select("status,trigger,started_at,completed_at")
-      .order("started_at", { ascending: false })
-      .limit(1);
+    const [latestSyncResult, latestWebsiteReconciliationResult] = await Promise.all([
+      supabase
+        .from("sync_runs")
+        .select("status,trigger,started_at,completed_at")
+        .neq("trigger", WEBSITE_RECONCILIATION_CRON_TRIGGER)
+        .neq("trigger", WEBSITE_RECONCILIATION_MANUAL_TRIGGER)
+        .order("started_at", { ascending: false })
+        .limit(1),
+      supabase
+        .from("sync_runs")
+        .select("status,trigger,started_at,completed_at")
+        .in("trigger", [...WEBSITE_RECONCILIATION_TRIGGERS])
+        .order("started_at", { ascending: false })
+        .limit(1),
+    ]);
 
-    if (error) throw error;
+    if (latestSyncResult.error) throw latestSyncResult.error;
+    if (latestWebsiteReconciliationResult.error) throw latestWebsiteReconciliationResult.error;
 
-    const row = Array.isArray(data) ? data[0] : null;
-    if (row) {
-      const status = (row.status as SystemHealthSnapshot["latestSync"]["status"]) || null;
-      latestSync = {
-        at: typeof row.completed_at === "string" ? row.completed_at : (row.started_at as string),
-        status,
-        trigger: (row.trigger as string) || null,
-      };
-    }
+    latestSync = latestRunFromRows(latestSyncResult.data);
+    latestWebsiteReconciliation = latestRunFromRows(
+      latestWebsiteReconciliationResult.data,
+    );
   } catch (error) {
     if (!(error instanceof ConfigurationError)) {
       issues.push({
         level: "warning",
-        title: "Couldn't read sync history",
+        title: "Couldn't read pipeline history",
         detail:
           error instanceof Error
             ? error.message
@@ -130,6 +152,16 @@ export async function getSystemHealth(): Promise<SystemHealthSnapshot> {
     });
   }
 
+  if (latestWebsiteReconciliation.status === "failed") {
+    issues.push({
+      level: "warning",
+      title: "Website reconciliation failed",
+      detail:
+        "The most recent appointment-to-website conversion reconciliation did not complete. Convert bookings may lag.",
+      link: { href: "/operate?tab=health", label: "Open health" },
+    });
+  }
+
   const status: SystemHealthStatus = issues.some((issue) => issue.level === "critical")
     ? "critical"
     : issues.length
@@ -141,6 +173,23 @@ export async function getSystemHealth(): Promise<SystemHealthSnapshot> {
     generatedAt: new Date().toISOString(),
     missingEnv,
     latestSync,
+    latestWebsiteReconciliation,
     issues,
+  };
+}
+
+function latestRunFromRows(data: unknown): SystemHealthSnapshot["latestSync"] {
+  const row = Array.isArray(data) ? data[0] as Record<string, unknown> | undefined : null;
+  if (!row) return { at: null, status: null, trigger: null };
+
+  return {
+    at:
+      typeof row.completed_at === "string"
+        ? row.completed_at
+        : typeof row.started_at === "string"
+          ? row.started_at
+          : null,
+    status: (row.status as SystemHealthSnapshot["latestSync"]["status"]) || null,
+    trigger: (row.trigger as string) || null,
   };
 }
