@@ -15,8 +15,8 @@ import { hasPermission } from "@/lib/access-control";
 import { emptyDashboardPayload, fetchDashboardData } from "@/lib/analytics";
 import { CAMPAIGN_UMBRELLAS } from "@/lib/campaign-umbrellas";
 import {
+  cachedFetchCreativeAnalysisData,
   emptyCreativeAnalysisPayload,
-  fetchCreativeAnalysisData,
 } from "@/lib/creative-analysis";
 import { firstParam, numberParam, pathWithQuery } from "@/lib/dashboard-page";
 import {
@@ -149,11 +149,10 @@ export default async function OptimizePage({
 
   const creativePromise =
     activeTab === "creatives" && canViewCreatives
-      ? fetchCreativeAnalysisData({
+      ? cachedFetchCreativeAnalysisData({
           days,
           startDate,
           endDate,
-          includeLive: true,
         }).catch((e) => {
           console.error("[optimize] fetchCreativeAnalysisData threw:", e);
           return {
@@ -303,6 +302,7 @@ export default async function OptimizePage({
             group={groupFilter}
             delivery={statusFilter}
             focus={focus}
+            canRefreshDiagnostics={canRunSync}
           />
         ) : (
           <PermissionPanel label="Creative diagnostics" />

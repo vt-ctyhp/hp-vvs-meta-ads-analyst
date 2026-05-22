@@ -1,4 +1,5 @@
 import { differenceInCalendarDays, subDays } from "date-fns";
+import { unstable_cache } from "next/cache.js";
 
 import {
   buildCreativeDiagnostics,
@@ -15,6 +16,7 @@ import {
 import { resolveMetaKpi } from "./meta-kpi";
 import { createAdsAnalystClient, getAdsAnalystEnvironment } from "./ads-analyst-db";
 import { resolveCreativeDisplayMedia } from "./creative-display-media";
+import { normalizeOptimizeDeliveryStatus } from "./optimize-filters";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -23,6 +25,9 @@ export type CreativeAnalysisDateRangeInput = {
   startDate?: string | null;
   endDate?: string | null;
   includeLive?: boolean;
+  brand?: string | null;
+  group?: string | null;
+  status?: string | null;
 };
 
 export type CreativeAnalysisPayload = {
@@ -152,6 +157,11 @@ type CreativeRow = {
   preview_html: string | null;
   preview_source: string | null;
 };
+type AdDeliveryRow = {
+  ad_id: string | null;
+  status: string | null;
+  effective_status: string | null;
+};
 type StoredInsightRow = {
   brand_id: string | null;
   meta_account_id: string;
@@ -184,11 +194,19 @@ type StoredInsightRow = {
   cost_per_kpi: number | string | null;
   actions: unknown;
   video_metrics: unknown;
-  raw_json: unknown;
+  raw_json?: unknown;
+};
+type StoredInsightFilters = {
+  brandId: string | null;
+  campaignUmbrella: string | null;
+  adIds: string[] | null;
+  empty: boolean;
 };
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const LIVE_META_TIMEOUT_MS = 12000;
+export const CREATIVE_ANALYSIS_CACHE_TAG = "creative-analysis";
+export const CREATIVE_ANALYSIS_REVALIDATE_SECONDS = 300;
 
 export function emptyCreativeAnalysisPayload(
   missingEnv = getMissingDashboardEnv(["META_ACCESS_TOKEN", "META_HP_AD_ACCOUNT_ID"]),
@@ -248,22 +266,21 @@ export async function fetchCreativeAnalysisData(
     const dateRange = resolveDateRange(dateRangeInput);
     const comparisonRange = resolveComparisonRange(dateRange);
     const includeLive = dateRangeInput.includeLive === true;
+    const deliveryStatus = normalizeOptimizeDeliveryStatus(dateRangeInput.status);
     const livePromise = includeLive
       ? fetchLiveCreativeInsights(dateRange)
       : Promise.resolve(emptyLiveCreativeInsights());
-    const currentStoredPromise = fetchStoredInsightRows(supabase, dateRange);
-    const previousStoredPromise = fetchStoredInsightRows(supabase, comparisonRange);
     const baseMetadataPromise = Promise.all([
       supabase.from("brands").select("id,code,name"),
       supabase.from("meta_ad_accounts").select("brand_id,meta_account_id,name"),
     ]);
+    const deliveryAdIdsPromise = fetchAdIdsForDeliveryStatus(supabase, deliveryStatus);
 
-    const [live, currentStoredRows, previousStoredRows, [brandsRes, accountsRes]] =
+    const [live, [brandsRes, accountsRes], deliveryAdIds] =
       await Promise.all([
         livePromise,
-        currentStoredPromise,
-        previousStoredPromise,
         baseMetadataPromise,
+        deliveryAdIdsPromise,
       ]);
 
     if (brandsRes.error) throw brandsRes.error;
@@ -273,6 +290,11 @@ export async function fetchCreativeAnalysisData(
     const accounts = rows<AccountRow>(accountsRes.data);
     const brandById = new Map(brands.map((brand) => [brand.id, brand]));
     const accountByMetaId = new Map(accounts.map((account) => [account.meta_account_id, account]));
+    const storedFilters = buildStoredInsightFilters(dateRangeInput, brands, deliveryAdIds);
+    const [currentStoredRows, previousStoredRows] = await Promise.all([
+      fetchStoredInsightRows(supabase, dateRange, storedFilters),
+      fetchStoredInsightRows(supabase, comparisonRange, storedFilters),
+    ]);
 
     const currentRows = live.rows.length
       ? live.rows.map(mapLiveInsight)
@@ -344,6 +366,22 @@ export async function fetchCreativeAnalysisData(
     throw error;
   }
 }
+
+export async function cachedFetchCreativeAnalysisData(
+  dateRangeInput: CreativeAnalysisDateRangeInput = { days: 30 },
+): Promise<CreativeAnalysisPayload> {
+  return cachedFetchCreativeAnalysisDataImpl(normalizeCreativeAnalysisCacheInput(dateRangeInput));
+}
+
+const cachedFetchCreativeAnalysisDataImpl = unstable_cache(
+  async (dateRangeInput: CreativeAnalysisDateRangeInput) =>
+    fetchCreativeAnalysisData(dateRangeInput),
+  ["creative-analysis-v1"],
+  {
+    revalidate: CREATIVE_ANALYSIS_REVALIDATE_SECONDS,
+    tags: [CREATIVE_ANALYSIS_CACHE_TAG],
+  },
+);
 
 function mapLiveInsight(row: MetaCreativeAnalysisInsight): RawCreativeInsight {
   const adId = stringField(row.ad_id) || "unknown";
@@ -592,6 +630,79 @@ async function fetchCreativeMetadata(
   };
 }
 
+async function fetchAdIdsForDeliveryStatus(
+  supabase: ReturnType<typeof createAdsAnalystClient>,
+  status: ReturnType<typeof normalizeOptimizeDeliveryStatus>,
+): Promise<string[] | null> {
+  if (!status) return null;
+  if (status === "live") return fetchLiveAdIds(supabase);
+
+  const output: AdDeliveryRow[] = [];
+  const pageSize = 1000;
+
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from("meta_ads")
+      .select("ad_id,status,effective_status")
+      .range(from, from + pageSize - 1);
+
+    if (error) throw error;
+
+    const page = rows<AdDeliveryRow>(data);
+    output.push(...page);
+    if (page.length < pageSize) break;
+  }
+
+  return unique(
+    output
+      .filter((row) => deliveryState(row) === status)
+      .map((row) => row.ad_id),
+  );
+}
+
+async function fetchLiveAdIds(supabase: ReturnType<typeof createAdsAnalystClient>) {
+  const [effectiveActive, configuredActive] = await Promise.all([
+    supabase
+      .from("meta_ads")
+      .select("ad_id,status,effective_status")
+      .eq("effective_status", "ACTIVE"),
+    supabase
+      .from("meta_ads")
+      .select("ad_id,status,effective_status")
+      .is("effective_status", null)
+      .eq("status", "ACTIVE"),
+  ]);
+
+  if (effectiveActive.error) throw effectiveActive.error;
+  if (configuredActive.error) throw configuredActive.error;
+
+  return unique(
+    [
+      ...rows<AdDeliveryRow>(effectiveActive.data),
+      ...rows<AdDeliveryRow>(configuredActive.data),
+    ].map((row) => row.ad_id),
+  );
+}
+
+function buildStoredInsightFilters(
+  input: CreativeAnalysisDateRangeInput,
+  brands: BrandRow[],
+  adIds: string[] | null,
+): StoredInsightFilters {
+  const brand = normalizeStoredFilter(input.brand);
+  const group = normalizeStoredFilter(input.group);
+  const brandId = brand
+    ? brands.find((row) => row.code === brand || row.name === brand)?.id || null
+    : null;
+
+  return {
+    brandId,
+    campaignUmbrella: group,
+    adIds,
+    empty: Boolean((brand && !brandId) || (adIds && adIds.length === 0)),
+  };
+}
+
 function enrichCreativeRow(input: {
   row: RawCreativeInsight;
   diagnostic: CreativeDiagnostic | undefined;
@@ -678,58 +789,80 @@ function enrichCreativeRow(input: {
 async function fetchStoredInsightRows(
   supabase: ReturnType<typeof createAdsAnalystClient>,
   range: { start: string; end: string },
+  filters: StoredInsightFilters = {
+    brandId: null,
+    campaignUmbrella: null,
+    adIds: null,
+    empty: false,
+  },
 ) {
+  if (filters.empty) return [];
+
   const output: StoredInsightRow[] = [];
   const pageSize = 1000;
+  const adIdChunks = filters.adIds ? chunks(filters.adIds, 200) : [null];
 
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await supabase
-      .from("meta_daily_insights")
-      .select(
-        [
-          "brand_id",
-          "meta_account_id",
-          "campaign_id",
-          "campaign_name",
-          "campaign_umbrella",
-          "ad_set_id",
-          "ad_set_name",
-          "ad_id",
-          "ad_name",
-          "creative_id",
-          "objective",
-          "optimization_goal",
-          "date_start",
-          "spend",
-          "impressions",
-          "reach",
-          "frequency",
-          "cpm",
-          "clicks",
-          "inline_link_clicks",
-          "ctr",
-          "cpc",
-          "quality_ranking",
-          "engagement_rate_ranking",
-          "conversion_rate_ranking",
-          "kpi_label",
-          "kpi_action_type",
-          "kpi_value",
-          "cost_per_kpi",
-          "actions",
-          "video_metrics",
-          "raw_json",
-        ].join(","),
-      )
-      .eq("environment", getAdsAnalystEnvironment())
-      .gte("date_start", range.start)
-      .lte("date_start", range.end)
-      .range(from, from + pageSize - 1);
+  for (const adIdChunk of adIdChunks) {
+    for (let from = 0; ; from += pageSize) {
+      let query = supabase
+        .from("meta_daily_insights")
+        .select(
+          [
+            "brand_id",
+            "meta_account_id",
+            "campaign_id",
+            "campaign_name",
+            "campaign_umbrella",
+            "ad_set_id",
+            "ad_set_name",
+            "ad_id",
+            "ad_name",
+            "creative_id",
+            "objective",
+            "optimization_goal",
+            "date_start",
+            "spend",
+            "impressions",
+            "reach",
+            "frequency",
+            "cpm",
+            "clicks",
+            "inline_link_clicks",
+            "ctr",
+            "cpc",
+            "cost_per_action_type",
+            "quality_ranking",
+            "engagement_rate_ranking",
+            "conversion_rate_ranking",
+            "kpi_label",
+            "kpi_action_type",
+            "kpi_value",
+            "cost_per_kpi",
+            "actions",
+            "video_metrics",
+          ].join(","),
+        )
+        .eq("environment", getAdsAnalystEnvironment())
+        .gte("date_start", range.start)
+        .lte("date_start", range.end);
 
-    if (error) throw error;
-    const page = rows<StoredInsightRow>(data);
-    output.push(...page);
-    if (page.length < pageSize) break;
+      if (filters.brandId) {
+        query = query.eq("brand_id", filters.brandId);
+      }
+      if (filters.campaignUmbrella) {
+        query = query.eq("campaign_umbrella", filters.campaignUmbrella);
+      }
+      if (adIdChunk) {
+        query = query.in("ad_id", adIdChunk);
+      }
+
+      const { data, error } = await query.range(from, from + pageSize - 1);
+
+      if (error) throw error;
+      const page = rows<StoredInsightRow>(data);
+      output.push(...page);
+      if (page.length < pageSize) break;
+    }
   }
 
   return output;
@@ -796,8 +929,33 @@ function normalizeDays(days: number | null | undefined) {
   return Number.isFinite(days) && Number(days) > 0 ? Math.floor(Number(days)) : 30;
 }
 
+function normalizeCreativeAnalysisCacheInput(
+  input: CreativeAnalysisDateRangeInput,
+): CreativeAnalysisDateRangeInput {
+  return {
+    days: normalizeDays(input.days),
+    startDate: normalizeDateString(input.startDate),
+    endDate: normalizeDateString(input.endDate),
+    includeLive: input.includeLive === true,
+    brand: normalizeStoredFilter(input.brand),
+    group: normalizeStoredFilter(input.group),
+    status: normalizeOptimizeDeliveryStatus(input.status),
+  };
+}
+
 function normalizeDateString(value: string | null | undefined) {
   return value && DATE_PATTERN.test(value) ? value : null;
+}
+
+function normalizeStoredFilter(value: string | null | undefined) {
+  return value && value !== "all" ? value : null;
+}
+
+function deliveryState(row: AdDeliveryRow) {
+  const state = (row.effective_status || row.status || "").toLowerCase();
+  if (state.includes("active")) return "live";
+  if (state.includes("paused")) return "paused";
+  return "off";
 }
 
 function parseDate(value: string) {

@@ -3,11 +3,13 @@ export type MetaAdsSyncTrigger =
   | "cron_catalog"
   | "manual"
   | "manual_catalog"
+  | "manual_diagnostics"
   | "preview";
 
 export type MetaAdsSyncOptions = {
   refreshPreviews: boolean;
   refreshAdCatalog: boolean;
+  refreshAdStatusesOnly: boolean;
   refreshRankingDiagnostics: boolean;
   includeCreativeDiagnostics: boolean;
 };
@@ -24,6 +26,8 @@ export type MetaAdsSyncOptions = {
  *     clicked vs scheduled refreshes.
  *   - `manual_catalog`            → operator-clicked catalog refresh.
  *     Same heavy options as `cron_catalog`.
+ *   - `manual_diagnostics`        → operator-clicked metrics/status refresh.
+ *     Pulls fresh insights + ranking/video diagnostics without creative media.
  *   - `preview`                   → no defaults; caller supplies options.
  */
 export function syncOptionsForTrigger(
@@ -35,6 +39,17 @@ export function syncOptionsForTrigger(
     return {
       refreshPreviews: true,
       refreshAdCatalog: true,
+      refreshAdStatusesOnly: false,
+      refreshRankingDiagnostics: true,
+      includeCreativeDiagnostics: true,
+    };
+  }
+
+  if (trigger === "manual_diagnostics") {
+    return {
+      refreshPreviews: false,
+      refreshAdCatalog: false,
+      refreshAdStatusesOnly: true,
       refreshRankingDiagnostics: true,
       includeCreativeDiagnostics: true,
     };
@@ -43,6 +58,7 @@ export function syncOptionsForTrigger(
   return {
     refreshPreviews: false,
     refreshAdCatalog: false,
+    refreshAdStatusesOnly: false,
     refreshRankingDiagnostics: false,
     includeCreativeDiagnostics: false,
   };

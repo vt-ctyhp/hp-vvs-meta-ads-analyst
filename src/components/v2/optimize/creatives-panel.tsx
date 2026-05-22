@@ -4,6 +4,7 @@ import { ExternalLink, FileDown, ImageIcon, Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import type { CreativeAnalysisPayload, CreativeAnalysisRow } from "@/lib/creative-analysis";
+import { RunSyncButton } from "./sync-button";
 
 type Props = {
   data: CreativeAnalysisPayload;
@@ -11,6 +12,7 @@ type Props = {
   group?: string | null;
   delivery?: string;
   focus?: string | null;
+  canRefreshDiagnostics?: boolean;
 };
 
 type SortKey =
@@ -52,6 +54,7 @@ export function CreativesPanel({
   group = "all",
   delivery = "all",
   focus = null,
+  canRefreshDiagnostics = false,
 }: Props) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
@@ -135,6 +138,15 @@ export function CreativesPanel({
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {canRefreshDiagnostics ? (
+              <RunSyncButton
+                size="sm"
+                mode="diagnostics"
+                variant="secondary"
+                label="Refresh live diagnostics"
+                runningLabel="Refreshing diagnostics…"
+              />
+            ) : null}
             <label className="inline-flex h-9 items-center gap-2 rounded-md border border-stone-300 bg-white px-3 text-xs font-medium text-stone-700">
               <input
                 type="checkbox"
