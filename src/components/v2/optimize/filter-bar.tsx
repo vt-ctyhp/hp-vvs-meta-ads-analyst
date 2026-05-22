@@ -3,6 +3,7 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useState, useTransition } from "react";
 
+import { OPTIMIZE_DEFAULT_DAYS } from "@/lib/app-routes";
 import { normalizeOptimizeStatusSelection } from "@/lib/optimize-filters";
 
 /**
@@ -45,6 +46,7 @@ const DATE_PRESETS: Array<{ value: string; label: string }> = [
 ];
 
 const SERVER_DATA_KEYS = new Set(["brand", "group", "days", "start", "end", "status"]);
+const DEFAULT_DAYS_VALUE = String(OPTIMIZE_DEFAULT_DAYS);
 
 export function OptimizeFilterBar({ brands, groups }: Props) {
   const router = useRouter();
@@ -55,7 +57,7 @@ export function OptimizeFilterBar({ brands, groups }: Props) {
   const current = useMemo(() => {
     const brand = params.get("brand") ?? "all";
     const group = params.get("group") ?? "all";
-    const days = params.get("days") ?? "30";
+    const days = params.get("days") ?? DEFAULT_DAYS_VALUE;
     const start = params.get("start") ?? "";
     const end = params.get("end") ?? "";
     // status defaults to "live" when the URL doesn't pin it. `status=all`

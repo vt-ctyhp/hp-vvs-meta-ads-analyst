@@ -9,12 +9,7 @@ import {
   normalizeAppNextPath,
 } from "../src/lib/app-routes.ts";
 
-test("dashboard users land on the legacy broadsheet after login (legacy auth flow)", () => {
-  // The legacy auth flow (firstPermittedAppPath) still points dashboard-
-  // permitted users at the broadsheet. Phase 12 moved that surface from `/`
-  // to `/broadsheet`; `/` itself now redirects per role via
-  // resolveLandingPath, but getPostLoginDestination is part of the legacy
-  // route table and stays in lockstep with APP_NAV_ROUTES.
+test("dashboard users land on optimize after login", () => {
   const destination = getPostLoginDestination({
     authenticated: true,
     active: true,
@@ -22,7 +17,7 @@ test("dashboard users land on the legacy broadsheet after login (legacy auth flo
     permissions: ["view_dashboard", "view_inbox"],
   });
 
-  assert.equal(destination, "/broadsheet");
+  assert.equal(destination, "/optimize?days=7&periods=1");
 });
 
 test("inbox-only users land on their first permitted page", () => {
@@ -52,7 +47,23 @@ test("post-login next path is honored only when permitted", () => {
   assert.equal(getPostLoginDestination(profile, "/analysis"), "/inbox");
 });
 
+test("legacy root next falls through to the default dashboard landing", () => {
+  assert.equal(
+    getPostLoginDestination({
+      authenticated: true,
+      active: true,
+      missingAppProfile: false,
+      permissions: ["view_dashboard"],
+    }, "/"),
+    "/optimize?days=7&periods=1",
+  );
+});
+
 test("unsafe or non-app next paths are ignored", () => {
+  assert.equal(
+    normalizeAppNextPath("/optimize?days=7&periods=1"),
+    "/optimize?days=7&periods=1",
+  );
   assert.equal(normalizeAppNextPath("/attribution-ledger"), "/attribution-ledger");
   assert.equal(normalizeAppNextPath("https://example.com/inbox"), null);
   assert.equal(normalizeAppNextPath("//example.com/inbox"), null);
@@ -83,6 +94,8 @@ test("inactive or missing-profile users do not have internal app access", () => 
 
 test("page permission checks follow the route permission map", () => {
   assert.equal(canAccessAppPath(["view_inbox"], "/inbox/thread/1"), true);
+  assert.equal(canAccessAppPath(["view_dashboard"], "/optimize"), true);
+  assert.equal(canAccessAppPath(["view_inbox"], "/optimize"), false);
   assert.equal(canAccessAppPath(["view_inbox"], "/"), false);
   assert.equal(canAccessAppPath(["view_dashboard"], "/website-funnel"), true);
   assert.equal(canAccessAppPath(["view_dashboard"], "/attribution-ledger"), true);

@@ -26,6 +26,11 @@ export type PermissionProfile = {
   permissions: readonly AppPermission[];
 };
 
+export const OPTIMIZE_DEFAULT_DAYS = 7;
+export const OPTIMIZE_DEFAULT_PERIODS = 1;
+export const OPTIMIZE_LANDING_PATH =
+  `/optimize?days=${OPTIMIZE_DEFAULT_DAYS}&periods=${OPTIMIZE_DEFAULT_PERIODS}`;
+
 /**
  * Nav order matters. Within each group, items are listed in the order they're
  * most likely to be used. Across groups, the order goes:
@@ -74,6 +79,16 @@ export const APP_ROUTE_GROUP_ORDER: AppRouteGroup[] = [
   "admin",
 ];
 
+type AppAccessRoute = Pick<AppRoute, "href" | "permission">;
+
+const APP_ACCESS_ROUTES = [
+  { href: "/optimize", permission: "view_dashboard" },
+  { href: "/convert", permission: "view_dashboard" },
+  { href: "/operate", permission: "manage_backfill" },
+  { href: "/m/inbox", permission: "view_inbox" },
+  ...APP_NAV_ROUTES,
+] satisfies AppAccessRoute[];
+
 const INTERNAL_ORIGIN = "https://internal.hp-vvs.local";
 
 export function hasInternalAppAccess(profile: PermissionProfile) {
@@ -86,11 +101,13 @@ export function hasInternalAppAccess(profile: PermissionProfile) {
 }
 
 export function firstPermittedAppPath(permissions: readonly AppPermission[]) {
+  if (permissions.includes("view_dashboard")) return OPTIMIZE_LANDING_PATH;
+
   return APP_NAV_ROUTES.find((route) => permissions.includes(route.permission))?.href || null;
 }
 
 export function getAppRouteForPath(pathname: string) {
-  return APP_NAV_ROUTES.find((route) => routeMatches(route.href, pathname)) || null;
+  return APP_ACCESS_ROUTES.find((route) => routeMatches(route.href, pathname)) || null;
 }
 
 export function canAccessAppPath(permissions: readonly AppPermission[], path: string) {
@@ -106,7 +123,7 @@ export function getPostLoginDestination(
   if (!hasInternalAppAccess(profile)) return null;
 
   const next = normalizeAppNextPath(requestedNext);
-  if (next && canAccessAppPath(profile.permissions, next)) {
+  if (next && pathnameFromAppPath(next) !== "/" && canAccessAppPath(profile.permissions, next)) {
     return next;
   }
 

@@ -29,6 +29,10 @@ import {
   normalizeOptimizeStatusSelection,
 } from "@/lib/optimize-filters";
 import {
+  OPTIMIZE_DEFAULT_DAYS,
+  OPTIMIZE_DEFAULT_PERIODS,
+} from "@/lib/app-routes";
+import {
   fetchPeriodPivot,
   isPeriodMetric,
   normalizePeriodCount,
@@ -60,7 +64,7 @@ export default async function OptimizePage({
   const startDate = firstParam(params.start) ?? null;
   const endDate = firstParam(params.end) ?? null;
   const focus = firstParam(params.focus) ?? null;
-  const days = numberParam(params.days) || 30;
+  const days = numberParam(params.days) || OPTIMIZE_DEFAULT_DAYS;
 
   // Filter-bar inputs. Status defaults to "live" so the operator lands on
   // currently-active inventory; explicit URL params override.
@@ -75,8 +79,10 @@ export default async function OptimizePage({
   // its rightmost period to the end of the range (today for presets).
   const pivotAnchor = new Date(`${pageDateRange.end}T12:00:00Z`);
 
-  // Period-pivot controls — defaults: 4 weeks of Primary KPI.
-  const periodCount = normalizePeriodCount(firstParam(params.periods));
+  // Period-pivot controls — defaults: 1 week of Primary KPI.
+  const periodCount = normalizePeriodCount(
+    firstParam(params.periods) ?? String(OPTIMIZE_DEFAULT_PERIODS),
+  );
   const frequencyParam = firstParam(params.freq);
   const frequency: Frequency = isFrequency(frequencyParam) ? frequencyParam : "week";
   const metricParam = firstParam(params.metric);
