@@ -15,7 +15,10 @@ import {
   type AppointmentEventConversionRow,
   type WebsiteLocationEventInput,
 } from "../src/lib/website-analytics.ts";
-import { selectBestPaidTouch } from "../src/lib/attribution-touch-selection.ts";
+import {
+  selectBestPaidTouch,
+  selectOriginalPaidTouch,
+} from "../src/lib/attribution-touch-selection.ts";
 
 describe("website analytics appointment reconciliation", () => {
   it("builds a website Schedule conversion from an Acuity appointment event", () => {
@@ -252,6 +255,53 @@ describe("website analytics appointment reconciliation", () => {
     };
 
     assert.equal(selectLastPaidTouch(olderAdTouch, newerAdTouch), newerAdTouch);
+  });
+
+  it("keeps conversion storage pointed at the original paid attribution time", () => {
+    const originalAdTouch = {
+      capturedAt: "2026-05-22T17:45:49.970Z",
+      eventId: "evt-paid",
+      eventName: "PageView",
+      fbc: "fb.1.1779471949970.original-click",
+      fbp: "fb.1.1779471949970.123",
+      pageUrl: "https://www.hungphatusa.com/pages/book-an-appointment?fbclid=original-click",
+      source: "shopify_browser",
+      sourceType: "paid_meta",
+      utm: {
+        adId: "120244031602180650",
+        adsetId: "120242517363420650",
+        campaignId: "120234691669940650",
+        content: "DM_IG_HeyBeyArea",
+        fbclid: "original-click",
+        medium: "paid_social",
+        source: "ig",
+      },
+    };
+    const bookingPaidEcho = {
+      ...originalAdTouch,
+      capturedAt: "2026-05-22T18:04:05.382Z",
+      eventId: "acuity-1709637713",
+      eventName: "Schedule",
+      source: "booking_api",
+    };
+
+    assert.equal(
+      selectOriginalPaidTouch([bookingPaidEcho, originalAdTouch], {
+        maxCapturedAt: "2026-05-22T18:04:05.382Z",
+      }),
+      originalAdTouch,
+    );
+
+    const fbcOnlyOriginalTouch = {
+      ...originalAdTouch,
+      utm: undefined,
+    };
+    assert.equal(
+      selectOriginalPaidTouch([bookingPaidEcho, fbcOnlyOriginalTouch], {
+        maxCapturedAt: "2026-05-22T18:04:05.382Z",
+      }),
+      fbcOnlyOriginalTouch,
+    );
   });
 
   it("ignores known paid touches after the booking cutoff", () => {

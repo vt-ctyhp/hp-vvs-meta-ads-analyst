@@ -35,6 +35,32 @@ export function selectBestPaidTouch<T extends SelectableAttributionTouch>(
   return best;
 }
 
+export function selectOriginalPaidTouch<T extends SelectableAttributionTouch>(
+  touches: Array<T | null | undefined>,
+  options: { maxCapturedAt?: string | null } = {},
+): T | null {
+  const best = selectBestPaidTouch(touches, options);
+  if (!best) return null;
+
+  const maxCapturedAt = timestampMs(options.maxCapturedAt);
+  const candidates = touches.filter((touch): touch is T => {
+    if (!touch || !isPaidAttributionTouch(touch)) return false;
+    const capturedAt = timestampMs(touch.capturedAt);
+    return maxCapturedAt === null || capturedAt === null || capturedAt <= maxCapturedAt;
+  });
+  const matchingCandidates = candidates.filter((touch) => paidTouchesMatchLineage(touch, best));
+  const timedCandidates = matchingCandidates.filter((touch) => timestampMs(touch.capturedAt) !== null);
+  const originalCandidates =
+    maxCapturedAt === null
+      ? timedCandidates
+      : timedCandidates.filter((touch) => {
+          const capturedAt = timestampMs(touch.capturedAt);
+          return capturedAt !== null && capturedAt < maxCapturedAt;
+        });
+
+  return earliestPaidTouch(originalCandidates.length ? originalCandidates : timedCandidates) || best;
+}
+
 export function selectLastPaidTouch<T extends SelectableAttributionTouch>(
   existing: T | null | undefined,
   touch: T,
@@ -58,6 +84,52 @@ function comparePaidTouches(
   if (leftTime !== null && rightTime === null) return 1;
   if (leftTime === null && rightTime !== null) return -1;
   return 0;
+}
+
+function earliestPaidTouch<T extends SelectableAttributionTouch>(touches: T[]) {
+  let earliest: T | null = null;
+  for (const touch of touches) {
+    const capturedAt = timestampMs(touch.capturedAt);
+    const earliestCapturedAt = timestampMs(earliest?.capturedAt);
+    if (capturedAt === null) continue;
+    if (!earliest || earliestCapturedAt === null || capturedAt < earliestCapturedAt) {
+      earliest = touch;
+    }
+  }
+  return earliest;
+}
+
+function paidTouchesMatchLineage(
+  touch: SelectableAttributionTouch,
+  selected: SelectableAttributionTouch,
+) {
+  const touchUtm = touch.utm || {};
+  const selectedUtm = selected.utm || {};
+  const identifierKeys = ["adId", "adsetId", "campaignId"] as const;
+  const selectedIdentifiers = identifierKeys.filter((key) => selectedUtm[key]);
+
+  if (selectedIdentifiers.length) {
+    return (
+      selectedIdentifiers.some((key) => touchUtm[key] === selectedUtm[key]) ||
+      paidTouchesShareClick(touch, selected)
+    );
+  }
+
+  if (selectedUtm.fbclid || selected.fbc) return paidTouchesShareClick(touch, selected);
+  return true;
+}
+
+function paidTouchesShareClick(
+  touch: SelectableAttributionTouch,
+  selected: SelectableAttributionTouch,
+) {
+  const touchUtm = touch.utm || {};
+  const selectedUtm = selected.utm || {};
+  if (selectedUtm.fbclid && touchUtm.fbclid === selectedUtm.fbclid) return true;
+  if (selected.fbc && touch.fbc === selected.fbc) return true;
+  if (selectedUtm.fbclid && touch.fbc?.endsWith(selectedUtm.fbclid)) return true;
+  if (touchUtm.fbclid && selected.fbc?.endsWith(touchUtm.fbclid)) return true;
+  return false;
 }
 
 function paidTouchScore(touch: SelectableAttributionTouch) {

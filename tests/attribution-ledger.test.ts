@@ -716,6 +716,74 @@ describe("attribution ledger detail data", () => {
     );
   });
 
+  it("uses original paid attribution time instead of booking-time paid echo", () => {
+    const detail = buildAttributionLedgerDetailData({
+      acuityAppointmentId: "1709637713",
+      conversions: [
+        conversionRow({
+          acuity_appointment_id: "1709637713",
+          event_id: "acuity-1709637713",
+          conversion_touch: richPaidTouch("2026-05-22T18:04:05.382Z"),
+          last_paid_touch: richPaidTouch("2026-05-22T18:04:05.382Z"),
+          occurred_at: "2026-05-22T18:04:05.382Z",
+          session_id: "session-1",
+          properties: {
+            attribution: {
+              capturedAt: "2026-05-22T17:45:49.970Z",
+              fbc: "fb.1.1779471949970.original-click",
+              fbp: "fb.1.1779471949970.123",
+              landingPageUrl:
+                "https://www.hungphatusa.com/pages/book-an-appointment?utm_source=ig&utm_medium=paid_social&utm_campaign_id=120234691669940650&utm_adset_id=120242517363420650&utm_ad_id=120244031602180650&utm_content=DM_IG_HeyBeyArea&fbclid=original-click",
+              referrer: "https://www.instagram.com/",
+              utm: {
+                adId: "120244031602180650",
+                adsetId: "120242517363420650",
+                campaignId: "120234691669940650",
+                content: "DM_IG_HeyBeyArea",
+                fbclid: "original-click",
+                medium: "paid_social",
+                placement: "Instagram_Stories",
+                source: "ig",
+              },
+            },
+          },
+        }),
+      ],
+      events: [
+        eventRow({
+          event_id: "hp_evt-return-page",
+          event_name: "PageView",
+          occurred_at: "2026-05-22T18:01:43.988Z",
+          page_url:
+            "https://www.hungphatusa.com/pages/book-an-appointment?utm_source=ig&utm_medium=paid_social&utm_campaign_id=120234691669940650&utm_adset_id=120242517363420650&utm_ad_id=120244031602180650&utm_content=DM_IG_HeyBeyArea&fbclid=return-click",
+          source_type: "paid_meta",
+          utm_ad_id: "120244031602180650",
+          utm_adset_id: "120242517363420650",
+          utm_campaign_id: "120234691669940650",
+          utm_content: "DM_IG_HeyBeyArea",
+          utm_medium: "paid_social",
+          utm_source: "ig",
+        }),
+        eventRow({
+          event_id: "acuity-1709637713",
+          event_name: "Schedule",
+          event_type: "conversion",
+          occurred_at: "2026-05-22T18:04:05.382Z",
+        }),
+      ],
+      sessions: [sessionRow({ session_id: "session-1" })],
+      visitor: visitorRow({
+        last_paid_touch: richPaidTouch("2026-05-22T18:04:05.911Z"),
+      }),
+    });
+
+    assert.equal(detail.creditedTouch?.capturedAt, "2026-05-22T17:45:49.970Z");
+    assert.equal(detail.creditedTouch?.content, "DM_IG_HeyBeyArea");
+    assert.match(detail.summary || "", /Paid attribution captured 18m before booking/);
+    assert.doesNotMatch(detail.summary || "", /0s before booking/);
+    assert.match(detail.summary || "", /booked 2m later/);
+  });
+
   it("uses the only pre-booking page view as the return touch", () => {
     const detail = buildAttributionLedgerDetailData({
       conversions: [
@@ -850,6 +918,25 @@ function linkInBioTouch(capturedAt: string) {
       content: "link_in_bio",
       fbclid: "link-in-bio-click",
       medium: "social",
+      source: "ig",
+    },
+  };
+}
+
+function richPaidTouch(capturedAt: string) {
+  return {
+    capturedAt,
+    eventName: "Schedule",
+    source: "booking_api",
+    sourceType: "paid_meta",
+    utm: {
+      adId: "120244031602180650",
+      adsetId: "120242517363420650",
+      campaignId: "120234691669940650",
+      content: "DM_IG_HeyBeyArea",
+      fbclid: "original-click",
+      medium: "paid_social",
+      placement: "Instagram_Stories",
       source: "ig",
     },
   };

@@ -1,6 +1,6 @@
 import { differenceInCalendarDays, format, parseISO, subDays } from "date-fns";
 
-import { selectBestPaidTouch } from "./attribution-touch-selection.ts";
+import { selectOriginalPaidTouch } from "./attribution-touch-selection.ts";
 import { createAdsAnalystClient } from "./ads-analyst-db.ts";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -726,7 +726,7 @@ export function buildCustomerJourneyLedgerDetailData(input: {
     sessionsById: sessionsByVisitorAndId.get(input.visitor.visitor_id),
   });
   const eventTouches = input.events.flatMap(eventAttributionTouches);
-  const creditedTouch = selectBestPaidTouch(
+  const creditedTouch = selectOriginalPaidTouch(
     [
       attributionTouch(input.visitor.last_paid_touch),
       attributionTouch(conversion?.last_paid_touch),
@@ -781,7 +781,7 @@ export function buildCustomerJourneyLedgerConversionOnlyDetailData(input: {
   conversion: CustomerJourneyLedgerConversionRow;
 }): CustomerJourneyLedgerDetailData {
   const conversion = input.conversion;
-  const creditedTouch = selectBestPaidTouch(
+  const creditedTouch = selectOriginalPaidTouch(
     [
       attributionTouch(conversion.last_paid_touch),
       attributionTouch(conversion.conversion_touch),
@@ -876,7 +876,7 @@ export function buildCustomerJourneyLedgerRows(input: {
       });
       const visitorEvents = eventsByVisitor.get(visitor.visitor_id) || [];
       const eventTouches = visitorEvents.flatMap(eventAttributionTouches);
-      const paidTouch = selectBestPaidTouch(
+      const paidTouch = selectOriginalPaidTouch(
         [
           attributionTouch(visitor.last_paid_touch),
           attributionTouch(conversion?.last_paid_touch),
@@ -966,7 +966,7 @@ function conversionOnlyLedgerRow(
   events: CustomerJourneyLedgerEventRow[],
 ): CustomerJourneyLedgerRow {
   const eventTouches = events.flatMap(eventAttributionTouches);
-  const paidTouch = selectBestPaidTouch(
+  const paidTouch = selectOriginalPaidTouch(
     [
       attributionTouch(conversion.last_paid_touch),
       attributionTouch(conversion.conversion_touch),

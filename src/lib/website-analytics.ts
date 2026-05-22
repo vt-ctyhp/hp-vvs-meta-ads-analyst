@@ -13,6 +13,7 @@ import {
   isPaidAttributionTouch,
   selectBestPaidTouch,
   selectLastPaidTouch as selectBestLastPaidTouch,
+  selectOriginalPaidTouch,
 } from "./attribution-touch-selection.ts";
 import { BOOKING_ACTION_TYPES, actionArray, actionCount } from "./meta-kpi.ts";
 import {
@@ -1384,9 +1385,15 @@ async function recordWebsiteEvent(
     session = await upsertWebsiteSession(client, row, touch);
   }
   applyResolvedWebsiteGeo(row, visitor, session);
-  const lastPaidTouch = selectBestPaidTouch([touchWithUrlUtmFallback(visitor?.last_paid_touch), touch], {
-    maxCapturedAt: row.occurred_at,
-  });
+  const paidTouchCandidates = [
+    touchWithUrlUtmFallback(visitor?.last_paid_touch),
+    touchWithUrlUtmFallback(session?.last_paid_touch),
+    originalAttributionTouch(input, row),
+    touch,
+  ];
+  const lastPaidTouch = isConversionEventName(eventName, row.meta_event_name)
+    ? selectOriginalPaidTouch(paidTouchCandidates, { maxCapturedAt: row.occurred_at })
+    : selectBestPaidTouch(paidTouchCandidates, { maxCapturedAt: row.occurred_at });
   const firstTouch = touchWithUrlUtmFallback(visitor?.first_touch);
   const lastTouch = touchWithUrlUtmFallback(visitor?.last_touch) || touch;
   const conversionContext = isConversionEventName(eventName, row.meta_event_name)
@@ -1767,6 +1774,62 @@ function attributionTouch(row: WebsiteEventRow): AttributionTouch {
     osName: row.os_name || undefined,
     utm: Object.keys(utm).length ? utm : undefined,
   };
+}
+
+function originalAttributionTouch(
+  input: z.infer<typeof websiteEventSchema> & Partial<z.infer<typeof conversionEventSchema>>,
+  row: WebsiteEventRow,
+): AttributionTouch | null {
+  const properties = objectRecord(input.properties);
+  const tracking = objectRecord(input.tracking);
+  const propertyTracking = objectRecord(properties.tracking);
+  const candidates = [
+    input.attribution,
+    tracking.attribution,
+    properties.attribution,
+    propertyTracking.attribution,
+  ];
+
+  for (const candidate of candidates) {
+    const touch = attributionRecordTouch(candidate, row);
+    if (touch) return touch;
+  }
+
+  return null;
+}
+
+function attributionRecordTouch(value: unknown, row: WebsiteEventRow): AttributionTouch | null {
+  const record = objectRecord(value);
+  const capturedAt = firstStringValue(record.capturedAt, record.timestamp, record.occurredAt);
+  if (!capturedAt) return null;
+
+  const pageUrl =
+    firstStringValue(record.pageUrl, record.landingPageUrl, record.eventSourceUrl, row.page_url) ||
+    undefined;
+  const utm = mergeUtmRecords(utmFromUrl(pageUrl), record.utm, record);
+  const fbc = firstStringValue(record.fbc, row.fbc) || undefined;
+  const referrer = firstStringValue(record.referrer, row.referrer) || undefined;
+  const sourceType =
+    firstStringValue(record.sourceType, row.source_type) ||
+    classifySourceType({ fbc, referrer, utm: utm || {} });
+  const touch: AttributionTouch = {
+    capturedAt,
+    eventId: firstStringValue(record.eventId, row.event_id),
+    eventName: firstStringValue(record.eventName, row.event_name),
+    fbc,
+    fbp: firstStringValue(record.fbp, row.fbp) || undefined,
+    pageUrl,
+    referrer,
+    source: firstStringValue(record.source, row.source),
+    sourceType,
+    userAgent: firstStringValue(record.userAgent, row.user_agent) || undefined,
+    deviceCategory: firstStringValue(record.deviceCategory, row.device_category) || undefined,
+    browserName: firstStringValue(record.browserName, row.browser_name) || undefined,
+    osName: firstStringValue(record.osName, row.os_name) || undefined,
+    utm,
+  };
+
+  return isPaidAttributionTouch(touch) ? touch : null;
 }
 
 function touchWithUrlUtmFallback(touch: AttributionTouch | null | undefined): AttributionTouch | null {
