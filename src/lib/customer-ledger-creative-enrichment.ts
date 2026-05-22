@@ -1,5 +1,9 @@
 import { createAdsAnalystClient } from "./ads-analyst-db.ts";
 import { resolveCreativeDisplayMedia } from "./creative-display-media.ts";
+import {
+  isBetterCreativeMediaRow,
+  isBetterEnvironmentScopedRow,
+} from "./creative-metadata-selection.ts";
 import type {
   CustomerLedgerCreativePreview,
   CustomerLedgerRow,
@@ -24,6 +28,7 @@ type AdMetadataRow = {
   ad_id?: unknown;
   creative_id?: unknown;
   effective_status?: unknown;
+  environment?: unknown;
   last_synced_at?: unknown;
   meta_account_id?: unknown;
   name?: unknown;
@@ -36,6 +41,7 @@ type AdMetadataRow = {
 type CreativeMetadataRow = {
   body?: unknown;
   creative_id?: unknown;
+  environment?: unknown;
   image_url?: unknown;
   last_synced_at?: unknown;
   meta_account_id?: unknown;
@@ -51,6 +57,7 @@ type CreativeMetadataRow = {
 };
 
 const AD_COLUMNS = [
+  "environment",
   "ad_id",
   "creative_id",
   "meta_account_id",
@@ -64,6 +71,7 @@ const AD_COLUMNS = [
 ].join(",");
 
 const CREATIVE_COLUMNS = [
+  "environment",
   "creative_id",
   "meta_account_id",
   "name",
@@ -81,6 +89,7 @@ const CREATIVE_COLUMNS = [
 ].join(",");
 
 const CREATIVE_COLUMNS_WITHOUT_CACHE = [
+  "environment",
   "creative_id",
   "meta_account_id",
   "name",
@@ -217,13 +226,13 @@ function indexCreativeRows(rows: CreativeMetadataRow[]) {
     const accountKey = creativeKey(stringOrNull(row.meta_account_id), creativeId);
     if (accountKey) {
       const current = byAccountAndCreative.get(accountKey);
-      if (!current || isNewer(row.last_synced_at, current.last_synced_at)) {
+      if (!current || isBetterCreativeMediaRow(row, current)) {
         byAccountAndCreative.set(accountKey, row);
       }
     }
 
     const current = byCreative.get(creativeId);
-    if (!current || isNewer(row.last_synced_at, current.last_synced_at)) {
+    if (!current || isBetterCreativeMediaRow(row, current)) {
       byCreative.set(creativeId, row);
     }
   }
@@ -274,17 +283,7 @@ function isBetterAdRow(candidate: AdMetadataRow, current: AdMetadataRow) {
   const candidateHasCreative = Boolean(stringOrNull(candidate.creative_id));
   const currentHasCreative = Boolean(stringOrNull(current.creative_id));
   if (candidateHasCreative !== currentHasCreative) return candidateHasCreative;
-  return isNewer(candidate.last_synced_at, current.last_synced_at);
-}
-
-function isNewer(candidate: unknown, current: unknown) {
-  return timestampValue(candidate) > timestampValue(current);
-}
-
-function timestampValue(value: unknown) {
-  if (typeof value !== "string") return 0;
-  const timestamp = new Date(value).getTime();
-  return Number.isFinite(timestamp) ? timestamp : 0;
+  return isBetterEnvironmentScopedRow(candidate, current);
 }
 
 function creativeKey(metaAccountId: string | null, creativeId: string | null) {
