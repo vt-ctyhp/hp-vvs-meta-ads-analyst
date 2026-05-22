@@ -84,6 +84,68 @@ describe("creative score helpers", () => {
     assert.equal(metrics.costPerResult, 12.5);
   });
 
+  it("uses conversations started as the canonical message result", () => {
+    const metrics = deriveCreativeMetrics(
+      input({
+        spend: 60,
+        campaignName: "CBI | Prospecting | VN | Promotion | Messenger Campaign",
+        actions: [
+          { action_type: "onsite_conversion.total_messaging_connection", value: 8 },
+          { action_type: "onsite_conversion.messaging_conversation_started_7d", value: 3 },
+          { action_type: "onsite_conversion.messaging_first_reply", value: 2 },
+        ],
+        costPerActionType: [
+          { action_type: "onsite_conversion.total_messaging_connection", value: 7.5 },
+          { action_type: "onsite_conversion.messaging_conversation_started_7d", value: 20 },
+          { action_type: "onsite_conversion.messaging_first_reply", value: 30 },
+        ],
+      }),
+    );
+
+    assert.equal(metrics.resultKpiLabel, "Messages");
+    assert.equal(metrics.resultActionType, "onsite_conversion.messaging_conversation_started_7d");
+    assert.equal(metrics.resultCount, 3);
+    assert.equal(metrics.costPerResult, 20);
+  });
+
+  it("recomputes stored message cost from spend and selected results", () => {
+    const metrics = deriveCreativeMetrics(
+      input({
+        spend: 5.21,
+        campaignName: "CBI | Prospecting | VN | Promotion | Messenger Campaign",
+        actions: [
+          { action_type: "onsite_conversion.total_messaging_connection", value: 15 },
+          { action_type: "onsite_conversion.messaging_conversation_started_7d", value: 5 },
+          { action_type: "onsite_conversion.messaging_first_reply", value: 4 },
+        ],
+        costPerActionType: [],
+      }),
+    );
+
+    assert.equal(metrics.resultActionType, "onsite_conversion.messaging_conversation_started_7d");
+    assert.equal(metrics.resultCount, 5);
+    assert.equal(metrics.costPerResult, 5.21 / 5);
+  });
+
+  it("falls back to total messaging connections when conversations started are absent", () => {
+    const metrics = deriveCreativeMetrics(
+      input({
+        spend: 40,
+        campaignName: "CBI | Prospecting | VN | Promotion | Messenger Campaign",
+        actions: [
+          { action_type: "onsite_conversion.total_messaging_connection", value: 8 },
+          { action_type: "onsite_conversion.messaging_first_reply", value: 2 },
+        ],
+        costPerActionType: [],
+      }),
+    );
+
+    assert.equal(metrics.resultKpiLabel, "Messages");
+    assert.equal(metrics.resultActionType, "onsite_conversion.total_messaging_connection");
+    assert.equal(metrics.resultCount, 8);
+    assert.equal(metrics.costPerResult, 5);
+  });
+
   it("uses bookings for appointment campaigns", () => {
     const metrics = deriveCreativeMetrics(
       input({
