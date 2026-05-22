@@ -144,6 +144,26 @@ describe("ad-hoc analytics prompt normalization", () => {
     ]);
   });
 
+  it("normalizes creative scaling decisions to creative-level evidence", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Which ad creative should I scale?",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.dimensions, ["creative"]);
+    assert.deepEqual(plan.spec.metrics, [
+      "spend",
+      "leads",
+      "cpl",
+      "primary_results",
+      "ctr",
+      "frequency",
+    ]);
+    assert.deepEqual(plan.spec.sort, { field: "leads", direction: "desc" });
+    assert.equal(plan.spec.limit, 20);
+  });
+
   it("normalizes unqualified results to primary results for weekly umbrella tables", () => {
     const plan = buildAnalysisPlanForPrompt(
       {},

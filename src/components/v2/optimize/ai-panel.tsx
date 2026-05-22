@@ -135,6 +135,7 @@ export function OptimizeAiPanel({
         body: JSON.stringify({
           sessionId: chatSessionId,
           message,
+          mode,
           days: dateRange.days,
           startDate: dateRange.startDate,
           endDate: dateRange.endDate,
@@ -174,6 +175,7 @@ export function OptimizeAiPanel({
     filters.brand,
     filters.group,
     filters.status,
+    mode,
     prompt,
     requestedRangeLabel,
   ]);

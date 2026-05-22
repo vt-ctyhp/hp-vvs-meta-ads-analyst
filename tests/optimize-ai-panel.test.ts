@@ -103,6 +103,33 @@ test("analysis POST applies Optimize defaults only to new dashboard builds", asy
   });
 });
 
+test("chat POST forwards selected analysis mode", async () => {
+  const calls: Array<{ name: string; args: unknown[] }> = [];
+  const route = loadChatRoute(calls);
+
+  const response = await route.POST(
+    jsonRequest({
+      sessionId: "session-1",
+      message: "Which ad creative should I scale?",
+      mode: "deep",
+      days: 30,
+    }),
+  );
+
+  assert.deepEqual(await response.json(), { kind: "chat" });
+  assert.deepEqual(serializable(calls.at(-1)), {
+    name: "answerExecutiveChat",
+    args: [
+      {
+        sessionId: "session-1",
+        message: "Which ad creative should I scale?",
+        mode: "deep",
+        days: 30,
+      },
+    ],
+  });
+});
+
 function serializable(value: unknown) {
   return JSON.parse(JSON.stringify(value));
 }
@@ -133,6 +160,30 @@ function loadAnalysisRoute(calls: Array<{ name: string; args: unknown[] }>) {
       async runSavedAdHocAnalysis(...args: unknown[]) {
         calls.push({ name: "runSavedAdHocAnalysis", args });
         return { kind: "saved", dashboardId: args[0] };
+      },
+    },
+    "@/lib/app-auth": {
+      async requirePermissionFromRequest() {
+        return {};
+      },
+    },
+    "@/lib/http": {
+      jsonError(error: unknown) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "Unexpected error" },
+          { status: 500 },
+        );
+      },
+    },
+  }) as { POST(request: Request): Promise<Response> };
+}
+
+function loadChatRoute(calls: Array<{ name: string; args: unknown[] }>) {
+  return loadModule("src/app/api/chat/route.ts", {
+    "@/lib/ai": {
+      async answerExecutiveChat(...args: unknown[]) {
+        calls.push({ name: "answerExecutiveChat", args });
+        return { kind: "chat" };
       },
     },
     "@/lib/app-auth": {

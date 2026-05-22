@@ -570,7 +570,7 @@ function ModeSwitch({
         className={`flex items-center gap-2 px-4 py-2 text-[11px] uppercase tracking-[0.14em] ${
           value === "fast" ? "bg-hp-ink text-hp-foundation" : "text-hp-body hover:bg-hp-inset"
         }`}
-        title="Fast mode uses gpt-5.4-nano"
+        title="Fast mode uses gpt-5.4 for dashboard planning"
       >
         <Gauge size={15} />
         Fast

@@ -392,6 +392,132 @@ const analysisSpecSchema = z.object({
   widgets: z.array(widgetSchema).min(1).max(4).catch([]),
 });
 
+const nullableStringSchema = { anyOf: [{ type: "string" }, { type: "null" }] } as const;
+const nullableIntegerSchema = {
+  anyOf: [{ type: "integer", minimum: 1, maximum: MAX_DAYS }, { type: "null" }],
+} as const;
+const nullableBooleanSchema = { anyOf: [{ type: "boolean" }, { type: "null" }] } as const;
+const nullableDimensionSchema = { anyOf: [{ enum: ANALYSIS_DIMENSIONS }, { type: "null" }] } as const;
+const nullableMetricSchema = { anyOf: [{ enum: ANALYSIS_METRICS }, { type: "null" }] } as const;
+
+const analysisSpecResponseFormat = {
+  type: "json_schema" as const,
+  json_schema: {
+    name: "analysis_spec",
+    strict: true,
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        title: { type: "string", minLength: 1, maxLength: 100 },
+        dateRange: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            preset: { anyOf: [{ enum: DATE_PRESETS }, { type: "null" }] },
+            start: nullableStringSchema,
+            end: nullableStringSchema,
+            days: nullableIntegerSchema,
+            includeToday: nullableBooleanSchema,
+          },
+          required: ["preset", "start", "end", "days", "includeToday"],
+        },
+        grain: { enum: ["summary", "daily", "weekly", "monthly"] },
+        dimensions: {
+          type: "array",
+          minItems: 1,
+          maxItems: 3,
+          items: { enum: ANALYSIS_DIMENSIONS },
+        },
+        filters: {
+          type: "array",
+          maxItems: 6,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              field: { enum: FILTER_FIELDS },
+              operator: { enum: ["contains", "equals"] },
+              value: { type: "string", maxLength: 120 },
+            },
+            required: ["field", "operator", "value"],
+          },
+        },
+        metrics: {
+          type: "array",
+          minItems: 1,
+          maxItems: 8,
+          items: { enum: ANALYSIS_METRICS },
+        },
+        sort: {
+          anyOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                field: { enum: [...ANALYSIS_METRICS, ...ANALYSIS_DIMENSIONS] },
+                direction: { enum: ["asc", "desc"] },
+              },
+              required: ["field", "direction"],
+            },
+            { type: "null" },
+          ],
+        },
+        limit: { type: "integer", minimum: 1, maximum: MAX_TABLE_ROWS },
+        tableLayout: {
+          anyOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                type: { enum: TABLE_LAYOUT_TYPES },
+                rowDimension: nullableDimensionSchema,
+                columnDimension: nullableDimensionSchema,
+                metric: nullableMetricSchema,
+              },
+              required: ["type", "rowDimension", "columnDimension", "metric"],
+            },
+            { type: "null" },
+          ],
+        },
+        widgets: {
+          type: "array",
+          minItems: 1,
+          maxItems: 4,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              type: { enum: WIDGET_TYPES },
+              title: { type: "string", maxLength: 80 },
+              x: nullableDimensionSchema,
+              metrics: {
+                type: "array",
+                minItems: 1,
+                maxItems: 6,
+                items: { enum: ANALYSIS_METRICS },
+              },
+            },
+            required: ["type", "title", "x", "metrics"],
+          },
+        },
+      },
+      required: [
+        "title",
+        "dateRange",
+        "grain",
+        "dimensions",
+        "filters",
+        "metrics",
+        "sort",
+        "limit",
+        "tableLayout",
+        "widgets",
+      ],
+    },
+  },
+};
+
 export async function fetchSavedAnalysisDashboards(limit = 12): Promise<SavedAnalysisDashboard[]> {
   const missing = getMissingDashboardEnv();
   if (missing.length) return [];
@@ -723,12 +849,12 @@ export async function editAdHocAnalysis(input: {
 async function createSpecWithAI(prompt: string, model: string) {
   const response = await createOpenAIClient().chat.completions.create({
     model,
-    response_format: { type: "json_object" },
+    response_format: analysisSpecResponseFormat,
     messages: [
       {
         role: "system",
         content:
-          "You convert Meta Ads questions into a compact JSON dashboard spec. Return JSON only. Never write SQL, code, or raw data. Use only the allowed fields and widgets.",
+          "You convert Meta Ads questions into a compact JSON dashboard spec. Return JSON matching the provided schema only. Never write SQL, code, or raw data. Use only the allowed fields and widgets.",
       },
       {
         role: "user",
@@ -745,6 +871,7 @@ async function createSpecWithAI(prompt: string, model: string) {
             datePresets: DATE_PRESETS,
           },
           rules: [
+            "Use null for sort, tableLayout, dateRange fields, and widget x when they are not needed.",
             "Map campaign umbrella, internal campaign umbrella, or umbrella to the campaign_umbrella dimension. Do not use a search filter for that.",
             "Use exact campaign_umbrella filters for known campaign concepts: cash for gold => Cash for Gold US, book appointments => Book Appts US.",
             "If the user asks for website, social inbox, CRM, employee, landing page, or response-time data, keep the closest spec minimal; validation will mark the request unsupported. Do not substitute Meta spend/click/lead tables.",
@@ -789,12 +916,12 @@ async function editSpecWithAI(input: {
 }) {
   const response = await createOpenAIClient().chat.completions.create({
     model: input.model,
-    response_format: { type: "json_object" },
+    response_format: analysisSpecResponseFormat,
     messages: [
       {
         role: "system",
         content:
-          "You edit an existing Meta Ads dashboard AnalysisSpec. Return the full updated JSON spec only. Preserve existing filters/date range/metrics/widgets unless the user asks to change them. You may add, remove, rename, or reorder widgets to satisfy layout requests. Never write SQL or raw data.",
+          "You edit an existing Meta Ads dashboard AnalysisSpec. Return the full updated JSON spec matching the provided schema only. Preserve existing filters/date range/metrics/widgets unless the user asks to change them. You may add, remove, rename, or reorder widgets to satisfy layout requests. Never write SQL or raw data.",
       },
       {
         role: "user",
@@ -814,6 +941,7 @@ async function editSpecWithAI(input: {
           },
           rules: [
             "Return one complete AnalysisSpec JSON object.",
+            "Use null for sort, tableLayout, dateRange fields, and widget x when they are not needed.",
             "If the user says add a chart/table/metric, append an appropriate widget.",
             "If the user says rearrange, update the widgets array order.",
             "If the user asks to compare by campaign, ad set, ad, creative, brand, or umbrella, adjust dimensions accordingly.",
@@ -2129,19 +2257,23 @@ function inferPromptIntent(prompt: string): PromptIntent {
   const latestLower = latestPrompt.toLowerCase();
   const promptForMode = hasFollowUp ? latestPrompt : prompt;
   const promptForModeLower = promptForMode.toLowerCase();
+  const scaleDecision = inferScaleDecisionIntent(promptForModeLower) || inferScaleDecisionIntent(lower);
   const latestMetrics = inferMetricsFromPrompt(latestLower);
   const allMentionedMetrics = inferMetricsFromPrompt(lower);
   const additiveFollowUp = hasFollowUp && latestMetrics && shouldAddFollowUpMetrics(latestLower);
-  const metrics = additiveFollowUp
+  const metrics = scaleDecision
+    ? mergeMetricLists(scaleDecision.metrics, additiveFollowUp ? mergeMetricLists(allMentionedMetrics || [], latestMetrics || []) : latestMetrics || allMentionedMetrics || [])
+    : additiveFollowUp
     ? mergeMetricLists(allMentionedMetrics || [], latestMetrics)
     : latestMetrics || allMentionedMetrics;
   const requiredMetrics = metrics;
   const latestDimensions = inferDimensionsFromPrompt(latestLower, metrics);
   const allMentionedDimensions = inferDimensionsFromPrompt(lower, metrics);
   const dimensions =
-    hasFollowUp && shouldMergeFollowUpDimensions(latestLower, latestDimensions, allMentionedDimensions)
+    scaleDecision?.dimensions ||
+    (hasFollowUp && shouldMergeFollowUpDimensions(latestLower, latestDimensions, allMentionedDimensions)
       ? mergeDimensionsForFollowUp(allMentionedDimensions || [], latestDimensions || [])
-      : latestDimensions || allMentionedDimensions;
+      : latestDimensions || allMentionedDimensions);
   const dateRange = inferDateRangeFromPromptSegments(segments, prompt);
   const grain = inferGrainFromPrompt(latestPrompt) || inferGrainFromPrompt(prompt);
   const glossaryFilters = campaignGlossaryFilters(prompt);
@@ -2193,8 +2325,8 @@ function inferPromptIntent(prompt: string): PromptIntent {
     metrics: intendedMetrics,
     requiredMetrics,
     filters: filters.length ? filters : undefined,
-    sort: summaryOnly ? undefined : inferSortFromPrompt(promptForModeLower, firstDimension, intendedMetrics),
-    limit: inferLimitFromPrompt(promptForModeLower, intendedDimensions),
+    sort: summaryOnly ? undefined : scaleDecision?.sort || inferSortFromPrompt(promptForModeLower, firstDimension, intendedMetrics),
+    limit: scaleDecision?.limit || inferLimitFromPrompt(promptForModeLower, intendedDimensions),
     tableOnly,
     tableTitle:
       tableOnly && isMonthlyUmbrella && wantsBudget
@@ -2468,6 +2600,38 @@ function inferMetricsFromPrompt(lower: string): AnalysisMetric[] | undefined {
   if (/\bfrequency\b/.test(metricText)) add("frequency");
 
   return requested.length ? requested : undefined;
+}
+
+function inferScaleDecisionIntent(lower: string):
+  | {
+      dimensions: AnalysisDimension[];
+      metrics: AnalysisMetric[];
+      sort: AnalysisSpec["sort"];
+      limit: number;
+    }
+  | undefined {
+  const asksToScale =
+    /\b(which|what)\b[^.?!\n]{0,80}\b(?:should|can|would)\b[^.?!\n]{0,80}\bscale\b/.test(lower) ||
+    /\bscale\b[^.?!\n]{0,80}\b(?:which|what|creative|ad|campaign|winner|best)\b/.test(lower) ||
+    /\b(?:creative|ad|campaign)\b[^.?!\n]{0,80}\b(?:to|should)\s+scale\b/.test(lower);
+  if (!asksToScale) return undefined;
+
+  const dimension = /\b(?:ad\s+)?creatives?\b/.test(lower)
+    ? "creative"
+    : /\bad\s+sets?\b/.test(lower)
+      ? "ad_set"
+      : /\bcampaigns?\b/.test(lower)
+        ? "campaign"
+        : /\bads?\b/.test(lower)
+          ? "ad"
+          : "creative";
+
+  return {
+    dimensions: [dimension],
+    metrics: ["spend", "leads", "cpl", "primary_results", "ctr", "frequency"],
+    sort: { field: "leads", direction: "desc" },
+    limit: 20,
+  };
 }
 
 function inferGrainFromPrompt(prompt: string): AnalysisGrain | undefined {
@@ -2956,10 +3120,21 @@ function createOpenAIClient() {
 function parseJson(content: string | null | undefined) {
   if (!content) return null;
   try {
-    return JSON.parse(content) as unknown;
+    return stripNullValues(JSON.parse(content) as unknown);
   } catch {
     return null;
   }
+}
+
+function stripNullValues(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripNullValues);
+  if (!value || typeof value !== "object") return value;
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, entryValue]) => entryValue !== null)
+      .map(([key, entryValue]) => [key, stripNullValues(entryValue)]),
+  );
 }
 
 function rows<T>(data: unknown): T[] {
@@ -3106,7 +3281,9 @@ function costFor(model: string, inputTokens: number, outputTokens: number) {
       ? { input: 0.2, output: 1.25 }
       : model.includes("gpt-5.4-mini")
         ? { input: 0.75, output: 4.5 }
-        : { input: 1, output: 5 };
+        : model.includes("gpt-5.4")
+          ? { input: 2.5, output: 15 }
+          : { input: 1, output: 5 };
 
   return (inputTokens / 1_000_000) * rates.input + (outputTokens / 1_000_000) * rates.output;
 }

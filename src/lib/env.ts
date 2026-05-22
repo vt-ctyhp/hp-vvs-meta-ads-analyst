@@ -119,7 +119,7 @@ export function getMetaApiVersion(): string {
 
 export function getOpenAIAnalysisModel(mode: AnalysisMode): string {
   if (mode === "deep") return getOptionalEnv("OPENAI_DEEP_MODEL", "gpt-5.5");
-  return getOptionalEnv("OPENAI_FAST_MODEL", "gpt-5.4-nano");
+  return getOptionalEnv("OPENAI_FAST_MODEL", "gpt-5.4");
 }
 
 export function getOpenAIModel(): string {
