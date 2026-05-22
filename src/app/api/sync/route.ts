@@ -1,6 +1,7 @@
 import { revalidateTag } from "next/cache";
 
 import { requirePermissionFromRequest } from "@/lib/app-auth";
+import { CREATIVE_ANALYSIS_CACHE_TAG } from "@/lib/creative-analysis";
 import { jsonError } from "@/lib/http";
 import { META_INSIGHT_AGGREGATES_CACHE_TAG } from "@/lib/meta-insight-aggregates";
 import { syncMetaAds } from "@/lib/meta";
@@ -23,6 +24,7 @@ export async function POST(request: Request) {
 
     const result = await syncMetaAds(trigger);
     revalidateTag(META_INSIGHT_AGGREGATES_CACHE_TAG, { expire: 0 });
+    revalidateTag(CREATIVE_ANALYSIS_CACHE_TAG, { expire: 0 });
     return Response.json(result);
   } catch (error) {
     return jsonError(error);
