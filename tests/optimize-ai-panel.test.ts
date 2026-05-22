@@ -70,6 +70,37 @@ test("Optimize AI saved analyses drawer is collapsed by default", () => {
   assert.doesNotMatch(detailsTag, /\sopen(?:[=>\s]|$)/);
 });
 
+test("Optimize AI chat formats markdown answers for readability", () => {
+  const { FormattedChatContent } = loadModule("src/components/v2/optimize/ai-panel.tsx", {
+    "@/components/analysis-client": { AnalysisOutput: () => null },
+    "@/lib/glossary": { translateError: () => "Something went wrong." },
+  });
+
+  const markup = renderToStaticMarkup(
+    React.createElement(FormattedChatContent, {
+      content: [
+        "For **Book Appts US**, prioritize cautious scale.",
+        "",
+        "### Scale candidates",
+        "| Priority | Ad / Creative | Spend | Notes |",
+        "|---|---|---:|---|",
+        "| 1 | **Creative A** / Ad set: Testing \\| Broad \\| New | $570.93 | Best volume |",
+        "| 2 | **Ad:** `DM_IG_HeyBeyArea | May 13` | $95.15 | Pipe inside code |",
+        "",
+        "- Watch fatigue",
+      ].join("\n"),
+    }),
+  );
+
+  assert.match(markup, /<strong[^>]*>Book Appts US<\/strong>/);
+  assert.match(markup, /<h4[^>]*>Scale candidates<\/h4>/);
+  assert.match(markup, /<table/);
+  assert.match(markup, /Testing \| Broad \| New/);
+  assert.match(markup, /<code[^>]*>DM_IG_HeyBeyArea \| May 13<\/code>/);
+  assert.match(markup, /<li[^>]*>Watch fatigue<\/li>/);
+  assert.doesNotMatch(markup, /\| Priority \|/);
+});
+
 test("analysis POST applies Optimize defaults only to new dashboard builds", async () => {
   const calls: Array<{ name: string; args: unknown[] }> = [];
   const route = loadAnalysisRoute(calls);
