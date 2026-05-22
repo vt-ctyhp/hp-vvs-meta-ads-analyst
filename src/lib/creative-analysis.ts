@@ -13,7 +13,7 @@ import {
   type MetaCreativeAnalysisInsight,
 } from "./meta";
 import { resolveMetaKpi } from "./meta-kpi";
-import { createAdsAnalystClient } from "./ads-analyst-db";
+import { createAdsAnalystClient, getAdsAnalystEnvironment } from "./ads-analyst-db";
 import { resolveCreativeDisplayMedia } from "./creative-display-media";
 
 type JsonRecord = Record<string, unknown>;
@@ -175,7 +175,6 @@ type StoredInsightRow = {
   inline_link_clicks: number | string | null;
   ctr: number | string | null;
   cpc: number | string | null;
-  cost_per_action_type: unknown;
   quality_ranking: string | null;
   engagement_rate_ranking: string | null;
   conversion_rate_ranking: string | null;
@@ -478,7 +477,6 @@ function aggregateStoredInsightRows(
     const rawJson = recordValue(storedRow.raw_json);
     const videoMetrics = recordValue(storedRow.video_metrics);
     const actions = actionAccumulator(actionGroups, `${key}:actions`);
-    const costs = actionAccumulator(actionGroups, `${key}:costs`);
     const play = actionAccumulator(actionGroups, `${key}:play`);
     const p25 = actionAccumulator(actionGroups, `${key}:p25`);
     const p50 = actionAccumulator(actionGroups, `${key}:p50`);
@@ -488,7 +486,6 @@ function aggregateStoredInsightRows(
     const thruplay = actionAccumulator(actionGroups, `${key}:thruplay`);
 
     mergeActions(actions, storedRow.actions);
-    mergeActions(costs, firstNonEmptyActionArray(storedRow.cost_per_action_type, rawJson.cost_per_action_type));
     mergeActions(
       play,
       firstNonEmptyActionArray(
@@ -530,7 +527,7 @@ function aggregateStoredInsightRows(
     row.cpc = row.clicks > 0 ? round(row.spend / row.clicks) : 0;
     row.spend = round(row.spend);
     row.actions = actionAccumulatorRows(actionGroups, `${row.id}:actions`);
-    row.costPerActionType = actionAccumulatorRows(actionGroups, `${row.id}:costs`);
+    row.costPerActionType = [];
     row.videoPlayActions = actionAccumulatorRows(actionGroups, `${row.id}:play`);
     row.videoP25WatchedActions = actionAccumulatorRows(actionGroups, `${row.id}:p25`);
     row.videoP50WatchedActions = actionAccumulatorRows(actionGroups, `${row.id}:p50`);
@@ -712,7 +709,6 @@ async function fetchStoredInsightRows(
           "inline_link_clicks",
           "ctr",
           "cpc",
-          "cost_per_action_type",
           "quality_ranking",
           "engagement_rate_ranking",
           "conversion_rate_ranking",
@@ -725,6 +721,7 @@ async function fetchStoredInsightRows(
           "raw_json",
         ].join(","),
       )
+      .eq("environment", getAdsAnalystEnvironment())
       .gte("date_start", range.start)
       .lte("date_start", range.end)
       .range(from, from + pageSize - 1);
