@@ -50,7 +50,7 @@ Regular sync does not pull historical insight ranges. Stored historical rows rem
 
 ## Historical Backfill
 
-The Operate room owns sync and historical repair work. `/operate/pipelines` shows recent sync runs, manual Meta sync, catalog refresh, backfill jobs, and chunks. `/operate/coverage` preserves the historical backfill and data-health visibility that used to live at `/admin/backfill`; `/admin/backfill` now redirects there. Admin users can enter `CRON_SECRET` for protected sync actions; marketing users have read-only visibility into coverage, jobs, and data health.
+The Operate room owns sync and historical repair work. `/operate/pipelines` shows recent sync runs, manual Meta sync, catalog refresh, backfill jobs, and chunks. `/operate/coverage` is the Operate coverage tab: monthly backfill sync, Supabase load, and lock status. `/admin/backfill` remains the legacy historical backfill monitor for live coverage, jobs, data-health checks, and protected operator actions. Admin users can enter `CRON_SECRET` on `/admin/backfill` for protected sync actions; marketing users have read-only visibility where their permissions allow it.
 
 Backfill jobs split each configured Meta ad account into monthly chunks from `META_BACKFILL_START_DATE` through the requested end date. Each chunk calls Meta insights with `time_range[since]` and `time_range[until]`, then upserts daily ad-level rows by `meta_account_id`, `ad_id`, and `date_start`, so retries do not duplicate data. Empty Meta responses are treated as completed chunks.
 

@@ -57,10 +57,11 @@ vercel --prod
 - `/convert/inbox` Facebook/Instagram desktop inbox readiness page and human-approved reply UI shell
 - `/m/inbox` sales-first mobile inbox shell
 - `/operate/pipelines` sync runs, manual sync, catalog refresh, backfill jobs, and chunks
-- `/operate/coverage` historical backfill coverage and data-health visibility
+- `/operate/coverage` Operate coverage tab with monthly backfill sync, Supabase load, and lock status
 - `/operate/health` system and data health
-- `/operate/users` read-only users and roles from the analytics identity view
-- `/optimize`, `/creative-analysis`, `/inbox`, `/admin/backfill`, `/users`, and `/broadsheet` redirect to their cutover targets
+- `/operate/users` legacy Users & Permissions page
+- `/admin/backfill` legacy historical backfill monitor with live coverage, jobs, and data-health actions
+- `/optimize`, `/creative-analysis`, `/inbox`, `/users`, and `/broadsheet` redirect to their cutover targets
 - `/login` Supabase Auth login screen for internal users
 - `/api/auth/me` current signed-in access profile derived from Supabase Auth and app roles
 - `/api/users` read-only user list API; user-management writes stay disabled in this app

@@ -71,7 +71,7 @@ const ROLE_ORDER: UserRole[] = [
   "read_only",
 ];
 
-export function UsersClient() {
+export function UsersClient({ loginNextPath = "/users" }: { loginNextPath?: string } = {}) {
   const [profile, setProfile] = useState<AccessProfile | null>(null);
   const [payload, setPayload] = useState<UsersPayload | null>(null);
   const [users, setUsers] = useState<EditableUser[]>([]);
@@ -229,7 +229,7 @@ export function UsersClient() {
       <AccessMessage
         title={`${AUTH.signIn} required`}
         body="The users page requires an approved internal account."
-        actionHref="/login?next=/users"
+        actionHref={`/login?next=${encodeURIComponent(loginNextPath)}`}
         actionLabel={AUTH.signIn}
       />
     );
