@@ -60,6 +60,7 @@ export async function loadDashboardPagePayload(
     const dashboard = await fetchDashboardData({
       startDate: window.start,
       endDate: window.end,
+      periodCount: analystPeriodCount,
     });
     return { dashboard, permissions: profile.permissions, analystPeriodCount, wow };
   }
@@ -68,6 +69,7 @@ export async function loadDashboardPagePayload(
     startDate: firstParam(params.start),
     endDate: firstParam(params.end),
     days: numberParam(params.days) || 30,
+    periodCount: analystPeriodCount,
   });
   return { dashboard, permissions: profile.permissions, analystPeriodCount, wow: null };
 }

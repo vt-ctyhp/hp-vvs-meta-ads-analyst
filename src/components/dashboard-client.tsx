@@ -34,16 +34,33 @@ import {
   ANALYST_PERIOD_COUNTS,
   rollingAnalystPeriods,
   type AnalystPeriodCount,
+  type AnalystPeriodWindow,
 } from "@/lib/analyst-periods";
-import type { DashboardPayload, PerformanceRow } from "@/lib/analytics";
+import type {
+  DashboardPayload,
+  PerformanceRow,
+} from "@/lib/analytics";
+import type {
+  AnalystPeriodEntityValues,
+  AnalystPeriodMetricValues,
+} from "@/lib/analyst-period-breakdown";
 import {
   buildPerformanceTree,
   type PerformanceTreeAdSetNode,
   type PerformanceTreeCampaignNode,
 } from "@/lib/dashboard-performance-tree";
+import {
+  ALLOWED_PERIOD_METRICS,
+  PERIOD_METRIC_LABELS,
+  type PeriodMetric,
+} from "@/lib/period-pivot-data";
 import { TERMS } from "@/lib/glossary";
 import { StatusSentence, type StatusHighlight } from "./status-sentence";
 import { TechnicalId } from "./technical-id";
+import {
+  formatDelta as formatPeriodDelta,
+  formatMetric as formatPeriodMetric,
+} from "./v2/optimize/metric-format";
 
 type SortKey = "spend" | "primaryResults" | "ctr" | "cpc" | "newMessagingContacts" | "frequency";
 type DeliveryFilter = "all" | "active" | "paused";
@@ -62,6 +79,9 @@ const SORT_LABELS: Record<SortKey, string> = {
   newMessagingContacts: "New Msg Contacts",
   frequency: "Frequency",
 };
+
+const DEFAULT_PERIOD_METRIC: PeriodMetric = "spend";
+const PERIOD_METRIC_OPTIONS = ALLOWED_PERIOD_METRICS;
 
 const MONEY_FORMATTER_WITH_CENTS = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -96,6 +116,9 @@ export function DashboardClient({
   const [sortKey, setSortKey] = useState<SortKey>("spend");
   const [compareEnabled, setCompareEnabled] = useState(true);
   const [periodCount, setPeriodCount] = useState<AnalystPeriodCount>(initialPeriodCount);
+  const [periodMetric, setPeriodMetric] = useState<PeriodMetric>(() =>
+    normalizePeriodMetric(searchParams.get("metric")),
+  );
   const [delivery, setDelivery] = useState<DeliveryFilter>("all");
   const [drawerCreativeId, setDrawerCreativeId] = useState<string | null>(null);
   const [hidePdfFinancials, setHidePdfFinancials] = useState(false);
@@ -330,9 +353,12 @@ export function DashboardClient({
 
   const changePeriodCount = useCallback(function changePeriodCount(nextPeriodCount: AnalystPeriodCount) {
     setPeriodCount(nextPeriodCount);
-    const url = new URL(window.location.href);
-    url.searchParams.set("periods", String(nextPeriodCount));
-    window.history.replaceState({}, "", url.toString());
+    window.location.assign(urlWithParam("periods", String(nextPeriodCount)).toString());
+  }, []);
+
+  const changePeriodMetric = useCallback(function changePeriodMetric(nextMetric: PeriodMetric) {
+    setPeriodMetric(nextMetric);
+    replaceUrlParam("metric", nextMetric);
   }, []);
 
   const toggleCampaign = useCallback(function toggleCampaign(campaignId: string) {
@@ -490,6 +516,8 @@ export function DashboardClient({
           onCompareChange={setCompareEnabled}
           periodCount={periodCount}
           onPeriodCountChange={changePeriodCount}
+          periodMetric={periodMetric}
+          onPeriodMetricChange={changePeriodMetric}
           periodWindows={periodWindows}
           comparisonRange={data.comparison.timeRange}
         />
@@ -566,7 +594,10 @@ export function DashboardClient({
           />
           <UmbrellaScorecard
             rows={umbrellaScorecard}
-            showComparison={compareEnabled}
+            showPeriodBreakdown={compareEnabled}
+            periodMetric={periodMetric}
+            periodWindows={periodWindows}
+            periodValuesByEntity={data.periodBreakdown.byUmbrella}
             onSelect={setUmbrella}
           />
         </section>
@@ -634,6 +665,10 @@ export function DashboardClient({
             expandedCampaignIds={expandedCampaignIds}
             expandedAdSetIds={expandedAdSetIds}
             forceExpanded={Boolean(normalizedQuery)}
+            showPeriodBreakdown={compareEnabled}
+            periodMetric={periodMetric}
+            periodWindows={periodWindows}
+            periodBreakdown={data.periodBreakdown}
             onToggleCampaign={toggleCampaign}
             onToggleAdSet={toggleAdSet}
             onSelectCreative={openCreativeDrawer}
@@ -822,6 +857,8 @@ const DateRangeControls = memo(function DateRangeControls({
   onCompareChange,
   periodCount,
   onPeriodCountChange,
+  periodMetric,
+  onPeriodMetricChange,
   periodWindows,
   comparisonRange,
 }: {
@@ -836,6 +873,8 @@ const DateRangeControls = memo(function DateRangeControls({
   onCompareChange: (value: boolean) => void;
   periodCount: AnalystPeriodCount;
   onPeriodCountChange: (value: AnalystPeriodCount) => void;
+  periodMetric: PeriodMetric;
+  onPeriodMetricChange: (value: PeriodMetric) => void;
   periodWindows: ReturnType<typeof rollingAnalystPeriods>;
   comparisonRange: { start: string; end: string; days: number };
 }) {
@@ -907,22 +946,40 @@ const DateRangeControls = memo(function DateRangeControls({
         vs Prev
       </label>
       {compareEnabled ? (
-        <label className="flex h-8 items-center gap-2 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-          <span>Periods</span>
-          <select
-            value={periodCount}
-            onChange={(event) =>
-              onPeriodCountChange(Number(event.target.value) as AnalystPeriodCount)
-            }
-            className="h-6 bg-transparent text-hp-ink outline-none"
-          >
-            {ANALYST_PERIOD_COUNTS.map((count) => (
-              <option key={count} value={count}>
-                {count}
-              </option>
-            ))}
-          </select>
-        </label>
+        <>
+          <label className="flex h-8 items-center gap-2 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+            <span>Periods</span>
+            <select
+              value={periodCount}
+              onChange={(event) =>
+                onPeriodCountChange(Number(event.target.value) as AnalystPeriodCount)
+              }
+              className="h-6 bg-transparent text-hp-ink outline-none"
+            >
+              {ANALYST_PERIOD_COUNTS.map((count) => (
+                <option key={count} value={count}>
+                  {count}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex h-8 items-center gap-2 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+            <span>Metric</span>
+            <select
+              value={periodMetric}
+              onChange={(event) =>
+                onPeriodMetricChange(event.target.value as PeriodMetric)
+              }
+              className="h-6 bg-transparent text-hp-ink outline-none"
+            >
+              {PERIOD_METRIC_OPTIONS.map((metric) => (
+                <option key={metric} value={metric}>
+                  {PERIOD_METRIC_LABELS[metric]}
+                </option>
+              ))}
+            </select>
+          </label>
+        </>
       ) : null}
       {compareEnabled && periodWindows.length ? (
         <div className="flex min-h-8 max-w-full items-center gap-2 overflow-x-auto text-[10px] uppercase tracking-[0.12em] text-hp-muted lg:max-w-[360px]">
@@ -953,15 +1010,22 @@ type ScorecardSortKey = "spend" | "primaryResults" | "costPerPrimaryResult" | "c
 
 const UmbrellaScorecard = memo(function UmbrellaScorecard({
   rows,
-  showComparison,
+  showPeriodBreakdown,
+  periodMetric,
+  periodWindows,
+  periodValuesByEntity,
   onSelect,
 }: {
   rows: UmbrellaScorecardRow[];
-  showComparison: boolean;
+  showPeriodBreakdown: boolean;
+  periodMetric: PeriodMetric;
+  periodWindows: AnalystPeriodWindow[];
+  periodValuesByEntity: AnalystPeriodEntityValues;
   onSelect: (umbrella: string) => void;
 }) {
   const [sortKey, setSortKey] = useState<ScorecardSortKey>("spend");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const periodMode = showPeriodBreakdown && periodWindows.length > 0;
 
   const sorted = useMemo(() => {
     const direction = sortDir === "asc" ? 1 : -1;
@@ -979,6 +1043,77 @@ const UmbrellaScorecard = memo(function UmbrellaScorecard({
 
   if (!rows.length) {
     return <div className="text-sm text-hp-muted">No umbrella data in this period.</div>;
+  }
+
+  if (periodMode) {
+    const columnCount = 1 + periodWindows.length + (periodWindows.length > 1 ? 1 : 0);
+    const tableMinWidth = 320 + periodWindows.length * 124 + (periodWindows.length > 1 ? 110 : 0);
+
+    return (
+      <div className="w-full overflow-x-auto">
+        <table
+          className="w-full table-fixed border-collapse text-sm"
+          style={{ minWidth: tableMinWidth }}
+        >
+          <colgroup>
+            <col className="w-[260px]" />
+            {periodWindows.map((period) => (
+              <col key={period.key} className="w-[124px]" />
+            ))}
+            {periodWindows.length > 1 ? <col className="w-[110px]" /> : null}
+          </colgroup>
+          <thead>
+            <tr className="bg-hp-inset text-left">
+              <th className="border-b border-hp-rule px-4 py-3 text-[10px] font-normal uppercase tracking-[0.14em] text-hp-muted">
+                Umbrella
+              </th>
+              {periodWindows.map((period) => (
+                <PeriodHeader key={period.key} period={period} />
+              ))}
+              {periodWindows.length > 1 ? (
+                <th className="border-b border-hp-rule px-4 py-3 text-right text-[10px] font-normal uppercase tracking-[0.14em] text-hp-muted">
+                  Δ oldest→current
+                </th>
+              ) : null}
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map(({ current }) => {
+              const periodValues = periodValuesByEntity[current.id];
+              return (
+                <tr
+                  key={current.id}
+                  className="cursor-pointer border-b border-hp-rule bg-hp-card align-top transition-colors duration-150 hover:bg-hp-inset"
+                  onClick={() => onSelect(current.campaignUmbrella || current.name)}
+                >
+                  <td className="px-4 py-4 text-hp-ink">
+                    <div className="font-body text-base">{current.name}</div>
+                    <div className="mt-1 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+                      {formatMetric(current.impressions, "number")} impressions
+                    </div>
+                  </td>
+                  {periodWindows.map((period) => (
+                    <PeriodMetricCell
+                      key={period.key}
+                      values={periodValues?.[period.key]}
+                      metric={periodMetric}
+                    />
+                  ))}
+                  {periodWindows.length > 1 ? (
+                    <PeriodDeltaCell
+                      periodValues={periodValues}
+                      periods={periodWindows}
+                      metric={periodMetric}
+                    />
+                  ) : null}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <div className="sr-only">{columnCount} scorecard columns displayed</div>
+      </div>
+    );
   }
 
   function toggle(key: ScorecardSortKey) {
@@ -1028,26 +1163,26 @@ const UmbrellaScorecard = memo(function UmbrellaScorecard({
                 value={formatMetric(current.spend, "money")}
                 current={current.spend}
                 previous={prior?.spend}
-                showComparison={showComparison}
+                showComparison={showPeriodBreakdown}
               />
               <ScorecardCell
                 value={`${formatMetric(current.primaryResults, "number")} ${current.primaryResultLabel}`}
                 current={current.primaryResults}
                 previous={prior?.primaryResults}
-                showComparison={showComparison}
+                showComparison={showPeriodBreakdown}
               />
               <ScorecardCell
                 value={formatMetric(current.costPerPrimaryResult, "money")}
                 current={current.costPerPrimaryResult}
                 previous={prior?.costPerPrimaryResult}
                 lowerIsBetter
-                showComparison={showComparison}
+                showComparison={showPeriodBreakdown}
               />
               <ScorecardCell
                 value={formatMetric(current.ctr, "percent")}
                 current={current.ctr}
                 previous={prior?.ctr}
-                showComparison={showComparison}
+                showComparison={showPeriodBreakdown}
               />
             </tr>
           ))}
@@ -1114,6 +1249,94 @@ const ScorecardCell = memo(function ScorecardCell({
           <DeltaChip current={current} previous={previous} lowerIsBetter={lowerIsBetter} />
         </div>
       ) : null}
+    </td>
+  );
+});
+
+const PeriodHeader = memo(function PeriodHeader({
+  period,
+  compact = false,
+}: {
+  period: AnalystPeriodWindow;
+  compact?: boolean;
+}) {
+  return (
+    <th
+      className={`whitespace-nowrap border-b border-hp-rule text-right text-[10px] font-normal uppercase tracking-[0.14em] text-hp-muted ${
+        compact ? "px-3 py-3" : "px-4 py-3"
+      }`}
+      title={`${period.start} → ${period.end}`}
+    >
+      <span className="block">{period.label}</span>
+      {period.isCurrent ? (
+        <span className="mt-0.5 block text-[9px] tracking-[0.12em] text-hp-ink">
+          Current
+        </span>
+      ) : null}
+    </th>
+  );
+});
+
+const PeriodMetricCell = memo(function PeriodMetricCell({
+  values,
+  metric,
+  compact = false,
+}: {
+  values?: AnalystPeriodMetricValues;
+  metric: PeriodMetric;
+  compact?: boolean;
+}) {
+  const value = values?.[metric];
+  return (
+    <td
+      className={`text-right tabular-nums text-hp-ink ${
+        compact ? "px-3 py-4" : "px-4 py-4"
+      }`}
+    >
+      {formatPeriodMetric(value, metric)}
+    </td>
+  );
+});
+
+const PeriodDeltaCell = memo(function PeriodDeltaCell({
+  periodValues,
+  periods,
+  metric,
+  compact = false,
+}: {
+  periodValues?: Record<string, AnalystPeriodMetricValues>;
+  periods: AnalystPeriodWindow[];
+  metric: PeriodMetric;
+  compact?: boolean;
+}) {
+  const currentPeriod = periods[0];
+  const oldestPeriod = periods[periods.length - 1];
+  const delta = currentPeriod && oldestPeriod
+    ? formatPeriodDelta(
+        periodValues?.[currentPeriod.key]?.[metric],
+        periodValues?.[oldestPeriod.key]?.[metric],
+      )
+    : null;
+
+  if (!delta) {
+    return (
+      <td className={`${compact ? "px-3" : "px-4"} py-4 text-right text-hp-muted`}>
+        —
+      </td>
+    );
+  }
+
+  const lowerIsBetter = isLowerBetterPeriodMetric(metric);
+  const isGood = delta.positive ? !lowerIsBetter : lowerIsBetter;
+  const colorStyle = { color: isGood ? "#245D4D" : "#8D2E2E" };
+
+  return (
+    <td
+      className={`${compact ? "px-3" : "px-4"} py-4 text-right text-xs font-medium tabular-nums`}
+      style={colorStyle}
+      title={`${oldestPeriod.label} → ${currentPeriod.label}`}
+    >
+      {delta.text}
     </td>
   );
 });
@@ -1196,6 +1419,10 @@ const NestedPerformanceTable = memo(function NestedPerformanceTable({
   expandedCampaignIds,
   expandedAdSetIds,
   forceExpanded,
+  showPeriodBreakdown,
+  periodMetric,
+  periodWindows,
+  periodBreakdown,
   onToggleCampaign,
   onToggleAdSet,
   onSelectCreative,
@@ -1204,33 +1431,75 @@ const NestedPerformanceTable = memo(function NestedPerformanceTable({
   expandedCampaignIds: Set<string>;
   expandedAdSetIds: Set<string>;
   forceExpanded: boolean;
+  showPeriodBreakdown: boolean;
+  periodMetric: PeriodMetric;
+  periodWindows: AnalystPeriodWindow[];
+  periodBreakdown: DashboardPayload["periodBreakdown"];
   onToggleCampaign: (id: string) => void;
   onToggleAdSet: (id: string) => void;
   onSelectCreative: (id: string) => void;
 }) {
+  const periodMode = showPeriodBreakdown && periodWindows.length > 0;
+  const tableMinWidth = periodMode
+    ? 580 + periodWindows.length * 124 + (periodWindows.length > 1 ? 112 : 0)
+    : 1040;
+  const columnCount = periodMode
+    ? 3 + periodWindows.length + (periodWindows.length > 1 ? 1 : 0)
+    : 8;
+
   return (
     <div className="w-full overflow-x-auto">
-      <table className="w-full min-w-[1040px] table-fixed border-collapse text-sm">
-        <colgroup>
-          <col className="w-[34%]" />
-          <col className="w-[7%]" />
-          <col className="w-[13%]" />
-          <col className="w-[9%]" />
-          <col className="w-[13%]" />
-          <col className="w-[10%]" />
-          <col className="w-[7%]" />
-          <col className="w-[7%]" />
-        </colgroup>
+      <table
+        className="w-full table-fixed border-collapse text-sm"
+        style={{ minWidth: tableMinWidth }}
+      >
+        {periodMode ? (
+          <colgroup>
+            <col className="w-[360px]" />
+            <col className="w-[80px]" />
+            <col className="w-[140px]" />
+            {periodWindows.map((period) => (
+              <col key={period.key} className="w-[124px]" />
+            ))}
+            {periodWindows.length > 1 ? <col className="w-[112px]" /> : null}
+          </colgroup>
+        ) : (
+          <colgroup>
+            <col className="w-[34%]" />
+            <col className="w-[7%]" />
+            <col className="w-[13%]" />
+            <col className="w-[9%]" />
+            <col className="w-[13%]" />
+            <col className="w-[10%]" />
+            <col className="w-[7%]" />
+            <col className="w-[7%]" />
+          </colgroup>
+        )}
         <thead>
           <tr className="bg-hp-inset text-left text-[11px] uppercase tracking-[0.14em] text-hp-muted">
             <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Name</th>
             <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Brand</th>
             <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">{TERMS.umbrellaShort}</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">Spend</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">{TERMS.primaryKpi}</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">Cost / Result</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">CTR</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">CPC</th>
+            {periodMode ? (
+              <>
+                {periodWindows.map((period) => (
+                  <PeriodHeader key={period.key} period={period} compact />
+                ))}
+                {periodWindows.length > 1 ? (
+                  <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">
+                    Δ oldest→current
+                  </th>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">Spend</th>
+                <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">{TERMS.primaryKpi}</th>
+                <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">Cost / Result</th>
+                <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">CTR</th>
+                <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">CPC</th>
+              </>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -1243,6 +1512,10 @@ const NestedPerformanceTable = memo(function NestedPerformanceTable({
                 expanded={campaignExpanded}
                 expandedAdSetIds={expandedAdSetIds}
                 forceExpanded={forceExpanded}
+                periodMode={periodMode}
+                periodMetric={periodMetric}
+                periodWindows={periodWindows}
+                periodBreakdown={periodBreakdown}
                 onToggleCampaign={onToggleCampaign}
                 onToggleAdSet={onToggleAdSet}
                 onSelectCreative={onSelectCreative}
@@ -1251,7 +1524,7 @@ const NestedPerformanceTable = memo(function NestedPerformanceTable({
           })}
           {!tree.length ? (
             <tr>
-              <td colSpan={8} className="px-3 py-8 text-center text-sm text-hp-muted">
+              <td colSpan={columnCount} className="px-3 py-8 text-center text-sm text-hp-muted">
                 No rows match the selected filters.
               </td>
             </tr>
@@ -1267,6 +1540,10 @@ const NestedCampaignRows = memo(function NestedCampaignRows({
   expanded,
   expandedAdSetIds,
   forceExpanded,
+  periodMode,
+  periodMetric,
+  periodWindows,
+  periodBreakdown,
   onToggleCampaign,
   onToggleAdSet,
   onSelectCreative,
@@ -1275,6 +1552,10 @@ const NestedCampaignRows = memo(function NestedCampaignRows({
   expanded: boolean;
   expandedAdSetIds: Set<string>;
   forceExpanded: boolean;
+  periodMode: boolean;
+  periodMetric: PeriodMetric;
+  periodWindows: AnalystPeriodWindow[];
+  periodBreakdown: DashboardPayload["periodBreakdown"];
   onToggleCampaign: (id: string) => void;
   onToggleAdSet: (id: string) => void;
   onSelectCreative: (id: string) => void;
@@ -1286,6 +1567,10 @@ const NestedCampaignRows = memo(function NestedCampaignRows({
         level="campaign"
         childCount={node.adSets.length}
         expanded={expanded}
+        periodMode={periodMode}
+        periodMetric={periodMetric}
+        periodWindows={periodWindows}
+        periodValues={periodBreakdown.campaigns[node.campaign.id]}
         onToggle={() => onToggleCampaign(node.id)}
       />
       {expanded
@@ -1296,6 +1581,10 @@ const NestedCampaignRows = memo(function NestedCampaignRows({
                 key={adSet.id}
                 node={adSet}
                 expanded={adSetExpanded}
+                periodMode={periodMode}
+                periodMetric={periodMetric}
+                periodWindows={periodWindows}
+                periodBreakdown={periodBreakdown}
                 onToggleAdSet={onToggleAdSet}
                 onSelectCreative={onSelectCreative}
               />
@@ -1309,11 +1598,19 @@ const NestedCampaignRows = memo(function NestedCampaignRows({
 const NestedAdSetRows = memo(function NestedAdSetRows({
   node,
   expanded,
+  periodMode,
+  periodMetric,
+  periodWindows,
+  periodBreakdown,
   onToggleAdSet,
   onSelectCreative,
 }: {
   node: PerformanceTreeAdSetNode;
   expanded: boolean;
+  periodMode: boolean;
+  periodMetric: PeriodMetric;
+  periodWindows: AnalystPeriodWindow[];
+  periodBreakdown: DashboardPayload["periodBreakdown"];
   onToggleAdSet: (id: string) => void;
   onSelectCreative: (id: string) => void;
 }) {
@@ -1324,6 +1621,10 @@ const NestedAdSetRows = memo(function NestedAdSetRows({
         level="adSet"
         childCount={node.creatives.length}
         expanded={expanded}
+        periodMode={periodMode}
+        periodMetric={periodMetric}
+        periodWindows={periodWindows}
+        periodValues={periodBreakdown.adSets[node.adSet.id]}
         onToggle={() => onToggleAdSet(node.id)}
       />
       {expanded
@@ -1332,6 +1633,10 @@ const NestedAdSetRows = memo(function NestedAdSetRows({
               key={creative.id}
               row={creative}
               level="creative"
+              periodMode={periodMode}
+              periodMetric={periodMetric}
+              periodWindows={periodWindows}
+              periodValues={periodBreakdown.creatives[creative.id]}
               onSelectCreative={onSelectCreative}
             />
           ))
@@ -1345,6 +1650,10 @@ const MetricTreeRow = memo(function MetricTreeRow({
   level,
   childCount = 0,
   expanded = false,
+  periodMode,
+  periodMetric,
+  periodWindows,
+  periodValues,
   onToggle,
   onSelectCreative,
 }: {
@@ -1352,6 +1661,10 @@ const MetricTreeRow = memo(function MetricTreeRow({
   level: "campaign" | "adSet" | "creative";
   childCount?: number;
   expanded?: boolean;
+  periodMode: boolean;
+  periodMetric: PeriodMetric;
+  periodWindows: AnalystPeriodWindow[];
+  periodValues?: Record<string, AnalystPeriodMetricValues>;
   onToggle?: () => void;
   onSelectCreative?: (id: string) => void;
 }) {
@@ -1411,15 +1724,38 @@ const MetricTreeRow = memo(function MetricTreeRow({
       <td className="px-3 py-4 text-xs leading-5 text-hp-muted [overflow-wrap:anywhere]">
         {row.campaignUmbrella}
       </td>
-      <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.spend, "money")}</td>
-      <td className="px-3 py-4 text-right">
-        <ResultCell row={row} align="right" />
-      </td>
-      <td className="px-3 py-4 text-right tabular-nums">
-        {formatMetric(row.costPerPrimaryResult, "money")}
-      </td>
-      <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.ctr, "percent")}</td>
-      <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.cpc, "money")}</td>
+      {periodMode ? (
+        <>
+          {periodWindows.map((period) => (
+            <PeriodMetricCell
+              key={period.key}
+              values={periodValues?.[period.key]}
+              metric={periodMetric}
+              compact
+            />
+          ))}
+          {periodWindows.length > 1 ? (
+            <PeriodDeltaCell
+              periodValues={periodValues}
+              periods={periodWindows}
+              metric={periodMetric}
+              compact
+            />
+          ) : null}
+        </>
+      ) : (
+        <>
+          <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.spend, "money")}</td>
+          <td className="px-3 py-4 text-right">
+            <ResultCell row={row} align="right" />
+          </td>
+          <td className="px-3 py-4 text-right tabular-nums">
+            {formatMetric(row.costPerPrimaryResult, "money")}
+          </td>
+          <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.ctr, "percent")}</td>
+          <td className="px-3 py-4 text-right tabular-nums">{formatMetric(row.cpc, "money")}</td>
+        </>
+      )}
     </tr>
   );
 });
@@ -2256,6 +2592,26 @@ function searchValueMatches(value: string | null | undefined, normalizedQuery: s
 
 function isFinancialSortKey(sortKey: SortKey) {
   return sortKey === "spend" || sortKey === "cpc";
+}
+
+function normalizePeriodMetric(value: string | null): PeriodMetric {
+  return PERIOD_METRIC_OPTIONS.includes(value as PeriodMetric)
+    ? (value as PeriodMetric)
+    : DEFAULT_PERIOD_METRIC;
+}
+
+function replaceUrlParam(key: string, value: string) {
+  window.history.replaceState({}, "", urlWithParam(key, value).toString());
+}
+
+function urlWithParam(key: string, value: string) {
+  const url = new URL(window.location.href);
+  url.searchParams.set(key, value);
+  return url;
+}
+
+function isLowerBetterPeriodMetric(metric: PeriodMetric) {
+  return metric === "cost_per_primary_results" || metric === "cpc";
 }
 
 function shiftDate(date: string, days: number) {

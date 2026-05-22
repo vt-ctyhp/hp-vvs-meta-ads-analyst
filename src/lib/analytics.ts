@@ -7,10 +7,22 @@ import {
   type CampaignUmbrella,
   type CampaignUmbrellaClassification,
 } from "./campaign-umbrellas";
+import {
+  normalizeAnalystPeriodCount,
+  rollingAnalystPeriods,
+  type AnalystPeriodCount,
+  type AnalystPeriodWindow,
+} from "./analyst-periods";
+import {
+  buildAnalystPeriodBreakdown,
+  type AnalystPeriodAggregateBucket,
+  type AnalystPeriodBreakdown,
+} from "./analyst-period-breakdown";
 import { ConfigurationError, getMissingDashboardEnv } from "./env";
 import {
   cachedAggregateMetaInsights as aggregateMetaInsights,
   type MetaInsightAggregateRow,
+  type MetaInsightFilter,
 } from "./meta-insight-aggregates";
 import { buildSharedInsightFilters } from "./optimize-filters";
 import { createAdsAnalystClient } from "./ads-analyst-db";
@@ -140,6 +152,7 @@ export type DashboardPayload = {
   latestReports: StoredReport[];
   latestSyncRuns: SyncRun[];
   comparison: ComparisonPayload;
+  periodBreakdown: AnalystPeriodBreakdown;
   generatedAt: string;
 };
 
@@ -150,6 +163,7 @@ export type DashboardDateRangeInput = {
   brand?: string | null;
   group?: string | null;
   status?: string | null;
+  periodCount?: AnalystPeriodCount | null;
 };
 
 export type StoredReport = {
@@ -289,6 +303,13 @@ const WEBSITE_BOOKING_ACTION_TYPES = ["offsite_conversion.fb_pixel_custom"];
 const MESSAGING_CONTACT_ACTION_TYPES = ["onsite_conversion.total_messaging_connection"];
 const NEW_MESSAGING_CONTACT_ACTION_TYPES = ["onsite_conversion.messaging_first_reply"];
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const EMPTY_PERIOD_BREAKDOWN: AnalystPeriodBreakdown = {
+  periods: [],
+  byUmbrella: {},
+  campaigns: {},
+  adSets: {},
+  creatives: {},
+};
 
 export function emptyDashboardPayload(missingEnv = getMissingDashboardEnv()): DashboardPayload {
   return {
@@ -329,6 +350,7 @@ export function emptyDashboardPayload(missingEnv = getMissingDashboardEnv()): Da
       campaigns: [],
       dailyTrend: [],
     },
+    periodBreakdown: EMPTY_PERIOD_BREAKDOWN,
     generatedAt: new Date().toISOString(),
   };
 }
@@ -348,6 +370,13 @@ export async function fetchDashboardData(
     const priorRange = resolvePriorDateRange(dateRange);
     const filters = buildSharedInsightFilters(
       typeof dateRangeInput === "number" ? {} : dateRangeInput,
+    );
+    const requestedPeriodCount = typeof dateRangeInput === "number"
+      ? undefined
+      : dateRangeInput.periodCount;
+    const analystPeriodWindows = rollingAnalystPeriods(
+      dateRange,
+      normalizeAnalystPeriodCount(requestedPeriodCount),
     );
 
     const coreMetadataPromise = Promise.all([
@@ -576,6 +605,25 @@ export async function fetchDashboardData(
     if (targetedMetadataError) {
       throw targetedMetadataError;
     }
+
+    const periodBreakdown = await fetchAnalystPeriodBreakdown(
+      analystPeriodWindows,
+      filters,
+      {
+        current: {
+          range: dateRange,
+          byUmbrellaRows,
+          campaignRows: campaignAggregateRows,
+          adSetRows: adSetAggregateRows,
+          creativeRows: creativeAggregateRows,
+        },
+        prior: {
+          range: priorRange,
+          byUmbrellaRows: priorByUmbrellaRows,
+          campaignRows: priorCampaignAggregateRows,
+        },
+      },
+    );
 
     const brands = rows<BrandRow>(brandsRes.data);
     const accounts = rows<AccountRow>(accountsRes.data);
@@ -891,6 +939,11 @@ export async function fetchDashboardData(
         aggregate_creatives: creativeAggregateRows.length,
         aggregate_daily_trend: dailyTrendAggregateRows.length,
         aggregate_date_coverage: dateCoverageAggregateRows.length,
+        period_breakdown_periods: periodBreakdown.periods.length,
+        period_breakdown_umbrellas: Object.keys(periodBreakdown.byUmbrella).length,
+        period_breakdown_campaigns: Object.keys(periodBreakdown.campaigns).length,
+        period_breakdown_ad_sets: Object.keys(periodBreakdown.adSets).length,
+        period_breakdown_creatives: Object.keys(periodBreakdown.creatives).length,
         campaign_umbrellas: campaignUmbrellas.length,
       },
     };
@@ -932,6 +985,7 @@ export async function fetchDashboardData(
         campaigns: priorCampaigns,
         dailyTrend: priorDailyTrend,
       },
+      periodBreakdown,
       latestSyncRuns: rows<Record<string, unknown>>(syncRunsRes.data).map((run) => ({
         id: String(run.id),
         trigger: String(run.trigger),
@@ -949,6 +1003,125 @@ export async function fetchDashboardData(
     }
     throw error;
   }
+}
+
+async function fetchAnalystPeriodBreakdown(
+  periods: AnalystPeriodWindow[],
+  filters: MetaInsightFilter[],
+  seedRows?: AnalystPeriodSeedRows,
+): Promise<AnalystPeriodBreakdown> {
+  if (!periods.length) return EMPTY_PERIOD_BREAKDOWN;
+
+  const buckets: AnalystPeriodAggregateBucket[] = [];
+
+  for (const period of periods) {
+    const seed = seedRowsForPeriod(period, seedRows);
+    const [
+      byUmbrellaRows,
+      campaignRows,
+      adSetRows,
+      creativeRows,
+    ] = await Promise.all([
+      seed.byUmbrellaRows
+        ? Promise.resolve(seed.byUmbrellaRows)
+        : aggregateMetaInsights({
+            start: period.start,
+            end: period.end,
+            dimensions: ["campaign_umbrella"],
+            filters,
+            sortField: "spend",
+            sortDirection: "desc",
+            limit: 100,
+          }),
+      seed.campaignRows
+        ? Promise.resolve(seed.campaignRows)
+        : aggregateMetaInsights({
+            start: period.start,
+            end: period.end,
+            dimensions: ["campaign"],
+            filters,
+            sortField: "spend",
+            sortDirection: "desc",
+            limit: 5000,
+          }),
+      seed.adSetRows
+        ? Promise.resolve(seed.adSetRows)
+        : aggregateMetaInsights({
+            start: period.start,
+            end: period.end,
+            dimensions: ["ad_set"],
+            filters,
+            sortField: "spend",
+            sortDirection: "desc",
+            limit: 5000,
+          }),
+      seed.creativeRows
+        ? Promise.resolve(seed.creativeRows)
+        : aggregateMetaInsights({
+            start: period.start,
+            end: period.end,
+            dimensions: ["creative"],
+            filters,
+            sortField: "spend",
+            sortDirection: "desc",
+            limit: 5000,
+          }),
+    ]);
+
+    buckets.push({
+      period,
+      byUmbrellaRows,
+      campaignRows,
+      adSetRows,
+      creativeRows,
+    });
+  }
+
+  return buildAnalystPeriodBreakdown(buckets);
+}
+
+type PeriodSeedRange = { start: string; end: string };
+
+type AnalystPeriodSeedRows = {
+  current: {
+    range: PeriodSeedRange;
+    byUmbrellaRows: MetaInsightAggregateRow[];
+    campaignRows: MetaInsightAggregateRow[];
+    adSetRows: MetaInsightAggregateRow[];
+    creativeRows: MetaInsightAggregateRow[];
+  };
+  prior?: {
+    range: PeriodSeedRange;
+    byUmbrellaRows: MetaInsightAggregateRow[];
+    campaignRows: MetaInsightAggregateRow[];
+  };
+};
+
+function seedRowsForPeriod(
+  period: AnalystPeriodWindow,
+  seedRows?: AnalystPeriodSeedRows,
+): Partial<AnalystPeriodAggregateBucket> {
+  if (seedRows && samePeriodWindow(period, seedRows.current.range)) {
+    return {
+      byUmbrellaRows: seedRows.current.byUmbrellaRows,
+      campaignRows: seedRows.current.campaignRows,
+      adSetRows: seedRows.current.adSetRows,
+      creativeRows: seedRows.current.creativeRows,
+    };
+  }
+
+  if (seedRows?.prior && samePeriodWindow(period, seedRows.prior.range)) {
+    return {
+      byUmbrellaRows: seedRows.prior.byUmbrellaRows,
+      campaignRows: seedRows.prior.campaignRows,
+    };
+  }
+
+  return {};
+}
+
+function samePeriodWindow(period: AnalystPeriodWindow, range: PeriodSeedRange) {
+  return period.start === range.start && period.end === range.end;
 }
 
 async function fetchTargetedDashboardMetadata({
