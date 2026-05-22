@@ -4392,6 +4392,8 @@ export type Database = {
           brand_id: string | null
           call_to_action_type: string | null
           created_at: string
+          creative_cache_attempted_at: string | null
+          creative_cache_error: string | null
           creative_id: string
           effective_object_story_id: string | null
           environment: string
@@ -4408,6 +4410,8 @@ export type Database = {
           preview_source: string
           preview_url: string | null
           raw_json: Json
+          supabase_image_url: string | null
+          supabase_thumbnail_url: string | null
           thumbnail_url: string | null
           title: string | null
           updated_at: string
@@ -4421,6 +4425,8 @@ export type Database = {
           brand_id?: string | null
           call_to_action_type?: string | null
           created_at?: string
+          creative_cache_attempted_at?: string | null
+          creative_cache_error?: string | null
           creative_id: string
           effective_object_story_id?: string | null
           environment?: string
@@ -4437,6 +4443,8 @@ export type Database = {
           preview_source?: string
           preview_url?: string | null
           raw_json?: Json
+          supabase_image_url?: string | null
+          supabase_thumbnail_url?: string | null
           thumbnail_url?: string | null
           title?: string | null
           updated_at?: string
@@ -4450,6 +4458,8 @@ export type Database = {
           brand_id?: string | null
           call_to_action_type?: string | null
           created_at?: string
+          creative_cache_attempted_at?: string | null
+          creative_cache_error?: string | null
           creative_id?: string
           effective_object_story_id?: string | null
           environment?: string
@@ -4466,6 +4476,8 @@ export type Database = {
           preview_source?: string
           preview_url?: string | null
           raw_json?: Json
+          supabase_image_url?: string | null
+          supabase_thumbnail_url?: string | null
           thumbnail_url?: string | null
           title?: string | null
           updated_at?: string

@@ -1798,7 +1798,7 @@ const CreativePreview = memo(function CreativePreview({
   compact?: boolean;
   gallery?: boolean;
 }) {
-  const imageSrc = creative.previewUrl || creative.thumbnailUrl || creative.imageUrl || creative.videoThumbnailUrl;
+  const imageSrc = creative.thumbnailUrl || creative.imageUrl;
   const dimensions = compact ? "h-14 w-14" : gallery ? "aspect-[4/3] w-full" : "h-28 w-28";
 
   if (creative.previewHtml && creative.previewSource === "ad_preview") {
@@ -2559,7 +2559,7 @@ function creativePreviewMarkup(row: PerformanceRow) {
 }
 
 function printablePreviewUrl(row: PerformanceRow) {
-  const src = row.previewUrl || row.thumbnailUrl || row.imageUrl || row.videoThumbnailUrl;
+  const src = row.thumbnailUrl || row.imageUrl;
   if (!src) return null;
   const trimmed = src.trim();
   return /^(https?:\/\/|data:image\/|blob:|\/)/i.test(trimmed) ? trimmed : null;

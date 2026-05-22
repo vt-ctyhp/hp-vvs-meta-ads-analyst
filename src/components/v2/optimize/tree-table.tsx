@@ -500,14 +500,11 @@ function NameCell({
   const renderedLabel = isCreative
     ? (asset?.name ?? asset?.title ?? label)
     : label;
-  // Prefer the permanent Supabase Storage URL stamped by
-  // /api/cron/cache-thumbnails — never expires. Meta CDN URLs are the
-  // fallback for creatives the cron hasn't reached yet.
+  // These display URLs are Supabase-cached only. If the cache has not
+  // materialized an asset yet, render the placeholder instead of trying an
+  // expiring Meta CDN URL.
   const thumb = isCreative
-    ? (asset?.supabaseThumbnailUrl ??
-       asset?.thumbnailUrl ??
-       asset?.imageUrl ??
-       asset?.videoThumbnailUrl)
+    ? (asset?.thumbnailUrl ?? asset?.imageUrl)
     : null;
 
   return (
@@ -568,13 +565,9 @@ const LEVEL_BADGE: Record<TreeRow["level"], string> = {
 };
 
 /**
- * Small img-with-fallback so a broken Meta CDN URL (expired signed link)
- * renders the dashed placeholder instead of Chrome's torn-photo icon.
- *
- * Meta thumbnails expire ~24-48h after sync; the /api/cron/cache-thumbnails
- * job copies them into Supabase Storage so they stop expiring, but until
- * the cron has caught up to a given creative we still try the Meta URL.
- * onError swaps cleanly to the placeholder so the row never looks broken.
+ * Small img-with-fallback. Sources should already be durable Supabase
+ * Storage URLs; onError still swaps to the placeholder so bad cached objects
+ * never show Chrome's torn-photo icon.
  */
 function ThumbnailWithFallback({ src }: { src: string | null }) {
   const [failed, setFailed] = useState(false);
