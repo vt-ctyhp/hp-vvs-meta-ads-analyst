@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { normalizeAggregateInput } from "../src/lib/meta-insight-aggregates.ts";
+import {
+  normalizeAggregateInput,
+  shouldRevalidateCachedMetaInsightAggregates,
+} from "../src/lib/meta-insight-aggregates.ts";
 
 describe("normalizeAggregateInput", () => {
   it("defaults cache-key inputs and sorts equivalent filters", () => {
@@ -29,5 +32,12 @@ describe("normalizeAggregateInput", () => {
       sortDirection: "desc",
       limit: 100,
     });
+  });
+
+  it("only revalidates cached aggregates in production", () => {
+    assert.equal(shouldRevalidateCachedMetaInsightAggregates("development"), false);
+    assert.equal(shouldRevalidateCachedMetaInsightAggregates("test"), false);
+    assert.equal(shouldRevalidateCachedMetaInsightAggregates(undefined), false);
+    assert.equal(shouldRevalidateCachedMetaInsightAggregates("production"), true);
   });
 });

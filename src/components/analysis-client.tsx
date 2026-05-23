@@ -570,7 +570,7 @@ function ModeSwitch({
         className={`flex items-center gap-2 px-4 py-2 text-[11px] uppercase tracking-[0.14em] ${
           value === "fast" ? "bg-hp-ink text-hp-foundation" : "text-hp-body hover:bg-hp-inset"
         }`}
-        title="Fast mode uses gpt-5.4-nano"
+        title="Fast mode uses gpt-5.4 for dashboard planning"
       >
         <Gauge size={15} />
         Fast
@@ -608,12 +608,15 @@ export function AnalysisOutput({
               {result.title}
             </h2>
           </div>
-          {result.dashboardId ? (
-            <div className="flex items-center gap-2 border border-hp-rule px-3 py-2 text-xs text-hp-muted">
-              <Save size={14} />
-              Saved
-            </div>
-          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            <ApiCostBadge result={result} />
+            {result.dashboardId ? (
+              <div className="flex items-center gap-2 border border-hp-rule px-3 py-2 text-xs text-hp-muted">
+                <Save size={14} />
+                Saved
+              </div>
+            ) : null}
+          </div>
         </div>
         <p className="mt-5 max-w-4xl text-sm leading-7 text-hp-body">{result.answer}</p>
         {result.persistenceWarning ? (
@@ -649,6 +652,25 @@ function validationLabel(status: AnalysisResult["validationStatus"]) {
   if (status === "unsupported") return "Unsupported Request";
   if (status === "needs_clarification") return "Needs Clarification";
   return "Generated Dashboard";
+}
+
+function ApiCostBadge({ result }: { result: AnalysisResult }) {
+  const tokenCount =
+    result.tokenEstimate.planInputTokens +
+    result.tokenEstimate.planOutputTokens +
+    result.tokenEstimate.analysisInputTokens +
+    result.tokenEstimate.analysisOutputTokens;
+  if (!tokenCount && !result.tokenEstimate.estimatedCostUsd) return null;
+
+  return (
+    <div className="border border-hp-rule bg-hp-inset px-3 py-2 text-xs text-hp-muted">
+      <span className="font-medium text-hp-ink">Est. API cost</span>{" "}
+      {formatApiCost(result.tokenEstimate.estimatedCostUsd)}
+      <span className="ml-2 text-[10px] uppercase tracking-[0.14em]">
+        {formatNumber(tokenCount)} tokens
+      </span>
+    </div>
+  );
 }
 
 function MessageList({
@@ -1064,6 +1086,10 @@ function formatMoney(value: number) {
     currency: "USD",
     maximumFractionDigits: value >= 100 ? 0 : 2,
   }).format(value);
+}
+
+function formatApiCost(value: number) {
+  return `$${Math.max(0, value).toFixed(5)}`;
 }
 
 function formatNumber(value: number) {

@@ -10,6 +10,7 @@ import {
   getOpenAIAnalysisModel,
 } from "./env.ts";
 import { aggregateMetaInsights, type MetaInsightAggregateRow } from "./meta-insight-aggregates.ts";
+import { calculateOpenAICostUsd } from "./openai-cost.ts";
 import { createAdsAnalystClient, withAdsAnalystEnvironment } from "./ads-analyst-db.ts";
 
 const ANALYSIS_METRICS = [
@@ -303,7 +304,7 @@ const UNSUPPORTED_SOURCE_ROUTERS: UnsupportedSourceRouter[] = [
   {
     router: "website",
     pattern:
-      /\b(website\s+visitors?|site\s+visitors?|landing\s+pages?|page\s+views?|sessions?|traffic|utm|checkout|add\s+to\s+cart|funnel)\b/i,
+      /\b(website\s+visitors?|site\s+visitors?|landing[-\s]?pages?|page\s+views?|sessions?|traffic|utm|checkout|add\s+to\s+cart|funnel)\b/i,
     reason:
       "website_events routing is not wired into this Meta Ads ad-hoc analyst yet.",
   },
@@ -317,7 +318,7 @@ const UNSUPPORTED_SOURCE_ROUTERS: UnsupportedSourceRouter[] = [
   {
     router: "crm",
     pattern:
-      /\b(crm|customers?|orders?|sales|revenue|invoice|deposit|closed\s+deals?|employees?)\b/i,
+      /\b(crm|customers?|orders?|sales\s+(?:data|orders?|revenue|amount|from|by)|revenue|invoice|deposit|closed\s+deals?|employees?)\b/i,
     reason:
       "crm routing is not wired into this Meta Ads ad-hoc analyst yet.",
   },
@@ -391,6 +392,132 @@ const analysisSpecSchema = z.object({
     .optional(),
   widgets: z.array(widgetSchema).min(1).max(4).catch([]),
 });
+
+const nullableStringSchema = { anyOf: [{ type: "string" }, { type: "null" }] } as const;
+const nullableIntegerSchema = {
+  anyOf: [{ type: "integer", minimum: 1, maximum: MAX_DAYS }, { type: "null" }],
+} as const;
+const nullableBooleanSchema = { anyOf: [{ type: "boolean" }, { type: "null" }] } as const;
+const nullableDimensionSchema = { anyOf: [{ enum: ANALYSIS_DIMENSIONS }, { type: "null" }] } as const;
+const nullableMetricSchema = { anyOf: [{ enum: ANALYSIS_METRICS }, { type: "null" }] } as const;
+
+const analysisSpecResponseFormat = {
+  type: "json_schema" as const,
+  json_schema: {
+    name: "analysis_spec",
+    strict: true,
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        title: { type: "string", minLength: 1, maxLength: 100 },
+        dateRange: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            preset: { anyOf: [{ enum: DATE_PRESETS }, { type: "null" }] },
+            start: nullableStringSchema,
+            end: nullableStringSchema,
+            days: nullableIntegerSchema,
+            includeToday: nullableBooleanSchema,
+          },
+          required: ["preset", "start", "end", "days", "includeToday"],
+        },
+        grain: { enum: ["summary", "daily", "weekly", "monthly"] },
+        dimensions: {
+          type: "array",
+          minItems: 1,
+          maxItems: 3,
+          items: { enum: ANALYSIS_DIMENSIONS },
+        },
+        filters: {
+          type: "array",
+          maxItems: 6,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              field: { enum: FILTER_FIELDS },
+              operator: { enum: ["contains", "equals"] },
+              value: { type: "string", maxLength: 120 },
+            },
+            required: ["field", "operator", "value"],
+          },
+        },
+        metrics: {
+          type: "array",
+          minItems: 1,
+          maxItems: 8,
+          items: { enum: ANALYSIS_METRICS },
+        },
+        sort: {
+          anyOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                field: { enum: [...ANALYSIS_METRICS, ...ANALYSIS_DIMENSIONS] },
+                direction: { enum: ["asc", "desc"] },
+              },
+              required: ["field", "direction"],
+            },
+            { type: "null" },
+          ],
+        },
+        limit: { type: "integer", minimum: 1, maximum: MAX_TABLE_ROWS },
+        tableLayout: {
+          anyOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                type: { enum: TABLE_LAYOUT_TYPES },
+                rowDimension: nullableDimensionSchema,
+                columnDimension: nullableDimensionSchema,
+                metric: nullableMetricSchema,
+              },
+              required: ["type", "rowDimension", "columnDimension", "metric"],
+            },
+            { type: "null" },
+          ],
+        },
+        widgets: {
+          type: "array",
+          minItems: 1,
+          maxItems: 4,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              type: { enum: WIDGET_TYPES },
+              title: { type: "string", maxLength: 80 },
+              x: nullableDimensionSchema,
+              metrics: {
+                type: "array",
+                minItems: 1,
+                maxItems: 6,
+                items: { enum: ANALYSIS_METRICS },
+              },
+            },
+            required: ["type", "title", "x", "metrics"],
+          },
+        },
+      },
+      required: [
+        "title",
+        "dateRange",
+        "grain",
+        "dimensions",
+        "filters",
+        "metrics",
+        "sort",
+        "limit",
+        "tableLayout",
+        "widgets",
+      ],
+    },
+  },
+};
 
 export async function fetchSavedAnalysisDashboards(limit = 12): Promise<SavedAnalysisDashboard[]> {
   const missing = getMissingDashboardEnv();
@@ -723,12 +850,12 @@ export async function editAdHocAnalysis(input: {
 async function createSpecWithAI(prompt: string, model: string) {
   const response = await createOpenAIClient().chat.completions.create({
     model,
-    response_format: { type: "json_object" },
+    response_format: analysisSpecResponseFormat,
     messages: [
       {
         role: "system",
         content:
-          "You convert Meta Ads questions into a compact JSON dashboard spec. Return JSON only. Never write SQL, code, or raw data. Use only the allowed fields and widgets.",
+          "You convert Meta Ads questions into a compact JSON dashboard spec. Return JSON matching the provided schema only. Never write SQL, code, or raw data. Use only the allowed fields and widgets.",
       },
       {
         role: "user",
@@ -745,6 +872,7 @@ async function createSpecWithAI(prompt: string, model: string) {
             datePresets: DATE_PRESETS,
           },
           rules: [
+            "Use null for sort, tableLayout, dateRange fields, and widget x when they are not needed.",
             "Map campaign umbrella, internal campaign umbrella, or umbrella to the campaign_umbrella dimension. Do not use a search filter for that.",
             "Use exact campaign_umbrella filters for known campaign concepts: cash for gold => Cash for Gold US, book appointments => Book Appts US.",
             "If the user asks for website, social inbox, CRM, employee, landing page, or response-time data, keep the closest spec minimal; validation will mark the request unsupported. Do not substitute Meta spend/click/lead tables.",
@@ -789,12 +917,12 @@ async function editSpecWithAI(input: {
 }) {
   const response = await createOpenAIClient().chat.completions.create({
     model: input.model,
-    response_format: { type: "json_object" },
+    response_format: analysisSpecResponseFormat,
     messages: [
       {
         role: "system",
         content:
-          "You edit an existing Meta Ads dashboard AnalysisSpec. Return the full updated JSON spec only. Preserve existing filters/date range/metrics/widgets unless the user asks to change them. You may add, remove, rename, or reorder widgets to satisfy layout requests. Never write SQL or raw data.",
+          "You edit an existing Meta Ads dashboard AnalysisSpec. Return the full updated JSON spec matching the provided schema only. Preserve existing filters/date range/metrics/widgets unless the user asks to change them. You may add, remove, rename, or reorder widgets to satisfy layout requests. Never write SQL or raw data.",
       },
       {
         role: "user",
@@ -814,6 +942,7 @@ async function editSpecWithAI(input: {
           },
           rules: [
             "Return one complete AnalysisSpec JSON object.",
+            "Use null for sort, tableLayout, dateRange fields, and widget x when they are not needed.",
             "If the user says add a chart/table/metric, append an appropriate widget.",
             "If the user says rearrange, update the widgets array order.",
             "If the user asks to compare by campaign, ad set, ad, creative, brand, or umbrella, adjust dimensions accordingly.",
@@ -952,25 +1081,28 @@ async function aggregateSpec(
       : spec.limit;
 
   const supabase = createAdsAnalystClient("web");
-  const [aggregateRows, totalRows, countRowsByMetric, totalCountRowsByMetric, accountsRes] = await Promise.all([
-    aggregateMetaInsights({
-      start: range.start,
-      end: range.end,
-      dimensions: spec.dimensions,
-      filters: spec.filters,
-      sortField: spec.sort?.field,
-      sortDirection: spec.sort?.direction,
-      limit: aggregateLimit,
-    }),
-    aggregateMetaInsights({
-      start: range.start,
-      end: range.end,
-      dimensions: [],
-      filters: spec.filters,
-      sortField: "spend",
-      sortDirection: "desc",
-      limit: 1,
-    }),
+  const aggregateRows = await aggregateMetaInsights({
+    start: range.start,
+    end: range.end,
+    dimensions: spec.dimensions,
+    filters: spec.filters,
+    sortField: spec.sort?.field,
+    sortDirection: spec.sort?.direction,
+    limit: aggregateLimit,
+  });
+  const canDeriveTotalsFromGroups = !countMetrics.length && aggregateRows.length < aggregateLimit;
+  const [totalRows, countRowsByMetric, totalCountRowsByMetric, accountsRes] = await Promise.all([
+    canDeriveTotalsFromGroups
+      ? Promise.resolve(sumAggregateRows(aggregateRows))
+      : aggregateMetaInsights({
+          start: range.start,
+          end: range.end,
+          dimensions: [],
+          filters: spec.filters,
+          sortField: "spend",
+          sortDirection: "desc",
+          limit: 1,
+        }),
     Promise.all(
       countMetrics.map(async (metric) => ({
         metric,
@@ -1315,9 +1447,14 @@ function validateAnalysisSpec(
     unsupportedReasons.push(`Dimension "${dimension}" is not available in the Meta Ads catalog.`);
   });
 
+  const promptAsksForUmbrellaBreakdown =
+    /\b(?:by|per|each|all|every)\s+(?:brand\s+and\s+)?(?:campaign[-\s]?umbrella|umbrella)s?\b/i.test(prompt) ||
+    /\b(?:campaign[-\s]?umbrella|umbrella)s?\s+(?:as|are|is)\s+(?:rows?|columns?|headers?)\b/i.test(prompt);
   const asksForNamedUmbrella =
-    /\b(?:for|inside|within|under|in)\b[^.?!\n]{0,80}\b(?:campaign[-\s]?umbrella|umbrella|campaign)\b/i.test(prompt) ||
-    /\b(?:campaign[-\s]?umbrella|umbrella)\b[^.?!\n]{0,80}\b(?:called|named)\b/i.test(prompt);
+    !promptAsksForUmbrellaBreakdown &&
+    (/\b(?:inside|within|under|in)\b[^.?!\n]{0,80}\b(?:campaign[-\s]?umbrella|umbrella|campaign)\b/i.test(prompt) ||
+      /\bfor\s+(?!the\s+(?:last|past|previous|prior|recent|trailing)\b)(?!last\b)[^.?!\n]{1,80}\b(?:campaign[-\s]?umbrella|umbrella|campaign)\b/i.test(prompt) ||
+      /\b(?:campaign[-\s]?umbrella|umbrella)\b[^.?!\n]{0,80}\b(?:called|named)\b/i.test(prompt));
   const hasUmbrellaFilter = spec.filters.some((filter) => filter.field === "campaign_umbrella");
   const mentionsKnownUmbrella = CAMPAIGN_GLOSSARY.some((entry) => entry.pattern.test(prompt));
   if (asksForNamedUmbrella && !hasUmbrellaFilter && !mentionsKnownUmbrella) {
@@ -1357,9 +1494,10 @@ function unsupportedMetricMentions(lower: string) {
   const mentions: string[] = [];
   const candidates: Array<[string, RegExp]> = [
     ["landing page views", /\blanding\s+page\s+views?\b/],
+    ["landing-page conversion rate", /\blanding[-\s]?page\s+conversion\s+rate\b|\bwebsite\s+conversion\s+rate\b/],
     ["website visitors", /\bwebsite\s+visitors?\b|\bsite\s+visitors?\b|\bvisitors?\b/],
     ["response time", /\bresponse\s+time\b/],
-    ["revenue", /\brevenue\b|\bsales\b|\border\s+value\b/],
+    ["revenue", /\brevenue\b|\bsales\s+(?:data|orders?|revenue|amount|from|by)\b|\border\s+value\b/],
     ["employee performance", /\bemployee\b|\bstaff\b|\bagent\b/],
   ];
 
@@ -1438,6 +1576,7 @@ function normalizeWidgets(
   metrics: AnalysisMetric[],
   requiredMetrics: AnalysisMetric[] = [],
 ) {
+  const primaryDimension = dimensions[0];
   const normalized = widgets
     .filter((widget) => WIDGET_TYPES.includes(widget.type))
     .map((widget) => ({
@@ -1445,7 +1584,7 @@ function normalizeWidgets(
       title: widget.title || labelForWidget(widget.type),
       ...(widget.type === "metric"
         ? {}
-        : { x: widget.x && dimensions.includes(widget.x) ? widget.x : dimensions[0] }),
+        : { x: widget.x && dimensions.includes(widget.x) ? widget.x : primaryDimension }),
       metrics: includeRequiredMetrics(
         uniqueAllowed(widget.metrics, metrics, metrics),
         requiredMetrics,
@@ -1453,9 +1592,22 @@ function normalizeWidgets(
       ),
     }));
 
-  if (normalized.length) return normalized;
+  if (normalized.length) {
+    const hasTable = normalized.some((widget) => widget.type === "table");
+    const metricCardsOnly = normalized.every((widget) => widget.type === "metric");
+    if (hasTable || metricCardsOnly) return normalized;
 
-  const primaryDimension = dimensions[0];
+    const tableWidget = {
+      type: "table" as const,
+      title: "Comparison table",
+      x: primaryDimension,
+      metrics,
+    };
+    return normalized.length >= 4
+      ? [...normalized.slice(0, 3), tableWidget]
+      : [...normalized, tableWidget];
+  }
+
   const timeWidget = Boolean(primaryDimension && isTimeDimension(primaryDimension));
   return [
     { type: "metric" as const, title: "Totals", metrics: metrics.slice(0, 4) },
@@ -1754,6 +1906,78 @@ function aggregateMetrics(row: MetaInsightAggregateRow | undefined): Record<Anal
     cpl: row.cpl,
     frequency: row.frequency,
   };
+}
+
+function sumAggregateRows(rows: MetaInsightAggregateRow[]) {
+  if (!rows.length) return [];
+
+  const totals = rows.reduce(
+    (sum, row) => {
+      sum.spend += row.spend;
+      sum.monthly_budget += row.monthly_budget;
+      sum.impressions += row.impressions;
+      sum.reach += row.reach;
+      sum.clicks += row.clicks;
+      sum.leads += row.leads;
+      sum.bookings += row.bookings;
+      sum.conversions += row.conversions;
+      sum.website_bookings += row.website_bookings;
+      sum.messaging_contacts += row.messaging_contacts;
+      sum.new_messaging_contacts += row.new_messaging_contacts;
+      sum.primary_results += row.primary_results;
+      sum.secondary_results += row.secondary_results;
+      sum.source_rows += row.source_rows;
+      return sum;
+    },
+    {
+      spend: 0,
+      monthly_budget: 0,
+      impressions: 0,
+      reach: 0,
+      clicks: 0,
+      leads: 0,
+      bookings: 0,
+      conversions: 0,
+      website_bookings: 0,
+      messaging_contacts: 0,
+      new_messaging_contacts: 0,
+      primary_results: 0,
+      secondary_results: 0,
+      source_rows: 0,
+    },
+  );
+
+  return [
+    {
+      date: null,
+      week: null,
+      month: null,
+      quarter: null,
+      brand: null,
+      campaign_umbrella: null,
+      campaign: null,
+      campaign_id: null,
+      ad_set: null,
+      ad_set_id: null,
+      ad: null,
+      ad_id: null,
+      creative: null,
+      creative_id: null,
+      ...totals,
+      spend: round(totals.spend),
+      monthly_budget: round(totals.monthly_budget),
+      website_bookings: round(totals.website_bookings),
+      messaging_contacts: round(totals.messaging_contacts),
+      new_messaging_contacts: round(totals.new_messaging_contacts),
+      primary_results: round(totals.primary_results),
+      secondary_results: round(totals.secondary_results),
+      ctr: totals.impressions > 0 ? round((totals.clicks / totals.impressions) * 100) : 0,
+      cpm: totals.impressions > 0 ? round((totals.spend / totals.impressions) * 1000) : 0,
+      cpc: totals.clicks > 0 ? round(totals.spend / totals.clicks) : 0,
+      cpl: totals.leads > 0 ? round(totals.spend / totals.leads) : null,
+      frequency: totals.reach > 0 ? round(totals.impressions / totals.reach) : 0,
+    } satisfies MetaInsightAggregateRow,
+  ];
 }
 
 function aggregateMetricValue(row: MetaInsightAggregateRow, metric: AnalysisMetric) {
@@ -2129,19 +2353,23 @@ function inferPromptIntent(prompt: string): PromptIntent {
   const latestLower = latestPrompt.toLowerCase();
   const promptForMode = hasFollowUp ? latestPrompt : prompt;
   const promptForModeLower = promptForMode.toLowerCase();
+  const scaleDecision = inferScaleDecisionIntent(promptForModeLower) || inferScaleDecisionIntent(lower);
   const latestMetrics = inferMetricsFromPrompt(latestLower);
   const allMentionedMetrics = inferMetricsFromPrompt(lower);
   const additiveFollowUp = hasFollowUp && latestMetrics && shouldAddFollowUpMetrics(latestLower);
-  const metrics = additiveFollowUp
+  const metrics = scaleDecision
+    ? mergeMetricLists(scaleDecision.metrics, additiveFollowUp ? mergeMetricLists(allMentionedMetrics || [], latestMetrics || []) : latestMetrics || allMentionedMetrics || [])
+    : additiveFollowUp
     ? mergeMetricLists(allMentionedMetrics || [], latestMetrics)
     : latestMetrics || allMentionedMetrics;
   const requiredMetrics = metrics;
   const latestDimensions = inferDimensionsFromPrompt(latestLower, metrics);
   const allMentionedDimensions = inferDimensionsFromPrompt(lower, metrics);
   const dimensions =
-    hasFollowUp && shouldMergeFollowUpDimensions(latestLower, latestDimensions, allMentionedDimensions)
+    scaleDecision?.dimensions ||
+    (hasFollowUp && shouldMergeFollowUpDimensions(latestLower, latestDimensions, allMentionedDimensions)
       ? mergeDimensionsForFollowUp(allMentionedDimensions || [], latestDimensions || [])
-      : latestDimensions || allMentionedDimensions;
+      : latestDimensions || allMentionedDimensions);
   const dateRange = inferDateRangeFromPromptSegments(segments, prompt);
   const grain = inferGrainFromPrompt(latestPrompt) || inferGrainFromPrompt(prompt);
   const glossaryFilters = campaignGlossaryFilters(prompt);
@@ -2193,8 +2421,8 @@ function inferPromptIntent(prompt: string): PromptIntent {
     metrics: intendedMetrics,
     requiredMetrics,
     filters: filters.length ? filters : undefined,
-    sort: summaryOnly ? undefined : inferSortFromPrompt(promptForModeLower, firstDimension, intendedMetrics),
-    limit: inferLimitFromPrompt(promptForModeLower, intendedDimensions),
+    sort: summaryOnly ? undefined : scaleDecision?.sort || inferSortFromPrompt(promptForModeLower, firstDimension, intendedMetrics),
+    limit: scaleDecision?.limit || inferLimitFromPrompt(promptForModeLower, intendedDimensions),
     tableOnly,
     tableTitle:
       tableOnly && isMonthlyUmbrella && wantsBudget
@@ -2394,17 +2622,26 @@ function inferDimensionsFromPrompt(
   const wantsBrand = /\bbrands?\b/.test(lower);
   const dimensions: AnalysisDimension[] = [];
   const countMetrics = new Set((metrics || []).filter(isCountMetric));
+  const addDimension = (dimension: AnalysisDimension) => {
+    if (!dimensions.includes(dimension)) dimensions.push(dimension);
+  };
 
-  if (wantsMonth) dimensions.push("month");
-  else if (wantsWeek) dimensions.push("week");
-  else if (wantsDay) dimensions.push("date");
+  if (wantsMonth) addDimension("month");
+  else if (wantsWeek) addDimension("week");
+  else if (wantsDay) addDimension("date");
 
-  if (wantsUmbrella) dimensions.push("campaign_umbrella");
-  else if (wantsAdSet && shouldUseEntityDimension(lower, "ad_set", countMetrics)) dimensions.push("ad_set");
-  else if (wantsCreative && shouldUseEntityDimension(lower, "creative", countMetrics)) dimensions.push("creative");
-  else if (wantsAd && shouldUseEntityDimension(lower, "ad", countMetrics)) dimensions.push("ad");
-  else if (wantsCampaign && shouldUseEntityDimension(lower, "campaign", countMetrics)) dimensions.push("campaign");
-  else if (wantsBrand) dimensions.push("brand");
+  const wantsAdSetBreakdown = wantsAdSet && shouldUseEntityDimension(lower, "ad_set", countMetrics);
+  const wantsCreativeBreakdown = wantsCreative && shouldUseEntityDimension(lower, "creative", countMetrics);
+  const wantsAdBreakdown = wantsAd && shouldUseEntityDimension(lower, "ad", countMetrics);
+  const wantsCampaignBreakdown = wantsCampaign && shouldUseEntityDimension(lower, "campaign", countMetrics);
+
+  if (wantsAdSetBreakdown) addDimension("ad_set");
+  else if (wantsCreativeBreakdown) addDimension("creative");
+  else if (wantsAdBreakdown) addDimension("ad");
+  else if (wantsCampaignBreakdown) addDimension("campaign");
+
+  if (wantsBrand) addDimension("brand");
+  if (wantsUmbrella) addDimension("campaign_umbrella");
 
   return dimensions.length ? dimensions : undefined;
 }
@@ -2468,6 +2705,38 @@ function inferMetricsFromPrompt(lower: string): AnalysisMetric[] | undefined {
   if (/\bfrequency\b/.test(metricText)) add("frequency");
 
   return requested.length ? requested : undefined;
+}
+
+function inferScaleDecisionIntent(lower: string):
+  | {
+      dimensions: AnalysisDimension[];
+      metrics: AnalysisMetric[];
+      sort: AnalysisSpec["sort"];
+      limit: number;
+    }
+  | undefined {
+  const asksToScale =
+    /\b(which|what)\b[^.?!\n]{0,80}\b(?:should|can|would)\b[^.?!\n]{0,80}\bscale\b/.test(lower) ||
+    /\bscale\b[^.?!\n]{0,80}\b(?:which|what|creative|ad|campaign|winner|best)\b/.test(lower) ||
+    /\b(?:creative|ad|campaign)\b[^.?!\n]{0,80}\b(?:to|should)\s+scale\b/.test(lower);
+  if (!asksToScale) return undefined;
+
+  const dimension = /\b(?:ad\s+)?creatives?\b/.test(lower)
+    ? "creative"
+    : /\bad\s+sets?\b/.test(lower)
+      ? "ad_set"
+      : /\bcampaigns?\b/.test(lower)
+        ? "campaign"
+        : /\bads?\b/.test(lower)
+          ? "ad"
+          : "creative";
+
+  return {
+    dimensions: [dimension],
+    metrics: ["spend", "leads", "cpl", "primary_results", "ctr", "frequency"],
+    sort: { field: "leads", direction: "desc" },
+    limit: 20,
+  };
 }
 
 function inferGrainFromPrompt(prompt: string): AnalysisGrain | undefined {
@@ -2956,10 +3225,21 @@ function createOpenAIClient() {
 function parseJson(content: string | null | undefined) {
   if (!content) return null;
   try {
-    return JSON.parse(content) as unknown;
+    return stripNullValues(JSON.parse(content) as unknown);
   } catch {
     return null;
   }
+}
+
+function stripNullValues(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripNullValues);
+  if (!value || typeof value !== "object") return value;
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, entryValue]) => entryValue !== null)
+      .map(([key, entryValue]) => [key, stripNullValues(entryValue)]),
+  );
 }
 
 function rows<T>(data: unknown): T[] {
@@ -3090,25 +3370,21 @@ function withEstimatedCost(
   return {
     ...estimate,
     estimatedCostUsd: round(
-      costFor(planModel, estimate.planInputTokens, estimate.planOutputTokens) +
+      calculateOpenAICostUsd({
+        model: planModel,
+        inputTokens: estimate.planInputTokens,
+        outputTokens: estimate.planOutputTokens,
+      }) +
         (analysisModel
-          ? costFor(analysisModel, estimate.analysisInputTokens, estimate.analysisOutputTokens)
+          ? calculateOpenAICostUsd({
+              model: analysisModel,
+              inputTokens: estimate.analysisInputTokens,
+              outputTokens: estimate.analysisOutputTokens,
+            })
           : 0),
       5,
     ),
   };
-}
-
-function costFor(model: string, inputTokens: number, outputTokens: number) {
-  const rates = model.includes("gpt-5.5")
-    ? { input: 5, output: 30 }
-    : model.includes("gpt-5.4-nano")
-      ? { input: 0.2, output: 1.25 }
-      : model.includes("gpt-5.4-mini")
-        ? { input: 0.75, output: 4.5 }
-        : { input: 1, output: 5 };
-
-  return (inputTokens / 1_000_000) * rates.input + (outputTokens / 1_000_000) * rates.output;
 }
 
 function estimateTokens(value: string) {

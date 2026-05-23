@@ -14,7 +14,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 
 import { AnalysisOutput } from "@/components/analysis-client";
 import type {
@@ -24,11 +24,13 @@ import type {
 } from "@/lib/ad-hoc-analytics";
 import type { AnalysisMode } from "@/lib/env";
 import { translateError } from "@/lib/glossary";
+import type { OpenAICostBreakdown } from "@/lib/openai-cost";
 
 type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   rangeLabel: string;
+  apiCost?: OpenAICostBreakdown;
 };
 
 type Props = {
@@ -135,6 +137,7 @@ export function OptimizeAiPanel({
         body: JSON.stringify({
           sessionId: chatSessionId,
           message,
+          mode,
           days: dateRange.days,
           startDate: dateRange.startDate,
           endDate: dateRange.endDate,
@@ -152,6 +155,7 @@ export function OptimizeAiPanel({
           role: "assistant",
           content: payload.answer,
           rangeLabel: formatSourceRange(payload.sourceTransparency, requestedRangeLabel),
+          apiCost: payload.apiCost,
         },
       ]);
     } catch (error) {
@@ -174,6 +178,7 @@ export function OptimizeAiPanel({
     filters.brand,
     filters.group,
     filters.status,
+    mode,
     prompt,
     requestedRangeLabel,
   ]);
@@ -500,7 +505,7 @@ export function OptimizeAiPanel({
               <article
                 key={`${message.role}-${index}`}
                 className={[
-                  "border p-3 text-sm leading-6 [overflow-wrap:anywhere]",
+                  "border p-3 text-sm leading-6",
                   message.role === "user"
                     ? "border-hp-rule bg-hp-inset text-hp-ink"
                     : "border-hp-rule bg-hp-card text-hp-body",
@@ -510,8 +515,24 @@ export function OptimizeAiPanel({
                   <span>{message.role}</span>
                   <span className="h-1 w-1 bg-hp-rule" />
                   <span>{message.rangeLabel}</span>
+                  {message.role === "assistant" && message.apiCost ? (
+                    <>
+                      <span className="h-1 w-1 bg-hp-rule" />
+                      <span>Est. API cost {formatApiCost(message.apiCost.estimatedCostUsd)}</span>
+                      <span className="h-1 w-1 bg-hp-rule" />
+                      <span>
+                        {message.apiCost.model} · {formatCount(message.apiCost.totalTokens)} tokens
+                      </span>
+                    </>
+                  ) : null}
                 </div>
-                {message.content}
+                {message.role === "assistant" ? (
+                  <FormattedChatContent content={message.content} />
+                ) : (
+                  <p className="whitespace-pre-wrap text-[15px] leading-7 [overflow-wrap:anywhere]">
+                    {message.content}
+                  </p>
+                )}
               </article>
             ))}
           </div>
@@ -581,6 +602,308 @@ export function OptimizeAiPanel({
       ) : null}
     </section>
   );
+}
+
+type ChatContentBlock =
+  | { type: "heading"; level: number; text: string }
+  | { type: "list"; ordered: boolean; items: string[] }
+  | { type: "paragraph"; text: string }
+  | { type: "table"; headers: string[]; rows: string[][] };
+
+export function FormattedChatContent({ content }: { content: string }) {
+  const blocks = parseChatContent(content);
+
+  return (
+    <div className="space-y-4 text-[15px] leading-7 text-hp-body [overflow-wrap:anywhere]">
+      {blocks.map((block, index) => {
+        if (block.type === "heading") {
+          const HeadingTag = block.level <= 2 ? "h3" : "h4";
+          return (
+            <HeadingTag
+              key={`heading-${index}`}
+              className="font-[family-name:var(--font-title)] text-xl leading-tight text-hp-ink"
+            >
+              {renderInlineChatMarkdown(block.text, `heading-${index}`)}
+            </HeadingTag>
+          );
+        }
+
+        if (block.type === "list") {
+          const ListTag = block.ordered ? "ol" : "ul";
+          return (
+            <ListTag
+              key={`list-${index}`}
+              className={[
+                "space-y-2 pl-5",
+                block.ordered ? "list-decimal" : "list-disc",
+              ].join(" ")}
+            >
+              {block.items.map((item, itemIndex) => (
+                <li key={`${index}-${itemIndex}`} className="pl-1">
+                  {renderInlineChatMarkdown(item, `${index}-${itemIndex}`)}
+                </li>
+              ))}
+            </ListTag>
+          );
+        }
+
+        if (block.type === "table") {
+          return (
+            <div key={`table-${index}`} className="[overflow-wrap:normal]">
+              <div className="space-y-3 lg:hidden">
+                {block.rows.map((row, rowIndex) => (
+                  <div key={`${index}-card-${rowIndex}`} className="border border-hp-rule bg-hp-inset p-3">
+                    {block.headers.map((header, cellIndex) => (
+                      <div
+                        key={`${index}-card-${rowIndex}-${cellIndex}`}
+                        className="border-b border-hp-rule py-2 last:border-b-0 first:pt-0 last:pb-0"
+                      >
+                        <div className="mb-1 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                          {renderInlineChatMarkdown(header, `${index}-card-header-${rowIndex}-${cellIndex}`)}
+                        </div>
+                        <div className="text-[13px] leading-6 text-hp-body">
+                          {renderInlineChatMarkdown(row[cellIndex] || "", `${index}-card-cell-${rowIndex}-${cellIndex}`)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+
+              <div className="hidden overflow-x-auto border border-hp-rule lg:block">
+                <table className="min-w-[900px] border-collapse text-left text-[13px] leading-5">
+                  <thead className="bg-hp-inset text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                    <tr>
+                      {block.headers.map((header, headerIndex) => (
+                        <th
+                          key={`${index}-header-${headerIndex}`}
+                          className="border-b border-hp-rule px-3 py-2 font-medium"
+                        >
+                          {renderInlineChatMarkdown(header, `${index}-header-${headerIndex}`)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {block.rows.map((row, rowIndex) => (
+                      <tr key={`${index}-row-${rowIndex}`} className="border-b border-hp-rule last:border-b-0">
+                        {block.headers.map((_, cellIndex) => (
+                          <td
+                            key={`${index}-cell-${rowIndex}-${cellIndex}`}
+                            className="max-w-[360px] px-3 py-2 align-top text-hp-body"
+                          >
+                            {renderInlineChatMarkdown(row[cellIndex] || "", `${index}-cell-${rowIndex}-${cellIndex}`)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        }
+
+        return (
+          <p key={`paragraph-${index}`}>
+            {renderInlineChatMarkdown(block.text, `paragraph-${index}`)}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
+function parseChatContent(content: string): ChatContentBlock[] {
+  const lines = content.replace(/\r\n?/g, "\n").split("\n");
+  const blocks: ChatContentBlock[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index]?.trimEnd() || "";
+
+    if (!line.trim()) {
+      index += 1;
+      continue;
+    }
+
+    const heading = /^(#{1,4})\s+(.+)$/.exec(line.trim());
+    if (heading) {
+      blocks.push({
+        type: "heading",
+        level: heading[1].length,
+        text: heading[2].trim(),
+      });
+      index += 1;
+      continue;
+    }
+
+    if (isMarkdownTableStart(lines, index)) {
+      const table = parseMarkdownTable(lines, index);
+      blocks.push(table.block);
+      index = table.nextIndex;
+      continue;
+    }
+
+    const bullet = parseListMarker(line);
+    if (bullet) {
+      const items: string[] = [];
+      const ordered = bullet.ordered;
+
+      while (index < lines.length) {
+        const nextBullet = parseListMarker(lines[index] || "");
+        if (!nextBullet || nextBullet.ordered !== ordered) break;
+        items.push(nextBullet.text);
+        index += 1;
+      }
+
+      blocks.push({ type: "list", ordered, items });
+      continue;
+    }
+
+    const paragraphLines: string[] = [];
+    while (index < lines.length) {
+      const paragraphLine = lines[index]?.trim() || "";
+      if (!paragraphLine) break;
+      if (paragraphLines.length && /^(#{1,4})\s+/.test(paragraphLine)) break;
+      if (paragraphLines.length && isMarkdownTableStart(lines, index)) break;
+      if (paragraphLines.length && parseListMarker(paragraphLine)) break;
+      paragraphLines.push(paragraphLine);
+      index += 1;
+    }
+    blocks.push({ type: "paragraph", text: paragraphLines.join(" ") });
+  }
+
+  return blocks.length ? blocks : [{ type: "paragraph", text: content }];
+}
+
+function parseListMarker(line: string) {
+  const unordered = /^\s*[-*]\s+(.+)$/.exec(line);
+  if (unordered) return { ordered: false, text: unordered[1].trim() };
+
+  const ordered = /^\s*\d+[.)]\s+(.+)$/.exec(line);
+  if (ordered) return { ordered: true, text: ordered[1].trim() };
+
+  return null;
+}
+
+function isMarkdownTableStart(lines: string[], index: number) {
+  const header = lines[index] || "";
+  const separator = lines[index + 1] || "";
+  return countUnescapedPipes(header) >= 2 && splitMarkdownTableRow(separator).every(isTableSeparatorCell);
+}
+
+function parseMarkdownTable(lines: string[], index: number) {
+  const headers = splitMarkdownTableRow(lines[index] || "");
+  const rows: string[][] = [];
+  let nextIndex = index + 2;
+
+  while (nextIndex < lines.length) {
+    const rowLine = lines[nextIndex] || "";
+    if (!rowLine.trim() || countUnescapedPipes(rowLine) < 1) break;
+    rows.push(splitMarkdownTableRow(rowLine));
+    nextIndex += 1;
+  }
+
+  return {
+    block: { type: "table", headers, rows } satisfies ChatContentBlock,
+    nextIndex,
+  };
+}
+
+function splitMarkdownTableRow(line: string) {
+  const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+  const cells: string[] = [];
+  let cell = "";
+  let escaped = false;
+  let inCode = false;
+
+  for (const character of trimmed) {
+    if (escaped) {
+      cell += character;
+      escaped = false;
+      continue;
+    }
+
+    if (character === "\\") {
+      escaped = true;
+      continue;
+    }
+
+    if (character === "`") {
+      inCode = !inCode;
+      cell += character;
+      continue;
+    }
+
+    if (character === "|" && !inCode) {
+      cells.push(cell.trim());
+      cell = "";
+      continue;
+    }
+
+    cell += character;
+  }
+
+  cells.push(cell.trim());
+  return cells;
+}
+
+function countUnescapedPipes(line: string) {
+  let count = 0;
+  let escaped = false;
+  let inCode = false;
+
+  for (const character of line) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (character === "\\") {
+      escaped = true;
+      continue;
+    }
+
+    if (character === "`") {
+      inCode = !inCode;
+      continue;
+    }
+
+    if (character === "|" && !inCode) count += 1;
+  }
+
+  return count;
+}
+
+function isTableSeparatorCell(cell: string) {
+  return /^:?-{3,}:?$/.test(cell.trim());
+}
+
+function renderInlineChatMarkdown(text: string, keyPrefix: string): ReactNode[] {
+  const tokens = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).filter(Boolean);
+  return tokens.map((token, index) => {
+    if (token.startsWith("**") && token.endsWith("**")) {
+      return (
+        <strong key={`${keyPrefix}-strong-${index}`} className="font-semibold text-hp-ink">
+          {token.slice(2, -2)}
+        </strong>
+      );
+    }
+
+    if (token.startsWith("`") && token.endsWith("`")) {
+      return (
+        <code
+          key={`${keyPrefix}-code-${index}`}
+          className="break-words border border-hp-rule bg-hp-inset px-1 py-0.5 text-[0.9em]"
+        >
+          {token.slice(1, -1)}
+        </code>
+      );
+    }
+
+    return token;
+  });
 }
 
 function SavedAnalysisDrawer({
@@ -744,6 +1067,14 @@ function formatSourceRange(source: unknown, fallback: string) {
 
 function formatAnalysisRange(result: AnalysisResult) {
   return formatSourceRange(result.sourceTransparency, "Range unavailable");
+}
+
+function formatApiCost(value: number) {
+  return `$${Math.max(0, value).toFixed(5)}`;
+}
+
+function formatCount(value: number) {
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
 }
 
 function sourceTransparencyRange(source: unknown) {

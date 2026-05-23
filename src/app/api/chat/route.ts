@@ -1,5 +1,6 @@
 import { answerExecutiveChat } from "@/lib/ai";
 import { requirePermissionFromRequest } from "@/lib/app-auth";
+import type { AnalysisMode } from "@/lib/env";
 import { jsonError } from "@/lib/http";
 
 export const runtime = "nodejs";
@@ -12,6 +13,7 @@ export async function POST(request: Request) {
     const body = (await request.json()) as {
       sessionId?: string | null;
       message?: string;
+      mode?: AnalysisMode;
       days?: number;
       startDate?: string | null;
       endDate?: string | null;
@@ -27,6 +29,7 @@ export async function POST(request: Request) {
     const result = await answerExecutiveChat({
       sessionId: body.sessionId,
       message: body.message,
+      mode: body.mode === "deep" ? "deep" : body.mode === "fast" ? "fast" : undefined,
       days: body.days,
       startDate: body.startDate,
       endDate: body.endDate,

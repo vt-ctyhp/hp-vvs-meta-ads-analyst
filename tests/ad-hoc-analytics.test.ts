@@ -144,6 +144,26 @@ describe("ad-hoc analytics prompt normalization", () => {
     ]);
   });
 
+  it("normalizes creative scaling decisions to creative-level evidence", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Which ad creative should I scale?",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.dimensions, ["creative"]);
+    assert.deepEqual(plan.spec.metrics, [
+      "spend",
+      "leads",
+      "cpl",
+      "primary_results",
+      "ctr",
+      "frequency",
+    ]);
+    assert.deepEqual(plan.spec.sort, { field: "leads", direction: "desc" });
+    assert.equal(plan.spec.limit, 20);
+  });
+
   it("normalizes unqualified results to primary results for weekly umbrella tables", () => {
     const plan = buildAnalysisPlanForPrompt(
       {},
@@ -370,6 +390,51 @@ describe("ad-hoc analytics prompt normalization", () => {
     ]);
   });
 
+  it("does not ask for an umbrella filter when the user wants all umbrella rows", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Create a pivot table with campaign umbrella as rows and week as columns for the last 8 weeks. Show spend and primary KPI as metric rows under each umbrella.",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.dateRange, { preset: "last_8_weeks" });
+    assert.deepEqual(plan.spec.dimensions, ["week", "campaign_umbrella"]);
+    assert.deepEqual(plan.spec.tableLayout, {
+      type: "metric_rows_pivot",
+      rowDimension: "campaign_umbrella",
+      columnDimension: "week",
+      metric: "spend",
+    });
+    assert.deepEqual(plan.clarificationQuestions, []);
+  });
+
+  it("keeps brand and campaign umbrella dimensions for leadership summary tables", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Build an export-ready summary for leadership: last 30 days by brand and campaign umbrella, with spend, impressions, clicks, CTR, CPC, CPM, and primary KPI. Keep it table-first with a concise takeaway.",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.dimensions, ["brand", "campaign_umbrella"]);
+    assert.deepEqual(plan.spec.widgets[0], {
+      type: "table",
+      title: "Comparison table",
+      x: "brand",
+      metrics: ["spend", "impressions", "clicks", "primary_results", "ctr", "cpm"],
+    });
+  });
+
+  it("keeps ad set detail when the prompt asks for ad sets plus campaign umbrella", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Show underperforming ad sets for the last 30 days. Rank ad sets by high CPC and low primary KPI. Include spend, clicks, CPC, CTR, primary KPI, and campaign umbrella.",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.dimensions, ["ad_set", "campaign_umbrella"]);
+    assert.deepEqual(plan.spec.metrics, ["spend", "clicks", "primary_results", "ctr", "cpc"]);
+  });
+
   it("does not turn multiple campaign examples into impossible AND filters", () => {
     const plan = buildAnalysisPlanForPrompt(
       {},
@@ -424,6 +489,32 @@ describe("ad-hoc analytics prompt normalization", () => {
 
     assert.equal(plan.validationStatus, "unsupported");
     assert.ok(plan.unsupportedReasons.some((reason) => reason.includes("website_events")));
+  });
+
+  it("marks landing-page conversion rate requests unsupported", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Compare Meta ad spend to landing-page conversion rate by campaign for the last 14 days.",
+    );
+
+    assert.equal(plan.validationStatus, "unsupported");
+    assert.ok(plan.unsupportedReasons.some((reason) => reason.includes("website_events")));
+    assert.ok(plan.unsupportedReasons.some((reason) => reason.includes("landing-page conversion rate")));
+  });
+
+  it("does not treat sales-team action wording as CRM revenue data", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "For Book Appointments US, show booked appointments by creative over the last 14 days. Include spend, bookings, CPC, CTR, and cost per booking. Tell me which creatives sales should ask marketing to keep pushing.",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.metrics, ["spend", "bookings", "ctr", "cpc"]);
+    assert.deepEqual(plan.spec.dimensions, ["creative"]);
+    assert.deepEqual(plan.spec.filters, [
+      { field: "campaign_umbrella", operator: "equals", value: "Book Appts US" },
+    ]);
+    assert.ok(plan.spec.widgets.some((widget) => widget.type === "table"));
   });
 
   it("marks social inbox employee response requests unsupported", () => {
