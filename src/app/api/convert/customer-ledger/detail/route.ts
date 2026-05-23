@@ -1,5 +1,6 @@
 import { requirePermissionFromRequest } from "@/lib/app-auth";
 import { customerLedgerDetailIdentityFromSearchParams } from "@/lib/convert-customer-ledger";
+import { enrichCustomerJourneyDetailWithCreativePreviews } from "@/lib/customer-ledger-creative-enrichment";
 import { fetchCustomerJourneyLedgerDetail } from "@/lib/customer-journey-ledger";
 import { jsonError } from "@/lib/http";
 
@@ -28,7 +29,9 @@ export async function GET(request: Request) {
       );
     }
 
-    return Response.json(detail);
+    const enrichedDetail = await enrichCustomerJourneyDetailWithCreativePreviews(detail);
+
+    return Response.json(enrichedDetail);
   } catch (error) {
     return jsonError(error);
   }

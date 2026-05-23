@@ -703,13 +703,13 @@ describe("attribution ledger detail data", () => {
     assert.equal(detail.confidence.level, "browser_session");
     assert.match(detail.confidence.explanation, /browser-level attribution/);
     assert.match(detail.summary || "", /Paid attribution captured/);
-    assert.match(detail.summary || "", /returned from link_in_bio/);
+    assert.match(detail.summary || "", /Booking session started from Instagram profile link/);
     assert.deepEqual(
       detail.timeline.map((event) => event.label),
       [
         "Paid ad attribution captured",
-        "Page viewed",
-        "Meta/social landing page viewed",
+        "Meta ad landing page viewed",
+        "Instagram profile link landing viewed",
         "Booking submitted",
         "Acuity booking created",
         "Meta CAPI sent",
@@ -782,10 +782,11 @@ describe("attribution ledger detail data", () => {
     assert.equal(detail.creditedTouch?.content, "DM_IG_HeyBeyArea");
     assert.match(detail.summary || "", /Paid attribution captured 18m before booking/);
     assert.doesNotMatch(detail.summary || "", /0s before booking/);
+    assert.match(detail.summary || "", /Booking session started from Meta ad DM_IG_HeyBeyArea/);
     assert.match(detail.summary || "", /booked 2m later/);
   });
 
-  it("uses the only pre-booking page view as the return touch", () => {
+  it("uses the only pre-booking page view as the booking session source", () => {
     const detail = buildAttributionLedgerDetailData({
       conversions: [
         conversionRow({
@@ -813,10 +814,13 @@ describe("attribution ledger detail data", () => {
     });
 
     assert.equal(detail.returnTouch?.content, "only_visit");
-    assert.equal(detail.timeline.find((event) => event.eventId === "hp_evt-only-page")?.label, "Meta/social landing page viewed");
+    assert.equal(
+      detail.timeline.find((event) => event.eventId === "hp_evt-only-page")?.label,
+      "Instagram profile link landing viewed",
+    );
   });
 
-  it("does not label persisted fbc-only returns as paid Meta ad landings", () => {
+  it("does not label inherited paid attribution as a fresh Meta ad landing", () => {
     const detail = buildAttributionLedgerDetailData({
       acuityAppointmentId: "fbc-only-return",
       conversions: [
@@ -834,11 +838,12 @@ describe("attribution ledger detail data", () => {
           fbc: "fb.1.1779200000000.original-click",
           fbclid: null,
           occurred_at: "2026-05-20T18:29:00.000Z",
-          page_url:
-            "https://www.hungphatusa.com/pages/book-an-appointment?utm_source=ig&utm_medium=social&utm_content=profile",
+          page_url: "https://www.hungphatusa.com/pages/book-an-appointment",
+          referrer: null,
           source_type: "paid_meta",
-          utm_content: "profile",
-          utm_medium: "social",
+          utm_ad_id: "inherited-ad",
+          utm_content: "inherited-profile",
+          utm_medium: "paid_social",
           utm_source: "ig",
         }),
       ],
@@ -848,7 +853,144 @@ describe("attribution ledger detail data", () => {
 
     assert.equal(
       detail.timeline.find((event) => event.eventId === "hp_evt-fbc-only-return")?.label,
-      "Meta/social landing page viewed",
+      "Booking page viewed",
+    );
+    assert.match(detail.summary || "", /Booking session started from booking page/);
+    assert.doesNotMatch(detail.summary || "", /Booking session started from Meta ad/);
+  });
+
+  it("labels every fresh paid Meta landing in the curated timeline", () => {
+    const detail = buildAttributionLedgerDetailData({
+      conversions: [
+        conversionRow({
+          event_id: "acuity-multi-ad",
+          occurred_at: "2026-05-22T19:00:00.000Z",
+          session_id: "session-booking",
+        }),
+      ],
+      events: [
+        eventRow({
+          event_id: "hp_evt-ad-one",
+          event_name: "PageView",
+          occurred_at: "2026-05-21T17:00:00.000Z",
+          page_url:
+            "https://www.hungphatusa.com/products/oval-ring?utm_source=fb&utm_medium=paid_social&utm_ad_id=ad-one&utm_adset_id=adset-one&utm_campaign_id=campaign-one&fbclid=click-one",
+          referrer: "https://l.facebook.com/",
+          session_id: "session-ad-one",
+          source_type: "paid_meta",
+          utm_ad_id: "ad-one",
+          utm_adset_id: "adset-one",
+          utm_campaign_id: "campaign-one",
+          utm_medium: "paid_social",
+          utm_source: "fb",
+        }),
+        eventRow({
+          event_id: "hp_evt-ad-two",
+          event_name: "PageView",
+          occurred_at: "2026-05-22T18:30:00.000Z",
+          page_url:
+            "https://www.hungphatusa.com/pages/custom-jewelry-design?utm_source=ig&utm_medium=paid_social&utm_ad_id=ad-two&utm_adset_id=adset-two&utm_campaign_id=campaign-two&fbclid=click-two",
+          referrer: "https://l.instagram.com/",
+          session_id: "session-ad-two",
+          source_type: "paid_meta",
+          utm_ad_id: "ad-two",
+          utm_adset_id: "adset-two",
+          utm_campaign_id: "campaign-two",
+          utm_medium: "paid_social",
+          utm_source: "ig",
+        }),
+        eventRow({
+          event_id: "hp_evt-booking-page",
+          event_name: "PageView",
+          occurred_at: "2026-05-22T18:58:00.000Z",
+          page_url: "https://www.hungphatusa.com/pages/book-an-appointment",
+          referrer: null,
+          session_id: "session-booking",
+          source_type: "direct",
+          utm_ad_id: null,
+          utm_adset_id: null,
+          utm_campaign_id: null,
+          utm_content: null,
+          utm_medium: null,
+          utm_source: null,
+        }),
+      ],
+      sessions: [sessionRow({ session_id: "session-booking" })],
+      visitor: visitorRow(),
+    });
+
+    assert.deepEqual(
+      detail.timeline
+        .filter((event) => event.eventId?.startsWith("hp_evt-"))
+        .map((event) => [event.eventId, event.label, event.adId]),
+      [
+        ["hp_evt-ad-one", "Meta ad landing page viewed", "ad-one"],
+        ["hp_evt-ad-two", "Meta ad landing page viewed", "ad-two"],
+        ["hp_evt-booking-page", "Booking page viewed", null],
+      ],
+    );
+  });
+
+  it("labels useful non-ad page views by page type", () => {
+    const detail = buildAttributionLedgerDetailData({
+      conversions: [
+        conversionRow({
+          event_id: "acuity-page-types",
+          occurred_at: "2026-05-22T19:00:00.000Z",
+          session_id: "session-1",
+        }),
+      ],
+      events: [
+        eventRow({
+          event_id: "hp_evt-product",
+          event_name: "PageView",
+          occurred_at: "2026-05-22T18:10:00.000Z",
+          page_url: "https://www.hungphatusa.com/products/oval-ring",
+          referrer: null,
+          source_type: "direct",
+          utm_ad_id: null,
+          utm_content: null,
+          utm_medium: null,
+          utm_source: null,
+        }),
+        eventRow({
+          event_id: "hp_evt-custom",
+          event_name: "PageView",
+          occurred_at: "2026-05-22T18:20:00.000Z",
+          page_url: "https://www.hungphatusa.com/pages/custom-jewelry-design",
+          referrer: null,
+          source_type: "direct",
+          utm_ad_id: null,
+          utm_content: null,
+          utm_medium: null,
+          utm_source: null,
+        }),
+        eventRow({
+          event_id: "hp_evt-booking",
+          event_name: "PageView",
+          occurred_at: "2026-05-22T18:30:00.000Z",
+          page_url: "https://www.hungphatusa.com/pages/book-an-appointment",
+          referrer: null,
+          source_type: "direct",
+          utm_ad_id: null,
+          utm_content: null,
+          utm_medium: null,
+          utm_source: null,
+        }),
+      ],
+      sessions: [sessionRow({ session_id: "session-1" })],
+      visitor: visitorRow(),
+    });
+
+    assert.deepEqual(
+      detail.timeline
+        .filter((event) => event.eventId?.startsWith("hp_evt-"))
+        .map((event) => [event.eventId, event.label]),
+      [
+        ["hp_evt-product", "Product page viewed"],
+        ["hp_evt-custom", "Custom jewelry page viewed"],
+        ["hp_evt-booking", "Booking page viewed"],
+      ],
     );
   });
 

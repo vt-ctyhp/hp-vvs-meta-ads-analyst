@@ -1012,6 +1012,7 @@ function emptyTimelineRow(
     osName: null,
     placement: null,
     sessionId: null,
+    stageKeys: [],
     visitorId,
   };
 }

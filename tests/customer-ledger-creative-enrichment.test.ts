@@ -2,10 +2,15 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  enrichCustomerJourneyDetailWithCreativePreviews,
   enrichCustomerLedgerRowsWithCreativePreviews,
   type CustomerLedgerCreativeClient,
 } from "../src/lib/customer-ledger-creative-enrichment.ts";
 import type { CustomerLedgerRow } from "../src/lib/convert-customer-ledger.ts";
+import type {
+  CustomerJourneyLedgerDetailData,
+  CustomerJourneyLedgerTimelineEvent,
+} from "../src/lib/customer-journey-ledger.ts";
 
 describe("customer ledger creative enrichment", () => {
   it("joins ad rows to creative rows and prefers cached preview URLs", async () => {
@@ -268,6 +273,38 @@ describe("customer ledger creative enrichment", () => {
     assert.equal(rows[0].creativePreview, null);
     assert.equal(warning.length, 1);
   });
+
+  it("adds ad and creative names to customer journey timeline events", async () => {
+    const client = mockCreativeClient({
+      meta_ads: [
+        {
+          ad_id: "ad-1",
+          creative_id: "creative-1",
+          meta_account_id: "account-1",
+          name: "Clicked ad",
+        },
+      ],
+      meta_creatives: [
+        {
+          creative_id: "creative-1",
+          meta_account_id: "account-1",
+          name: "Clicked creative",
+        },
+      ],
+    });
+
+    const detail = journeyDetail({
+      timeline: [timelineEvent({ adId: "ad-1", eventId: "hp_evt-ad-one" })],
+    });
+
+    const enriched = await enrichCustomerJourneyDetailWithCreativePreviews(detail, {
+      client,
+    });
+
+    assert.equal(enriched.timeline[0].adName, "Clicked ad");
+    assert.equal(enriched.timeline[0].creativeId, "creative-1");
+    assert.equal(enriched.timeline[0].creativeName, "Clicked creative");
+  });
 });
 
 type MockTable = "meta_ads" | "meta_creatives";
@@ -332,6 +369,67 @@ function ledgerRow(overrides: Partial<CustomerLedgerRow> = {}): CustomerLedgerRo
     sessionId: "session-1",
     sourceType: "paid_meta",
     visitorId: "visitor-1",
+    ...overrides,
+  };
+}
+
+function journeyDetail(
+  overrides: Partial<CustomerJourneyLedgerDetailData> = {},
+): CustomerJourneyLedgerDetailData {
+  return {
+    acuityAppointmentId: "1708622080",
+    booking: {
+      appointmentType: "Schedule",
+      bookingTime: "2026-05-20T23:49:18.756Z",
+      eventId: "conversion-1",
+      metaEventId: "meta-event-1",
+      sessionId: "session-1",
+    },
+    bookingSessionEntrySource: null,
+    capi: {
+      eventId: "meta-event-1",
+      status: "sent",
+      testMode: false,
+    },
+    confidence: {
+      explanation: "Matched by visitor.",
+      level: "browser_session",
+      signals: [],
+    },
+    creditedTouch: null,
+    geoCity: "San Jose",
+    geoCountry: "US",
+    geoRegion: "CA",
+    geoTimezone: "America/Los_Angeles",
+    returnTouch: null,
+    summary: "Booking found.",
+    timeline: [],
+    visitorId: "visitor-1",
+    ...overrides,
+  };
+}
+
+function timelineEvent(
+  overrides: Partial<CustomerJourneyLedgerTimelineEvent> = {},
+): CustomerJourneyLedgerTimelineEvent {
+  return {
+    adId: null,
+    adsetId: null,
+    campaignId: null,
+    category: "page",
+    content: null,
+    eventId: "hp_evt-1",
+    fbcPresent: false,
+    fbpPresent: false,
+    fbclidPresent: false,
+    label: "Meta ad landing page viewed",
+    medium: null,
+    occurredAt: "2026-05-20T23:48:27.772Z",
+    pageUrl: "https://www.hungphatusa.com/pages/book-an-appointment",
+    placement: null,
+    referrer: "https://l.instagram.com/",
+    source: "ig",
+    sourceType: "paid_meta",
     ...overrides,
   };
 }

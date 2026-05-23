@@ -88,10 +88,13 @@ export type CustomerJourneyLedgerTouchSummary = {
 
 export type CustomerJourneyLedgerTimelineEvent = {
   adId: string | null;
+  adName?: string | null;
   adsetId: string | null;
   campaignId: string | null;
   category: "ad_touch" | "page" | "booking" | "conversion" | "capi" | "engagement";
   content: string | null;
+  creativeId?: string | null;
+  creativeName?: string | null;
   eventId: string | null;
   fbcPresent: boolean;
   fbpPresent: boolean;
@@ -115,6 +118,7 @@ export type CustomerJourneyLedgerDetailData = {
     metaEventId: string | null;
     sessionId: string | null;
   } | null;
+  bookingSessionEntrySource: CustomerJourneyLedgerTouchSummary | null;
   capi: {
     eventId: string | null;
     status: string | null;
@@ -756,7 +760,6 @@ export function buildCustomerJourneyLedgerDetailData(input: {
     conversion,
     creditedTouch,
     events: input.events,
-    returnEvent,
   });
   const geo = geoFromRecords(conversion, input.visitor, session, ...input.events);
   const booking = conversion
@@ -783,8 +786,14 @@ export function buildCustomerJourneyLedgerDetailData(input: {
     geoCountry: geo.geoCountry,
     geoRegion: geo.geoRegion,
     geoTimezone: geo.geoTimezone,
+    bookingSessionEntrySource: summarizeTouch(returnTouch),
     returnTouch: summarizeTouch(returnTouch),
-    summary: summarizePath(creditedTouch, returnTouch, conversion),
+    summary: summarizePath(
+      creditedTouch,
+      returnTouch,
+      conversion,
+      returnEvent ? bookingSessionSourceLabelFromEvent(returnEvent, returnTouch) : null,
+    ),
     timeline,
     visitorId: input.visitor.visitor_id,
   };
@@ -807,7 +816,6 @@ export function buildCustomerJourneyLedgerConversionOnlyDetailData(input: {
     conversion,
     creditedTouch,
     events: [],
-    returnEvent: null,
   });
   const geo = geoFromRecords(conversion);
 
@@ -825,6 +833,7 @@ export function buildCustomerJourneyLedgerConversionOnlyDetailData(input: {
       status: conversion.meta_capi_status || null,
       testMode: conversion.meta_capi_test_mode ?? null,
     },
+    bookingSessionEntrySource: null,
     confidence: confidenceForConversionOnly(conversion),
     creditedTouch: summarizeTouch(creditedTouch),
     geoCity: geo.geoCity,
@@ -1152,10 +1161,17 @@ function pageGroupFromUrl(value: string | null) {
   if (!value) return null;
   try {
     const path = new URL(value).pathname.toLowerCase();
-    return path.includes("/book-an-appointment") ? "booking" : null;
+    return pageGroupFromPath(path);
   } catch {
-    return value.toLowerCase().includes("/book-an-appointment") ? "booking" : null;
+    return pageGroupFromPath(value.toLowerCase());
   }
+}
+
+function pageGroupFromPath(path: string) {
+  if (path.includes("/book-an-appointment")) return "booking";
+  if (path.includes("/products/")) return "product";
+  if (path.includes("custom-jewelry") || path.includes("jewelry-design")) return "custom_jewelry";
+  return null;
 }
 
 function selectDetailConversion(
@@ -1212,7 +1228,6 @@ function buildDetailTimeline(input: {
   conversion: CustomerJourneyLedgerConversionRow | null;
   creditedTouch: AttributionTouch | null;
   events: CustomerJourneyLedgerEventRow[];
-  returnEvent: CustomerJourneyLedgerEventRow | null;
 }) {
   const bookingTime = timestampValue(input.conversion?.occurred_at);
   const sessionId = input.conversion?.session_id;
@@ -1232,16 +1247,16 @@ function buildDetailTimeline(input: {
 
   for (const event of input.events) {
     const sameSession = !sessionId || event.session_id === sessionId;
-    if (!sameSession && !isPaidMetaLandingEvent(event)) continue;
+    if (!sameSession && !isJourneyEntryEvent(event)) continue;
     const eventTime = timestampValue(event.occurred_at);
     if (bookingTime && eventTime > (windowEnd || bookingTime)) continue;
     const touch = eventRowTouch(event);
     const summary = summarizeTouch(touch);
     timeline.push({
-      ...touchTimelineFields(summary),
+      ...eventTimelineFields(event, summary),
       category: timelineCategory(event),
       eventId: event.event_id,
-      label: timelineLabel(event, input.returnEvent),
+      label: timelineLabel(event),
       occurredAt: event.occurred_at,
     });
   }
@@ -1258,10 +1273,13 @@ function buildDetailTimeline(input: {
     if (input.conversion.meta_capi_status) {
       timeline.push({
         adId: null,
+        adName: null,
         adsetId: null,
         campaignId: null,
         category: "capi",
         content: null,
+        creativeId: null,
+        creativeName: null,
         eventId: input.conversion.meta_event_id,
         fbcPresent: Boolean(input.conversion.fbc),
         fbpPresent: Boolean(input.conversion.fbp),
@@ -1305,9 +1323,12 @@ function summarizeTouch(touch: AttributionTouch | null): CustomerJourneyLedgerTo
 function touchTimelineFields(summary: CustomerJourneyLedgerTouchSummary | null) {
   return {
     adId: summary?.adId || null,
+    adName: null,
     adsetId: summary?.adsetId || null,
     campaignId: summary?.campaignId || null,
     content: summary?.content || null,
+    creativeId: null,
+    creativeName: null,
     fbcPresent: Boolean(summary?.fbcPresent),
     fbpPresent: Boolean(summary?.fbpPresent),
     fbclidPresent: Boolean(summary?.fbclidPresent),
@@ -1320,6 +1341,29 @@ function touchTimelineFields(summary: CustomerJourneyLedgerTouchSummary | null) 
   };
 }
 
+function eventTimelineFields(
+  event: CustomerJourneyLedgerEventRow,
+  summary: CustomerJourneyLedgerTouchSummary | null,
+) {
+  const fields = touchTimelineFields(summary);
+  const freshUtm = utmFromUrl(event.page_url);
+  return {
+    ...fields,
+    adId: fields.adId || freshUtm?.adId || stringValue(event.utm_ad_id) || null,
+    adsetId: fields.adsetId || freshUtm?.adsetId || stringValue(event.utm_adset_id) || null,
+    campaignId:
+      fields.campaignId || freshUtm?.campaignId || stringValue(event.utm_campaign_id) || null,
+    content: fields.content || freshUtm?.content || stringValue(event.utm_content) || null,
+    fbclidPresent: fields.fbclidPresent || Boolean(freshUtm?.fbclid || event.fbclid),
+    medium: fields.medium || freshUtm?.medium || stringValue(event.utm_medium) || null,
+    pageUrl: fields.pageUrl || sanitizeUrl(event.page_url),
+    placement: fields.placement || freshUtm?.placement || stringValue(event.utm_placement) || null,
+    referrer: fields.referrer || sanitizeUrl(event.referrer),
+    source: fields.source || freshUtm?.source || stringValue(event.utm_source) || event.source || null,
+    sourceType: fields.sourceType || event.source_type || null,
+  };
+}
+
 function timelineCategory(event: CustomerJourneyLedgerEventRow): CustomerJourneyLedgerTimelineEvent["category"] {
   if (event.event_name === "PageView" || event.event_name === "ViewContent") return "page";
   if (event.event_type === "booking" || event.event_name.startsWith("Booking")) return "booking";
@@ -1327,11 +1371,12 @@ function timelineCategory(event: CustomerJourneyLedgerEventRow): CustomerJourney
   return "engagement";
 }
 
-function timelineLabel(event: CustomerJourneyLedgerEventRow, returnEvent: CustomerJourneyLedgerEventRow | null) {
-  if (returnEvent?.event_id === event.event_id) {
-    return isPaidMetaLandingEvent(event)
-      ? "Meta ad landing page viewed"
-      : "Meta/social landing page viewed";
+function timelineLabel(event: CustomerJourneyLedgerEventRow) {
+  if (event.event_name === "PageView") {
+    if (isFreshPaidMetaLandingEvent(event)) return "Meta ad landing page viewed";
+    const organicSocialLabel = organicSocialLandingLabel(event);
+    if (organicSocialLabel) return organicSocialLabel;
+    return pageViewLabel(event.page_url);
   }
   const labels: Record<string, string> = {
     BookingClientConfirmed: "Booking confirmed in browser",
@@ -1342,51 +1387,79 @@ function timelineLabel(event: CustomerJourneyLedgerEventRow, returnEvent: Custom
     BookingSubmitAttempt: "Booking submitted",
     BookingTimeSelected: "Time selected",
     BookingVisitSelected: "Appointment type selected",
-    PageView: "Page viewed",
     Schedule: "Acuity booking created",
     ViewContent: "Booking page content viewed",
   };
   return labels[event.event_name] || event.event_name;
 }
 
-function isPaidMetaLandingEvent(event: CustomerJourneyLedgerEventRow) {
-  const utm = mergeUtmRecords(
-    utmFromUrl(event.page_url),
-    normalizedUtmRecord({
-      ad: event.utm_ad,
-      adId: event.utm_ad_id,
-      adset: event.utm_adset,
-      adsetId: event.utm_adset_id,
-      campaign: event.utm_campaign,
-      campaignId: event.utm_campaign_id,
-      content: event.utm_content,
-      creative: event.utm_creative,
-      fbclid: event.fbclid,
-      id: event.utm_id,
-      medium: event.utm_medium,
-      placement: event.utm_placement,
-      source: event.utm_source,
-      term: event.utm_term,
-    }),
-  );
+function isJourneyEntryEvent(event: CustomerJourneyLedgerEventRow) {
+  return event.event_name === "PageView" && (isFreshPaidMetaLandingEvent(event) || Boolean(organicSocialLandingLabel(event)));
+}
+
+function isFreshPaidMetaLandingEvent(event: CustomerJourneyLedgerEventRow) {
+  const utm = utmFromUrl(event.page_url);
   const medium = (utm?.medium || "").toLowerCase();
   const source = (utm?.source || "").toLowerCase();
   const referrer = (event.referrer || "").toLowerCase();
-  const hasMetaSource =
-    event.source_type === "paid_meta" ||
-    source.includes("facebook") ||
-    source.includes("instagram") ||
-    source === "fb" ||
-    source === "ig" ||
-    source === "an" ||
-    referrer.includes("facebook.com") ||
-    referrer.includes("instagram.com");
+  const hasMetaSource = isMetaSourceText(source, referrer);
   const hasMetaAdIdentifier = Boolean(utm?.adId || utm?.adsetId || utm?.campaignId);
   return hasMetaSource && (isPaidMediumValue(medium) || hasMetaAdIdentifier);
 }
 
+function organicSocialLandingLabel(event: CustomerJourneyLedgerEventRow) {
+  const utm = utmFromUrl(event.page_url);
+  const source = (
+    utm?.source ||
+    stringValue(event.utm_source) ||
+    event.source ||
+    ""
+  ).toLowerCase();
+  const medium = (utm?.medium || stringValue(event.utm_medium) || "").toLowerCase();
+  const referrer = (event.referrer || "").toLowerCase();
+
+  if (isPaidMediumValue(medium) || Boolean(utm?.adId || utm?.adsetId || utm?.campaignId)) {
+    return null;
+  }
+
+  if (isInstagramSourceText(source, referrer)) {
+    return "Instagram profile link landing viewed";
+  }
+
+  if (isFacebookSourceText(source, referrer)) {
+    return "Facebook page link landing viewed";
+  }
+
+  return null;
+}
+
+function pageViewLabel(pageUrl: string | null) {
+  const group = pageGroupFromUrl(pageUrl);
+  if (group === "booking") return "Booking page viewed";
+  if (group === "product") return "Product page viewed";
+  if (group === "custom_jewelry") return "Custom jewelry page viewed";
+  return "Page viewed";
+}
+
 function isPaidMediumValue(value: string) {
   return ["paid", "paid_social", "cpc", "ppc", "social_paid"].some((needle) => value.includes(needle));
+}
+
+function isMetaSourceText(source: string, referrer: string) {
+  return (
+    isInstagramSourceText(source, referrer) ||
+    isFacebookSourceText(source, referrer) ||
+    source === "an" ||
+    source.includes("audience_network")
+  );
+}
+
+function isInstagramSourceText(source: string, referrer: string) {
+  return source.includes("instagram") || source === "ig" || referrer.includes("instagram.com");
+}
+
+function isFacebookSourceText(source: string, referrer: string) {
+  return source.includes("facebook") || source === "fb" || referrer.includes("facebook.com");
 }
 
 function dedupeTimeline(events: CustomerJourneyLedgerTimelineEvent[]) {
@@ -1457,6 +1530,7 @@ function summarizePath(
   creditedTouch: AttributionTouch | null,
   returnTouch: AttributionTouch | null,
   conversion: CustomerJourneyLedgerConversionRow | null,
+  bookingSessionSource?: string | null,
 ) {
   if (!conversion) return null;
   const parts: string[] = [];
@@ -1468,8 +1542,7 @@ function summarizePath(
   }
 
   if (returnTouch) {
-    const source = returnTouch.utm?.content || returnTouch.utm?.source || returnTouch.source || "return visit";
-    parts.push(`returned from ${source}`);
+    parts.push(`Booking session started from ${bookingSessionSource || bookingSessionSourceLabel(returnTouch)}`);
   }
 
   if (returnAt) {
@@ -1477,6 +1550,46 @@ function summarizePath(
   }
 
   return parts.length ? sentenceCase(`${parts.join("; ")}.`) : "Booking conversion found for this visitor.";
+}
+
+function bookingSessionSourceLabelFromEvent(
+  event: CustomerJourneyLedgerEventRow,
+  touch: AttributionTouch | null,
+) {
+  if (event.event_name !== "PageView") return touch ? bookingSessionSourceLabel(touch) : "website event";
+  if (isFreshPaidMetaLandingEvent(event)) {
+    const content = touch?.utm?.content || utmFromUrl(event.page_url)?.content;
+    return content ? `Meta ad ${content}` : "Meta ad";
+  }
+  const socialLabel = organicSocialLandingLabel(event);
+  if (socialLabel === "Instagram profile link landing viewed") return "Instagram profile link";
+  if (socialLabel === "Facebook page link landing viewed") return "Facebook page link";
+
+  const pageGroup = pageGroupFromUrl(event.page_url);
+  if (pageGroup === "booking") return "booking page";
+  if (pageGroup === "product") return "product page";
+  if (pageGroup === "custom_jewelry") return "custom jewelry page";
+  return touch ? bookingSessionSourceLabel(touch) : "website page";
+}
+
+function bookingSessionSourceLabel(touch: AttributionTouch) {
+  const utm = touch.utm || {};
+  const medium = (utm.medium || "").toLowerCase();
+  const source = (utm.source || touch.source || "").toLowerCase();
+  const referrer = (touch.referrer || "").toLowerCase();
+  const content = utm.content || null;
+  const hasPaidMetaSignal = Boolean(utm.adId || utm.adsetId || utm.campaignId) || isPaidMediumValue(medium);
+
+  if (hasPaidMetaSignal && isMetaSourceText(source, referrer)) {
+    return content ? `Meta ad ${content}` : "Meta ad";
+  }
+
+  if (isInstagramSourceText(source, referrer)) return "Instagram profile link";
+  if (isFacebookSourceText(source, referrer)) return "Facebook page link";
+  if (content) return content;
+  if (utm.source) return utm.source;
+  if (touch.source) return touch.source;
+  return "website page";
 }
 
 function summarizeConversionOnlyPath(

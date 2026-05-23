@@ -8,6 +8,7 @@ import type {
   CustomerLedgerCreativePreview,
   CustomerLedgerRow,
 } from "./convert-customer-ledger.ts";
+import type { CustomerJourneyLedgerDetailData } from "./customer-journey-ledger.ts";
 
 type QueryResult = {
   data: unknown;
@@ -120,28 +121,11 @@ export async function enrichCustomerLedgerRowsWithCreativePreviews(
   const logger = options.logger || console;
 
   try {
-    const adRows = await selectRows<AdMetadataRow>(
-      client,
-      "meta_ads",
-      AD_COLUMNS,
-      "ad_id",
-      adIds,
-    );
-    const adsByAdId = bestAdRowsByAdId(adRows);
-    const creativeIds = unique(
-      Array.from(adsByAdId.values()).map((row) => stringOrNull(row.creative_id)),
-    );
-    const creativeRows = creativeIds.length
-      ? await selectCreativeRows(client, creativeIds)
-      : [];
-    const creativeIndex = indexCreativeRows(creativeRows);
-
+    const previewsByAdId = await fetchCreativePreviewsByAdId(client, adIds);
     return rows.map((row) => {
       if (!row.adId) return row;
-      const ad = adsByAdId.get(row.adId);
-      if (!ad) return row;
-      const creative = creativeForAd(ad, creativeIndex);
-      const preview = creativePreviewFromRows(row.adId, ad, creative);
+      const preview = previewsByAdId.get(row.adId);
+      if (!preview) return row;
       return {
         ...row,
         creativePreview: preview,
@@ -151,6 +135,74 @@ export async function enrichCustomerLedgerRowsWithCreativePreviews(
     logger.warn("[convert] creative metadata enrichment failed:", error);
     return rows;
   }
+}
+
+export async function enrichCustomerJourneyDetailWithCreativePreviews(
+  detail: CustomerJourneyLedgerDetailData,
+  options: {
+    client?: CustomerLedgerCreativeClient;
+    logger?: Logger;
+  } = {},
+): Promise<CustomerJourneyLedgerDetailData> {
+  const adIds = unique(detail.timeline.map((event) => event.adId));
+  if (adIds.length === 0) return detail;
+
+  const client =
+    options.client ||
+    (createAdsAnalystClient("web") as unknown as CustomerLedgerCreativeClient);
+  const logger = options.logger || console;
+
+  try {
+    const previewsByAdId = await fetchCreativePreviewsByAdId(client, adIds);
+    const timeline = detail.timeline.map((event) => {
+      if (!event.adId) return event;
+      const preview = previewsByAdId.get(event.adId);
+      if (!preview) return event;
+      return {
+        ...event,
+        adName: preview.adName,
+        creativeId: preview.creativeId,
+        creativeName: preview.creativeName,
+      };
+    });
+
+    return {
+      ...detail,
+      timeline,
+    };
+  } catch (error) {
+    logger.warn("[convert] journey timeline creative metadata enrichment failed:", error);
+    return detail;
+  }
+}
+
+async function fetchCreativePreviewsByAdId(
+  client: CustomerLedgerCreativeClient,
+  adIds: string[],
+) {
+  const adRows = await selectRows<AdMetadataRow>(
+    client,
+    "meta_ads",
+    AD_COLUMNS,
+    "ad_id",
+    adIds,
+  );
+  const adsByAdId = bestAdRowsByAdId(adRows);
+  const creativeIds = unique(
+    Array.from(adsByAdId.values()).map((row) => stringOrNull(row.creative_id)),
+  );
+  const creativeRows = creativeIds.length
+    ? await selectCreativeRows(client, creativeIds)
+    : [];
+  const creativeIndex = indexCreativeRows(creativeRows);
+  const previewsByAdId = new Map<string, CustomerLedgerCreativePreview>();
+
+  for (const [adId, ad] of adsByAdId) {
+    const creative = creativeForAd(ad, creativeIndex);
+    previewsByAdId.set(adId, creativePreviewFromRows(adId, ad, creative));
+  }
+
+  return previewsByAdId;
 }
 
 async function selectCreativeRows(

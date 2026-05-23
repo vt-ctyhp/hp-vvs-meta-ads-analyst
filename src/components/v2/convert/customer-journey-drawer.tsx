@@ -160,6 +160,7 @@ function CustomerJourneyDetailContent({
   const timeToBook = formatTimeToBook(deltaMs);
   const attributedCreative =
     detail.creditedTouch?.content || detail.creditedTouch?.adId || null;
+  const bookingSessionEntrySource = detail.bookingSessionEntrySource ?? detail.returnTouch;
 
   return (
     <>
@@ -221,9 +222,9 @@ function CustomerJourneyDetailContent({
           touch={detail.creditedTouch}
         />
         <TouchSummaryCard
-          emptyMessage="No separate return visit was found before the booking."
-          title="Return touch"
-          touch={detail.returnTouch}
+          emptyMessage="No booking session entry source was found before the booking."
+          title="Booking session started from"
+          touch={bookingSessionEntrySource}
         />
       </section>
 
@@ -542,8 +543,14 @@ function TimelineEventItem({
     ["Campaign", event.campaignId],
     ["Ad set", event.adsetId],
     ["Ad", event.adId],
+    ["Creative", event.creativeId],
   ] as const;
   const hasIds = idFields.some(([, value]) => Boolean(value));
+  const nameFields = [
+    ["Ad name", event.adName],
+    ["Creative", event.creativeName],
+  ] as const;
+  const visibleNameFields = nameFields.filter(([, value]) => Boolean(value));
   const signals = [
     event.fbclidPresent ? "fbclid present" : null,
     event.fbcPresent ? "_fbc present" : null,
@@ -587,6 +594,17 @@ function TimelineEventItem({
             </>
           ) : null}
         </div>
+
+        {visibleNameFields.length ? (
+          <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+            {visibleNameFields.map(([label, value]) => (
+              <div key={label}>
+                <dt className="uppercase tracking-[0.14em] text-hp-muted">{label}</dt>
+                <dd className="mt-1 text-hp-body [overflow-wrap:anywhere]">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : null}
 
         {hasIds ? (
           <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
