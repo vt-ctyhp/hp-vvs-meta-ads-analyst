@@ -631,7 +631,6 @@ export function DashboardClient({
             periodMetric={periodMetric}
             periodWindows={periodWindows}
             periodValuesByEntity={data.periodBreakdown.byUmbrella}
-            primaryResultLabel={currentPrimaryResultLabel}
             onSelect={setUmbrella}
           />
         </section>
@@ -705,7 +704,6 @@ export function DashboardClient({
             periodMetric={periodMetric}
             periodWindows={periodWindows}
             periodBreakdown={data.periodBreakdown}
-            primaryResultLabel={currentPrimaryResultLabel}
             onToggleCampaign={toggleCampaign}
             onToggleAdSet={toggleAdSet}
             onSelectCreative={openCreativeDrawer}
@@ -1058,7 +1056,6 @@ const UmbrellaScorecard = memo(function UmbrellaScorecard({
   periodMetric,
   periodWindows,
   periodValuesByEntity,
-  primaryResultLabel,
   onSelect,
 }: {
   rows: UmbrellaScorecardRow[];
@@ -1066,7 +1063,6 @@ const UmbrellaScorecard = memo(function UmbrellaScorecard({
   periodMetric: PeriodMetric;
   periodWindows: AnalystPeriodWindow[];
   periodValuesByEntity: AnalystPeriodEntityValues;
-  primaryResultLabel?: string | null;
   onSelect: (umbrella: string) => void;
 }) {
   const [sortKey, setSortKey] = useState<ScorecardSortKey>("spend");
@@ -1118,7 +1114,8 @@ const UmbrellaScorecard = memo(function UmbrellaScorecard({
               ))}
               {periodWindows.length > 1 ? (
                 <th className="border-b border-hp-rule px-4 py-3 text-right text-[10px] font-normal uppercase tracking-[0.14em] text-hp-muted">
-                  Δ oldest→current
+                  <span className="block">Δ</span>
+                  <span className="mt-0.5 block text-[9px] tracking-[0.12em]">oldest→current</span>
                 </th>
               ) : null}
             </tr>
@@ -1143,7 +1140,7 @@ const UmbrellaScorecard = memo(function UmbrellaScorecard({
                       key={period.key}
                       values={periodValues?.[period.key]}
                       metric={periodMetric}
-                      primaryResultLabel={primaryResultLabel}
+                      primaryResultLabel={current.primaryResultLabel}
                     />
                   ))}
                   {periodWindows.length > 1 ? (
@@ -1479,7 +1476,6 @@ const NestedPerformanceTable = memo(function NestedPerformanceTable({
   periodMetric,
   periodWindows,
   periodBreakdown,
-  primaryResultLabel,
   onToggleCampaign,
   onToggleAdSet,
   onSelectCreative,
@@ -1492,14 +1488,13 @@ const NestedPerformanceTable = memo(function NestedPerformanceTable({
   periodMetric: PeriodMetric;
   periodWindows: AnalystPeriodWindow[];
   periodBreakdown: DashboardPayload["periodBreakdown"];
-  primaryResultLabel?: string | null;
   onToggleCampaign: (id: string) => void;
   onToggleAdSet: (id: string) => void;
   onSelectCreative: (id: string) => void;
 }) {
   const periodMode = showPeriodBreakdown && periodWindows.length > 0;
   const tableMinWidth = periodMode
-    ? 600 + periodWindows.length * 124 + (periodWindows.length > 1 ? 112 : 0)
+    ? 600 + periodWindows.length * 124 + (periodWindows.length > 1 ? 140 : 0)
     : 1040;
   const columnCount = periodMode
     ? 3 + periodWindows.length + (periodWindows.length > 1 ? 1 : 0)
@@ -1519,7 +1514,7 @@ const NestedPerformanceTable = memo(function NestedPerformanceTable({
             {periodWindows.map((period) => (
               <col key={period.key} className="w-[124px]" />
             ))}
-            {periodWindows.length > 1 ? <col className="w-[112px]" /> : null}
+            {periodWindows.length > 1 ? <col className="w-[140px]" /> : null}
           </colgroup>
         ) : (
           <colgroup>
@@ -1544,8 +1539,9 @@ const NestedPerformanceTable = memo(function NestedPerformanceTable({
                   <PeriodHeader key={period.key} period={period} compact />
                 ))}
                 {periodWindows.length > 1 ? (
-                  <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3 text-right">
-                    Δ oldest→current
+                  <th className="border-b border-hp-rule px-3 py-3 text-right text-[10px] font-normal uppercase tracking-[0.14em] text-hp-muted">
+                    <span className="block">Δ</span>
+                    <span className="mt-0.5 block text-[9px] tracking-[0.12em]">oldest→current</span>
                   </th>
                 ) : null}
               </>
@@ -1574,7 +1570,6 @@ const NestedPerformanceTable = memo(function NestedPerformanceTable({
                 periodMetric={periodMetric}
                 periodWindows={periodWindows}
                 periodBreakdown={periodBreakdown}
-                primaryResultLabel={primaryResultLabel}
                 onToggleCampaign={onToggleCampaign}
                 onToggleAdSet={onToggleAdSet}
                 onSelectCreative={onSelectCreative}
@@ -1603,7 +1598,6 @@ const NestedCampaignRows = memo(function NestedCampaignRows({
   periodMetric,
   periodWindows,
   periodBreakdown,
-  primaryResultLabel,
   onToggleCampaign,
   onToggleAdSet,
   onSelectCreative,
@@ -1616,7 +1610,6 @@ const NestedCampaignRows = memo(function NestedCampaignRows({
   periodMetric: PeriodMetric;
   periodWindows: AnalystPeriodWindow[];
   periodBreakdown: DashboardPayload["periodBreakdown"];
-  primaryResultLabel?: string | null;
   onToggleCampaign: (id: string) => void;
   onToggleAdSet: (id: string) => void;
   onSelectCreative: (id: string) => void;
@@ -1632,7 +1625,6 @@ const NestedCampaignRows = memo(function NestedCampaignRows({
         periodMetric={periodMetric}
         periodWindows={periodWindows}
         periodValues={periodBreakdown.campaigns[node.campaign.id]}
-        primaryResultLabel={primaryResultLabel}
         onToggle={() => onToggleCampaign(node.id)}
       />
       {expanded
@@ -1647,7 +1639,6 @@ const NestedCampaignRows = memo(function NestedCampaignRows({
                 periodMetric={periodMetric}
                 periodWindows={periodWindows}
                 periodBreakdown={periodBreakdown}
-                primaryResultLabel={primaryResultLabel}
                 onToggleAdSet={onToggleAdSet}
                 onSelectCreative={onSelectCreative}
               />
@@ -1665,7 +1656,6 @@ const NestedAdSetRows = memo(function NestedAdSetRows({
   periodMetric,
   periodWindows,
   periodBreakdown,
-  primaryResultLabel,
   onToggleAdSet,
   onSelectCreative,
 }: {
@@ -1675,7 +1665,6 @@ const NestedAdSetRows = memo(function NestedAdSetRows({
   periodMetric: PeriodMetric;
   periodWindows: AnalystPeriodWindow[];
   periodBreakdown: DashboardPayload["periodBreakdown"];
-  primaryResultLabel?: string | null;
   onToggleAdSet: (id: string) => void;
   onSelectCreative: (id: string) => void;
 }) {
@@ -1690,7 +1679,6 @@ const NestedAdSetRows = memo(function NestedAdSetRows({
         periodMetric={periodMetric}
         periodWindows={periodWindows}
         periodValues={periodBreakdown.adSets[node.adSet.id]}
-        primaryResultLabel={primaryResultLabel}
         onToggle={() => onToggleAdSet(node.id)}
       />
       {expanded
@@ -1703,7 +1691,6 @@ const NestedAdSetRows = memo(function NestedAdSetRows({
               periodMetric={periodMetric}
               periodWindows={periodWindows}
               periodValues={periodBreakdown.creatives[creative.id]}
-              primaryResultLabel={primaryResultLabel}
               onSelectCreative={onSelectCreative}
             />
           ))
@@ -1721,7 +1708,6 @@ const MetricTreeRow = memo(function MetricTreeRow({
   periodMetric,
   periodWindows,
   periodValues,
-  primaryResultLabel,
   onToggle,
   onSelectCreative,
 }: {
@@ -1733,7 +1719,6 @@ const MetricTreeRow = memo(function MetricTreeRow({
   periodMetric: PeriodMetric;
   periodWindows: AnalystPeriodWindow[];
   periodValues?: Record<string, AnalystPeriodMetricValues>;
-  primaryResultLabel?: string | null;
   onToggle?: () => void;
   onSelectCreative?: (id: string) => void;
 }) {
@@ -1804,7 +1789,7 @@ const MetricTreeRow = memo(function MetricTreeRow({
               key={period.key}
               values={periodValues?.[period.key]}
               metric={periodMetric}
-              primaryResultLabel={primaryResultLabel}
+              primaryResultLabel={row.primaryResultLabel}
               compact
             />
           ))}
