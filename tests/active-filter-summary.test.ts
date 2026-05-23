@@ -19,18 +19,19 @@ const DEFAULTS: ActiveFilterInput = {
   periodCount: 2,
   periodMetric: "spend",
   umbrella: "all",
+  query: "",
 };
 
 test("all defaults — every segment renders, only Range is non-default, no segment is active", () => {
   const summary = buildActiveFilterSummary(DEFAULTS);
-  assert.equal(summary.length, 6);
+  assert.equal(summary.length, 7);
   assert.deepEqual(
     summary.map((s) => s.key),
-    ["Brand", "Delivery", "Range", "vs Prev", "Metric", "Umbrella"],
+    ["Brand", "Delivery", "Range", "vs Prev", "Metric", "Umbrella", "Query"],
   );
   assert.deepEqual(
     summary.map((s) => s.isActive),
-    [false, false, false, false, false, false],
+    [false, false, false, false, false, false, false],
   );
 });
 
@@ -179,6 +180,7 @@ test("everything customised → every segment except Range is active", () => {
     periodCount: 8,
     periodMetric: "ctr",
     umbrella: "Facebook US Product",
+    query: "ring",
   });
   assert.deepEqual(
     summary.map((s) => ({ key: s.key, isActive: s.isActive })),
@@ -189,8 +191,23 @@ test("everything customised → every segment except Range is active", () => {
       { key: "vs Prev", isActive: true },
       { key: "Metric", isActive: true },
       { key: "Umbrella", isActive: true },
+      { key: "Query", isActive: true },
     ],
   );
+});
+
+test("/analyst · empty query → '—' and not active", () => {
+  const summary = buildActiveFilterSummary({ ...DEFAULTS, query: "" });
+  const q = summary.find((s) => s.key === "Query");
+  assert.equal(q?.value, "—");
+  assert.equal(q?.isActive, false);
+});
+
+test("/analyst · non-empty query → quoted and active", () => {
+  const summary = buildActiveFilterSummary({ ...DEFAULTS, query: "ring" });
+  const q = summary.find((s) => s.key === "Query");
+  assert.equal(q?.value, "\"ring\"");
+  assert.equal(q?.isActive, true);
 });
 
 // ─── /analyst/creative-analysis builder ──────────────────────────────

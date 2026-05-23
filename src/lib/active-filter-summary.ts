@@ -36,6 +36,7 @@ export type ActiveFilterInput = {
    *  "Primary KPI" / "$/Primary KPI" label when missing. */
   primaryResultLabel?: string | null;
   umbrella: string;
+  query: string;
 };
 
 const RANGE_FMT = new Intl.DateTimeFormat("en-US", {
@@ -79,6 +80,11 @@ export function buildActiveFilterSummary(
       key: "Umbrella",
       value: input.umbrella === "all" ? "All" : input.umbrella,
       isActive: input.umbrella !== "all",
+    },
+    {
+      key: "Query",
+      value: input.query.trim() ? `"${input.query.trim()}"` : "—",
+      isActive: input.query.trim().length > 0,
     },
   ];
 }

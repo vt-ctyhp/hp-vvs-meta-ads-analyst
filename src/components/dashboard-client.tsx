@@ -509,6 +509,7 @@ export function DashboardClient({
           periodMetric,
           primaryResultLabel: currentPrimaryResultLabel,
           umbrella,
+          query,
         })}
       >
         <section className="mx-auto mt-6 flex max-w-7xl flex-col gap-4 border-y border-hp-rule py-4 xl:flex-row xl:flex-wrap xl:items-center xl:justify-between xl:gap-x-6">
@@ -532,6 +533,15 @@ export function DashboardClient({
                 { value: "paused", label: "Paused" },
               ]}
             />
+            <label className="flex min-w-0 items-center gap-2 border-b border-hp-rule px-1 py-2 focus-within:border-hp-pink sm:w-64">
+              <Search size={16} className="text-hp-muted" />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search creatives"
+                className="w-full bg-transparent text-sm outline-none placeholder:text-hp-muted"
+              />
+            </label>
           </div>
 
           <DateRangeControls
@@ -671,15 +681,6 @@ export function DashboardClient({
               {formatMetric(treeCounts.creatives, "number")} creatives
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <label className="flex min-w-0 items-center gap-2 border-b border-hp-rule px-1 py-2 focus-within:border-hp-pink sm:w-64">
-                <Search size={16} className="text-hp-muted" />
-                <input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search creatives"
-                  className="w-full bg-transparent text-sm outline-none placeholder:text-hp-muted"
-                />
-              </label>
               {!compareEnabled ? (
                 <select
                   value={sortKey}
