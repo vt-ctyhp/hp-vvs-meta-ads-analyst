@@ -105,7 +105,19 @@ test("Optimize AI saved analyses drawer is collapsed by default", () => {
 test("Optimize AI chat formats markdown answers for readability", () => {
   const { FormattedChatContent } = loadModule("src/components/v2/optimize/ai-panel.tsx", {
     "@/components/analysis-client": { AnalysisOutput: () => null },
+    "@/components/filter-chip-group": { FilterChipGroup: () => null },
+    "@/components/universal-filter-bar": {
+      UniversalFilterBar: function UniversalFilterBar(props: { children: unknown }) {
+        return React.createElement(React.Fragment, null, props.children);
+      },
+    },
+    "@/lib/active-filter-summary": { buildAskAiFilterSummary: () => [] },
     "@/lib/glossary": { translateError: () => "Something went wrong." },
+    "next/navigation": {
+      usePathname: () => "/analysis",
+      useRouter: () => ({ replace: () => {} }),
+      useSearchParams: () => new URLSearchParams(),
+    },
   });
 
   const markup = renderToStaticMarkup(
