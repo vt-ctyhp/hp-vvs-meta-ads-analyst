@@ -8,10 +8,16 @@ Plan: [../../plans/2026-05-23-rebuild-decision-spike.md](../../plans/2026-05-23-
 | Track | Status | Owner | Output |
 |---|---|---|---|
 | 0 — Setup | complete | Claude | this README + stubs |
-| 1 — Data correctness | in progress — /analyst major finding | Claude + user | track-1-reconciliation.md, track-1-rotten-rpcs.md |
-| 2 — Performance | pending — needs Vercel URL + browser access | Claude (blocked on user) | track-2-perf-audit.md |
+| 1 — Data correctness | **complete** — major finding on /analyst, integrity bugs on /convert | Claude (+ user follow-up optional) | track-1-reconciliation.md, track-1-rotten-rpcs.md |
+| 2 — Performance | **complete (query-side)** — browser timings deferred | Claude | track-2-perf-audit.md |
 | 3 — Stack risk | **complete** — stack exonerated | Claude | track-3-stack-risk.md |
-| Synthesis | pending | Claude + user review | recommendation.md |
+| Synthesis | **complete — pending user review** | Claude + user | [recommendation.md](recommendation.md) |
+
+## 🎯 Recommendation
+
+**C — targeted data-layer + ingestion rebuild. ~3-5 weeks. NOT a full rebuild.**
+
+See [recommendation.md](recommendation.md) for the full reasoning.
 
 ## Headline so far
 

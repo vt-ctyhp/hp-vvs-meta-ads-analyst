@@ -46,3 +46,18 @@ SELECT count(*) FROM appointment_events WHERE visit_date_time IS NULL;          
 -- or schema misconfig; the loader at website-analytics.ts:1448-1470 queries this view.
 SELECT count(*) FROM analytics.sales_appointment_conversions_v1;                            -- ERROR
 
+-- [2026-05-23 17:25] [track-2] aggregate_meta_daily_insights RPC timing (warm 2nd run)
+-- Last 7d total                          → 177ms / 1 row
+-- Last 30d total                         → 417ms / 1 row
+-- Last 30d by campaign                   → 910ms / 9 rows
+-- Last 30d by ad                         → 405ms / 92 rows
+-- Last 90d by campaign                   → 1014ms / 16 rows
+-- Full year 2025 by month                → 10585ms / STATEMENT TIMEOUT
+-- Full year 2025 by campaign             → 8459ms  / STATEMENT TIMEOUT
+-- All-time (2024-2026) by year           → 10239ms / STATEMENT TIMEOUT
+-- Representative call:
+SELECT * FROM aggregate_meta_daily_insights(
+  '2025-01-01'::date, '2025-12-31'::date,
+  '{month}'::text[], '[]'::jsonb, 'spend', 'desc', 10000
+);
+
