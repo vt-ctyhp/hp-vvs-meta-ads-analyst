@@ -12,6 +12,8 @@
  * § "State B · Scrolled past" for the visual spec.
  */
 
+import { periodMetricLabel, type PeriodMetric } from "./period-pivot-data.ts";
+
 export type FilterSegment = {
   key: string;
   value: string;
@@ -27,7 +29,12 @@ export type ActiveFilterInput = {
   endDate: string;
   compareEnabled: boolean;
   periodCount: number;
-  periodMetric: string;
+  periodMetric: PeriodMetric;
+  /** Live primary-KPI name (e.g. "Messages", "Appointments") — used
+   *  to render the `primary_results` / `cost_per_primary_results`
+   *  metrics with their actual KPI name. Falls back to the static
+   *  "Primary KPI" / "$/Primary KPI" label when missing. */
+  primaryResultLabel?: string | null;
   umbrella: string;
 };
 
@@ -65,9 +72,8 @@ export function buildActiveFilterSummary(
     },
     {
       key: "Metric",
-      value: capitalize(input.periodMetric),
-      isActive:
-        input.periodMetric !== "" && input.periodMetric.toLowerCase() !== "spend",
+      value: periodMetricLabel(input.periodMetric, input.primaryResultLabel),
+      isActive: input.periodMetric !== "spend",
     },
     {
       key: "Umbrella",
@@ -104,7 +110,3 @@ function parseIsoDate(value: string): Date | null {
   return new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
 }
 
-function capitalize(value: string): string {
-  if (!value) return value;
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}

@@ -78,21 +78,81 @@ test("vs Prev off → value reads 'off' and is not active", () => {
   assert.equal(vp?.isActive, false);
 });
 
-test("metric default 'spend' (any case) is not active", () => {
-  const lower = buildActiveFilterSummary({ ...DEFAULTS, periodMetric: "spend" });
-  assert.equal(lower.find((s) => s.key === "Metric")?.isActive, false);
-  const upper = buildActiveFilterSummary({ ...DEFAULTS, periodMetric: "Spend" });
-  assert.equal(upper.find((s) => s.key === "Metric")?.isActive, false);
+test("metric default 'spend' is not active and renders 'Spend'", () => {
+  const summary = buildActiveFilterSummary({ ...DEFAULTS, periodMetric: "spend" });
+  const metric = summary.find((s) => s.key === "Metric");
+  assert.equal(metric?.value, "Spend");
+  assert.equal(metric?.isActive, false);
 });
 
-test("metric non-default → capitalized + active", () => {
+test("metric ctr → uses PERIOD_METRIC_LABELS short form 'CTR' and is active", () => {
   const summary = buildActiveFilterSummary({
     ...DEFAULTS,
     periodMetric: "ctr",
   });
   const metric = summary.find((s) => s.key === "Metric");
-  assert.equal(metric?.value, "Ctr");
+  assert.equal(metric?.value, "CTR");
   assert.equal(metric?.isActive, true);
+});
+
+test("metric primary_results without primaryResultLabel → falls back to 'Primary KPI'", () => {
+  const summary = buildActiveFilterSummary({
+    ...DEFAULTS,
+    periodMetric: "primary_results",
+  });
+  const metric = summary.find((s) => s.key === "Metric");
+  assert.equal(metric?.value, "Primary KPI");
+  assert.equal(metric?.isActive, true);
+});
+
+test("metric primary_results WITH primaryResultLabel → uses the live label", () => {
+  const summary = buildActiveFilterSummary({
+    ...DEFAULTS,
+    periodMetric: "primary_results",
+    primaryResultLabel: "Messages",
+  });
+  const metric = summary.find((s) => s.key === "Metric");
+  assert.equal(metric?.value, "Messages");
+  assert.equal(metric?.isActive, true);
+});
+
+test("metric cost_per_primary_results WITH primaryResultLabel → '$/{label}'", () => {
+  const summary = buildActiveFilterSummary({
+    ...DEFAULTS,
+    periodMetric: "cost_per_primary_results",
+    primaryResultLabel: "Appointments",
+  });
+  const metric = summary.find((s) => s.key === "Metric");
+  assert.equal(metric?.value, "$/Appointments");
+  assert.equal(metric?.isActive, true);
+});
+
+test("metric cost_per_primary_results without primaryResultLabel → '$/Primary KPI'", () => {
+  const summary = buildActiveFilterSummary({
+    ...DEFAULTS,
+    periodMetric: "cost_per_primary_results",
+  });
+  const metric = summary.find((s) => s.key === "Metric");
+  assert.equal(metric?.value, "$/Primary KPI");
+  assert.equal(metric?.isActive, true);
+});
+
+test("primaryResultLabel is ignored for non-primary metrics", () => {
+  const summary = buildActiveFilterSummary({
+    ...DEFAULTS,
+    periodMetric: "spend",
+    primaryResultLabel: "Messages",
+  });
+  assert.equal(summary.find((s) => s.key === "Metric")?.value, "Spend");
+});
+
+test("empty/whitespace primaryResultLabel does not substitute", () => {
+  const summary = buildActiveFilterSummary({
+    ...DEFAULTS,
+    periodMetric: "primary_results",
+    primaryResultLabel: "   ",
+  });
+  assert.equal(summary.find((s) => s.key === "Metric")?.value, "Primary KPI");
 });
 
 test("umbrella non-default → segment shows name and is active", () => {

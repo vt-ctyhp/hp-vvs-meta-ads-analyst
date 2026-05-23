@@ -51,10 +51,11 @@ import {
 } from "@/lib/dashboard-performance-tree";
 import {
   ALLOWED_PERIOD_METRICS,
-  PERIOD_METRIC_LABELS,
+  periodMetricLabel,
   type PeriodMetric,
 } from "@/lib/period-pivot-data";
 import { TERMS } from "@/lib/glossary";
+import { getKpiProfile } from "@/lib/umbrella-kpi-profile";
 import { AnalystFilterBar } from "./analyst-filter-bar";
 import { StatusSentence, type StatusHighlight } from "./status-sentence";
 import { TechnicalId } from "./technical-id";
@@ -148,6 +149,20 @@ export function DashboardClient({
   const umbrellaOptions = useMemo(
     () => ["all", ...data.campaignUmbrellas],
     [data.campaignUmbrellas],
+  );
+
+  // The Metric dropdown + sticky-bar standfirst use this label to render
+  // `primary_results` and `cost_per_primary_results` with the actual KPI
+  // name. When a specific umbrella is selected, derive the KPI label
+  // from its profile (matching the server-side aggregation in
+  // src/lib/analytics.ts). When `umbrella === "all"`, return null so
+  // `periodMetricLabel` falls back to the generic "Primary KPI" labels.
+  const currentPrimaryResultLabel = useMemo<string | null>(
+    () =>
+      umbrella === "all"
+        ? null
+        : getKpiProfile(umbrella).primaryResultLabel,
+    [umbrella],
   );
 
   const baseCampaigns = useMemo(
@@ -491,6 +506,7 @@ export function DashboardClient({
           compareEnabled,
           periodCount,
           periodMetric,
+          primaryResultLabel: currentPrimaryResultLabel,
           umbrella,
         }}
       >
@@ -533,6 +549,7 @@ export function DashboardClient({
             onPeriodMetricChange={changePeriodMetric}
             periodWindows={periodWindows}
             comparisonRange={data.comparison.timeRange}
+            primaryResultLabel={currentPrimaryResultLabel}
           />
         </section>
 
@@ -879,6 +896,7 @@ const DateRangeControls = memo(function DateRangeControls({
   onPeriodMetricChange,
   periodWindows,
   comparisonRange,
+  primaryResultLabel,
 }: {
   startDate: string;
   endDate: string;
@@ -895,6 +913,10 @@ const DateRangeControls = memo(function DateRangeControls({
   onPeriodMetricChange: (value: PeriodMetric) => void;
   periodWindows: ReturnType<typeof rollingAnalystPeriods>;
   comparisonRange: { start: string; end: string; days: number };
+  /** Live primary-KPI name (e.g. "Messages") — drives the dynamic
+   *  label for `primary_results` and `cost_per_primary_results`
+   *  in the Metric dropdown. Falls back to the static label. */
+  primaryResultLabel?: string | null;
 }) {
   function submitDateRange(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -993,7 +1015,7 @@ const DateRangeControls = memo(function DateRangeControls({
             >
               {PERIOD_METRIC_OPTIONS.map((metric) => (
                 <option key={metric} value={metric}>
-                  {PERIOD_METRIC_LABELS[metric]}
+                  {periodMetricLabel(metric, primaryResultLabel)}
                 </option>
               ))}
             </select>
@@ -1461,7 +1483,7 @@ const NestedPerformanceTable = memo(function NestedPerformanceTable({
 }) {
   const periodMode = showPeriodBreakdown && periodWindows.length > 0;
   const tableMinWidth = periodMode
-    ? 580 + periodWindows.length * 124 + (periodWindows.length > 1 ? 112 : 0)
+    ? 600 + periodWindows.length * 124 + (periodWindows.length > 1 ? 112 : 0)
     : 1040;
   const columnCount = periodMode
     ? 3 + periodWindows.length + (periodWindows.length > 1 ? 1 : 0)
@@ -1476,7 +1498,7 @@ const NestedPerformanceTable = memo(function NestedPerformanceTable({
         {periodMode ? (
           <colgroup>
             <col className="w-[360px]" />
-            <col className="w-[80px]" />
+            <col className="w-[100px]" />
             <col className="w-[140px]" />
             {periodWindows.map((period) => (
               <col key={period.key} className="w-[124px]" />
@@ -1486,8 +1508,8 @@ const NestedPerformanceTable = memo(function NestedPerformanceTable({
         ) : (
           <colgroup>
             <col className="w-[34%]" />
-            <col className="w-[7%]" />
-            <col className="w-[13%]" />
+            <col className="w-[9%]" />
+            <col className="w-[11%]" />
             <col className="w-[9%]" />
             <col className="w-[13%]" />
             <col className="w-[10%]" />
@@ -1498,7 +1520,7 @@ const NestedPerformanceTable = memo(function NestedPerformanceTable({
         <thead>
           <tr className="bg-hp-inset text-left text-[11px] uppercase tracking-[0.14em] text-hp-muted">
             <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Name</th>
-            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Brand</th>
+            <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">Delivery</th>
             <th className="whitespace-nowrap border-b border-hp-rule px-3 py-3">{TERMS.umbrellaShort}</th>
             {periodMode ? (
               <>
@@ -1740,7 +1762,11 @@ const MetricTreeRow = memo(function MetricTreeRow({
           </div>
         </div>
       </td>
-      <td className="px-3 py-4">{row.brandCode}</td>
+      <td className="px-3 py-4 text-xs uppercase tracking-[0.12em]">
+        <span className={deliveryStatusClass(row.effectiveStatus)}>
+          {deliveryStatusLabel(row.effectiveStatus)}
+        </span>
+      </td>
       <td className="px-3 py-4 text-xs leading-5 text-hp-muted [overflow-wrap:anywhere]">
         {row.campaignUmbrella}
       </td>
@@ -2468,6 +2494,33 @@ function formatDateLabel(value: string) {
 
 function formatUmbrellaName(value: string) {
   return value === "all" ? `All ${TERMS.campaignUmbrella}s` : value;
+}
+
+/**
+ * Delivery-status label for the performance table. Meta's `effective_status`
+ * arrives uppercase (ACTIVE / PAUSED / ARCHIVED / DELETED / CAMPAIGN_PAUSED
+ * / ADSET_PAUSED / IN_PROCESS / WITH_ISSUES / etc.); we render it title-case.
+ * Null / missing → em-dash.
+ */
+function deliveryStatusLabel(status: string | null | undefined): string {
+  const raw = (status || "").trim();
+  if (!raw) return "—";
+  return raw
+    .toLowerCase()
+    .split("_")
+    .map((word) => (word ? word.charAt(0).toUpperCase() + word.slice(1) : word))
+    .join(" ");
+}
+
+/**
+ * Color treatment for the delivery cell — Active reads positive,
+ * everything else falls back to muted so the eye lands on actively-
+ * delivering rows.
+ */
+function deliveryStatusClass(status: string | null | undefined): string {
+  return (status || "").toUpperCase() === "ACTIVE"
+    ? "text-signal-positive"
+    : "text-hp-muted";
 }
 
 function truncateText(value: string | null | undefined, maxLength: number) {

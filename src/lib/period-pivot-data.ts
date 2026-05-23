@@ -65,6 +65,30 @@ export const PERIOD_METRIC_LABELS: Record<PeriodMetric, string> = {
   cpc: "CPC",
 };
 
+/**
+ * Display label for a period metric, sensitive to the actual primary
+ * KPI name. For static metrics (spend / ctr / impressions / cpc)
+ * returns the matching PERIOD_METRIC_LABELS entry. For the two
+ * primary-KPI-aware metrics, substitutes the live label:
+ *
+ *   primary_results              → "Messages" (or whatever the data says)
+ *   cost_per_primary_results     → "$/Messages"
+ *
+ * Falls back to the static label when no `primaryResultLabel` is
+ * supplied (e.g. before data has loaded or for an empty/null label).
+ */
+export function periodMetricLabel(
+  metric: PeriodMetric,
+  primaryResultLabel?: string | null,
+): string {
+  const trimmedLabel = primaryResultLabel?.trim();
+  if (trimmedLabel) {
+    if (metric === "primary_results") return trimmedLabel;
+    if (metric === "cost_per_primary_results") return `$/${trimmedLabel}`;
+  }
+  return PERIOD_METRIC_LABELS[metric];
+}
+
 export type TreeLevel = "campaign" | "ad_set" | "creative";
 
 export type PeriodPivotInput = {

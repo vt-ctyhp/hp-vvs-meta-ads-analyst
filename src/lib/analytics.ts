@@ -27,6 +27,7 @@ import {
 import { buildSharedInsightFilters } from "./optimize-filters";
 import { createAdsAnalystClient } from "./ads-analyst-db";
 import { resolveCreativeDisplayMedia } from "./creative-display-media";
+import { getKpiProfile } from "./umbrella-kpi-profile";
 
 export type MetricSummary = {
   spend: number;
@@ -1461,32 +1462,9 @@ function getPrimaryOutcome(row: InsightRow, umbrella: CampaignUmbrella) {
   };
 }
 
-function getKpiProfile(umbrella: CampaignUmbrella) {
-  if (umbrella === "Book Appts US") {
-    return {
-      primaryMetric: "websiteBookings" as const,
-      primaryResultLabel: "Website Bookings",
-      secondaryMetric: null,
-      secondaryResultLabel: null,
-    };
-  }
-
-  if (umbrella === "Facebook US Product" || umbrella === "Facebook VN Product") {
-    return {
-      primaryMetric: "messagingContacts" as const,
-      primaryResultLabel: "Messaging Contacts",
-      secondaryMetric: "newMessagingContacts" as const,
-      secondaryResultLabel: "New Msg Contacts",
-    };
-  }
-
-  return {
-    primaryMetric: "messagingContacts" as const,
-    primaryResultLabel: "Messaging Contacts",
-    secondaryMetric: null,
-    secondaryResultLabel: null,
-  };
-}
+// `getKpiProfile` lives in `./umbrella-kpi-profile` so the same mapping
+// drives both server-side aggregation (here) and client-side UI labels
+// (the analyst Metric dropdown + sticky-bar standfirst).
 
 function actionCount(actions: unknown, exactActionTypes: string[]) {
   if (!Array.isArray(actions)) return 0;
