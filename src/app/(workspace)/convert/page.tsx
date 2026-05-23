@@ -108,7 +108,23 @@ async function ConvertStatus({ data }: { data: ConvertData }) {
 
 async function ConvertFunnel({ data }: { data: ConvertData }) {
   const funnel = await data.funnel;
-  return <FunnelViz steps={funnel.funnel} />;
+  return (
+    <FunnelViz
+      steps={funnel.funnel}
+      bookingSignals={[
+        {
+          label: "Confirmed Schedule conversions",
+          source: "website_conversions / Schedule",
+          count: funnel.overview.websiteScheduleConversions,
+        },
+        {
+          label: "Paid Meta Schedule conversions",
+          source: "website_conversions / Schedule / paid_meta",
+          count: funnel.overview.paidMetaScheduleConversions,
+        },
+      ]}
+    />
+  );
 }
 
 async function ConvertLedger({ data }: { data: ConvertData }) {
@@ -144,6 +160,8 @@ function emptyFunnel(rangeRequest: CustomerJourneyLedgerRequest): WebsiteFunnelD
       scrollDepthEvents: 0,
       bookingStarts: 0,
       schedules: 0,
+      websiteScheduleConversions: 0,
+      paidMetaScheduleConversions: 0,
       metaAttributedBookings: 0,
       // Fields added by main's attribution-ledger work (commit 7dd4293). Stub
       // them at 0 so the empty-funnel placeholder still satisfies
