@@ -505,10 +505,10 @@ function CapiChip({
   if (!hasConversion) {
     return (
       <span
-        title="No booking conversion"
+        title="No website conversion row"
         className="inline-flex h-7 items-center justify-center whitespace-nowrap border border-hp-rule bg-hp-card px-2 text-[9px] font-bold uppercase leading-none tracking-[0.06em] text-hp-muted"
       >
-        no booking
+        no CAPI
       </span>
     );
   }
@@ -567,7 +567,10 @@ function emptyJourneyRow(
     adId: null,
     adsetId: null,
     acuityAppointmentId,
+    appointmentSourceId: null,
+    appointmentStatus: null,
     appointmentType: null,
+    appointmentVisitDateTime: null,
     brand: null,
     campaignId: null,
     capiStatus: null,

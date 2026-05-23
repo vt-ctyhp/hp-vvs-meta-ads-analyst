@@ -918,6 +918,7 @@ function confidenceLabel(level: AttributionLedgerDetailData["confidence"]["level
   const labels: Record<AttributionLedgerDetailData["confidence"]["level"], string> = {
     browser_session: "Same browser session",
     browser_visitor: "Same browser visitor",
+    appointment_only: "Appointment only",
     conversion_only: "Booking only",
     unmatched: "Unmatched",
   };
@@ -984,7 +985,10 @@ function emptyTimelineRow(
     adId: null,
     adsetId: null,
     acuityAppointmentId,
+    appointmentSourceId: null,
+    appointmentStatus: null,
     appointmentType: null,
+    appointmentVisitDateTime: null,
     bookingTime: null,
     brand: null,
     browserName: null,

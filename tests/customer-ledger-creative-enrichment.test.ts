@@ -344,7 +344,10 @@ function ledgerRow(overrides: Partial<CustomerLedgerRow> = {}): CustomerLedgerRo
     adId: "ad-1",
     adsetId: "adset-1",
     acuityAppointmentId: "1708622080",
+    appointmentSourceId: null,
+    appointmentStatus: null,
     appointmentType: "Schedule",
+    appointmentVisitDateTime: null,
     brand: "HP",
     campaignId: "campaign-1",
     capiStatus: "sent",
@@ -368,6 +371,7 @@ function ledgerRow(overrides: Partial<CustomerLedgerRow> = {}): CustomerLedgerRo
     rowId: "conversion-1",
     sessionId: "session-1",
     sourceType: "paid_meta",
+    stageKeys: ["confirmed_website_bookings"],
     visitorId: "visitor-1",
     ...overrides,
   };
@@ -378,6 +382,9 @@ function journeyDetail(
 ): CustomerJourneyLedgerDetailData {
   return {
     acuityAppointmentId: "1708622080",
+    appointmentSourceId: null,
+    appointmentStatus: null,
+    appointmentVisitDateTime: null,
     booking: {
       appointmentType: "Schedule",
       bookingTime: "2026-05-20T23:49:18.756Z",

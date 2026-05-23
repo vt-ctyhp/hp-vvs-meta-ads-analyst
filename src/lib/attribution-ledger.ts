@@ -9,6 +9,7 @@ export {
 
 export type {
   CustomerJourneyLedgerConversionRow as AttributionLedgerConversionRow,
+  CustomerJourneyLedgerAppointmentRow as AttributionLedgerAppointmentRow,
   CustomerJourneyLedgerData as AttributionLedgerData,
   CustomerJourneyLedgerDetailData as AttributionLedgerDetailData,
   CustomerJourneyLedgerEventRow as AttributionLedgerEventRow,

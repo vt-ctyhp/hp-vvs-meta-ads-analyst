@@ -8,8 +8,10 @@ const DEFAULT_LEDGER_DAYS = 30;
 const MAX_LEDGER_VISITORS = 500;
 const MAX_RELATED_ROWS = 2500;
 const VISITOR_ID_QUERY_BATCH_SIZE = 100;
+const ACUITY_APPOINTMENT_ID_BATCH_SIZE = 100;
 const DETAIL_EVENT_WINDOW_AFTER_BOOKING_MS = 60_000;
 const PAID_META_ATTRIBUTION_LOOKBACK_DAYS = 30;
+const INVALID_APPOINTMENT_STATUSES = new Set(["canceled", "cancelled", "rescheduled"]);
 
 type JsonRecord = Record<string, unknown>;
 
@@ -22,7 +24,10 @@ export type CustomerJourneyLedgerRow = {
   adId: string | null;
   adsetId: string | null;
   acuityAppointmentId: string | null;
+  appointmentSourceId: string | null;
+  appointmentStatus: string | null;
   appointmentType: string | null;
+  appointmentVisitDateTime: string | null;
   bookingTime: string | null;
   brand: string | null;
   browserName: string | null;
@@ -111,6 +116,9 @@ export type CustomerJourneyLedgerTimelineEvent = {
 
 export type CustomerJourneyLedgerDetailData = {
   acuityAppointmentId: string | null;
+  appointmentSourceId: string | null;
+  appointmentStatus: string | null;
+  appointmentVisitDateTime: string | null;
   booking: {
     appointmentType: string | null;
     bookingTime: string | null;
@@ -126,7 +134,7 @@ export type CustomerJourneyLedgerDetailData = {
   };
   confidence: {
     explanation: string;
-    level: "browser_session" | "browser_visitor" | "conversion_only" | "unmatched";
+    level: "browser_session" | "browser_visitor" | "conversion_only" | "appointment_only" | "unmatched";
     signals: string[];
   };
   creditedTouch: CustomerJourneyLedgerTouchSummary | null;
@@ -155,6 +163,9 @@ type AttributionTouch = {
 };
 
 export type CustomerJourneyLedgerEventRow = {
+  acuity_appointment_id: string | null;
+  appointment_type: string | null;
+  brand?: string | null;
   browser_name: string | null;
   device_category: string | null;
   event_id: string;
@@ -279,6 +290,21 @@ export type CustomerJourneyLedgerConversionRow = {
   visitor_id: string | null;
 };
 
+export type CustomerJourneyLedgerAppointmentRow = {
+  appt_id: string;
+  booking_source: string;
+  brand: string | null;
+  booked_at: string | null;
+  created_at: string;
+  external_booking_id: string | null;
+  id: string;
+  raw_payload: JsonRecord | null;
+  source: string | null;
+  status: string | null;
+  visit_date_time: string | null;
+  visit_type: string | null;
+};
+
 export type CustomerJourneyLedgerClient = {
   from: (table: "website_visitors") => {
     select: (columns: string) => LedgerSelectChain<CustomerJourneyLedgerVisitorRow[]>;
@@ -294,6 +320,10 @@ export type CustomerJourneyLedgerClient = {
 } & {
   from: (table: "website_conversions") => {
     select: (columns: string) => LedgerSelectChain<CustomerJourneyLedgerConversionRow[]>;
+  };
+} & {
+  from: (table: "appointment_events") => {
+    select: (columns: string) => LedgerSelectChain<CustomerJourneyLedgerAppointmentRow[]>;
   };
 };
 
@@ -358,6 +388,7 @@ const EVENT_COLUMNS = [
   "event_id",
   "session_id",
   "visitor_id",
+  "brand",
   "source",
   "event_name",
   "event_type",
@@ -387,6 +418,8 @@ const EVENT_COLUMNS = [
   "browser_name",
   "os_name",
   "source_type",
+  "acuity_appointment_id",
+  "appointment_type",
   "customer_name",
   "customer_email",
   "customer_phone",
@@ -430,6 +463,21 @@ const CONVERSION_COLUMNS = [
   "raw_json",
 ].join(",");
 
+const APPOINTMENT_COLUMNS = [
+  "id",
+  "appt_id",
+  "booking_source",
+  "external_booking_id",
+  "visit_date_time",
+  "visit_type",
+  "brand",
+  "status",
+  "source",
+  "booked_at",
+  "created_at",
+  "raw_payload",
+].join(",");
+
 export async function fetchCustomerJourneyLedgerData(
   input: {
     days?: number | null;
@@ -444,67 +492,97 @@ export async function fetchCustomerJourneyLedgerData(
   // Use the limited-mode web client. In limited-access mode (staging today,
   // production after cutover) SUPABASE_SERVICE_ROLE_KEY is intentionally
   // absent — `createServiceClient()` would throw. The web role's RLS still
-  // permits reads on website_visitors / website_sessions / website_events /
-  // website_conversions for the current ads-analyst environment.
+  // permits reads on the customer journey tables for the current ads-analyst
+  // environment.
   const startIso = `${range.start}T00:00:00.000Z`;
   const endIso = `${range.end}T23:59:59.999Z`;
 
-  const [visitorsResult, rangeConversionsResult] = await Promise.all([
-    client
-      .from("website_visitors")
-      .select(VISITOR_COLUMNS)
-      .gte("last_seen_at", startIso)
-      .lte("last_seen_at", endIso)
-      .order("last_seen_at", { ascending: false })
-      .limit(MAX_LEDGER_VISITORS),
-    client
-      .from("website_conversions")
-      .select(CONVERSION_COLUMNS)
-      .gte("occurred_at", startIso)
-      .lte("occurred_at", endIso)
-      .order("occurred_at", { ascending: false })
-      .limit(MAX_RELATED_ROWS),
+  const appointmentsResult = await client
+    .from("appointment_events")
+    .select(APPOINTMENT_COLUMNS)
+    .gte("visit_date_time", startIso)
+    .lte("visit_date_time", endIso)
+    .order("visit_date_time", { ascending: false })
+    .limit(MAX_RELATED_ROWS);
+
+  if (appointmentsResult.error) throw appointmentsResult.error;
+
+  const appointments = uniqueValidAcuityAppointments(appointmentsResult.data || []);
+  const appointmentIds = appointments.map((appointment) => appointmentAcuityId(appointment));
+
+  if (!appointmentIds.length) {
+    return buildCustomerJourneyLedgerData({
+      appointments,
+      conversions: [],
+      events: [],
+      range,
+      sessions: [],
+      visitors: [],
+    });
+  }
+
+  const [rangeConversions, appointmentEvents] = await Promise.all([
+    fetchRowsByAcuityAppointmentIds<CustomerJourneyLedgerConversionRow>(
+      appointmentIds,
+      (batch) =>
+        client
+          .from("website_conversions")
+          .select(CONVERSION_COLUMNS)
+          .in("acuity_appointment_id", batch)
+          .order("occurred_at", { ascending: false })
+          .limit(MAX_RELATED_ROWS),
+      "occurred_at",
+    ),
+    fetchRowsByAcuityAppointmentIds<CustomerJourneyLedgerEventRow>(
+      appointmentIds,
+      (batch) =>
+        client
+          .from("website_events")
+          .select(EVENT_COLUMNS)
+          .in("acuity_appointment_id", batch)
+          .order("occurred_at", { ascending: false })
+          .limit(MAX_RELATED_ROWS),
+      "occurred_at",
+    ),
   ]);
 
-  if (visitorsResult.error) throw visitorsResult.error;
-  if (rangeConversionsResult.error) throw rangeConversionsResult.error;
-
-  const rangeConversions = rangeConversionsResult.data || [];
-  const initialVisitors = visitorsResult.data || [];
-  const initialVisitorIds = new Set(initialVisitors.map((visitor) => visitor.visitor_id));
-  const missingConversionVisitorIds = uniqueStrings(
-    rangeConversions
+  const visitorIdsFromAppointments = uniqueStrings([
+    ...rangeConversions
       .map((conversion) => conversion.visitor_id)
-      .filter((visitorId): visitorId is string => Boolean(visitorId))
-      .filter((visitorId) => !initialVisitorIds.has(visitorId)),
-  );
-  const extraVisitorsResult = missingConversionVisitorIds.length
-    ? await client
-        .from("website_visitors")
-        .select(VISITOR_COLUMNS)
-        .in("visitor_id", missingConversionVisitorIds)
-        .limit(MAX_LEDGER_VISITORS)
-    : null;
-
-  if (extraVisitorsResult?.error) throw extraVisitorsResult.error;
-
-  const visitors = uniqueVisitors([
-    ...initialVisitors,
-    ...(extraVisitorsResult?.data || []),
+      .filter((visitorId): visitorId is string => Boolean(visitorId)),
+    ...appointmentEvents
+      .map((event) => event.visitor_id)
+      .filter((visitorId): visitorId is string => Boolean(visitorId)),
   ]);
+
+  const visitors = visitorIdsFromAppointments.length
+    ? uniqueVisitors(
+        await fetchRowsByVisitorIds<CustomerJourneyLedgerVisitorRow>(
+          visitorIdsFromAppointments,
+          (batch) =>
+            client
+              .from("website_visitors")
+              .select(VISITOR_COLUMNS)
+              .in("visitor_id", batch)
+              .limit(MAX_LEDGER_VISITORS),
+          "last_seen_at",
+        ),
+      )
+    : [];
   const visitorIds = visitors.map((visitor) => visitor.visitor_id);
 
   if (!visitorIds.length) {
     return buildCustomerJourneyLedgerData({
+      appointments,
       conversions: rangeConversions,
-      events: [],
+      events: appointmentEvents,
       range,
       sessions: [],
       visitors,
     });
   }
 
-  const [sessions, events, conversions] = await Promise.all([
+  const [sessions, visitorEvents, visitorConversions] = await Promise.all([
     fetchRowsByVisitorIds<CustomerJourneyLedgerSessionRow>(
       visitorIds,
       (batch) =>
@@ -541,11 +619,15 @@ export async function fetchCustomerJourneyLedgerData(
   ]);
 
   return buildCustomerJourneyLedgerData({
+    appointments,
     conversions: uniqueConversions([
       ...rangeConversions,
-      ...conversions,
+      ...visitorConversions,
     ]),
-    events,
+    events: uniqueEvents([
+      ...appointmentEvents,
+      ...visitorEvents,
+    ]),
     range,
     sessions,
     visitors,
@@ -560,6 +642,24 @@ async function fetchRowsByVisitorIds<Row>(
   const rows: Row[] = [];
 
   for (const batch of chunks(visitorIds, VISITOR_ID_QUERY_BATCH_SIZE)) {
+    const result = await queryBatch(batch);
+    if (result.error) throw result.error;
+    rows.push(...(result.data || []));
+  }
+
+  return rows
+    .sort((left, right) => timestampValue(right[timestampColumn]) - timestampValue(left[timestampColumn]))
+    .slice(0, MAX_RELATED_ROWS);
+}
+
+async function fetchRowsByAcuityAppointmentIds<Row>(
+  acuityAppointmentIds: string[],
+  queryBatch: (acuityAppointmentIdBatch: string[]) => LedgerSelectChain<Row[]>,
+  timestampColumn: keyof Row,
+) {
+  const rows: Row[] = [];
+
+  for (const batch of chunks(acuityAppointmentIds, ACUITY_APPOINTMENT_ID_BATCH_SIZE)) {
     const result = await queryBatch(batch);
     if (result.error) throw result.error;
     rows.push(...(result.data || []));
@@ -648,9 +748,14 @@ async function fetchCustomerJourneyLedgerVisitorDetail(
       skipVisitorLookup: true,
     });
   }
+  const appointment = await fetchDetailAppointmentByIdentity(client, {
+    acuityAppointmentId: input.acuityAppointmentId,
+    eventId: input.eventId,
+  });
 
   return buildCustomerJourneyLedgerDetailData({
     acuityAppointmentId: input.acuityAppointmentId,
+    appointment,
     eventId: input.eventId,
     conversions: conversionsResult.data || [],
     events: eventsResult.data || [],
@@ -668,19 +773,40 @@ async function fetchCustomerJourneyLedgerConversionOnlyDetail(
   },
 ): Promise<CustomerJourneyLedgerDetailData | null> {
   const conversion = await fetchDetailConversionByIdentity(client, input);
-  if (!conversion) return null;
+  const appointment = await fetchDetailAppointmentByIdentity(client, {
+    acuityAppointmentId: conversion?.acuity_appointment_id || input.acuityAppointmentId,
+    eventId: conversion?.event_id || input.eventId,
+  });
 
-  const visitorId = conversion.visitor_id?.trim();
+  const visitorId = conversion?.visitor_id?.trim();
   if (visitorId && !input.skipVisitorLookup) {
     const visitorDetail = await fetchCustomerJourneyLedgerVisitorDetail(client, {
-      acuityAppointmentId: conversion.acuity_appointment_id || input.acuityAppointmentId,
-      eventId: conversion.event_id || input.eventId,
+      acuityAppointmentId: conversion?.acuity_appointment_id || input.acuityAppointmentId,
+      eventId: conversion?.event_id || input.eventId,
       visitorId,
     });
     if (visitorDetail) return visitorDetail;
   }
 
-  return buildCustomerJourneyLedgerConversionOnlyDetailData({ conversion });
+  if (conversion) {
+    return buildCustomerJourneyLedgerConversionOnlyDetailData({ appointment, conversion });
+  }
+
+  const event = await fetchDetailEventByIdentity(client, input);
+  if (event?.visitor_id && !input.skipVisitorLookup) {
+    const visitorDetail = await fetchCustomerJourneyLedgerVisitorDetail(client, {
+      acuityAppointmentId: event.acuity_appointment_id || input.acuityAppointmentId,
+      eventId: event.event_id || input.eventId,
+      visitorId: event.visitor_id,
+    });
+    if (visitorDetail) return visitorDetail;
+  }
+
+  if (appointment || event) {
+    return buildCustomerJourneyLedgerAppointmentOnlyDetailData({ appointment, event });
+  }
+
+  return null;
 }
 
 async function fetchDetailConversionByIdentity(
@@ -718,8 +844,79 @@ async function fetchDetailConversionByIdentity(
   return (result.data || [])[0] || null;
 }
 
+async function fetchDetailAppointmentByIdentity(
+  client: CustomerJourneyLedgerClient,
+  input: {
+    acuityAppointmentId?: string | null;
+    eventId?: string | null;
+  },
+) {
+  const acuityAppointmentId = input.acuityAppointmentId?.trim();
+
+  if (acuityAppointmentId) {
+    const result = await client
+      .from("appointment_events")
+      .select(APPOINTMENT_COLUMNS)
+      .eq("external_booking_id", acuityAppointmentId)
+      .order("visit_date_time", { ascending: false })
+      .limit(1);
+    if (result.error) throw result.error;
+    const appointment = (result.data || [])[0] || null;
+    if (appointment) return appointment;
+  }
+
+  const event = await fetchDetailEventByIdentity(client, input);
+  const eventAcuityId = event?.acuity_appointment_id?.trim();
+  if (!eventAcuityId || eventAcuityId === acuityAppointmentId) return null;
+
+  const result = await client
+    .from("appointment_events")
+    .select(APPOINTMENT_COLUMNS)
+    .eq("external_booking_id", eventAcuityId)
+    .order("visit_date_time", { ascending: false })
+    .limit(1);
+  if (result.error) throw result.error;
+  return (result.data || [])[0] || null;
+}
+
+async function fetchDetailEventByIdentity(
+  client: CustomerJourneyLedgerClient,
+  input: {
+    acuityAppointmentId?: string | null;
+    eventId?: string | null;
+  },
+) {
+  const acuityAppointmentId = input.acuityAppointmentId?.trim();
+  const eventId = input.eventId?.trim();
+
+  if (acuityAppointmentId) {
+    const result = await client
+      .from("website_events")
+      .select(EVENT_COLUMNS)
+      .eq("acuity_appointment_id", acuityAppointmentId)
+      .order("occurred_at", { ascending: false })
+      .limit(1);
+    if (result.error) throw result.error;
+    const event = (result.data || [])[0] || null;
+    if (event) return event;
+  }
+
+  const normalizedEventId = eventId || (acuityAppointmentId ? `acuity-${acuityAppointmentId}` : null);
+  if (!normalizedEventId) return null;
+
+  const result = await client
+    .from("website_events")
+    .select(EVENT_COLUMNS)
+    .eq("event_id", normalizedEventId)
+    .order("occurred_at", { ascending: false })
+    .limit(1);
+  if (result.error) throw result.error;
+  return (result.data || [])[0] || null;
+}
+
 export function buildCustomerJourneyLedgerDetailData(input: {
   acuityAppointmentId?: string | null;
+  appointment?: CustomerJourneyLedgerAppointmentRow | null;
   eventId?: string | null;
   conversions: CustomerJourneyLedgerConversionRow[];
   events: CustomerJourneyLedgerEventRow[];
@@ -730,6 +927,7 @@ export function buildCustomerJourneyLedgerDetailData(input: {
     acuityAppointmentId: input.acuityAppointmentId,
     eventId: input.eventId,
   });
+  const appointment = input.appointment || null;
   const sessionsByVisitor = latestByVisitor(input.sessions, "last_seen_at");
   const sessionsByVisitorAndId = groupSessionsByVisitorAndId(input.sessions);
   const session = selectSessionForConversion({
@@ -757,6 +955,7 @@ export function buildCustomerJourneyLedgerDetailData(input: {
   const returnEvent = selectReturnEvent(input.events, conversion);
   const returnTouch = returnEvent ? eventRowTouch(returnEvent) : null;
   const timeline = buildDetailTimeline({
+    appointment,
     conversion,
     creditedTouch,
     events: input.events,
@@ -770,17 +969,29 @@ export function buildCustomerJourneyLedgerDetailData(input: {
         metaEventId: conversion.meta_event_id,
         sessionId: conversion.session_id,
       }
+    : appointment
+      ? {
+          appointmentType: appointment.visit_type,
+          bookingTime: appointmentVisitDateTime(appointment),
+          eventId: null,
+          metaEventId: null,
+          sessionId: session?.session_id || null,
+        }
     : null;
 
   return {
-    acuityAppointmentId: conversion?.acuity_appointment_id || input.acuityAppointmentId || null,
+    acuityAppointmentId:
+      conversion?.acuity_appointment_id || appointmentAcuityId(appointment) || input.acuityAppointmentId || null,
+    appointmentSourceId: appointmentSourceId(appointment),
+    appointmentStatus: appointmentStatus(appointment),
+    appointmentVisitDateTime: appointmentVisitDateTime(appointment),
     booking,
     capi: {
       eventId: conversion?.meta_event_id || null,
       status: conversion?.meta_capi_status || null,
       testMode: conversion?.meta_capi_test_mode ?? null,
     },
-    confidence: confidenceForDetail(input.visitor, conversion, session),
+    confidence: confidenceForDetail(input.visitor, conversion, session, appointment),
     creditedTouch: summarizeTouch(creditedTouch),
     geoCity: geo.geoCity,
     geoCountry: geo.geoCountry,
@@ -788,21 +999,27 @@ export function buildCustomerJourneyLedgerDetailData(input: {
     geoTimezone: geo.geoTimezone,
     bookingSessionEntrySource: summarizeTouch(returnTouch),
     returnTouch: summarizeTouch(returnTouch),
-    summary: summarizePath(
-      creditedTouch,
-      returnTouch,
-      conversion,
-      returnEvent ? bookingSessionSourceLabelFromEvent(returnEvent, returnTouch) : null,
-    ),
+    summary: conversion
+      ? summarizePath(
+          creditedTouch,
+          returnTouch,
+          conversion,
+          returnEvent ? bookingSessionSourceLabelFromEvent(returnEvent, returnTouch) : null,
+        )
+      : appointment
+        ? "Acuity appointment found, but no matching website conversion record was available."
+        : null,
     timeline,
     visitorId: input.visitor.visitor_id,
   };
 }
 
 export function buildCustomerJourneyLedgerConversionOnlyDetailData(input: {
+  appointment?: CustomerJourneyLedgerAppointmentRow | null;
   conversion: CustomerJourneyLedgerConversionRow;
 }): CustomerJourneyLedgerDetailData {
   const conversion = input.conversion;
+  const appointment = input.appointment || null;
   const creditedTouch = selectPaidTouchForConversion(
     conversion,
     [
@@ -813,6 +1030,7 @@ export function buildCustomerJourneyLedgerConversionOnlyDetailData(input: {
     [conversion],
   );
   const timeline = buildDetailTimeline({
+    appointment,
     conversion,
     creditedTouch,
     events: [],
@@ -821,6 +1039,9 @@ export function buildCustomerJourneyLedgerConversionOnlyDetailData(input: {
 
   return {
     acuityAppointmentId: conversion.acuity_appointment_id || null,
+    appointmentSourceId: appointmentSourceId(appointment),
+    appointmentStatus: appointmentStatus(appointment),
+    appointmentVisitDateTime: appointmentVisitDateTime(appointment),
     booking: {
       appointmentType: conversion.appointment_type,
       bookingTime: conversion.occurred_at,
@@ -847,7 +1068,60 @@ export function buildCustomerJourneyLedgerConversionOnlyDetailData(input: {
   };
 }
 
+export function buildCustomerJourneyLedgerAppointmentOnlyDetailData(input: {
+  appointment?: CustomerJourneyLedgerAppointmentRow | null;
+  event?: CustomerJourneyLedgerEventRow | null;
+}): CustomerJourneyLedgerDetailData {
+  const appointment = input.appointment || null;
+  const event = input.event || null;
+  const creditedTouch = event ? eventRowTouch(event) : null;
+  const appointmentTime = appointmentVisitDateTime(appointment) || event?.occurred_at || null;
+  const appointmentId = appointmentAcuityId(appointment) || event?.acuity_appointment_id || null;
+  const geo = geoFromRecords(event || undefined);
+  const timeline = buildDetailTimeline({
+    appointment,
+    conversion: null,
+    creditedTouch,
+    events: event ? [event] : [],
+  });
+
+  return {
+    acuityAppointmentId: appointmentId,
+    appointmentSourceId: appointmentSourceId(appointment),
+    appointmentStatus: appointmentStatus(appointment),
+    appointmentVisitDateTime: appointmentVisitDateTime(appointment),
+    booking: appointment || event
+      ? {
+          appointmentType: appointment?.visit_type || event?.appointment_type || null,
+          bookingTime: appointmentTime,
+          eventId: event?.event_id || null,
+          metaEventId: null,
+          sessionId: event?.session_id || null,
+        }
+      : null,
+    capi: {
+      eventId: null,
+      status: null,
+      testMode: null,
+    },
+    bookingSessionEntrySource: summarizeTouch(creditedTouch),
+    confidence: confidenceForAppointmentOnly(appointment, event),
+    creditedTouch: summarizeTouch(creditedTouch),
+    geoCity: geo.geoCity,
+    geoCountry: geo.geoCountry,
+    geoRegion: geo.geoRegion,
+    geoTimezone: geo.geoTimezone,
+    returnTouch: summarizeTouch(creditedTouch),
+    summary: appointment
+      ? "Acuity appointment found, but no matching website conversion record was available."
+      : "Website booking event found, but no matching conversion or appointment record was available.",
+    timeline,
+    visitorId: event?.visitor_id || null,
+  };
+}
+
 export function buildCustomerJourneyLedgerData(input: {
+  appointments?: CustomerJourneyLedgerAppointmentRow[];
   conversions: CustomerJourneyLedgerConversionRow[];
   events?: CustomerJourneyLedgerEventRow[];
   range: CustomerJourneyLedgerData["timeRange"];
@@ -877,6 +1151,7 @@ export function buildCustomerJourneyLedgerData(input: {
 }
 
 export function buildCustomerJourneyLedgerRows(input: {
+  appointments?: CustomerJourneyLedgerAppointmentRow[];
   conversions: CustomerJourneyLedgerConversionRow[];
   events?: CustomerJourneyLedgerEventRow[];
   sessions: CustomerJourneyLedgerSessionRow[];
@@ -885,7 +1160,51 @@ export function buildCustomerJourneyLedgerRows(input: {
   const sessionsByVisitor = latestByVisitor(input.sessions, "last_seen_at");
   const sessionsByVisitorAndId = groupSessionsByVisitorAndId(input.sessions);
   const eventsByVisitor = groupByVisitor(input.events || []);
+  const eventsByAcuityId = groupByAcuityAppointmentId(input.events || []);
   const visitorsById = new Map(input.visitors.map((visitor) => [visitor.visitor_id, visitor]));
+  const appointments = uniqueValidAcuityAppointments(input.appointments || []);
+  const conversionsByAcuityId = latestConversionByAcuityAppointmentId(input.conversions);
+
+  if (appointments.length) {
+    const appointmentRows = appointments.map((appointment) => {
+      const acuityAppointmentId = appointmentAcuityId(appointment);
+      const conversion = conversionsByAcuityId.get(acuityAppointmentId) || null;
+      const appointmentEvents = eventsByAcuityId.get(acuityAppointmentId) || [];
+      const visitorId =
+        conversion?.visitor_id ||
+        appointmentEvents.find((event) => event.visitor_id)?.visitor_id ||
+        null;
+      const visitor = visitorId ? visitorsById.get(visitorId) || null : null;
+      const visitorEvents = visitorId ? eventsByVisitor.get(visitorId) || [] : [];
+      const events = uniqueEvents([...appointmentEvents, ...visitorEvents]);
+
+      if (conversion) {
+        if (!visitor) {
+          return withAppointmentFields(
+            conversionOnlyLedgerRow(conversion, events, input.conversions),
+            appointment,
+          );
+        }
+
+        const session = selectSessionForConversion({
+          conversion,
+          latestSession: sessionsByVisitor.get(visitor.visitor_id) || null,
+          sessionsById: sessionsByVisitorAndId.get(visitor.visitor_id),
+        });
+        return withAppointmentFields(
+          conversionLedgerRow({ allConversions: input.conversions, conversion, events, session, visitor }),
+          appointment,
+        );
+      }
+
+      const latestSession = visitor ? sessionsByVisitor.get(visitor.visitor_id) || null : null;
+      return appointmentLedgerRow({ appointment, events, session: latestSession, visitor });
+    });
+
+    return appointmentRows.sort(
+      (a, b) => timestampValue(b.appointmentVisitDateTime || b.lastSeen) - timestampValue(a.appointmentVisitDateTime || a.lastSeen),
+    );
+  }
 
   const conversionRows = input.conversions.map((conversion) => {
     const visitor = conversion.visitor_id ? visitorsById.get(conversion.visitor_id) || null : null;
@@ -957,7 +1276,10 @@ function conversionLedgerRow(input: {
     adId,
     adsetId,
     acuityAppointmentId: conversion.acuity_appointment_id || null,
+    appointmentSourceId: null,
+    appointmentStatus: null,
     appointmentType: conversion.appointment_type || null,
+    appointmentVisitDateTime: null,
     bookingTime: conversion.occurred_at,
     brand: conversion.brand || null,
     browserName,
@@ -1021,7 +1343,10 @@ function conversionOnlyLedgerRow(
     adId,
     adsetId,
     acuityAppointmentId: conversion.acuity_appointment_id || null,
+    appointmentSourceId: null,
+    appointmentStatus: null,
     appointmentType: conversion.appointment_type || null,
+    appointmentVisitDateTime: null,
     bookingTime: conversion.occurred_at,
     brand: conversion.brand || null,
     browserName,
@@ -1051,6 +1376,89 @@ function conversionOnlyLedgerRow(
     sessionId: conversion.session_id || null,
     stageKeys: stageKeysForConversion({ conversion, events, paidTouch }),
     visitorId: conversion.visitor_id || null,
+  };
+}
+
+function appointmentLedgerRow(input: {
+  appointment: CustomerJourneyLedgerAppointmentRow;
+  events: CustomerJourneyLedgerEventRow[];
+  session: CustomerJourneyLedgerSessionRow | null;
+  visitor: CustomerJourneyLedgerVisitorRow | null;
+}): CustomerJourneyLedgerRow {
+  const { appointment, events, session, visitor } = input;
+  const appointmentTime = appointmentVisitDateTime(appointment) || appointment.created_at;
+  const eventTouches = events.flatMap(eventAttributionTouches);
+  const paidTouch = selectOriginalPaidTouch(
+    [
+      attributionTouch(visitor?.last_paid_touch),
+      attributionTouch(session?.last_paid_touch),
+      ...eventTouches,
+    ],
+    { maxCapturedAt: appointmentTime },
+  );
+  const campaignId = paidTouch?.utm?.campaignId || null;
+  const adsetId = paidTouch?.utm?.adsetId || null;
+  const adId = paidTouch?.utm?.adId || null;
+  const placement = paidTouch?.utm?.placement || null;
+  const source = paidTouch?.utm?.source || paidTouch?.sourceType || paidTouch?.source || null;
+  const deviceCategory = visitor?.device_category || session?.device_category || paidTouch?.deviceCategory || null;
+  const browserName = visitor?.browser_name || session?.browser_name || paidTouch?.browserName || null;
+  const osName = visitor?.os_name || session?.os_name || paidTouch?.osName || null;
+  const customer = appointmentCustomer(appointment);
+  const geo = geoFromRecords(visitor, session, ...events);
+
+  return {
+    adId,
+    adsetId,
+    acuityAppointmentId: appointmentAcuityId(appointment) || null,
+    appointmentSourceId: appointmentSourceId(appointment),
+    appointmentStatus: appointmentStatus(appointment),
+    appointmentType: appointment.visit_type || null,
+    appointmentVisitDateTime: appointmentVisitDateTime(appointment),
+    bookingTime: null,
+    brand: appointment.brand || null,
+    browserName,
+    campaignId,
+    capiStatus: null,
+    conversionEventId: null,
+    customerEmail: customer.email || visitor?.customer_email || session?.customer_email || null,
+    customerName: customer.name || visitor?.customer_name || session?.customer_name || null,
+    customerPhone: customer.phone || visitor?.customer_phone || session?.customer_phone || null,
+    deviceBrowser: formatDeviceBrowser(deviceCategory, browserName, osName),
+    deviceCategory,
+    fbc: visitor?.fbc || session?.fbc || paidTouch?.fbc || null,
+    fbp: visitor?.fbp || session?.fbp || paidTouch?.fbp || null,
+    firstPage: visitor?.first_page_url || session?.first_page_url || events.find((event) => event.page_url)?.page_url || null,
+    geoCity: geo.geoCity,
+    geoCountry: geo.geoCountry,
+    geoRegion: geo.geoRegion,
+    geoTimezone: geo.geoTimezone,
+    hasConversion: false,
+    hasPaidTouch: Boolean(paidTouch),
+    lastPaidSource: source,
+    lastPaidSourceType: paidTouch?.sourceType || null,
+    lastSeen: appointmentTime,
+    metaEventId: null,
+    osName,
+    placement,
+    sessionId: session?.session_id || events.find((event) => event.session_id)?.session_id || null,
+    stageKeys: stageKeysForAppointment({ appointment, events, paidTouch }),
+    visitorId: visitor?.visitor_id || events.find((event) => event.visitor_id)?.visitor_id || null,
+  };
+}
+
+function withAppointmentFields(
+  row: CustomerJourneyLedgerRow,
+  appointment: CustomerJourneyLedgerAppointmentRow,
+): CustomerJourneyLedgerRow {
+  return {
+    ...row,
+    acuityAppointmentId: appointmentAcuityId(appointment) || row.acuityAppointmentId,
+    appointmentSourceId: appointmentSourceId(appointment),
+    appointmentStatus: appointmentStatus(appointment),
+    appointmentType: row.appointmentType || appointment.visit_type || null,
+    appointmentVisitDateTime: appointmentVisitDateTime(appointment),
+    lastSeen: appointmentVisitDateTime(appointment) || row.lastSeen,
   };
 }
 
@@ -1146,6 +1554,29 @@ function stageKeysForConversion(input: {
   return Array.from(keys);
 }
 
+function stageKeysForAppointment(input: {
+  appointment: CustomerJourneyLedgerAppointmentRow;
+  events: CustomerJourneyLedgerEventRow[];
+  paidTouch: AttributionTouch | null;
+}) {
+  const keys = new Set<string>(["confirmed_website_bookings"]);
+  const appointmentTime = timestampValue(appointmentVisitDateTime(input.appointment));
+  const relevantEvents = input.events.filter((event) => {
+    const eventTime = timestampValue(event.occurred_at);
+    return !appointmentTime || eventTime <= appointmentTime;
+  });
+
+  if (input.paidTouch) keys.add("paid_meta_bookings");
+  if (relevantEvents.some((event) => event.event_name === "PageView" && pageGroupFromUrl(event.page_url) === "booking")) {
+    keys.add("booking_page_view");
+  }
+  if (relevantEvents.some(isBookingFormStartedLedgerEvent)) keys.add("booking_form_started");
+  if (relevantEvents.some((event) => event.event_name === "BookingVisitSelected")) keys.add("visit_selected");
+  if (relevantEvents.some((event) => event.event_name === "BookingDateSelected")) keys.add("date_selected");
+  if (relevantEvents.some((event) => event.event_name === "BookingTimeSelected")) keys.add("time_selected");
+  return Array.from(keys);
+}
+
 function isBookingFormStartedLedgerEvent(event: CustomerJourneyLedgerEventRow) {
   return [
     "BookingFormStarted",
@@ -1225,6 +1656,7 @@ function selectReturnEvent(
 }
 
 function buildDetailTimeline(input: {
+  appointment?: CustomerJourneyLedgerAppointmentRow | null;
   conversion: CustomerJourneyLedgerConversionRow | null;
   creditedTouch: AttributionTouch | null;
   events: CustomerJourneyLedgerEventRow[];
@@ -1295,6 +1727,14 @@ function buildDetailTimeline(input: {
         sourceType: input.conversion.source_type,
       });
     }
+  } else if (input.appointment) {
+    timeline.push({
+      ...touchTimelineFields(null),
+      category: "conversion",
+      eventId: null,
+      label: "Acuity appointment scheduled",
+      occurredAt: appointmentVisitDateTime(input.appointment) || input.appointment.created_at,
+    });
   }
 
   return dedupeTimeline(timeline).sort((a, b) => timestampValue(a.occurredAt) - timestampValue(b.occurredAt));
@@ -1522,9 +1962,11 @@ function confidenceForDetail(
   visitor: CustomerJourneyLedgerVisitorRow,
   conversion: CustomerJourneyLedgerConversionRow | null,
   session: CustomerJourneyLedgerSessionRow | null,
+  appointment: CustomerJourneyLedgerAppointmentRow | null,
 ): CustomerJourneyLedgerDetailData["confidence"] {
   const signals = [`Same visitor ID: ${visitor.visitor_id}`];
 
+  if (appointment) signals.push(`Acuity appointment: ${appointmentAcuityId(appointment)}`);
   if (conversion?.session_id || session?.session_id) {
     signals.push(`Same session ID: ${conversion?.session_id || session?.session_id}`);
   }
@@ -1550,9 +1992,38 @@ function confidenceForDetail(
     };
   }
 
+  if (appointment) {
+    return {
+      explanation:
+        "Matched the Acuity appointment to website activity by visitor or event data, but no website conversion row was available.",
+      level: session ? "browser_session" : "browser_visitor",
+      signals,
+    };
+  }
+
   return {
     explanation: "No booking conversion was found for this visitor in the detail lookup.",
     level: "unmatched",
+    signals,
+  };
+}
+
+function confidenceForAppointmentOnly(
+  appointment: CustomerJourneyLedgerAppointmentRow | null,
+  event: CustomerJourneyLedgerEventRow | null,
+): CustomerJourneyLedgerDetailData["confidence"] {
+  const signals: string[] = [];
+  const acuityAppointmentId = appointmentAcuityId(appointment) || event?.acuity_appointment_id || null;
+  if (acuityAppointmentId) signals.push(`Acuity appointment: ${acuityAppointmentId}`);
+  if (appointment?.status) signals.push(`Appointment status: ${appointment.status}`);
+  if (event?.event_id) signals.push(`Website event: ${event.event_id}`);
+  if (event?.session_id) signals.push(`Session ID on event: ${event.session_id}`);
+  if (event?.visitor_id) signals.push(`Visitor ID on event: ${event.visitor_id}`);
+
+  return {
+    explanation:
+      "The Acuity appointment exists, but the browser journey is incomplete because no matching website conversion row was available.",
+    level: "appointment_only",
     signals,
   };
 }
@@ -1697,6 +2168,85 @@ function uniqueConversions(rows: CustomerJourneyLedgerConversionRow[]) {
   return Array.from(byEventId.values());
 }
 
+function uniqueEvents(rows: CustomerJourneyLedgerEventRow[]) {
+  const byEventId = new Map<string, CustomerJourneyLedgerEventRow>();
+  for (const row of rows) {
+    const existing = byEventId.get(row.event_id);
+    if (!existing || timestampValue(row.occurred_at) > timestampValue(existing.occurred_at)) {
+      byEventId.set(row.event_id, row);
+    }
+  }
+  return Array.from(byEventId.values());
+}
+
+function uniqueValidAcuityAppointments(rows: CustomerJourneyLedgerAppointmentRow[]) {
+  const byAcuityId = new Map<string, CustomerJourneyLedgerAppointmentRow>();
+
+  for (const row of rows) {
+    if (!isValidAcuityAppointment(row)) continue;
+    const acuityAppointmentId = appointmentAcuityId(row);
+    const existing = byAcuityId.get(acuityAppointmentId);
+    if (!existing || timestampValue(row.visit_date_time) > timestampValue(existing.visit_date_time)) {
+      byAcuityId.set(acuityAppointmentId, row);
+    }
+  }
+
+  return Array.from(byAcuityId.values());
+}
+
+function isValidAcuityAppointment(row: CustomerJourneyLedgerAppointmentRow) {
+  if (row.booking_source !== "acuity") return false;
+  if (!appointmentAcuityId(row)) return false;
+  if (!appointmentVisitDateTime(row)) return false;
+  return !INVALID_APPOINTMENT_STATUSES.has((row.status || "").toLowerCase());
+}
+
+function appointmentAcuityId(row: CustomerJourneyLedgerAppointmentRow | null | undefined) {
+  return row?.external_booking_id?.trim() || "";
+}
+
+function appointmentStatus(row: CustomerJourneyLedgerAppointmentRow | null | undefined) {
+  return row?.status || null;
+}
+
+function appointmentVisitDateTime(row: CustomerJourneyLedgerAppointmentRow | null | undefined) {
+  return typeof row?.visit_date_time === "string" && row.visit_date_time.trim()
+    ? row.visit_date_time
+    : null;
+}
+
+function appointmentSourceId(row: CustomerJourneyLedgerAppointmentRow | null | undefined) {
+  return row?.appt_id || appointmentAcuityId(row) || null;
+}
+
+function appointmentCustomer(row: CustomerJourneyLedgerAppointmentRow | null | undefined) {
+  const raw = objectRecord(row?.raw_payload);
+  const appointment = objectRecord(raw?.appointment);
+  const firstName = stringValue(appointment?.firstName);
+  const lastName = stringValue(appointment?.lastName);
+  const name = [firstName, lastName].filter(Boolean).join(" ") || null;
+  return {
+    email: stringValue(appointment?.email) || null,
+    name,
+    phone: stringValue(appointment?.phone) || null,
+  };
+}
+
+function latestConversionByAcuityAppointmentId(rows: CustomerJourneyLedgerConversionRow[]) {
+  const byAcuityId = new Map<string, CustomerJourneyLedgerConversionRow>();
+
+  for (const row of rows) {
+    const acuityAppointmentId = row.acuity_appointment_id?.trim();
+    if (!acuityAppointmentId) continue;
+    const existing = byAcuityId.get(acuityAppointmentId);
+    if (!existing || timestampValue(row.occurred_at) > timestampValue(existing.occurred_at)) {
+      byAcuityId.set(acuityAppointmentId, row);
+    }
+  }
+
+  return byAcuityId;
+}
+
 function latestByVisitor<Row extends { visitor_id: string | null }>(
   rows: Row[],
   timestampColumn: keyof Row,
@@ -1723,6 +2273,17 @@ function groupByVisitor<Row extends { visitor_id: string | null }>(rows: Row[]) 
   for (const row of rows) {
     if (!row.visitor_id) continue;
     groups.set(row.visitor_id, [...(groups.get(row.visitor_id) || []), row]);
+  }
+
+  return groups;
+}
+
+function groupByAcuityAppointmentId<Row extends { acuity_appointment_id: string | null }>(rows: Row[]) {
+  const groups = new Map<string, Row[]>();
+
+  for (const row of rows) {
+    if (!row.acuity_appointment_id) continue;
+    groups.set(row.acuity_appointment_id, [...(groups.get(row.acuity_appointment_id) || []), row]);
   }
 
   return groups;
