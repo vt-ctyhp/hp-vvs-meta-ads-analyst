@@ -29,6 +29,7 @@ import {
 import { buildSharedInsightFilters } from "./optimize-filters";
 import { createAdsAnalystClient } from "./ads-analyst-db";
 import { resolveCreativeDisplayMedia } from "./creative-display-media";
+import { runLimitedTasks } from "./query-concurrency";
 import { getKpiProfile } from "./umbrella-kpi-profile";
 
 export type MetricSummary = {
@@ -328,6 +329,7 @@ const EMPTY_METRICS: MetricSummary = {
 const WEBSITE_BOOKING_ACTION_TYPES = ["offsite_conversion.fb_pixel_custom"];
 const MESSAGING_CONTACT_ACTION_TYPES = ["onsite_conversion.total_messaging_connection"];
 const NEW_MESSAGING_CONTACT_ACTION_TYPES = ["onsite_conversion.messaging_first_reply"];
+const DASHBOARD_QUERY_CONCURRENCY = 3;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const EMPTY_PERIOD_BREAKDOWN: AnalystPeriodBreakdown = {
   periods: [],
@@ -413,7 +415,12 @@ export async function fetchDashboardData(
       normalizeAnalystPeriodCount(requestedPeriodCount),
     );
 
-    const coreMetadataPromise = Promise.all([
+    const [
+      brandsRes,
+      accountsRes,
+      reportsRes,
+      syncRunsRes,
+    ] = await Promise.all([
       supabase.from("brands").select(BRAND_COLUMNS),
       supabase.from("meta_ad_accounts").select(ACCOUNT_COLUMNS),
       supabase
@@ -427,7 +434,12 @@ export async function fetchDashboardData(
         .order("started_at", { ascending: false })
         .limit(8),
     ]);
-    const metadataCountPromise = Promise.all([
+    const [
+      campaignCountRes,
+      adSetCountRes,
+      adCountRes,
+      creativeCountRes,
+    ] = await Promise.all([
       supabase.from("meta_campaigns").select("id", { count: "exact", head: true }),
       supabase.from("meta_ad_sets").select("id", { count: "exact", head: true }),
       supabase.from("meta_ads").select("id", { count: "exact", head: true }),
@@ -519,7 +531,6 @@ export async function fetchDashboardData(
           limit: dateRange.days + 5,
         }),
     ];
-    const aggregatePromise = Promise.all(aggregateTasks.map((task) => task()));
 
     const priorAggregateTasks = [
       () =>
@@ -573,21 +584,8 @@ export async function fetchDashboardData(
           limit: 10000,
         }),
     ];
-    const priorAggregatePromise = Promise.all(priorAggregateTasks.map((task) => task()));
 
     const [
-      [
-        brandsRes,
-        accountsRes,
-        reportsRes,
-        syncRunsRes,
-      ],
-      [
-        campaignCountRes,
-        adSetCountRes,
-        adCountRes,
-        creativeCountRes,
-      ],
       [
         overviewRows,
         byBrandRows,
@@ -605,12 +603,10 @@ export async function fetchDashboardData(
         priorCampaignAggregateRows,
         priorDailyTrendAggregateRows,
       ],
-    ] = await Promise.all([
-      coreMetadataPromise,
-      metadataCountPromise,
-      aggregatePromise,
-      priorAggregatePromise,
-    ]);
+    ] = await runLimitedTasks([
+      async () => runLimitedTasks(aggregateTasks, DASHBOARD_QUERY_CONCURRENCY),
+      async () => runLimitedTasks(priorAggregateTasks, DASHBOARD_QUERY_CONCURRENCY),
+    ], 1);
 
     const firstError = [
       brandsRes,
