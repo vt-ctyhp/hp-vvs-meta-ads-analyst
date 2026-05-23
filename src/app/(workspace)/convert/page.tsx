@@ -78,10 +78,14 @@ async function ConvertStatus({ data }: { data: ConvertData }) {
     data.funnel,
     data.ledger,
   ]);
+  const bookingSessions =
+    funnel.funnel.find((row) => row.key === "booking_page_view")?.count ?? 0;
+  const confirmedBookings = funnel.overview.websiteScheduleConversions;
   const sentence = buildCustomerLedgerStatusSentence({
-    bookings: funnel.overview.schedules,
+    bookings: confirmedBookings,
     rows: ledger,
-    sessions: funnel.overview.sessions,
+    sessionNoun: "booking session",
+    sessions: bookingSessions,
     unreadConversations: 0,
   });
 
@@ -90,12 +94,12 @@ async function ConvertStatus({ data }: { data: ConvertData }) {
       sentence={sentence}
       metrics={[
         {
-          label: "Sessions",
-          value: funnel.overview.sessions.toLocaleString(),
+          label: "Booking sessions",
+          value: bookingSessions.toLocaleString(),
         },
         {
-          label: "Bookings",
-          value: funnel.overview.schedules.toLocaleString(),
+          label: "Confirmed bookings",
+          value: confirmedBookings.toLocaleString(),
         },
         {
           label: "CAPI gaps",
@@ -190,7 +194,7 @@ function StatusSentenceFallback() {
         <Skeleton className="h-6 w-[min(36rem,72vw)]" />
       </div>
       <div className="grid grid-cols-2 gap-4 sm:flex">
-        {["sessions", "bookings", "gaps"].map((item) => (
+        {["booking-sessions", "confirmed-bookings", "gaps"].map((item) => (
           <div key={item} className="min-w-[88px] space-y-2">
             <Skeleton className="h-2 w-20" />
             <Skeleton className="h-5 w-12" />

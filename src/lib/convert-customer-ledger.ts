@@ -178,25 +178,28 @@ export function countUnreadThreads(
 export function buildCustomerLedgerStatusSentence({
   bookings,
   rows,
+  sessionNoun = "session",
   sessions,
   unreadConversations,
 }: {
   bookings: number;
   rows: CustomerLedgerRow[];
+  sessionNoun?: string;
   sessions: number;
   unreadConversations: number;
 }): string {
   const gaps = countCustomerLedgerCapiGaps(rows);
+  const sessionUnit = `${sessionNoun}${sessions === 1 ? "" : "s"}`;
 
   if (sessions === 0 && bookings === 0 && unreadConversations === 0 && rows.length === 0) {
-    return "No session activity in this range yet. Once the booking pixel + inbox sync are live, traffic + bookings + conversations land here.";
+    return `No ${sessionNoun} activity in this range yet. Once the booking pixel + inbox sync are live, traffic + bookings + conversations land here.`;
   }
 
   const pieces: string[] = [];
   if (sessions > 0 || bookings > 0) {
     const rate = sessions > 0 ? ((bookings / sessions) * 100).toFixed(1) : null;
     pieces.push(
-      `${sessions.toLocaleString()} sessions → ${bookings} booking${
+      `${sessions.toLocaleString()} ${sessionUnit} → ${bookings} booking${
         bookings === 1 ? "" : "s"
       }${rate ? ` (${rate}%)` : ""}.`,
     );

@@ -262,6 +262,16 @@ describe("Convert customer ledger adapter", () => {
       }),
       "10 sessions → 1 booking (10.0%). 2 conversations waiting.",
     );
+    assert.equal(
+      buildCustomerLedgerStatusSentence({
+        bookings: 12,
+        rows,
+        sessionNoun: "booking session",
+        sessions: 258,
+        unreadConversations: 0,
+      }),
+      "258 booking sessions → 12 bookings (4.7%).",
+    );
   });
 });
 
