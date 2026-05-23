@@ -56,7 +56,8 @@ import {
 } from "@/lib/period-pivot-data";
 import { TERMS } from "@/lib/glossary";
 import { getKpiProfile } from "@/lib/umbrella-kpi-profile";
-import { AnalystFilterBar } from "./analyst-filter-bar";
+import { buildActiveFilterSummary } from "@/lib/active-filter-summary";
+import { UniversalFilterBar } from "./universal-filter-bar";
 import { StatusSentence, type StatusHighlight } from "./status-sentence";
 import { TechnicalId } from "./technical-id";
 import {
@@ -497,8 +498,8 @@ export function DashboardClient({
         </div>
       </section>
 
-      <AnalystFilterBar
-        filters={{
+      <UniversalFilterBar
+        summary={buildActiveFilterSummary({
           brand,
           delivery,
           startDate,
@@ -508,7 +509,7 @@ export function DashboardClient({
           periodMetric,
           primaryResultLabel: currentPrimaryResultLabel,
           umbrella,
-        }}
+        })}
       >
         <section className="mx-auto mt-6 flex max-w-7xl flex-col gap-4 border-y border-hp-rule py-4 xl:flex-row xl:flex-wrap xl:items-center xl:justify-between xl:gap-x-6">
           <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
@@ -560,7 +561,7 @@ export function DashboardClient({
             onChange={setUmbrella}
           />
         </section>
-      </AnalystFilterBar>
+      </UniversalFilterBar>
 
       <section className="mx-auto mt-6 w-full max-w-7xl min-w-0">
         <div className="min-w-0 border border-hp-rule bg-hp-card p-6">

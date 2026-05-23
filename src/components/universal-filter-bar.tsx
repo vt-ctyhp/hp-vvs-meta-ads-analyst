@@ -1,25 +1,29 @@
 "use client";
 
 /**
- * Sticky + collapsible filter bar for the /analyst page.
+ * Sticky + collapsible filter bar shared by the analyst-room pages
+ * (/analyst, /analyst/creative-analysis, /analysis).
  *
- * Wraps the three filter bands (filter strip / period chips inside
- * DateRangeControls / umbrella tabs) so they render normally in flow at
- * the top of the page, then collapse to a single editorial standfirst
- * pinned under the workspace nav header once the user has scrolled past
- * them. Clicking the bar (or the "✎ Edit" toggle) opens an overlay
- * panel containing the same filter UI for editing without scrolling
- * back to the top.
+ * Wraps each page's filter UI so it renders normally in flow at the top
+ * of the page, then collapses to a single editorial standfirst pinned
+ * under the workspace nav header once the user has scrolled past it.
+ * Clicking the bar (or the "✎ Edit" toggle) opens an overlay panel
+ * containing the same filter UI for editing without scrolling back to
+ * the top.
  *
- * See `docs/superpowers/specs/2026-05-22-sticky-collapsible-filters-design.md`
- * for the full spec and visual companion.
+ * Generic: each page builds its own ActiveFilterSummary array via a
+ * sibling builder in src/lib/active-filter-summary.ts and passes it as
+ * `summary`. The bar just renders the standfirst — it doesn't know
+ * which page it's on.
  *
- * Pure UI behavior layer — filter state still lives in DashboardClient
- * and the underlying controls (FilterChipGroup, DateRangeControls,
- * UmbrellaTabs) are unchanged. The wrapped children render twice when
- * the panel is open (once in flow, once inside the panel); both
- * instances stay in sync via the controlled props they receive from
- * the parent.
+ * See:
+ *   - docs/superpowers/specs/2026-05-22-sticky-collapsible-filters-design.md
+ *   - docs/superpowers/specs/2026-05-23-universal-filter-bar-design.md
+ *
+ * Pure UI behavior layer — filter state lives in each page's client
+ * component. The wrapped children render twice when the panel is open
+ * (once in flow, once inside the panel); both instances stay in sync
+ * via the controlled props they receive from the parent.
  */
 
 import {
@@ -30,26 +34,21 @@ import {
   type ReactNode,
 } from "react";
 
-import {
-  buildActiveFilterSummary,
-  type ActiveFilterInput,
-  type ActiveFilterSummary,
-} from "@/lib/active-filter-summary";
+import { type ActiveFilterSummary } from "@/lib/active-filter-summary";
 
 type Props = {
-  /** Current filter state — drives the collapsed-bar standfirst. */
-  filters: ActiveFilterInput;
-  /** The three filter bands. Rendered in normal flow always, and a
-   *  second time inside the expanded panel when the bar is open. */
+  /** Pre-computed standfirst segments. Each page builds its own
+   *  via a sibling builder in src/lib/active-filter-summary.ts. */
+  summary: ActiveFilterSummary;
+  /** The filter UI. Rendered once in-flow and a second time inside
+   *  the expanded panel when the user opens it. */
   children: ReactNode;
 };
 
 const NAV_HEADER_PX = 64; // workspace shell <header> is h-16
 const STICKY_BAR_PX = 44; // collapsed bar height
 
-export function AnalystFilterBar({ filters, children }: Props) {
-  const summary = buildActiveFilterSummary(filters);
-
+export function UniversalFilterBar({ summary, children }: Props) {
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const stickyBarRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
