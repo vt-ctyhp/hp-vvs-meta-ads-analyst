@@ -231,6 +231,15 @@ function CustomerJourneyDetailContent({
       <section className="grid gap-4 border-b border-hp-rule p-5 lg:grid-cols-2">
         <DetailPanel title="Booking and customer" icon={CalendarCheck2}>
           <DetailField label="Appointment" value={detail.booking?.appointmentType || row.appointmentType} />
+          <DetailField
+            label="Visit time"
+            value={
+              detail.appointmentVisitDateTime || row.appointmentVisitDateTime
+                ? formatDateTime(detail.appointmentVisitDateTime || row.appointmentVisitDateTime || "")
+                : null
+            }
+          />
+          <DetailField label="Status" value={detail.appointmentStatus || row.appointmentStatus} />
           <DetailField label="Brand" value={row.brand} />
           <DetailField label="Email" value={row.customerEmail} />
           <DetailField label="Phone" value={row.customerPhone} />
@@ -736,6 +745,7 @@ function confidenceLabel(level: CustomerJourneyLedgerDetailData["confidence"]["l
   const labels: Record<CustomerJourneyLedgerDetailData["confidence"]["level"], string> = {
     browser_session: "Same session",
     browser_visitor: "Same visitor",
+    appointment_only: "Appointment only",
     conversion_only: "Booking only",
     unmatched: "Unmatched",
   };

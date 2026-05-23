@@ -38,7 +38,10 @@ describe("Convert customer ledger adapter", () => {
       adId: "ad-1",
       adsetId: "adset-1",
       acuityAppointmentId: "1708622080",
+      appointmentSourceId: null,
+      appointmentStatus: null,
       appointmentType: "General Meeting",
+      appointmentVisitDateTime: null,
       brand: "HP",
       capiStatus: "sent",
       campaignId: "campaign-1",
@@ -62,7 +65,7 @@ describe("Convert customer ledger adapter", () => {
       rowId: "conversion-1",
       sessionId: "session-1",
       sourceType: "paid_meta",
-      stageKeys: [],
+      stageKeys: ["confirmed_website_bookings"],
       visitorId: "visitor-1",
     });
   });
@@ -283,7 +286,10 @@ function journeyRow(
     adId: "ad-1",
     adsetId: "adset-1",
     acuityAppointmentId: "1708622080",
+    appointmentSourceId: null,
+    appointmentStatus: null,
     appointmentType: "Schedule",
+    appointmentVisitDateTime: null,
     bookingTime: "2026-05-20T23:49:18.756Z",
     brand: null,
     browserName: "Mobile Safari",
@@ -311,6 +317,7 @@ function journeyRow(
     osName: "iOS",
     placement: "Instagram_Stories",
     sessionId: "session-1",
+    stageKeys: ["confirmed_website_bookings"],
     visitorId: "visitor-1",
     ...overrides,
   };

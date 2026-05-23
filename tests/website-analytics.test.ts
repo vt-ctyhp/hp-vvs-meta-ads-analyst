@@ -10,6 +10,7 @@ import {
   isPaidTouch,
   normalizeBookingAttributionPayload,
   normalizeBookingConversionPayload,
+  reconcileAppointmentConversionsToWebsiteEvents,
   selectLastPaidTouch,
   websiteGeoFromRequest,
   type AppointmentEventConversionRow,
@@ -99,12 +100,13 @@ describe("website analytics appointment reconciliation", () => {
     assert.equal(conversion, null);
   });
 
-  it("keeps funnel reads separate from appointment reconciliation", async () => {
+  it("reads Acuity appointments for the funnel without running reconciliation", async () => {
     const selectedTables: string[] = [];
     const client = {
       from(table: string) {
         selectedTables.push(table);
         if (
+          table === "appointment_events" ||
           table === "website_events" ||
           table === "website_conversions" ||
           table === "meta_daily_insights"
@@ -126,13 +128,13 @@ describe("website analytics appointment reconciliation", () => {
 
     assert.deepEqual(selectedTables, [
       "website_events",
-      "website_conversions",
+      "appointment_events",
       "meta_daily_insights",
     ]);
     assert.equal(data.sourceTransparency.recordCounts.website_events, 0);
     assert.equal(data.sourceTransparency.recordCounts.website_conversions, 0);
     assert.equal(data.sourceTransparency.recordCounts.meta_daily_insights, 0);
-    assert.equal(data.sourceTransparency.recordCounts.appointment_events_checked, undefined);
+    assert.equal(data.sourceTransparency.recordCounts.appointment_events, 0);
   });
 
   it("paginates website funnel reads before calculating totals", async () => {
@@ -168,31 +170,47 @@ describe("website analytics appointment reconciliation", () => {
     }));
     const conversions = [
       {
+        acuity_appointment_id: "apt-1",
+        event_id: "conversion-1",
         event_name: "Schedule",
         meta_event_name: "Schedule",
         occurred_at: "2026-05-01T03:00:00.000Z",
         source_type: "paid_meta",
       },
       {
+        acuity_appointment_id: "apt-2",
+        event_id: "conversion-2",
         event_name: "Schedule",
         meta_event_name: "Schedule",
         occurred_at: "2026-05-01T04:00:00.000Z",
         source_type: "direct",
       },
     ];
+    const appointments = [
+      appointmentEvent({
+        external_booking_id: "apt-1",
+        visit_date_time: "2026-05-01T13:00:00.000Z",
+      }),
+      appointmentEvent({
+        external_booking_id: "apt-2",
+        visit_date_time: "2026-05-01T14:00:00.000Z",
+      }),
+    ];
     const rangeCalls: Record<string, Array<[number, number]>> = {
+      appointment_events: [],
       meta_daily_insights: [],
       website_conversions: [],
       website_events: [],
     };
     const eqCalls: Record<string, Array<[string, unknown]>> = {
+      appointment_events: [],
       meta_daily_insights: [],
       website_conversions: [],
       website_events: [],
     };
     const selectedColumns: Record<string, string[]> = {};
     const client = {
-      from(table: "website_events" | "website_conversions" | "meta_daily_insights") {
+      from(table: "appointment_events" | "website_events" | "website_conversions" | "meta_daily_insights") {
         return {
           select(columns: string) {
             selectedColumns[table] ||= [];
@@ -202,7 +220,9 @@ describe("website analytics appointment reconciliation", () => {
                 ? events
                 : table === "website_conversions"
                   ? conversions
-                  : metaRows,
+                  : table === "appointment_events"
+                    ? appointments
+                    : metaRows,
               rangeCalls[table],
               eqCalls[table],
             );
@@ -224,6 +244,7 @@ describe("website analytics appointment reconciliation", () => {
       [0, 999],
       [1000, 1999],
     ]);
+    assert.deepEqual(rangeCalls.appointment_events, []);
     assert.deepEqual(eqCalls.website_events, [
       ["environment", "production"],
       ["environment", "production"],
@@ -236,6 +257,7 @@ describe("website analytics appointment reconciliation", () => {
     assert.match(selectedColumns.website_events[0], /meta_event_name/);
     assert.equal(data.sourceTransparency.recordCounts.website_events, 1002);
     assert.equal(data.sourceTransparency.recordCounts.website_conversions, 2);
+    assert.equal(data.sourceTransparency.recordCounts.appointment_events, 2);
     assert.equal(data.sourceTransparency.recordCounts.meta_daily_insights, 1001);
     assert.equal(data.overview.sessions, 1002);
     assert.equal(data.overview.pageViews, 1001);
@@ -244,7 +266,7 @@ describe("website analytics appointment reconciliation", () => {
     assert.equal(data.overview.paidMetaScheduleConversions, 1);
     assert.equal(data.overview.completeTrackingConversions, 1);
     assert.equal(data.overview.metaAttributedBookings, 1001);
-    assert.equal(data.overview.discrepancy, -1000);
+    assert.equal(data.overview.discrepancy, -999);
     assert.equal(data.funnel.at(-1)?.count, 1);
     assert.equal(data.trend[0]?.pageViews, 1001);
     assert.equal(data.trend[0]?.schedules, 1);
@@ -333,6 +355,7 @@ describe("website analytics appointment reconciliation", () => {
     ];
     const conversions = [
       {
+        acuity_appointment_id: "apt-1",
         event_id: "conversion-1",
         event_name: "Schedule",
         meta_event_name: "Schedule",
@@ -340,6 +363,7 @@ describe("website analytics appointment reconciliation", () => {
         source_type: "paid_meta",
       },
       {
+        acuity_appointment_id: "apt-2",
         event_id: "conversion-2",
         event_name: "Schedule",
         meta_event_name: "Schedule",
@@ -347,12 +371,28 @@ describe("website analytics appointment reconciliation", () => {
         source_type: "direct",
       },
     ];
+    const appointments = [
+      appointmentEvent({
+        external_booking_id: "apt-1",
+        visit_date_time: "2026-05-01T13:00:00.000Z",
+      }),
+      appointmentEvent({
+        external_booking_id: "apt-2",
+        visit_date_time: "2026-05-01T14:00:00.000Z",
+      }),
+    ];
     const client = {
-      from(table: "website_events" | "website_conversions" | "meta_daily_insights") {
+      from(table: "appointment_events" | "website_events" | "website_conversions" | "meta_daily_insights") {
         return {
           select() {
             return resolvedSelect(
-              table === "website_events" ? events : table === "website_conversions" ? conversions : [],
+              table === "website_events"
+                ? events
+                : table === "website_conversions"
+                  ? conversions
+                  : table === "appointment_events"
+                    ? appointments
+                    : [],
             );
           },
         };
@@ -378,6 +418,165 @@ describe("website analytics appointment reconciliation", () => {
         paid_meta_bookings: 1,
       },
     );
+  });
+
+  it("counts two Acuity IDs in one browser session as two confirmed appointments", async () => {
+    const events = [
+      websiteEvent({
+        event_id: "schedule-1",
+        event_name: "Schedule",
+        meta_event_name: "Schedule",
+        session_id: "same-session",
+      }),
+      websiteEvent({
+        event_id: "schedule-2",
+        event_name: "Schedule",
+        meta_event_name: "Schedule",
+        session_id: "same-session",
+      }),
+    ];
+    const appointments = [
+      appointmentEvent({ external_booking_id: "apt-1", visit_date_time: "2026-05-01T13:00:00.000Z" }),
+      appointmentEvent({ external_booking_id: "apt-2", visit_date_time: "2026-05-01T14:00:00.000Z" }),
+    ];
+
+    const data = await fetchWebsiteFunnelData(
+      { startDate: "2026-05-01", endDate: "2026-05-01" },
+      { client: funnelClient({ appointments, events }) as never },
+    );
+
+    assert.equal(data.overview.schedules, 2);
+    assert.equal(data.overview.websiteScheduleConversions, 2);
+    assert.equal(data.funnel.find((row) => row.key === "confirmed_website_bookings")?.count, 2);
+  });
+
+  it("filters appointment denominator by visit date and valid Acuity status", async () => {
+    const appointments = [
+      appointmentEvent({ external_booking_id: "active-in-range", status: "active", visit_date_time: "2026-05-01T13:00:00.000Z" }),
+      appointmentEvent({ external_booking_id: "outside-range", status: "active", visit_date_time: "2026-04-30T13:00:00.000Z" }),
+      appointmentEvent({ external_booking_id: "cancelled", status: "canceled", visit_date_time: "2026-05-01T14:00:00.000Z" }),
+      appointmentEvent({ external_booking_id: "old-rescheduled", status: "rescheduled", visit_date_time: "2026-05-01T15:00:00.000Z" }),
+      appointmentEvent({ external_booking_id: "new-rescheduled-time", status: "scheduled", visit_date_time: "2026-05-02T15:00:00.000Z" }),
+    ];
+
+    const may1 = await fetchWebsiteFunnelData(
+      { startDate: "2026-05-01", endDate: "2026-05-01" },
+      { client: funnelClient({ appointments }) as never },
+    );
+    const may2 = await fetchWebsiteFunnelData(
+      { startDate: "2026-05-02", endDate: "2026-05-02" },
+      { client: funnelClient({ appointments }) as never },
+    );
+
+    assert.equal(may1.overview.websiteScheduleConversions, 1);
+    assert.equal(may1.trend[0]?.websiteScheduleConversions, 1);
+    assert.equal(may2.overview.websiteScheduleConversions, 1);
+    assert.equal(may2.trend[0]?.websiteScheduleConversions, 1);
+  });
+
+  it("joins paid Meta conversion by Acuity ID even when conversion occurred outside the date range", async () => {
+    const appointments = [
+      appointmentEvent({ external_booking_id: "apt-paid", visit_date_time: "2026-05-01T13:00:00.000Z" }),
+    ];
+    const conversions = [
+      {
+        acuity_appointment_id: "apt-paid",
+        event_id: "conversion-paid",
+        event_name: "Schedule",
+        meta_event_name: "Schedule",
+        occurred_at: "2026-04-29T20:00:00.000Z",
+        source_type: "paid_meta",
+      },
+    ];
+
+    const data = await fetchWebsiteFunnelData(
+      { startDate: "2026-05-01", endDate: "2026-05-01" },
+      { client: funnelClient({ appointments, conversions }) as never },
+    );
+
+    assert.equal(data.overview.websiteScheduleConversions, 1);
+    assert.equal(data.overview.paidMetaScheduleConversions, 1);
+    assert.equal(data.trend[0]?.paidMetaScheduleConversions, 1);
+  });
+
+  it("reconciles missing conversions from existing rich website events without overwriting the event", async () => {
+    const appointment = appointmentEvent({
+      external_booking_id: "apt-rich",
+      id: "appointment-rich",
+      visit_date_time: "2026-05-01T13:00:00.000Z",
+    });
+    const richEvent = websiteEvent({
+      acuity_appointment_id: "apt-rich",
+      environment: "production",
+      event_id: "acuity-apt-rich",
+      event_name: "Schedule",
+      event_type: "conversion",
+      meta_event_name: "Schedule",
+      occurred_at: "2026-05-01T12:00:00.000Z",
+      properties: { browserTracked: true },
+      raw_json: {
+        tracking: {
+          attribution: {
+            capturedAt: "2026-04-30T12:00:00.000Z",
+            eventId: "paid-touch",
+            eventName: "PageView",
+            pageUrl: "https://www.hungphatusa.com/pages/book-an-appointment?utm_source=fb&utm_medium=paid_social&utm_campaign_id=campaign-1",
+            source: "shopify_browser",
+            sourceType: "paid_meta",
+          },
+        },
+      },
+      session_id: "session-rich",
+      source: "shopify_browser",
+      source_type: "paid_meta",
+      visitor_id: "visitor-rich",
+    });
+    const client = reconciliationClient({
+      appointment_events: [appointment],
+      website_events: [richEvent],
+      website_conversions: [],
+      website_sessions: [],
+      website_visitors: [],
+    });
+
+    const result = await reconcileAppointmentConversionsToWebsiteEvents(
+      { startDate: "2026-05-01", endDate: "2026-05-01" },
+      { client: client as never },
+    );
+
+    assert.equal(result.insertedConversions, 1);
+    assert.equal(result.skippedExistingConversions, 0);
+    assert.equal(client.upserts.filter((row) => row.table === "website_events").length, 0);
+    const conversion = client.upserts.find((row) => row.table === "website_conversions")?.row as Record<string, unknown>;
+    assert.equal(conversion.session_id, "session-rich");
+    assert.equal(conversion.visitor_id, "visitor-rich");
+    assert.equal(objectRecord(conversion.properties).browserTracked, true);
+    assert.equal(objectRecord(conversion.last_paid_touch).sourceType, "paid_meta");
+  });
+
+  it("reconciliation creates both event and conversion when no website event exists", async () => {
+    const client = reconciliationClient({
+      appointment_events: [
+        appointmentEvent({
+          external_booking_id: "apt-missing-event",
+          id: "appointment-missing-event",
+          visit_date_time: "2026-05-01T13:00:00.000Z",
+        }),
+      ],
+      website_events: [],
+      website_conversions: [],
+      website_sessions: [],
+      website_visitors: [],
+    });
+
+    const result = await reconcileAppointmentConversionsToWebsiteEvents(
+      { startDate: "2026-05-01", endDate: "2026-05-01" },
+      { client: client as never },
+    );
+
+    assert.equal(result.insertedConversions, 1);
+    assert.equal(client.upserts.filter((row) => row.table === "website_events").length, 1);
+    assert.equal(client.upserts.filter((row) => row.table === "website_conversions").length, 1);
   });
 
   it("treats Meta click identifiers and ad IDs as paid touches", () => {
@@ -896,10 +1095,16 @@ function resolvedSelect(
       eqCalls.push([column, value]);
       return chain;
     },
-    gte() {
+    gte(column: string, value: unknown) {
+      selected = selected.filter((row) => String((row as Record<string, unknown>)[column] ?? "") >= String(value ?? ""));
       return chain;
     },
-    lte() {
+    lte(column: string, value: unknown) {
+      selected = selected.filter((row) => String((row as Record<string, unknown>)[column] ?? "") <= String(value ?? ""));
+      return chain;
+    },
+    in(column: string, values: unknown[]) {
+      selected = selected.filter((row) => values.includes((row as Record<string, unknown>)[column]));
       return chain;
     },
     order() {
@@ -910,14 +1115,107 @@ function resolvedSelect(
     },
     range(from: number, to: number) {
       rangeCalls.push([from, to]);
-      selected = data.slice(from, to + 1);
+      selected = selected.slice(from, to + 1);
       return chain;
     },
     then(resolve: (value: { data: unknown[]; error: null }) => unknown, reject?: (reason: unknown) => unknown) {
       return Promise.resolve({ data: selected, error: null }).then(resolve, reject);
     },
+    maybeSingle() {
+      return Promise.resolve({ data: selected[0] || null, error: null });
+    },
+    single() {
+      return Promise.resolve({ data: selected[0], error: null });
+    },
   };
   return chain;
+}
+
+function appointmentEvent(overrides: Record<string, unknown> = {}) {
+  return {
+    appt_id: "acuity:apt-1",
+    booked_at: "2026-04-30T10:00:00.000Z",
+    booking_source: "acuity",
+    brand: "hpusa",
+    created_at: "2026-04-30T10:00:00.000Z",
+    external_booking_id: "apt-1",
+    id: "appointment-event-1",
+    raw_payload: {},
+    source: "Acuity",
+    status: "active",
+    visit_date_time: "2026-05-01T13:00:00.000Z",
+    visit_type: "General Meeting",
+    ...overrides,
+  };
+}
+
+function funnelClient(input: {
+  appointments?: unknown[];
+  conversions?: unknown[];
+  events?: unknown[];
+  metaRows?: unknown[];
+}) {
+  return {
+    from(table: "appointment_events" | "website_events" | "website_conversions" | "meta_daily_insights") {
+      return {
+        select() {
+          return resolvedSelect(
+            table === "website_events"
+              ? input.events || []
+              : table === "website_conversions"
+                ? input.conversions || []
+                : table === "appointment_events"
+                  ? input.appointments || []
+                  : input.metaRows || [],
+          );
+        },
+      };
+    },
+  };
+}
+
+function reconciliationClient(input: Record<string, unknown[]>) {
+  const upserts: Array<{ row: unknown; table: string }> = [];
+  const updates: Array<{ patch: unknown; table: string }> = [];
+  const client = {
+    upserts,
+    updates,
+    from(table: string) {
+      return {
+        select() {
+          return resolvedSingleSelect(input[table] || []);
+        },
+        update(patch: unknown) {
+          updates.push({ patch, table });
+          return {
+            eq() {
+              return Promise.resolve({ data: null, error: null });
+            },
+          };
+        },
+        upsert(row: unknown) {
+          upserts.push({ row, table });
+          return {
+            select() {
+              return {
+                single() {
+                  return Promise.resolve({ data: { id: `${table}-id` }, error: null });
+                },
+              };
+            },
+            then(resolve: (value: { data: null; error: null }) => unknown, reject?: (reason: unknown) => unknown) {
+              return Promise.resolve({ data: null, error: null }).then(resolve, reject);
+            },
+          };
+        },
+      };
+    },
+  };
+  return client;
+}
+
+function resolvedSingleSelect(data: unknown[]) {
+  return resolvedSelect(data);
 }
 
 function websiteEvent(overrides: Record<string, unknown>) {
@@ -950,6 +1248,10 @@ function websiteEvent(overrides: Record<string, unknown>) {
     visitor_id: null,
     ...overrides,
   };
+}
+
+function objectRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
 function locationEvent(overrides: Partial<WebsiteLocationEventInput>): WebsiteLocationEventInput {

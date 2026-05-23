@@ -168,6 +168,20 @@ describe("attribution ledger row merging", () => {
         visitor_id: `visitor-${index}`,
       }),
     );
+    const appointments = visitors.map((visitor, index) =>
+      appointmentRow({
+        appt_id: `acuity:apt-${index}`,
+        external_booking_id: `apt-${index}`,
+        visit_date_time: "2026-05-19T21:00:00.000Z",
+      }),
+    );
+    const conversions = visitors.map((visitor, index) =>
+      conversionRow({
+        acuity_appointment_id: `apt-${index}`,
+        event_id: `conversion-${index}`,
+        visitor_id: visitor.visitor_id,
+      }),
+    );
     const sessions = visitors.map((visitor) =>
       sessionRow({
         last_seen_at: visitor.last_seen_at,
@@ -183,7 +197,8 @@ describe("attribution ledger row merging", () => {
       },
       mockCustomerJourneyClient(
         {
-          website_conversions: [],
+          appointment_events: appointments,
+          website_conversions: conversions,
           website_events: [],
           website_sessions: sessions,
           website_visitors: visitors,
@@ -194,10 +209,11 @@ describe("attribution ledger row merging", () => {
       ),
     );
 
-    assert.equal(data.rows.length, 0);
+    assert.equal(data.rows.length, 240);
+    assert.equal(inFilters.filter((filter) => filter.table === "website_visitors").length, 3);
     assert.equal(inFilters.filter((filter) => filter.table === "website_sessions").length, 3);
-    assert.equal(inFilters.filter((filter) => filter.table === "website_events").length, 3);
-    assert.equal(inFilters.filter((filter) => filter.table === "website_conversions").length, 3);
+    assert.equal(inFilters.filter((filter) => filter.table === "website_events").length, 6);
+    assert.equal(inFilters.filter((filter) => filter.table === "website_conversions").length, 6);
     assert.ok(inFilters.every((filter) => filter.values.length <= 100));
   });
 
@@ -598,6 +614,120 @@ describe("attribution ledger detail data", () => {
       detail.timeline.map((event) => event.label),
       ["Acuity booking created"],
     );
+  });
+
+  it("looks up full visitor detail by Acuity appointment ID", async () => {
+    const detail = await fetchCustomerJourneyLedgerDetail(
+      { acuityAppointmentId: "apt-full" },
+      mockCustomerJourneyClient({
+        appointment_events: [
+          appointmentRow({ external_booking_id: "apt-full", visit_date_time: "2026-05-21T19:00:00.000Z" }),
+        ],
+        website_conversions: [
+          conversionRow({
+            acuity_appointment_id: "apt-full",
+            event_id: "acuity-apt-full",
+            occurred_at: "2026-05-21T18:00:00.000Z",
+            session_id: "session-full",
+            visitor_id: "visitor-1",
+          }),
+        ],
+        website_events: [
+          eventRow({
+            acuity_appointment_id: "apt-full",
+            event_id: "acuity-apt-full",
+            event_name: "Schedule",
+            event_type: "conversion",
+            occurred_at: "2026-05-21T18:00:00.000Z",
+            session_id: "session-full",
+            visitor_id: "visitor-1",
+          }),
+        ],
+        website_sessions: [sessionRow({ session_id: "session-full", visitor_id: "visitor-1" })],
+        website_visitors: [visitorRow({ visitor_id: "visitor-1" })],
+      }),
+    );
+
+    assert.ok(detail);
+    assert.equal(detail.visitorId, "visitor-1");
+    assert.equal(detail.acuityAppointmentId, "apt-full");
+    assert.equal(detail.appointmentVisitDateTime, "2026-05-21T19:00:00.000Z");
+    assert.equal(detail.confidence.level, "browser_session");
+  });
+
+  it("looks up conversion-only detail by Acuity appointment ID", async () => {
+    const detail = await fetchCustomerJourneyLedgerDetail(
+      { acuityAppointmentId: "apt-conversion-only" },
+      mockCustomerJourneyClient({
+        appointment_events: [
+          appointmentRow({ external_booking_id: "apt-conversion-only", visit_date_time: "2026-05-21T19:00:00.000Z" }),
+        ],
+        website_conversions: [
+          conversionRow({
+            acuity_appointment_id: "apt-conversion-only",
+            event_id: "acuity-apt-conversion-only",
+            visitor_id: null,
+          }),
+        ],
+        website_events: [],
+        website_sessions: [],
+        website_visitors: [],
+      }),
+    );
+
+    assert.ok(detail);
+    assert.equal(detail.confidence.level, "conversion_only");
+    assert.equal(detail.appointmentVisitDateTime, "2026-05-21T19:00:00.000Z");
+    assert.equal(detail.booking?.eventId, "acuity-apt-conversion-only");
+  });
+
+  it("looks up event-only detail by Acuity appointment ID", async () => {
+    const detail = await fetchCustomerJourneyLedgerDetail(
+      { acuityAppointmentId: "apt-event-only" },
+      mockCustomerJourneyClient({
+        appointment_events: [
+          appointmentRow({ external_booking_id: "apt-event-only", visit_date_time: "2026-05-21T19:00:00.000Z" }),
+        ],
+        website_conversions: [],
+        website_events: [
+          eventRow({
+            acuity_appointment_id: "apt-event-only",
+            event_id: "acuity-apt-event-only",
+            event_name: "Schedule",
+            event_type: "conversion",
+            visitor_id: null,
+          }),
+        ],
+        website_sessions: [],
+        website_visitors: [],
+      }),
+    );
+
+    assert.ok(detail);
+    assert.equal(detail.confidence.level, "appointment_only");
+    assert.equal(detail.booking?.eventId, "acuity-apt-event-only");
+    assert.equal(detail.appointmentVisitDateTime, "2026-05-21T19:00:00.000Z");
+  });
+
+  it("looks up appointment-only detail by Acuity appointment ID", async () => {
+    const detail = await fetchCustomerJourneyLedgerDetail(
+      { acuityAppointmentId: "apt-appointment-only" },
+      mockCustomerJourneyClient({
+        appointment_events: [
+          appointmentRow({ external_booking_id: "apt-appointment-only", visit_date_time: "2026-05-21T19:00:00.000Z" }),
+        ],
+        website_conversions: [],
+        website_events: [],
+        website_sessions: [],
+        website_visitors: [],
+      }),
+    );
+
+    assert.ok(detail);
+    assert.equal(detail.confidence.level, "appointment_only");
+    assert.equal(detail.acuityAppointmentId, "apt-appointment-only");
+    assert.equal(detail.booking?.eventId, null);
+    assert.equal(detail.appointmentVisitDateTime, "2026-05-21T19:00:00.000Z");
   });
 
   it("builds a sanitized booking timeline with credited and return touches", () => {
@@ -1311,6 +1441,7 @@ function richPaidTouch(capturedAt: string) {
 }
 
 function mockCustomerJourneyClient(input: {
+  appointment_events?: object[];
   website_conversions?: AttributionLedgerConversionRow[];
   website_events?: AttributionLedgerEventRow[];
   website_sessions?: AttributionLedgerSessionRow[];
@@ -1375,6 +1506,24 @@ function mockLedgerSelectChain(sourceRows: object[], options?: {
   };
 
   return chain;
+}
+
+function appointmentRow(overrides: Record<string, unknown> = {}) {
+  return {
+    appt_id: "acuity:1708622080",
+    booked_at: "2026-05-18T10:00:00.000Z",
+    booking_source: "acuity",
+    brand: "hpusa",
+    created_at: "2026-05-18T10:00:00.000Z",
+    external_booking_id: "1708622080",
+    id: "appointment-event-1",
+    raw_payload: {},
+    source: "Acuity",
+    status: "active",
+    visit_date_time: "2026-05-19T21:00:00.000Z",
+    visit_type: "General Meeting",
+    ...overrides,
+  };
 }
 
 function visitorRow(
@@ -1488,7 +1637,13 @@ function conversionRow(
 
 function eventRow(overrides: Partial<AttributionLedgerEventRow> = {}): AttributionLedgerEventRow {
   return {
+    acuity_appointment_id: null,
+    appointment_type: null,
+    brand: null,
     browser_name: "Mobile Safari",
+    customer_email: null,
+    customer_name: null,
+    customer_phone: null,
     device_category: "mobile",
     event_id: "hp_evt-1",
     event_name: "PageView",

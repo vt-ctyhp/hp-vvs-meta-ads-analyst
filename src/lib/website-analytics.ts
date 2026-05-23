@@ -36,6 +36,8 @@ const MAX_META_INSIGHT_ROWS = 50000;
 const SUPABASE_PAGE_SIZE = 1000;
 const MAX_APPOINTMENT_CONVERSIONS = 2000;
 const PAID_META_ATTRIBUTION_LOOKBACK_DAYS = 30;
+const ACUITY_APPOINTMENT_ID_BATCH_SIZE = 100;
+const INVALID_APPOINTMENT_STATUSES = new Set(["canceled", "cancelled", "rescheduled"]);
 
 const jsonObjectSchema = z.record(z.string(), z.unknown()).catch({});
 const eventTypeSchema = z.enum([
@@ -444,6 +446,8 @@ type WebsiteSupabaseClient = {
     select: (columns: string) => WebsiteSelectChain<AppointmentEventConversionRow[]>;
   };
 };
+
+type WebsiteAcuityAppointmentRow = AppointmentEventConversionRow | SalesAppointmentConversionViewRow;
 
 type WebsiteSelectChain<T> = PromiseLike<{ data: T | null; error: Error | null }> & {
   eq: (column: string, value: unknown) => WebsiteSelectChain<T>;
@@ -887,20 +891,30 @@ export async function fetchWebsiteFunnelData(input: {
 
   const conversionColumns = [
     "event_id",
+    "session_id",
     "visitor_id",
+    "brand",
     "event_name",
     "meta_event_name",
     "occurred_at",
+    "page_url",
+    "page_path",
+    "referrer",
     "source_type",
+    "acuity_appointment_id",
+    "appointment_type",
     "customer_email",
+    "customer_name",
     "customer_phone",
+    "fbc",
+    "fbp",
     "last_paid_touch",
     "conversion_touch",
     "properties",
     "raw_json",
   ].join(",");
 
-  const [events, conversions, metaRows] = await Promise.all([
+  const [events, appointmentRowsRaw, metaRows] = await Promise.all([
     fetchWebsiteRows(
       () =>
         client
@@ -912,16 +926,9 @@ export async function fetchWebsiteFunnelData(input: {
           .order("occurred_at", { ascending: false }),
       MAX_EVENTS,
     ),
-    fetchWebsiteRows(
-      () =>
-        client
-          .from("website_conversions")
-          .select(conversionColumns)
-          .gte("occurred_at", startIso)
-          .lte("occurred_at", endIso)
-          .order("occurred_at", { ascending: false }),
-      MAX_EVENTS,
-    ),
+    usesLimitedAdsAnalystDbAccess()
+      ? fetchAppointmentConversionsFromBoundaryView(startIso, endIso)
+      : fetchAppointmentConversionsFromCoreTable(client, startIso, endIso),
     fetchWebsiteRows(
       () =>
         client
@@ -934,6 +941,9 @@ export async function fetchWebsiteFunnelData(input: {
       MAX_META_INSIGHT_ROWS,
     ),
   ]);
+  const appointmentRows = uniqueValidAcuityAppointments(appointmentRowsRaw);
+  const appointmentIds = appointmentRows.map((appointment) => acuityAppointmentIdForRow(appointment));
+  const conversions = await fetchConversionsByAcuityAppointmentIds(client, appointmentIds, conversionColumns);
   const sessions = new Set(events.map((event) => event.session_id).filter(Boolean));
   const engagedSessions = new Set(
     events
@@ -942,10 +952,19 @@ export async function fetchWebsiteFunnelData(input: {
       .filter(Boolean),
   );
   const schedules = events.filter(isScheduleEvent);
-  const scheduleConversions = conversions.filter(isScheduleConversion);
-  const paidMetaScheduleConversions = scheduleConversions.filter((conversion) =>
-    isPaidMetaAttributedScheduleConversion(conversion, scheduleConversions),
+  const scheduleConversions = uniqueScheduleConversionsByAcuityId(
+    conversions.filter(isScheduleConversion),
+    appointmentIds,
   );
+  const scheduleConversionsByAcuityId = new Map(
+    scheduleConversions
+      .map((conversion) => [conversion.acuity_appointment_id, conversion] as const)
+      .filter((entry): entry is [string, WebsiteConversionRow] => Boolean(entry[0])),
+  );
+  const paidMetaScheduleConversions = appointmentRows.filter((appointment) => {
+    const conversion = scheduleConversionsByAcuityId.get(acuityAppointmentIdForRow(appointment));
+    return Boolean(conversion && isPaidMetaAttributedScheduleConversion(conversion, scheduleConversions));
+  });
   const metaPaidSessions = new Set(
     events
       .filter((event) => event.source_type === "paid_meta")
@@ -968,6 +987,7 @@ export async function fetchWebsiteFunnelData(input: {
       timeRange: range,
       recordCounts: {
         meta_daily_insights: metaRows.length,
+        appointment_events: appointmentRows.length,
         website_events: events.length,
         website_conversions: conversions.length,
       },
@@ -981,18 +1001,21 @@ export async function fetchWebsiteFunnelData(input: {
       scrollDepthEvents: countEvents(events, "ScrollDepth"),
       bookingStarts: countEvents(events, "BookingVisitSelected"),
       schedules: schedules.length,
-      websiteScheduleConversions: scheduleConversions.length,
+      websiteScheduleConversions: appointmentRows.length,
       paidMetaScheduleConversions: paidMetaScheduleConversions.length,
       metaAttributedBookings,
       metaPaidSessions: metaPaidSessions.size,
       customerLinkedEvents,
       completeTrackingConversions,
-      discrepancy: schedules.length - metaAttributedBookings,
+      discrepancy: appointmentRows.length - metaAttributedBookings,
     },
-    funnel: buildFunnel(events, scheduleConversions),
+    funnel: buildFunnel(events, {
+      paidMetaScheduleConversions: paidMetaScheduleConversions.length,
+      websiteScheduleConversions: appointmentRows.length,
+    }),
     pages: buildPages(events),
     locations: buildWebsiteLocationBreakdown(events),
-    trend: buildTrend(events, conversions, metaRows, range.start, range.end),
+    trend: buildTrend(events, appointmentRows, scheduleConversions, metaRows, range.start, range.end),
     recentEvents: events.slice(0, 50).map((event) => ({
       adId: event.utm_ad_id,
       adsetId: event.utm_adset_id,
@@ -1033,12 +1056,190 @@ async function fetchWebsiteRows<T>(
   return rows;
 }
 
+async function fetchConversionsByAcuityAppointmentIds(
+  client: WebsiteSupabaseClient,
+  acuityAppointmentIds: string[],
+  columns: string,
+) {
+  const rows: WebsiteConversionRow[] = [];
+  const uniqueIds = uniqueStrings(acuityAppointmentIds).filter(Boolean);
+
+  for (const batch of chunks(uniqueIds, ACUITY_APPOINTMENT_ID_BATCH_SIZE)) {
+    rows.push(
+      ...(await fetchWebsiteRows(
+        () =>
+          client
+            .from("website_conversions")
+            .select(columns)
+            .in("acuity_appointment_id", batch)
+            .order("occurred_at", { ascending: false }),
+        MAX_EVENTS,
+      )),
+    );
+  }
+
+  return rows;
+}
+
+function uniqueValidAcuityAppointments<Row extends WebsiteAcuityAppointmentRow>(rows: Row[]) {
+  const byAcuityId = new Map<string, Row>();
+
+  for (const row of rows) {
+    if (!isValidAcuityAppointmentRow(row)) continue;
+    const acuityAppointmentId = acuityAppointmentIdForRow(row);
+    const existing = byAcuityId.get(acuityAppointmentId);
+    if (!existing || timestampMillis(appointmentVisitDateTimeForRow(row)) > timestampMillis(appointmentVisitDateTimeForRow(existing))) {
+      byAcuityId.set(acuityAppointmentId, row);
+    }
+  }
+
+  return Array.from(byAcuityId.values());
+}
+
+function isValidAcuityAppointmentRow(row: WebsiteAcuityAppointmentRow) {
+  if (row.booking_source !== "acuity") return false;
+  if (!acuityAppointmentIdForRow(row)) return false;
+  if (!appointmentVisitDateTimeForRow(row)) return false;
+  return !INVALID_APPOINTMENT_STATUSES.has(appointmentStatusForRow(row).toLowerCase());
+}
+
+function acuityAppointmentIdForRow(row: WebsiteAcuityAppointmentRow) {
+  return row.external_booking_id?.trim() || "";
+}
+
+function appointmentStatusForRow(row: WebsiteAcuityAppointmentRow) {
+  return "appointment_status" in row ? row.appointment_status || "" : row.status || "";
+}
+
+function appointmentVisitDateTimeForRow(row: WebsiteAcuityAppointmentRow) {
+  return timestampValue(row.visit_date_time) || "";
+}
+
+function uniqueScheduleConversionsByAcuityId(
+  conversions: WebsiteConversionRow[],
+  appointmentIds: string[],
+) {
+  const appointmentIdSet = new Set(appointmentIds);
+  const byAcuityId = new Map<string, WebsiteConversionRow>();
+
+  for (const conversion of conversions) {
+    const acuityAppointmentId = conversion.acuity_appointment_id?.trim();
+    if (!acuityAppointmentId || !appointmentIdSet.has(acuityAppointmentId)) continue;
+    const existing = byAcuityId.get(acuityAppointmentId);
+    if (!existing || timestampMillis(conversion.occurred_at) > timestampMillis(existing.occurred_at)) {
+      byAcuityId.set(acuityAppointmentId, conversion);
+    }
+  }
+
+  return appointmentIds
+    .map((appointmentId) => byAcuityId.get(appointmentId))
+    .filter((conversion): conversion is WebsiteConversionRow => Boolean(conversion));
+}
+
+async function fetchWebsiteEventsForConversions(
+  client: WebsiteSupabaseClient,
+  conversions: ReconciledWebsiteConversionInput[],
+) {
+  const eventColumns = [
+    "event_id",
+    "environment",
+    "session_id",
+    "visitor_id",
+    "brand",
+    "source",
+    "event_name",
+    "event_type",
+    "occurred_at",
+    "page_url",
+    "page_path",
+    "page_title",
+    "page_group",
+    "referrer",
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_content",
+    "utm_term",
+    "utm_id",
+    "utm_campaign_id",
+    "utm_creative",
+    "utm_ad",
+    "utm_ad_id",
+    "utm_adset",
+    "utm_adset_id",
+    "utm_placement",
+    "fbclid",
+    "gclid",
+    "msclkid",
+    "ttclid",
+    "fbp",
+    "fbc",
+    "user_agent",
+    "device_category",
+    "browser_name",
+    "os_name",
+    "source_type",
+    "customer_name",
+    "customer_email",
+    "customer_phone",
+    "conversion_event_id",
+    "ip_hash",
+    "geo_country",
+    "geo_region",
+    "geo_city",
+    "geo_timezone",
+    "meta_event_name",
+    "meta_event_id",
+    "acuity_appointment_id",
+    "appointment_type",
+    "properties",
+    "raw_json",
+  ].join(",");
+  const eventIds = uniqueStrings(conversions.map((conversion) => conversion.eventId).filter(Boolean));
+  const acuityAppointmentIds = uniqueStrings(
+    conversions
+      .map((conversion) => conversion.acuityAppointmentId)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const rows: WebsiteEventRow[] = [];
+
+  for (const batch of chunks(eventIds, ACUITY_APPOINTMENT_ID_BATCH_SIZE)) {
+    rows.push(
+      ...(await fetchWebsiteRows(
+        () => client.from("website_events").select(eventColumns).in("event_id", batch),
+        MAX_EVENTS,
+      )),
+    );
+  }
+
+  for (const batch of chunks(acuityAppointmentIds, ACUITY_APPOINTMENT_ID_BATCH_SIZE)) {
+    rows.push(
+      ...(await fetchWebsiteRows(
+        () => client.from("website_events").select(eventColumns).in("acuity_appointment_id", batch),
+        MAX_EVENTS,
+      )),
+    );
+  }
+
+  const byEventId = new Map<string, WebsiteEventRow>();
+  for (const row of rows) {
+    byEventId.set(row.event_id, {
+      ...row,
+      properties: objectRecord(row.properties),
+      raw_json: objectRecord(row.raw_json),
+    });
+  }
+  return Array.from(byEventId.values());
+}
+
 export async function reconcileAppointmentConversionsToWebsiteEvents(input: {
   startDate?: string | null;
   endDate?: string | null;
   days?: number | null;
-}): Promise<WebsiteConversionReconciliationResult> {
-  return reconcileAppointmentConversionsForRange(normalizeDateRange(input));
+}, options: {
+  client?: WebsiteSupabaseClient;
+} = {}): Promise<WebsiteConversionReconciliationResult> {
+  return reconcileAppointmentConversionsForRange(normalizeDateRange(input), options.client);
 }
 
 export async function runWebsiteConversionReconciliation(
@@ -1111,8 +1312,8 @@ async function reconcileAppointmentConversionsForRange(range: {
   start: string;
   end: string;
   days: number;
-}): Promise<WebsiteConversionReconciliationResult> {
-  const client = createWebsiteClient("worker");
+}, inputClient?: WebsiteSupabaseClient): Promise<WebsiteConversionReconciliationResult> {
+  const client = inputClient || createWebsiteClient("worker");
   const startIso = `${range.start}T00:00:00.000Z`;
   const endIso = `${range.end}T23:59:59.999Z`;
 
@@ -1121,6 +1322,7 @@ async function reconcileAppointmentConversionsForRange(range: {
     : await fetchAppointmentConversionsFromCoreTable(client, startIso, endIso);
 
   const conversions = appointmentRows
+    .filter(isValidAcuityAppointmentRow)
     .map((row) =>
       "conversion_event_id" in row
         ? salesAppointmentConversionViewToWebsiteConversionInput(row)
@@ -1140,8 +1342,8 @@ async function reconcileAppointmentConversionsForRange(range: {
   }
 
   const existingResult = await client
-    .from("website_events")
-    .select("event_id")
+    .from("website_conversions")
+    .select("event_id,acuity_appointment_id")
     .in(
       "event_id",
       conversions.map((conversion) => conversion.eventId),
@@ -1151,7 +1353,7 @@ async function reconcileAppointmentConversionsForRange(range: {
   if (existingResult.error) throw existingResult.error;
 
   const existingAcuityIdsResult = await client
-    .from("website_events")
+    .from("website_conversions")
     .select("event_id,acuity_appointment_id")
     .in(
       "acuity_appointment_id",
@@ -1171,19 +1373,35 @@ async function reconcileAppointmentConversionsForRange(range: {
       .map((event) => event.acuity_appointment_id)
       .filter(Boolean),
   );
+  const existingEvents = await fetchWebsiteEventsForConversions(client, conversions);
+  const eventsByEventId = new Map(existingEvents.map((event) => [event.event_id, event]));
+  const eventsByAcuityId = new Map(
+    existingEvents
+      .map((event) => [event.acuity_appointment_id, event] as const)
+      .filter((entry): entry is [string, WebsiteEventRow] => Boolean(entry[0])),
+  );
   let insertedConversions = 0;
+  let skippedExistingConversions = 0;
 
   for (const conversion of conversions) {
     if (
       existingEventIds.has(conversion.eventId) ||
       (conversion.acuityAppointmentId && existingAcuityIds.has(conversion.acuityAppointmentId))
     ) {
+      skippedExistingConversions += 1;
       continue;
     }
-    await recordWebsiteEvent(conversion, {
-      request: new Request("https://hp-vvs-meta-ads-analyst.internal/appointment-reconciliation"),
-      source: "booking_api",
-    });
+    const existingEvent =
+      eventsByEventId.get(conversion.eventId) ||
+      (conversion.acuityAppointmentId ? eventsByAcuityId.get(conversion.acuityAppointmentId) : null);
+    if (existingEvent) {
+      await materializeWebsiteConversionFromExistingEvent(client, existingEvent, conversion);
+    } else {
+      await recordWebsiteEventWithClient(client, conversion, {
+        request: new Request("https://hp-vvs-meta-ads-analyst.internal/appointment-reconciliation"),
+        source: "booking_api",
+      });
+    }
     insertedConversions += 1;
   }
 
@@ -1191,7 +1409,7 @@ async function reconcileAppointmentConversionsForRange(range: {
     checkedAppointments: appointmentRows.length,
     eligibleAppointments: conversions.length,
     insertedConversions,
-    skippedExistingConversions: conversions.length - insertedConversions,
+    skippedExistingConversions,
   };
 }
 
@@ -1218,9 +1436,9 @@ async function fetchAppointmentConversionsFromCoreTable(
         "raw_payload",
       ].join(","),
     )
-    .gte("created_at", startIso)
-    .lte("created_at", endIso)
-    .order("created_at", { ascending: false })
+    .gte("visit_date_time", startIso)
+    .lte("visit_date_time", endIso)
+    .order("visit_date_time", { ascending: false })
     .limit(MAX_APPOINTMENT_CONVERSIONS);
 
   if (appointmentsResult.error) throw appointmentsResult.error;
@@ -1259,9 +1477,9 @@ async function fetchAppointmentConversionsFromBoundaryView(startIso: string, end
         "conversion_occurred_at",
       ].join(","),
     )
-    .gte("created_at", startIso)
-    .lte("created_at", endIso)
-    .order("created_at", { ascending: false })
+    .gte("visit_date_time", startIso)
+    .lte("visit_date_time", endIso)
+    .order("visit_date_time", { ascending: false })
     .limit(MAX_APPOINTMENT_CONVERSIONS);
 
   if (result.error) throw result.error;
@@ -1333,7 +1551,9 @@ export function appointmentEventToWebsiteConversionInput(
 function salesAppointmentConversionViewToWebsiteConversionInput(
   row: SalesAppointmentConversionViewRow,
 ): ReconciledWebsiteConversionInput | null {
-  if (row.booking_source !== "acuity" || !row.conversion_event_id) return null;
+  const acuityAppointmentId = row.external_booking_id?.trim();
+  if (row.booking_source !== "acuity" || !acuityAppointmentId) return null;
+  const eventId = row.conversion_event_id || `acuity-${acuityAppointmentId}`;
 
   const properties: Record<string, unknown> = {
     appointmentEventId: row.appointment_event_id,
@@ -1350,7 +1570,7 @@ function salesAppointmentConversionViewToWebsiteConversionInput(
   if (row.duration_minutes !== null) properties.duration = row.duration_minutes;
 
   return {
-    eventId: row.conversion_event_id,
+    eventId,
     eventName: "Schedule",
     eventType: "conversion",
     occurredAt: row.conversion_occurred_at || row.created_at || new Date().toISOString(),
@@ -1360,13 +1580,21 @@ function salesAppointmentConversionViewToWebsiteConversionInput(
     pageGroup: "booking",
     properties,
     metaEventName: "Schedule",
-    metaEventId: row.conversion_event_id,
-    acuityAppointmentId: row.external_booking_id || undefined,
+    metaEventId: eventId,
+    acuityAppointmentId,
     appointmentType: row.appointment_type?.slice(0, 180) || undefined,
   };
 }
 
 async function recordWebsiteEvent(
+  input: z.infer<typeof websiteEventSchema> & Partial<z.infer<typeof conversionEventSchema>>,
+  options: { request: Request; source: string },
+) {
+  return recordWebsiteEventWithClient(createWebsiteClient(), input, options);
+}
+
+async function recordWebsiteEventWithClient(
+  client: WebsiteSupabaseClient,
   input: z.infer<typeof websiteEventSchema> & Partial<z.infer<typeof conversionEventSchema>>,
   options: { request: Request; source: string },
 ) {
@@ -1445,7 +1673,6 @@ async function recordWebsiteEvent(
     },
   };
 
-  const client = createWebsiteClient();
   const touch = attributionTouch(row);
   const visitor = row.visitor_id ? await upsertWebsiteVisitor(client, row, touch) : null;
   let session: WebsiteSessionRow | null = null;
@@ -1515,6 +1742,60 @@ async function recordWebsiteEvent(
     id: data,
     ok: true as const,
   };
+}
+
+async function materializeWebsiteConversionFromExistingEvent(
+  client: WebsiteSupabaseClient,
+  row: WebsiteEventRow,
+  input: ReconciledWebsiteConversionInput,
+) {
+  const touch = attributionTouch(row);
+  const visitor = row.visitor_id ? await findVisitor(client, row.visitor_id) : null;
+  const session = row.session_id ? await findSession(client, row.session_id, row.environment) : null;
+  applyResolvedWebsiteGeo(row, visitor, session);
+
+  const eventCustomer = normalizeCustomer({
+    email: row.customer_email || undefined,
+    name: row.customer_name || undefined,
+    phone: row.customer_phone || undefined,
+  });
+  const appointmentCustomer = normalizeCustomer(input.customer);
+  const customer = mergeNormalizedCustomer(appointmentCustomer, eventCustomer);
+  const paidTouchCandidates = [
+    touchWithUrlUtmFallback(visitor?.last_paid_touch),
+    touchWithUrlUtmFallback(session?.last_paid_touch),
+    originalAttributionTouch(input, row),
+    touch,
+  ];
+  const lastPaidTouch = selectOriginalPaidTouch(paidTouchCandidates, { maxCapturedAt: row.occurred_at });
+  const firstTouch = touchWithUrlUtmFallback(visitor?.first_touch);
+  const lastTouch = touchWithUrlUtmFallback(visitor?.last_touch) || touch;
+  const trackingCompleteness = trackingCompletenessReport({
+    customer,
+    firstTouch,
+    lastPaidTouch,
+    row,
+  });
+
+  const mergedProperties = {
+    ...objectRecord(row.properties),
+    ...objectRecord(input.properties),
+    trackingCompleteness,
+  };
+  row.properties = mergedProperties;
+
+  await upsertWebsiteConversion(client, row, { ...input, properties: mergedProperties }, {
+    customer,
+    firstTouch,
+    lastPaidTouch,
+    lastTouch,
+    touch,
+    trackingCompleteness,
+  });
+
+  if (customer.name || customer.email || customer.phone) {
+    await backfillLinkedCustomer(client, row, customer, { conversionEventId: row.event_id });
+  }
 }
 
 function websiteAttributionEnvironment() {
@@ -1781,6 +2062,19 @@ function normalizeCustomer(value: unknown): NormalizedCustomer {
   const email = normalizeEmail(trimmedString(record.email)) || undefined;
   const phone = trimmedString(record.phone).slice(0, 40) || undefined;
   return { email, firstName, lastName, name, phone };
+}
+
+function mergeNormalizedCustomer(
+  primary: NormalizedCustomer,
+  fallback: NormalizedCustomer,
+): NormalizedCustomer {
+  return {
+    email: primary.email || fallback.email,
+    firstName: primary.firstName || fallback.firstName,
+    lastName: primary.lastName || fallback.lastName,
+    name: primary.name || fallback.name,
+    phone: primary.phone || fallback.phone,
+  };
 }
 
 function normalizeEmail(value: string) {
@@ -2256,7 +2550,10 @@ function countUniqueSessionsForEvents(
   ).size;
 }
 
-function buildFunnel(events: WebsiteEventRow[], scheduleConversions: WebsiteConversionRow[]) {
+function buildFunnel(events: WebsiteEventRow[], appointments: {
+  paidMetaScheduleConversions: number;
+  websiteScheduleConversions: number;
+}) {
   const rows = [
     {
       key: "booking_page_view",
@@ -2305,19 +2602,17 @@ function buildFunnel(events: WebsiteEventRow[], scheduleConversions: WebsiteConv
       key: "confirmed_website_bookings",
       label: "Confirmed website bookings",
       dataMapping:
-        "website_conversions: rows where event_name = Schedule or meta_event_name = Schedule. Grain is confirmed Acuity appointment.",
+        "appointment_events: distinct external_booking_id where booking_source = acuity, visit_date_time is in range, and status is not canceled/rescheduled. Grain is confirmed Acuity appointment.",
       unit: "booking" as const,
-      count: scheduleConversions.length,
+      count: appointments.websiteScheduleConversions,
     },
     {
       key: "paid_meta_bookings",
       label: "Paid Meta confirmed bookings",
       dataMapping:
-        "website_conversions: Schedule rows with source_type = paid_meta or a paid Meta touch within 30 days before booking. Grain is confirmed Acuity appointment.",
+        "appointment_events joined to website_conversions by acuity_appointment_id, then current paid Meta attribution rule. Grain is confirmed Acuity appointment.",
       unit: "booking" as const,
-      count: scheduleConversions.filter((conversion) =>
-        isPaidMetaAttributedScheduleConversion(conversion, scheduleConversions),
-      ).length,
+      count: appointments.paidMetaScheduleConversions,
     },
   ];
   const start = rows[0]?.count || 0;
@@ -2567,6 +2862,7 @@ export function buildWebsiteLocationBreakdown(events: WebsiteLocationEventInput[
 
 function buildTrend(
   events: WebsiteEventRow[],
+  appointments: WebsiteAcuityAppointmentRow[],
   conversions: WebsiteConversionRow[],
   metaRows: MetaInsightRow[],
   start: string,
@@ -2608,12 +2904,21 @@ function buildTrend(
     if (isScheduleEvent(event)) row.schedules += 1;
   }
 
-  for (const conversion of conversions) {
-    const date = conversion.occurred_at.slice(0, 10);
+  const conversionsByAcuityId = new Map(
+    conversions
+      .map((conversion) => [conversion.acuity_appointment_id, conversion] as const)
+      .filter((entry): entry is [string, WebsiteConversionRow] => Boolean(entry[0])),
+  );
+
+  for (const appointment of appointments) {
+    const date = appointmentVisitDateTimeForRow(appointment).slice(0, 10);
     const row = rows.get(date);
-    if (!row || !isScheduleConversion(conversion)) continue;
+    if (!row) continue;
     row.websiteScheduleConversions += 1;
-    if (isPaidMetaAttributedScheduleConversion(conversion, conversions)) row.paidMetaScheduleConversions += 1;
+    const conversion = conversionsByAcuityId.get(acuityAppointmentIdForRow(appointment));
+    if (conversion && isPaidMetaAttributedScheduleConversion(conversion, conversions)) {
+      row.paidMetaScheduleConversions += 1;
+    }
   }
 
   for (const metaRow of metaRows) {
@@ -2710,6 +3015,23 @@ function timestampValue(value: unknown) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
   return date.toISOString();
+}
+
+function timestampMillis(value: unknown) {
+  const timestamp = timestampValue(value);
+  return timestamp ? Date.parse(timestamp) : 0;
+}
+
+function uniqueStrings(values: Array<string | null | undefined>) {
+  return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
+}
+
+function chunks<T>(values: T[], size: number) {
+  const result: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    result.push(values.slice(index, index + size));
+  }
+  return result;
 }
 
 function websiteBrand(brand: string) {

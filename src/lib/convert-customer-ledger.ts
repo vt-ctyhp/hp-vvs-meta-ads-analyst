@@ -29,7 +29,10 @@ export type CustomerLedgerRow = {
   adId: string | null;
   adsetId: string | null;
   acuityAppointmentId: string | null;
+  appointmentSourceId: string | null;
+  appointmentStatus: string | null;
   appointmentType: string | null;
+  appointmentVisitDateTime: string | null;
   brand: string | null;
   capiStatus: string | null;
   campaignId: string | null;
@@ -106,7 +109,10 @@ export function customerLedgerRowsFromJourneys(
       adId: row.adId,
       adsetId: row.adsetId,
       acuityAppointmentId: row.acuityAppointmentId,
+      appointmentSourceId: row.appointmentSourceId,
+      appointmentStatus: row.appointmentStatus,
       appointmentType: row.appointmentType,
+      appointmentVisitDateTime: row.appointmentVisitDateTime,
       brand: row.brand,
       capiStatus: row.capiStatus,
       campaignId: row.campaignId,
@@ -123,7 +129,7 @@ export function customerLedgerRowsFromJourneys(
       geoTimezone: row.geoTimezone,
       hasConversion: row.hasConversion,
       hasPaidTouch: row.hasPaidTouch,
-      occurredAt: row.bookingTime || row.lastSeen,
+      occurredAt: row.appointmentVisitDateTime || row.bookingTime || row.lastSeen,
       paidTouchCampaign: row.campaignId,
       paidTouchSource: row.lastPaidSource,
       placement: row.placement,
