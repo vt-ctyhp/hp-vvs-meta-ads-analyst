@@ -38,6 +38,7 @@ import {
 } from "@/lib/analyst-periods";
 import type {
   DashboardPayload,
+  DashboardPerformanceChildrenPayload,
   PerformanceRow,
 } from "@/lib/analytics";
 import type {
@@ -128,11 +129,23 @@ export function DashboardClient({
   const [hidePdfFinancials, setHidePdfFinancials] = useState(false);
   const [expandedCampaignIds, setExpandedCampaignIds] = useState<Set<string>>(() => new Set());
   const [expandedAdSetIds, setExpandedAdSetIds] = useState<Set<string>>(() => new Set());
+  const [adSetRows, setAdSetRows] = useState(() => data.adSets);
+  const [creativeRows, setCreativeRows] = useState(() => data.creatives);
+  const [periodBreakdown, setPeriodBreakdown] = useState(() => data.periodBreakdown);
+  const [loadedCampaignChildren, setLoadedCampaignChildren] = useState<Set<string>>(
+    () => new Set(data.hierarchyLoading.mode === "eager" ? data.campaigns.map((row) => row.id) : []),
+  );
+  const [loadedAdSetChildren, setLoadedAdSetChildren] = useState<Set<string>>(
+    () => new Set(data.hierarchyLoading.mode === "eager" ? data.adSets.map((row) => row.id) : []),
+  );
+  const [loadingChildKeys, setLoadingChildKeys] = useState<Set<string>>(() => new Set());
+  const [childLoadErrors, setChildLoadErrors] = useState<Record<string, string>>({});
   const deferredQuery = useDeferredValue(query);
   const normalizedQuery = useMemo(
     () => deferredQuery.trim().toLowerCase(),
     [deferredQuery],
   );
+  const lazyHierarchy = data.hierarchyLoading.mode === "lazy";
 
   useEffect(() => {
     if (!drawerCreativeId) return;
@@ -175,14 +188,14 @@ export function DashboardClient({
 
   const baseAdSets = useMemo(
     () =>
-      filterAndSortRows(data.adSets, brand, umbrella, "", sortKey, delivery),
-    [brand, data.adSets, delivery, sortKey, umbrella],
+      filterAndSortRows(adSetRows, brand, umbrella, "", sortKey, delivery),
+    [adSetRows, brand, delivery, sortKey, umbrella],
   );
 
   const baseCreatives = useMemo(
     () =>
-      filterAndSortRows(data.creatives, brand, umbrella, "", sortKey, delivery),
-    [brand, data.creatives, delivery, sortKey, umbrella],
+      filterAndSortRows(creativeRows, brand, umbrella, "", sortKey, delivery),
+    [brand, creativeRows, delivery, sortKey, umbrella],
   );
 
   const performanceTree = useMemo(
@@ -215,11 +228,11 @@ export function DashboardClient({
 
   const creativeById = useMemo(() => {
     const map = new Map<string, PerformanceRow>();
-    for (const creative of data.creatives) {
+    for (const creative of creativeRows) {
       map.set(creative.id, creative);
     }
     return map;
-  }, [data.creatives]);
+  }, [creativeRows]);
 
   const drawerCreative = drawerCreativeId ? creativeById.get(drawerCreativeId) || null : null;
 
@@ -379,13 +392,107 @@ export function DashboardClient({
     replaceUrlParam("metric", nextMetric);
   }, []);
 
+  const loadCampaignChildren = useCallback(async function loadCampaignChildren(campaignId: string) {
+    if (!lazyHierarchy || loadedCampaignChildren.has(campaignId)) return;
+    const key = childLoadKey("campaign", campaignId);
+    if (loadingChildKeys.has(key)) return;
+
+    setLoadingChildKeys((current) => addSetValue(current, key));
+    setChildLoadErrors((current) => omitRecordKey(current, key));
+    try {
+      const payload = await fetchAnalystPerformanceChildren({
+        parentLevel: "campaign",
+        parentId: campaignId,
+        start: data.sourceTransparency.timeRange.start,
+        end: data.sourceTransparency.timeRange.end,
+        periods: periodCount,
+      });
+      if (payload.level !== "ad_set") {
+        throw new Error("Analyst child response returned the wrong level.");
+      }
+      setAdSetRows((current) =>
+        mergeRowsForParent(current, payload.rows, (row) => row.campaignId === campaignId),
+      );
+      setPeriodBreakdown((current) => ({
+        ...current,
+        adSets: {
+          ...current.adSets,
+          ...payload.periodValuesByEntity,
+        },
+      }));
+      setLoadedCampaignChildren((current) => addSetValue(current, campaignId));
+    } catch (error) {
+      setChildLoadErrors((current) => ({
+        ...current,
+        [key]: error instanceof Error ? error.message : "Could not load ad sets.",
+      }));
+    } finally {
+      setLoadingChildKeys((current) => deleteSetValue(current, key));
+    }
+  }, [
+    data.sourceTransparency.timeRange.end,
+    data.sourceTransparency.timeRange.start,
+    lazyHierarchy,
+    loadedCampaignChildren,
+    loadingChildKeys,
+    periodCount,
+  ]);
+
+  const loadAdSetChildren = useCallback(async function loadAdSetChildren(adSetId: string) {
+    if (!lazyHierarchy || loadedAdSetChildren.has(adSetId)) return;
+    const key = childLoadKey("ad_set", adSetId);
+    if (loadingChildKeys.has(key)) return;
+
+    setLoadingChildKeys((current) => addSetValue(current, key));
+    setChildLoadErrors((current) => omitRecordKey(current, key));
+    try {
+      const payload = await fetchAnalystPerformanceChildren({
+        parentLevel: "ad_set",
+        parentId: adSetId,
+        start: data.sourceTransparency.timeRange.start,
+        end: data.sourceTransparency.timeRange.end,
+        periods: periodCount,
+      });
+      if (payload.level !== "creative") {
+        throw new Error("Analyst child response returned the wrong level.");
+      }
+      setCreativeRows((current) =>
+        mergeRowsForParent(current, payload.rows, (row) => row.adSetId === adSetId),
+      );
+      setPeriodBreakdown((current) => ({
+        ...current,
+        creatives: {
+          ...current.creatives,
+          ...payload.periodValuesByEntity,
+        },
+      }));
+      setLoadedAdSetChildren((current) => addSetValue(current, adSetId));
+    } catch (error) {
+      setChildLoadErrors((current) => ({
+        ...current,
+        [key]: error instanceof Error ? error.message : "Could not load creatives.",
+      }));
+    } finally {
+      setLoadingChildKeys((current) => deleteSetValue(current, key));
+    }
+  }, [
+    data.sourceTransparency.timeRange.end,
+    data.sourceTransparency.timeRange.start,
+    lazyHierarchy,
+    loadedAdSetChildren,
+    loadingChildKeys,
+    periodCount,
+  ]);
+
   const toggleCampaign = useCallback(function toggleCampaign(campaignId: string) {
     setExpandedCampaignIds((current) => toggleSetValue(current, campaignId));
-  }, []);
+    void loadCampaignChildren(campaignId);
+  }, [loadCampaignChildren]);
 
   const toggleAdSet = useCallback(function toggleAdSet(adSetId: string) {
     setExpandedAdSetIds((current) => toggleSetValue(current, adSetId));
-  }, []);
+    void loadAdSetChildren(adSetId);
+  }, [loadAdSetChildren]);
 
   const exportCreativesPdf = useCallback(async function exportCreativesPdf() {
     const activeRange = data.sourceTransparency.timeRange;
@@ -539,7 +646,7 @@ export function DashboardClient({
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search creatives"
+                placeholder={lazyHierarchy ? "Search loaded rows" : "Search creatives"}
                 className="w-full bg-transparent text-sm outline-none placeholder:text-hp-muted"
               />
             </label>
@@ -678,8 +785,8 @@ export function DashboardClient({
           <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
               {formatMetric(treeCounts.campaigns, "number")} campaigns ·{" "}
-              {formatMetric(treeCounts.adSets, "number")} ad sets ·{" "}
-              {formatMetric(treeCounts.creatives, "number")} creatives
+              {formatMetric(treeCounts.adSets, "number")} {lazyHierarchy ? "loaded " : ""}ad sets ·{" "}
+              {formatMetric(treeCounts.creatives, "number")} {lazyHierarchy ? "loaded " : ""}creatives
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               {!compareEnabled ? (
@@ -702,11 +809,16 @@ export function DashboardClient({
             tree={performanceTree}
             expandedCampaignIds={expandedCampaignIds}
             expandedAdSetIds={expandedAdSetIds}
-            forceExpanded={Boolean(normalizedQuery)}
+            forceExpanded={Boolean(normalizedQuery) && !lazyHierarchy}
+            lazyHierarchy={lazyHierarchy}
+            loadedCampaignChildren={loadedCampaignChildren}
+            loadedAdSetChildren={loadedAdSetChildren}
+            loadingChildKeys={loadingChildKeys}
+            childLoadErrors={childLoadErrors}
             showPeriodBreakdown={compareEnabled}
             periodMetric={periodMetric}
             periodWindows={periodWindows}
-            periodBreakdown={data.periodBreakdown}
+            periodBreakdown={periodBreakdown}
             onToggleCampaign={toggleCampaign}
             onToggleAdSet={toggleAdSet}
             onSelectCreative={openCreativeDrawer}
@@ -1443,6 +1555,11 @@ const NestedPerformanceTable = memo(function NestedPerformanceTable({
   expandedCampaignIds,
   expandedAdSetIds,
   forceExpanded,
+  lazyHierarchy,
+  loadedCampaignChildren,
+  loadedAdSetChildren,
+  loadingChildKeys,
+  childLoadErrors,
   showPeriodBreakdown,
   periodMetric,
   periodWindows,
@@ -1455,6 +1572,11 @@ const NestedPerformanceTable = memo(function NestedPerformanceTable({
   expandedCampaignIds: Set<string>;
   expandedAdSetIds: Set<string>;
   forceExpanded: boolean;
+  lazyHierarchy: boolean;
+  loadedCampaignChildren: Set<string>;
+  loadedAdSetChildren: Set<string>;
+  loadingChildKeys: Set<string>;
+  childLoadErrors: Record<string, string>;
   showPeriodBreakdown: boolean;
   periodMetric: PeriodMetric;
   periodWindows: AnalystPeriodWindow[];
@@ -1537,6 +1659,12 @@ const NestedPerformanceTable = memo(function NestedPerformanceTable({
                 expanded={campaignExpanded}
                 expandedAdSetIds={expandedAdSetIds}
                 forceExpanded={forceExpanded}
+                lazyHierarchy={lazyHierarchy}
+                loadedCampaignChildren={loadedCampaignChildren}
+                loadedAdSetChildren={loadedAdSetChildren}
+                loadingChildKeys={loadingChildKeys}
+                childLoadErrors={childLoadErrors}
+                columnCount={columnCount}
                 periodMode={periodMode}
                 periodMetric={periodMetric}
                 periodWindows={periodWindows}
@@ -1565,6 +1693,12 @@ const NestedCampaignRows = memo(function NestedCampaignRows({
   expanded,
   expandedAdSetIds,
   forceExpanded,
+  lazyHierarchy,
+  loadedCampaignChildren,
+  loadedAdSetChildren,
+  loadingChildKeys,
+  childLoadErrors,
+  columnCount,
   periodMode,
   periodMetric,
   periodWindows,
@@ -1577,6 +1711,12 @@ const NestedCampaignRows = memo(function NestedCampaignRows({
   expanded: boolean;
   expandedAdSetIds: Set<string>;
   forceExpanded: boolean;
+  lazyHierarchy: boolean;
+  loadedCampaignChildren: Set<string>;
+  loadedAdSetChildren: Set<string>;
+  loadingChildKeys: Set<string>;
+  childLoadErrors: Record<string, string>;
+  columnCount: number;
   periodMode: boolean;
   periodMetric: PeriodMetric;
   periodWindows: AnalystPeriodWindow[];
@@ -1585,12 +1725,18 @@ const NestedCampaignRows = memo(function NestedCampaignRows({
   onToggleAdSet: (id: string) => void;
   onSelectCreative: (id: string) => void;
 }) {
+  const campaignLoadKey = childLoadKey("campaign", node.id);
+  const campaignLoading = loadingChildKeys.has(campaignLoadKey);
+  const campaignLoaded = loadedCampaignChildren.has(node.id);
+  const campaignError = childLoadErrors[campaignLoadKey];
   return (
     <>
       <MetricTreeRow
         row={node.campaign}
         level="campaign"
         childCount={node.adSets.length}
+        canLoadChildren={lazyHierarchy && !campaignLoaded}
+        isLoadingChildren={campaignLoading}
         expanded={expanded}
         periodMode={periodMode}
         periodMetric={periodMetric}
@@ -1606,6 +1752,11 @@ const NestedCampaignRows = memo(function NestedCampaignRows({
                 key={adSet.id}
                 node={adSet}
                 expanded={adSetExpanded}
+                lazyHierarchy={lazyHierarchy}
+                loadedAdSetChildren={loadedAdSetChildren}
+                loadingChildKeys={loadingChildKeys}
+                childLoadErrors={childLoadErrors}
+                columnCount={columnCount}
                 periodMode={periodMode}
                 periodMetric={periodMetric}
                 periodWindows={periodWindows}
@@ -1616,6 +1767,15 @@ const NestedCampaignRows = memo(function NestedCampaignRows({
             );
           })
         : null}
+      {expanded && campaignLoading ? (
+        <ChildStateRow colSpan={columnCount} depth="campaign" message="Loading ad sets..." />
+      ) : null}
+      {expanded && campaignError ? (
+        <ChildStateRow colSpan={columnCount} depth="campaign" message={campaignError} tone="error" />
+      ) : null}
+      {expanded && campaignLoaded && !campaignLoading && node.adSets.length === 0 ? (
+        <ChildStateRow colSpan={columnCount} depth="campaign" message="No ad sets delivered in this range." />
+      ) : null}
     </>
   );
 });
@@ -1623,6 +1783,11 @@ const NestedCampaignRows = memo(function NestedCampaignRows({
 const NestedAdSetRows = memo(function NestedAdSetRows({
   node,
   expanded,
+  lazyHierarchy,
+  loadedAdSetChildren,
+  loadingChildKeys,
+  childLoadErrors,
+  columnCount,
   periodMode,
   periodMetric,
   periodWindows,
@@ -1632,6 +1797,11 @@ const NestedAdSetRows = memo(function NestedAdSetRows({
 }: {
   node: PerformanceTreeAdSetNode;
   expanded: boolean;
+  lazyHierarchy: boolean;
+  loadedAdSetChildren: Set<string>;
+  loadingChildKeys: Set<string>;
+  childLoadErrors: Record<string, string>;
+  columnCount: number;
   periodMode: boolean;
   periodMetric: PeriodMetric;
   periodWindows: AnalystPeriodWindow[];
@@ -1639,12 +1809,18 @@ const NestedAdSetRows = memo(function NestedAdSetRows({
   onToggleAdSet: (id: string) => void;
   onSelectCreative: (id: string) => void;
 }) {
+  const adSetLoadKey = childLoadKey("ad_set", node.id);
+  const adSetLoading = loadingChildKeys.has(adSetLoadKey);
+  const adSetLoaded = loadedAdSetChildren.has(node.id);
+  const adSetError = childLoadErrors[adSetLoadKey];
   return (
     <>
       <MetricTreeRow
         row={node.adSet}
         level="adSet"
         childCount={node.creatives.length}
+        canLoadChildren={lazyHierarchy && !adSetLoaded}
+        isLoadingChildren={adSetLoading}
         expanded={expanded}
         periodMode={periodMode}
         periodMetric={periodMetric}
@@ -1666,6 +1842,15 @@ const NestedAdSetRows = memo(function NestedAdSetRows({
             />
           ))
         : null}
+      {expanded && adSetLoading ? (
+        <ChildStateRow colSpan={columnCount} depth="adSet" message="Loading creatives..." />
+      ) : null}
+      {expanded && adSetError ? (
+        <ChildStateRow colSpan={columnCount} depth="adSet" message={adSetError} tone="error" />
+      ) : null}
+      {expanded && adSetLoaded && !adSetLoading && node.creatives.length === 0 ? (
+        <ChildStateRow colSpan={columnCount} depth="adSet" message="No creatives delivered in this range." />
+      ) : null}
     </>
   );
 });
@@ -1674,6 +1859,8 @@ const MetricTreeRow = memo(function MetricTreeRow({
   row,
   level,
   childCount = 0,
+  canLoadChildren = false,
+  isLoadingChildren = false,
   expanded = false,
   periodMode,
   periodMetric,
@@ -1685,6 +1872,8 @@ const MetricTreeRow = memo(function MetricTreeRow({
   row: PerformanceRow;
   level: "campaign" | "adSet" | "creative";
   childCount?: number;
+  canLoadChildren?: boolean;
+  isLoadingChildren?: boolean;
   expanded?: boolean;
   periodMode: boolean;
   periodMetric: PeriodMetric;
@@ -1693,7 +1882,7 @@ const MetricTreeRow = memo(function MetricTreeRow({
   onToggle?: () => void;
   onSelectCreative?: (id: string) => void;
 }) {
-  const hasChildren = level !== "creative" && childCount > 0;
+  const hasChildren = level !== "creative" && (childCount > 0 || canLoadChildren);
   const isCreative = level === "creative";
   const rowClass =
     level === "campaign"
@@ -1737,9 +1926,21 @@ const MetricTreeRow = memo(function MetricTreeRow({
             <div className="leading-6 text-hp-ink [overflow-wrap:anywhere]">{row.name}</div>
             <div className="mt-1 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
               {level === "campaign"
-                ? `${formatMetric(childCount, "number")} ad sets`
+                ? isLoadingChildren
+                  ? "Loading ad sets..."
+                  : childCount > 0
+                    ? `${formatMetric(childCount, "number")} ad sets`
+                    : canLoadChildren
+                      ? "Ad sets load on expand"
+                      : "0 ad sets"
                 : level === "adSet"
-                  ? `${formatMetric(childCount, "number")} creatives`
+                  ? isLoadingChildren
+                    ? "Loading creatives..."
+                    : childCount > 0
+                      ? `${formatMetric(childCount, "number")} creatives`
+                      : canLoadChildren
+                        ? "Creatives load on expand"
+                        : "0 creatives"
                   : row.adName || "Creative"}
             </div>
           </div>
@@ -1792,6 +1993,31 @@ const MetricTreeRow = memo(function MetricTreeRow({
           </td>
         </>
       )}
+    </tr>
+  );
+});
+
+const ChildStateRow = memo(function ChildStateRow({
+  colSpan,
+  depth,
+  message,
+  tone = "muted",
+}: {
+  colSpan: number;
+  depth: "campaign" | "adSet";
+  message: string;
+  tone?: "muted" | "error";
+}) {
+  return (
+    <tr className="border-b border-hp-rule bg-hp-inset">
+      <td
+        colSpan={colSpan}
+        className={`py-3 pr-3 text-xs ${
+          depth === "campaign" ? "pl-16" : "pl-24"
+        } ${tone === "error" ? "text-red-700" : "text-hp-muted"}`}
+      >
+        {message}
+      </td>
     </tr>
   );
 });
@@ -2586,6 +2812,67 @@ function countPerformanceTree(tree: PerformanceTreeCampaignNode[]) {
     }
   }
   return { campaigns: tree.length, adSets, creatives };
+}
+
+async function fetchAnalystPerformanceChildren({
+  parentLevel,
+  parentId,
+  start,
+  end,
+  periods,
+}: {
+  parentLevel: "campaign" | "ad_set";
+  parentId: string;
+  start: string | null;
+  end: string | null;
+  periods: AnalystPeriodCount;
+}): Promise<DashboardPerformanceChildrenPayload> {
+  const params = new URLSearchParams({
+    parentLevel,
+    parentId,
+    periods: String(periods),
+  });
+  if (start) params.set("start", start);
+  if (end) params.set("end", end);
+
+  const response = await fetch(`/api/analyst/performance-children?${params.toString()}`, {
+    cache: "no-store",
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(typeof payload?.error === "string" ? payload.error : "Could not load rows.");
+  }
+  return payload as DashboardPerformanceChildrenPayload;
+}
+
+function mergeRowsForParent(
+  current: PerformanceRow[],
+  nextRows: PerformanceRow[],
+  matchesParent: (row: PerformanceRow) => boolean,
+) {
+  return [...current.filter((row) => !matchesParent(row)), ...nextRows];
+}
+
+function childLoadKey(parentLevel: "campaign" | "ad_set", parentId: string) {
+  return `${parentLevel}:${parentId}`;
+}
+
+function addSetValue(current: Set<string>, value: string) {
+  const next = new Set(current);
+  next.add(value);
+  return next;
+}
+
+function deleteSetValue(current: Set<string>, value: string) {
+  const next = new Set(current);
+  next.delete(value);
+  return next;
+}
+
+function omitRecordKey<T>(current: Record<string, T>, key: string) {
+  const { [key]: _removed, ...next } = current;
+  void _removed;
+  return next;
 }
 
 function toggleSetValue(current: Set<string>, value: string) {

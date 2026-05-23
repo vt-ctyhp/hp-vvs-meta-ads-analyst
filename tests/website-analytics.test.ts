@@ -104,7 +104,11 @@ describe("website analytics appointment reconciliation", () => {
     const client = {
       from(table: string) {
         selectedTables.push(table);
-        if (table === "website_events" || table === "meta_daily_insights") {
+        if (
+          table === "website_events" ||
+          table === "website_conversions" ||
+          table === "meta_daily_insights"
+        ) {
           return {
             select() {
               return resolvedSelect([]);
@@ -120,8 +124,13 @@ describe("website analytics appointment reconciliation", () => {
       { client: client as never },
     );
 
-    assert.deepEqual(selectedTables, ["website_events", "meta_daily_insights"]);
+    assert.deepEqual(selectedTables, [
+      "website_events",
+      "website_conversions",
+      "meta_daily_insights",
+    ]);
     assert.equal(data.sourceTransparency.recordCounts.website_events, 0);
+    assert.equal(data.sourceTransparency.recordCounts.website_conversions, 0);
     assert.equal(data.sourceTransparency.recordCounts.meta_daily_insights, 0);
     assert.equal(data.sourceTransparency.recordCounts.appointment_events_checked, undefined);
   });
@@ -157,23 +166,43 @@ describe("website analytics appointment reconciliation", () => {
       date_start: "2026-05-01",
       id: `meta-${index}`,
     }));
+    const conversions = [
+      {
+        event_name: "Schedule",
+        meta_event_name: "Schedule",
+        occurred_at: "2026-05-01T03:00:00.000Z",
+        source_type: "paid_meta",
+      },
+      {
+        event_name: "Schedule",
+        meta_event_name: "Schedule",
+        occurred_at: "2026-05-01T04:00:00.000Z",
+        source_type: "direct",
+      },
+    ];
     const rangeCalls: Record<string, Array<[number, number]>> = {
       meta_daily_insights: [],
+      website_conversions: [],
       website_events: [],
     };
     const eqCalls: Record<string, Array<[string, unknown]>> = {
       meta_daily_insights: [],
+      website_conversions: [],
       website_events: [],
     };
     const selectedColumns: Record<string, string[]> = {};
     const client = {
-      from(table: "website_events" | "meta_daily_insights") {
+      from(table: "website_events" | "website_conversions" | "meta_daily_insights") {
         return {
           select(columns: string) {
             selectedColumns[table] ||= [];
             selectedColumns[table].push(columns);
             return resolvedSelect(
-              table === "website_events" ? events : metaRows,
+              table === "website_events"
+                ? events
+                : table === "website_conversions"
+                  ? conversions
+                  : metaRows,
               rangeCalls[table],
               eqCalls[table],
             );
@@ -199,23 +228,138 @@ describe("website analytics appointment reconciliation", () => {
       ["environment", "production"],
       ["environment", "production"],
     ]);
+    assert.deepEqual(eqCalls.website_conversions, []);
     assert.deepEqual(eqCalls.meta_daily_insights, [
       ["environment", "production"],
       ["environment", "production"],
     ]);
     assert.match(selectedColumns.website_events[0], /meta_event_name/);
     assert.equal(data.sourceTransparency.recordCounts.website_events, 1002);
+    assert.equal(data.sourceTransparency.recordCounts.website_conversions, 2);
     assert.equal(data.sourceTransparency.recordCounts.meta_daily_insights, 1001);
     assert.equal(data.overview.sessions, 1002);
     assert.equal(data.overview.pageViews, 1001);
     assert.equal(data.overview.schedules, 1);
+    assert.equal(data.overview.websiteScheduleConversions, 2);
+    assert.equal(data.overview.paidMetaScheduleConversions, 1);
     assert.equal(data.overview.completeTrackingConversions, 1);
     assert.equal(data.overview.metaAttributedBookings, 1001);
     assert.equal(data.overview.discrepancy, -1000);
     assert.equal(data.funnel.at(-1)?.count, 1);
     assert.equal(data.trend[0]?.pageViews, 1001);
     assert.equal(data.trend[0]?.schedules, 1);
+    assert.equal(data.trend[0]?.websiteScheduleConversions, 2);
+    assert.equal(data.trend[0]?.paidMetaScheduleConversions, 1);
     assert.equal(data.trend[0]?.metaAttributedBookings, 1001);
+  });
+
+  it("counts funnel stages by unique session instead of raw events", async () => {
+    const events = [
+      websiteEvent({
+        event_id: "view-1",
+        event_name: "PageView",
+        page_group: "booking",
+        session_id: "session-a",
+      }),
+      websiteEvent({
+        event_id: "view-2",
+        event_name: "PageView",
+        page_group: "booking",
+        session_id: "session-a",
+      }),
+      websiteEvent({
+        event_id: "view-3",
+        event_name: "PageView",
+        page_group: "booking",
+        session_id: "session-b",
+      }),
+      websiteEvent({
+        event_id: "visit-1",
+        event_name: "BookingVisitSelected",
+        session_id: "session-a",
+      }),
+      websiteEvent({
+        event_id: "visit-2",
+        event_name: "BookingVisitSelected",
+        session_id: "session-a",
+      }),
+      websiteEvent({
+        event_id: "date-1",
+        event_name: "BookingDateSelected",
+        session_id: "session-a",
+      }),
+      websiteEvent({
+        event_id: "date-2",
+        event_name: "BookingDateSelected",
+        session_id: "session-b",
+      }),
+      websiteEvent({
+        event_id: "time-1",
+        event_name: "BookingTimeSelected",
+        session_id: "session-a",
+      }),
+      websiteEvent({
+        event_id: "time-2",
+        event_name: "BookingTimeSelected",
+        session_id: "session-a",
+      }),
+      websiteEvent({
+        event_id: "contact-1",
+        event_name: "BookingContactStarted",
+        session_id: "session-a",
+      }),
+      websiteEvent({
+        event_id: "submit-1",
+        event_name: "BookingSubmitAttempt",
+        session_id: "session-a",
+      }),
+      websiteEvent({
+        event_id: "schedule-1",
+        event_name: "BookingComplete",
+        meta_event_name: "Schedule",
+        session_id: "session-a",
+      }),
+      websiteEvent({
+        event_id: "schedule-2",
+        event_name: "BookingComplete",
+        meta_event_name: "Schedule",
+        session_id: "session-a",
+      }),
+      websiteEvent({
+        event_id: "schedule-3",
+        event_name: "Schedule",
+        session_id: "session-b",
+      }),
+    ];
+    const client = {
+      from(table: "website_events" | "website_conversions" | "meta_daily_insights") {
+        return {
+          select() {
+            return resolvedSelect(table === "website_events" ? events : []);
+          },
+        };
+      },
+    };
+
+    const data = await fetchWebsiteFunnelData(
+      { startDate: "2026-05-01", endDate: "2026-05-01" },
+      { client: client as never },
+    );
+
+    assert.equal(data.overview.pageViews, 3);
+    assert.equal(data.overview.schedules, 3);
+    assert.deepEqual(
+      Object.fromEntries(data.funnel.map((row) => [row.key, row.count])),
+      {
+        booking_page_view: 2,
+        visit_selected: 1,
+        date_selected: 2,
+        time_selected: 1,
+        contact_started: 1,
+        submit_attempt: 1,
+        schedule: 2,
+      },
+    );
   });
 
   it("treats Meta click identifiers and ad IDs as paid touches", () => {

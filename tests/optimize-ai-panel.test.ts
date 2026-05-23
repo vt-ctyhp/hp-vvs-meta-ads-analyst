@@ -102,6 +102,60 @@ test("Optimize AI saved analyses drawer is collapsed by default", () => {
   assert.doesNotMatch(detailsTag, /\sopen(?:[=>\s]|$)/);
 });
 
+test("Optimize AI chat formats markdown answers for readability", () => {
+  const { FormattedChatContent } = loadModule("src/components/v2/optimize/ai-panel.tsx", {
+    "@/components/analysis-client": { AnalysisOutput: () => null },
+    "@/lib/glossary": { translateError: () => "Something went wrong." },
+  });
+
+  const markup = renderToStaticMarkup(
+    React.createElement(FormattedChatContent, {
+      content: [
+        "For **Book Appts US**, prioritize cautious scale.",
+        "",
+        "### Scale candidates",
+        "| Priority | Ad / Creative | Spend | Notes |",
+        "|---|---|---:|---|",
+        "| 1 | **Creative A** / Ad set: Testing \\| Broad \\| New | $570.93 | Best volume |",
+        "| 2 | **Ad:** `DM_IG_HeyBeyArea | May 13` | $95.15 | Pipe inside code |",
+        "",
+        "- Watch fatigue",
+      ].join("\n"),
+    }),
+  );
+
+  assert.match(markup, /<strong[^>]*>Book Appts US<\/strong>/);
+  assert.match(markup, /<h4[^>]*>Scale candidates<\/h4>/);
+  assert.match(markup, /<table/);
+  assert.match(markup, /Testing \| Broad \| New/);
+  assert.match(markup, /<code[^>]*>DM_IG_HeyBeyArea \| May 13<\/code>/);
+  assert.match(markup, /<li[^>]*>Watch fatigue<\/li>/);
+  assert.doesNotMatch(markup, /\| Priority \|/);
+});
+
+test("analysis output shows API cost even when diagnostics are hidden", () => {
+  const { AnalysisOutput } = loadModule("src/components/analysis-client.tsx", {
+    "@/lib/glossary": {
+      translateError(error: unknown) {
+        return error instanceof Error ? error.message : "Something went wrong.";
+      },
+    },
+  });
+
+  const markup = renderToStaticMarkup(
+    React.createElement(AnalysisOutput, {
+      result: minimalAnalysisResult(),
+      hideDiagnostics: true,
+    }),
+  );
+
+  assert.match(markup, /Est\. API cost/);
+  assert.match(markup, /\$0\.01235/);
+  assert.match(markup, /2,500 tokens/);
+  assert.doesNotMatch(markup, /Analyst Debug/);
+  assert.doesNotMatch(markup, /Plan Model/);
+});
+
 test("analysis POST applies Optimize defaults only to new dashboard builds", async () => {
   const calls: Array<{ name: string; args: unknown[] }> = [];
   const route = loadAnalysisRoute(calls);
@@ -130,6 +184,33 @@ test("analysis POST applies Optimize defaults only to new dashboard builds", asy
         prompt: "Show spend by campaign umbrella.",
         mode: "deep",
         defaultDateRange: { days: 14 },
+      },
+    ],
+  });
+});
+
+test("chat POST forwards selected analysis mode", async () => {
+  const calls: Array<{ name: string; args: unknown[] }> = [];
+  const route = loadChatRoute(calls);
+
+  const response = await route.POST(
+    jsonRequest({
+      sessionId: "session-1",
+      message: "Which ad creative should I scale?",
+      mode: "deep",
+      days: 30,
+    }),
+  );
+
+  assert.deepEqual(await response.json(), { kind: "chat" });
+  assert.deepEqual(serializable(calls.at(-1)), {
+    name: "answerExecutiveChat",
+    args: [
+      {
+        sessionId: "session-1",
+        message: "Which ad creative should I scale?",
+        mode: "deep",
+        days: 30,
       },
     ],
   });
@@ -183,12 +264,98 @@ function loadAnalysisRoute(calls: Array<{ name: string; args: unknown[] }>) {
   }) as { POST(request: Request): Promise<Response> };
 }
 
+function loadChatRoute(calls: Array<{ name: string; args: unknown[] }>) {
+  return loadModule("src/app/api/chat/route.ts", {
+    "@/lib/ai": {
+      async answerExecutiveChat(...args: unknown[]) {
+        calls.push({ name: "answerExecutiveChat", args });
+        return { kind: "chat" };
+      },
+    },
+    "@/lib/app-auth": {
+      async requirePermissionFromRequest() {
+        return {};
+      },
+    },
+    "@/lib/http": {
+      jsonError(error: unknown) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "Unexpected error" },
+          { status: 500 },
+        );
+      },
+    },
+  }) as { POST(request: Request): Promise<Response> };
+}
+
 function jsonRequest(body: unknown) {
   return new Request("http://localhost/api/analysis", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
+}
+
+function minimalAnalysisResult() {
+  const spec = {
+    title: "API Cost Check",
+    dateRange: { preset: "last_30_days" },
+    grain: "summary",
+    dimensions: ["campaign_umbrella"],
+    filters: [],
+    metrics: ["spend"],
+    sort: null,
+    limit: 10,
+    tableLayout: null,
+    widgets: [],
+  };
+
+  return {
+    status: "ready",
+    validationStatus: "ready",
+    dashboardId: "dashboard-1",
+    prompt: "Show spend",
+    mode: "deep",
+    title: "API Cost Check",
+    answer: "Built.",
+    spec,
+    resolvedSpec: spec,
+    table: { columns: [], rows: [] },
+    totals: {},
+    widgets: [],
+    sourceTransparency: {
+      timeRange: { start: "2026-04-23", end: "2026-05-22", days: 30 },
+      adAccountsAnalyzed: [],
+      recordCounts: {},
+    },
+    analystDebug: {
+      validationStatus: "ready",
+      dataSource: "meta_ads",
+      sourceTable: "meta_daily_insights",
+      sourceFunction: null,
+      resolvedDateRange: { start: "2026-04-23", end: "2026-05-22", days: 30 },
+      latestSyncedInsightDate: "2026-05-22",
+      filters: [],
+      metrics: ["spend"],
+      dimensions: ["campaign_umbrella"],
+      assumptions: [],
+      warnings: [],
+      unsupportedReasons: [],
+      recordCounts: {},
+      repairedSpec: false,
+    },
+    warnings: [],
+    unsupportedReasons: [],
+    clarificationQuestions: [],
+    modelUsed: { plan: "gpt-5.4", analysis: "gpt-5.5" },
+    tokenEstimate: {
+      planInputTokens: 1000,
+      planOutputTokens: 500,
+      analysisInputTokens: 700,
+      analysisOutputTokens: 300,
+      estimatedCostUsd: 0.01235,
+    },
+  };
 }
 
 function loadModule(filePath: string, stubs: Record<string, unknown>) {

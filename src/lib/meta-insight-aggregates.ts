@@ -82,7 +82,12 @@ export const META_INSIGHT_AGGREGATES_CACHE_TAG = "meta-insight-aggregates";
 export const META_INSIGHT_AGGREGATES_REVALIDATE_SECONDS = 60;
 
 export async function cachedAggregateMetaInsights(input: AggregateInput) {
-  return cachedAggregateMetaInsightsImpl(normalizeAggregateInput(input));
+  const normalizedInput = normalizeAggregateInput(input);
+  if (shouldRevalidateCachedMetaInsightAggregates()) {
+    return revalidatingAggregateMetaInsightsImpl(normalizedInput);
+  }
+
+  return stableAggregateMetaInsightsImpl(normalizedInput);
 }
 
 type NormalizedAggregateInput = {
@@ -95,7 +100,7 @@ type NormalizedAggregateInput = {
   limit: number;
 };
 
-const cachedAggregateMetaInsightsImpl = unstable_cache(
+const revalidatingAggregateMetaInsightsImpl = unstable_cache(
   async (input: NormalizedAggregateInput) => aggregateMetaInsightsUncached(input),
   ["meta-insight-aggregates-v1"],
   {
@@ -103,6 +108,19 @@ const cachedAggregateMetaInsightsImpl = unstable_cache(
     tags: [META_INSIGHT_AGGREGATES_CACHE_TAG],
   },
 );
+
+const stableAggregateMetaInsightsImpl = unstable_cache(
+  async (input: NormalizedAggregateInput) => aggregateMetaInsightsUncached(input),
+  ["meta-insight-aggregates-v1"],
+  {
+    revalidate: false,
+    tags: [META_INSIGHT_AGGREGATES_CACHE_TAG],
+  },
+);
+
+export function shouldRevalidateCachedMetaInsightAggregates(nodeEnv = process.env.NODE_ENV) {
+  return nodeEnv === "production";
+}
 
 async function aggregateMetaInsightsUncached(input: NormalizedAggregateInput) {
   const supabase = createAdsAnalystClient("web") as unknown as {

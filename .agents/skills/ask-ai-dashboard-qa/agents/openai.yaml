@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ask AI Dashboard QA"
+  short_description: "Stress-test Ask AI dashboard quality"
+  default_prompt: "Use $ask-ai-dashboard-qa to run persona dashboard-generation tests until the Ask AI dashboard scores 90+."

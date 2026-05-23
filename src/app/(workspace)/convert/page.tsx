@@ -78,10 +78,14 @@ async function ConvertStatus({ data }: { data: ConvertData }) {
     data.funnel,
     data.ledger,
   ]);
+  const bookingSessions =
+    funnel.funnel.find((row) => row.key === "booking_page_view")?.count ?? 0;
+  const confirmedBookings = funnel.overview.websiteScheduleConversions;
   const sentence = buildCustomerLedgerStatusSentence({
-    bookings: funnel.overview.schedules,
+    bookings: confirmedBookings,
     rows: ledger,
-    sessions: funnel.overview.sessions,
+    sessionNoun: "booking session",
+    sessions: bookingSessions,
     unreadConversations: 0,
   });
 
@@ -90,12 +94,12 @@ async function ConvertStatus({ data }: { data: ConvertData }) {
       sentence={sentence}
       metrics={[
         {
-          label: "Customers",
-          value: funnel.overview.sessions.toLocaleString(),
+          label: "Booking sessions",
+          value: bookingSessions.toLocaleString(),
         },
         {
-          label: "Bookings",
-          value: funnel.overview.schedules.toLocaleString(),
+          label: "Confirmed bookings",
+          value: confirmedBookings.toLocaleString(),
         },
         {
           label: "CAPI gaps",
@@ -108,7 +112,23 @@ async function ConvertStatus({ data }: { data: ConvertData }) {
 
 async function ConvertFunnel({ data }: { data: ConvertData }) {
   const funnel = await data.funnel;
-  return <FunnelViz steps={funnel.funnel} />;
+  return (
+    <FunnelViz
+      steps={funnel.funnel}
+      bookingSignals={[
+        {
+          label: "Confirmed Schedule conversions",
+          source: "website_conversions / Schedule",
+          count: funnel.overview.websiteScheduleConversions,
+        },
+        {
+          label: "Paid Meta Schedule conversions",
+          source: "website_conversions / Schedule / paid_meta",
+          count: funnel.overview.paidMetaScheduleConversions,
+        },
+      ]}
+    />
+  );
 }
 
 async function ConvertLedger({ data }: { data: ConvertData }) {
@@ -144,6 +164,8 @@ function emptyFunnel(rangeRequest: CustomerJourneyLedgerRequest): WebsiteFunnelD
       scrollDepthEvents: 0,
       bookingStarts: 0,
       schedules: 0,
+      websiteScheduleConversions: 0,
+      paidMetaScheduleConversions: 0,
       metaAttributedBookings: 0,
       // Fields added by main's attribution-ledger work (commit 7dd4293). Stub
       // them at 0 so the empty-funnel placeholder still satisfies
@@ -172,7 +194,7 @@ function StatusSentenceFallback() {
         <Skeleton className="h-6 w-[min(36rem,72vw)]" />
       </div>
       <div className="grid grid-cols-2 gap-4 sm:flex">
-        {["customers", "bookings", "gaps"].map((item) => (
+        {["booking-sessions", "confirmed-bookings", "gaps"].map((item) => (
           <div key={item} className="min-w-[88px] space-y-2">
             <Skeleton className="h-2 w-20" />
             <Skeleton className="h-5 w-12" />

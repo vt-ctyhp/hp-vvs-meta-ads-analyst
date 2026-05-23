@@ -1,0 +1,238 @@
+{
+  "version": 1,
+  "name": "Ask AI Dashboard QA Persona Suite",
+  "passing": {
+    "minScore": 90,
+    "maxCriticalFailures": 0,
+    "requireAllWidgets": true
+  },
+  "tests": [
+    {
+      "id": "analyst-performance-diagnosis-weekly-umbrella",
+      "persona": "analyst",
+      "requestType": "performance_diagnosis",
+      "mode": "deep",
+      "prompt": "Diagnose performance by campaign umbrella for the last 4 weeks. Show spend, primary KPI, CTR, CPC, and CPM by week and umbrella. I need the table and the chart that explains what changed.",
+      "expected": {
+        "status": "ready",
+        "dateRange": { "preset": "last_4_weeks" },
+        "requiredMetrics": ["spend", "primary_results", "ctr", "cpc", "cpm"],
+        "requiredDimensions": ["week", "campaign_umbrella"],
+        "requiredWidgets": [
+          { "type": "table", "metrics": ["spend", "primary_results"], "xAny": ["week", "campaign_umbrella"] },
+          { "typeAny": ["line", "bar"], "metrics": ["spend", "primary_results"] }
+        ],
+        "minTableRows": 1,
+        "seniorInsight": { "needsComparison": true, "needsAction": true, "needsNumbers": true }
+      }
+    },
+    {
+      "id": "manager-budget-reallocation",
+      "persona": "manager",
+      "requestType": "budget_reallocation",
+      "mode": "deep",
+      "prompt": "Which campaign umbrellas should we move budget toward or away from this month? Build a dashboard with spend, monthly budget, primary results, CPC, CPM, and cost efficiency by campaign umbrella. Give me a prioritized recommendation.",
+      "expected": {
+        "status": "ready",
+        "requiredMetrics": ["spend", "monthly_budget", "primary_results", "cpc", "cpm"],
+        "requiredDimensions": ["campaign_umbrella"],
+        "requiredWidgets": [
+          { "type": "table", "metrics": ["spend", "monthly_budget", "primary_results"] },
+          { "type": "bar", "metrics": ["spend", "primary_results"], "x": "campaign_umbrella" }
+        ],
+        "minTableRows": 1,
+        "seniorInsight": { "needsPriority": true, "needsAction": true, "needsNumbers": true }
+      }
+    },
+    {
+      "id": "sales-lead-booking-creatives",
+      "persona": "sales_lead",
+      "requestType": "conversion_quality",
+      "mode": "deep",
+      "prompt": "For Book Appointments US, show booked appointments by creative over the last 14 days. Include spend, bookings, CPC, CTR, and cost per booking. Tell me which creatives sales should ask marketing to keep pushing.",
+      "expected": {
+        "status": "ready",
+        "dateRange": { "preset": "last_14_days" },
+        "requiredMetrics": ["spend", "bookings", "cpc", "ctr"],
+        "requiredDimensions": ["creative"],
+        "requiredFilters": [
+          { "field": "campaign_umbrella", "operator": "equals", "value": "Book Appts US" }
+        ],
+        "requiredWidgets": [
+          { "type": "table", "metrics": ["spend", "bookings"] },
+          { "typeAny": ["bar", "table"], "metrics": ["bookings"] }
+        ],
+        "minTableRows": 1,
+        "seniorInsight": { "needsSpecificEntity": true, "needsAction": true, "needsNumbers": true }
+      }
+    },
+    {
+      "id": "marketing-creative-winners-losers",
+      "persona": "marketing",
+      "requestType": "creative_winners_losers",
+      "mode": "deep",
+      "prompt": "Find creative winners and losers for Cash for Gold over the last 30 days. I want messages, spend, CPC, CPM, CTR, and a bar chart by ad creative. Tell me what creative angle we should test next.",
+      "expected": {
+        "status": "ready",
+        "dateRange": { "preset": "last_30_days" },
+        "requiredMetrics": ["messaging_contacts", "spend", "cpc", "cpm", "ctr"],
+        "requiredDimensions": ["creative"],
+        "requiredFilters": [
+          { "field": "campaign_umbrella", "operator": "equals", "value": "Cash for Gold US" }
+        ],
+        "requiredWidgets": [
+          { "type": "table", "metrics": ["messaging_contacts", "spend"] },
+          { "type": "bar", "metrics": ["messaging_contacts"], "x": "creative" }
+        ],
+        "minTableRows": 1,
+        "seniorInsight": { "needsSpecificEntity": true, "needsAction": true, "needsNumbers": true }
+      }
+    },
+    {
+      "id": "analyst-pivot-table-week-by-umbrella",
+      "persona": "analyst",
+      "requestType": "pivot_table",
+      "mode": "fast",
+      "prompt": "Create a pivot table with campaign umbrella as rows and week as columns for the last 8 weeks. Show spend and primary KPI as metric rows under each umbrella.",
+      "expected": {
+        "status": "ready",
+        "dateRange": { "preset": "last_8_weeks" },
+        "requiredMetrics": ["spend", "primary_results"],
+        "requiredDimensions": ["week", "campaign_umbrella"],
+        "tableLayout": { "type": "metric_rows_pivot", "rowDimension": "campaign_umbrella", "columnDimension": "week" },
+        "requiredWidgets": [
+          { "type": "table", "metrics": ["spend", "primary_results"] }
+        ],
+        "minTableRows": 1
+      }
+    },
+    {
+      "id": "manager-anomaly-explainer",
+      "persona": "manager",
+      "requestType": "anomaly_explainer",
+      "mode": "deep",
+      "prompt": "Explain the biggest anomaly in Meta performance over the last 12 weeks. Show a weekly line chart and a table with spend, primary KPI, CTR, CPC, and source rows. Give me the most likely reason and what to inspect next.",
+      "expected": {
+        "status": "ready",
+        "dateRange": { "preset": "last_12_weeks" },
+        "requiredMetrics": ["spend", "primary_results", "ctr", "cpc"],
+        "requiredDimensions": ["week"],
+        "requiredWidgets": [
+          { "type": "line", "metrics": ["spend", "primary_results"], "x": "week" },
+          { "type": "table", "metrics": ["spend", "primary_results", "ctr", "cpc"] }
+        ],
+        "minTableRows": 1,
+        "seniorInsight": { "needsComparison": true, "needsAction": true, "needsNumbers": true }
+      }
+    },
+    {
+      "id": "marketing-pacing-since-date",
+      "persona": "marketing",
+      "requestType": "pacing",
+      "mode": "deep",
+      "prompt": "Since January 1, 2026, show month-by-month pacing by campaign umbrella. Include spend, monthly budget, primary KPI, CPC, and CPM. Chart the monthly trend and say which campaign group needs attention.",
+      "expected": {
+        "status": "ready",
+        "dateRange": { "preset": "custom", "start": "2026-01-01" },
+        "requiredMetrics": ["spend", "monthly_budget", "primary_results", "cpc", "cpm"],
+        "requiredDimensions": ["month", "campaign_umbrella"],
+        "requiredWidgets": [
+          { "type": "table", "metrics": ["spend", "monthly_budget", "primary_results"] },
+          { "typeAny": ["line", "bar"], "metrics": ["spend", "primary_results"] }
+        ],
+        "minTableRows": 1,
+        "seniorInsight": { "needsSpecificEntity": true, "needsAction": true, "needsNumbers": true }
+      }
+    },
+    {
+      "id": "analyst-underperforming-adsets",
+      "persona": "analyst",
+      "requestType": "underperformers",
+      "mode": "deep",
+      "prompt": "Show underperforming ad sets for the last 30 days. Rank ad sets by high CPC and low primary KPI. Include spend, clicks, CPC, CTR, primary KPI, and campaign umbrella.",
+      "expected": {
+        "status": "ready",
+        "dateRange": { "preset": "last_30_days" },
+        "requiredMetrics": ["spend", "clicks", "cpc", "ctr", "primary_results"],
+        "requiredDimensions": ["ad_set", "campaign_umbrella"],
+        "requiredWidgets": [
+          { "type": "table", "metrics": ["spend", "cpc", "primary_results"] },
+          { "typeAny": ["bar", "table"], "metrics": ["cpc", "primary_results"] }
+        ],
+        "minTableRows": 1,
+        "seniorInsight": { "needsSpecificEntity": true, "needsAction": true, "needsNumbers": true }
+      }
+    },
+    {
+      "id": "manager-export-ready-summary",
+      "persona": "manager",
+      "requestType": "export_ready_summary",
+      "mode": "deep",
+      "prompt": "Build an export-ready summary for leadership: last 30 days by brand and campaign umbrella, with spend, impressions, clicks, CTR, CPC, CPM, and primary KPI. Keep it table-first with a concise takeaway.",
+      "expected": {
+        "status": "ready",
+        "dateRange": { "preset": "last_30_days" },
+        "requiredMetrics": ["spend", "impressions", "clicks", "ctr", "cpc", "cpm", "primary_results"],
+        "requiredDimensions": ["brand", "campaign_umbrella"],
+        "requiredWidgets": [
+          { "type": "table", "metrics": ["spend", "impressions", "clicks", "primary_results"] }
+        ],
+        "minTableRows": 1,
+        "seniorInsight": { "needsSummary": true, "needsNumbers": true }
+      }
+    },
+    {
+      "id": "sales-lead-no-fake-revenue",
+      "persona": "sales_lead",
+      "requestType": "unsupported_revenue_roas",
+      "mode": "deep",
+      "prompt": "Which Meta campaigns drove the most sales revenue and ROAS last month? Show revenue, ROAS, and booked appointments by campaign.",
+      "expected": {
+        "status": "unsupported",
+        "mustMentionUnsupported": ["revenue", "ROAS"],
+        "forbiddenReadyMetrics": ["spend", "primary_results"],
+        "seniorInsight": { "needsCaveat": true }
+      }
+    },
+    {
+      "id": "marketing-unsupported-landing-page",
+      "persona": "marketing",
+      "requestType": "unsupported_website",
+      "mode": "fast",
+      "prompt": "Compare Meta ad spend to landing-page conversion rate by campaign for the last 14 days.",
+      "expected": {
+        "status": "unsupported",
+        "mustMentionUnsupported": ["landing", "website", "conversion rate"],
+        "seniorInsight": { "needsCaveat": true }
+      }
+    },
+    {
+      "id": "optimize-runtime-context-filters",
+      "persona": "analyst",
+      "requestType": "runtime_context",
+      "mode": "fast",
+      "prompt": "Build a table of spend and primary KPI by campaign for the selected Optimize page range and filters.",
+      "runtimeContext": {
+        "dateRange": { "days": 7, "startDate": null, "endDate": null },
+        "filters": [
+          { "field": "campaign_umbrella", "operator": "equals", "value": "Cash for Gold US" },
+          { "field": "delivery_status", "operator": "equals", "value": "live" }
+        ]
+      },
+      "expected": {
+        "status": "ready",
+        "dateRange": { "days": 7 },
+        "requiredMetrics": ["spend", "primary_results"],
+        "requiredDimensions": ["campaign"],
+        "requiredFilters": [
+          { "field": "campaign_umbrella", "operator": "equals", "value": "Cash for Gold US" },
+          { "field": "delivery_status", "operator": "equals", "value": "live" }
+        ],
+        "requiredWidgets": [
+          { "type": "table", "metrics": ["spend", "primary_results"] }
+        ],
+        "minTableRows": 1
+      }
+    }
+  ]
+}

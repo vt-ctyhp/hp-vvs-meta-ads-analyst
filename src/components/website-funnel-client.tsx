@@ -202,6 +202,39 @@ export function WebsiteFunnelClient({ initialData }: Props) {
             attribution windows, deduplication, and campaign matching rules. First-party
             events show what happened on the website and booking API.
           </p>
+          <div className="mt-5 overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-hp-inset text-left text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+                <tr>
+                  <th className="px-4 py-3 font-normal">Signal</th>
+                  <th className="px-4 py-3 font-normal">Source</th>
+                  <th className="px-4 py-3 text-right font-normal">Count</th>
+                </tr>
+              </thead>
+              <tbody>
+                <SignalRow
+                  label="Raw Schedule events"
+                  source="website_events · Schedule"
+                  value={data.overview.schedules}
+                />
+                <SignalRow
+                  label="Confirmed Schedule conversions"
+                  source="website_conversions · Schedule"
+                  value={data.overview.websiteScheduleConversions}
+                />
+                <SignalRow
+                  label="Paid Meta Schedule conversions"
+                  source="website_conversions · Schedule · paid_meta"
+                  value={data.overview.paidMetaScheduleConversions}
+                />
+                <SignalRow
+                  label="Meta API custom booking signal"
+                  source="meta_daily_insights · fb_pixel_custom"
+                  value={data.overview.metaAttributedBookings}
+                />
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <section className="mt-8 border border-hp-rule bg-white">
@@ -264,7 +297,7 @@ export function WebsiteFunnelClient({ initialData }: Props) {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-[11px] uppercase tracking-[0.16em] text-hp-muted">
-                  Booking funnel
+                  Booking funnel - unique sessions
                 </p>
                 <h2 className="mt-1 font-title text-2xl font-normal text-hp-ink">
                   Drop-off by step
@@ -450,6 +483,24 @@ export function WebsiteFunnelClient({ initialData }: Props) {
         </section>
       </section>
     </main>
+  );
+}
+
+function SignalRow({
+  label,
+  source,
+  value,
+}: {
+  label: string;
+  source: string;
+  value: number;
+}) {
+  return (
+    <tr className="border-t border-hp-rule">
+      <td className="px-4 py-3 font-medium text-hp-ink">{label}</td>
+      <td className="px-4 py-3 text-hp-muted">{source}</td>
+      <td className="px-4 py-3 text-right text-hp-ink">{formatNumber(value)}</td>
+    </tr>
   );
 }
 

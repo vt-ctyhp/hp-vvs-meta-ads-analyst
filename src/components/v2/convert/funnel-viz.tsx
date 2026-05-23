@@ -25,11 +25,18 @@ export type FunnelStep = {
   rateFromStart: number | null;
 };
 
-type Props = {
-  steps: FunnelStep[];
+export type FunnelBookingSignal = {
+  label: string;
+  source: string;
+  count: number;
 };
 
-export function FunnelViz({ steps }: Props) {
+type Props = {
+  steps: FunnelStep[];
+  bookingSignals?: FunnelBookingSignal[];
+};
+
+export function FunnelViz({ steps, bookingSignals = [] }: Props) {
   if (steps.length === 0) {
     return (
       <div className="border border-hp-rule bg-hp-card px-4 py-10 text-center text-sm text-hp-muted">
@@ -48,9 +55,40 @@ export function FunnelViz({ steps }: Props) {
       className="overflow-hidden border border-hp-rule bg-hp-card"
     >
       <header className="flex items-baseline justify-between border-b border-hp-rule bg-hp-inset px-5 py-3 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-        <span>Funnel</span>
+        <span>Funnel - unique sessions</span>
         <span>{steps.length} stages</span>
       </header>
+
+      {bookingSignals.length ? (
+        <div className="border-b border-hp-rule px-5 py-4">
+          <div className="mb-3 flex items-baseline justify-between gap-3 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+            <span>Booking source check</span>
+            <span>{bookingSignals.length} signals</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-hp-inset text-left text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+                <tr>
+                  <th className="px-4 py-3 font-normal">Signal</th>
+                  <th className="px-4 py-3 font-normal">Source</th>
+                  <th className="px-4 py-3 text-right font-normal">Count</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bookingSignals.map((signal) => (
+                  <tr key={signal.source} className="border-t border-hp-rule">
+                    <td className="px-4 py-3 font-medium text-hp-ink">{signal.label}</td>
+                    <td className="px-4 py-3 text-hp-muted">{signal.source}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-hp-ink">
+                      {signal.count.toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
 
       <ParentSize parentSizeStyles={{ height: steps.length * 56 + 16 }}>
         {({ width }) => {
@@ -112,8 +150,8 @@ export function FunnelViz({ steps }: Props) {
                       {step.rateFromPrevious == null
                         ? idx === 0
                           ? "entry"
-                          : "—"
-                        : `${(step.rateFromPrevious * 100).toFixed(1)}% from prev · ${
+                          : "-"
+                        : `${(step.rateFromPrevious * 100).toFixed(1)}% from prev - ${
                             step.rateFromStart != null
                               ? `${(step.rateFromStart * 100).toFixed(1)}% from start`
                               : ""
