@@ -2,6 +2,7 @@ import { OptimizeAiPanel } from "@/components/v2/optimize/ai-panel";
 import { fetchSavedAnalysisDashboards } from "@/lib/ad-hoc-analytics";
 import {
   resolveAnalysisRouteDateRange,
+  resolveAnalysisRouteFilters,
   type AnalysisRouteSearchParams,
 } from "@/lib/analysis-route";
 import { requirePagePermission } from "@/lib/server-route-auth";
@@ -21,6 +22,7 @@ export default async function AnalysisPage({
       initialSaved={savedDashboards}
       canUseAdHocAnalysis
       dateRange={resolveAnalysisRouteDateRange(params)}
+      initialFilters={resolveAnalysisRouteFilters(params)}
     />
   );
 }

@@ -14,14 +14,18 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AnalysisOutput } from "@/components/analysis-client";
+import { FilterChipGroup } from "@/components/filter-chip-group";
+import { UniversalFilterBar } from "@/components/universal-filter-bar";
 import type {
   AnalysisFilter,
   AnalysisResult,
   SavedAnalysisDashboard,
 } from "@/lib/ad-hoc-analytics";
+import { buildAskAiFilterSummary } from "@/lib/active-filter-summary";
 import type { AnalysisMode } from "@/lib/env";
 import { translateError } from "@/lib/glossary";
 
@@ -39,25 +43,47 @@ type Props = {
     startDate: string | null;
     endDate: string | null;
   };
-  filters?: {
+  initialFilters?: {
     brand: string | null;
     group: string | null;
     status: string | null;
   };
 };
 
-const DEFAULT_FILTERS = {
+const DEFAULT_INITIAL_FILTERS: NonNullable<Props["initialFilters"]> = {
   brand: null,
   group: null,
   status: null,
 };
 
+const UMBRELLA_OPTIONS = [
+  "Book Appts US",
+  "Facebook US Product",
+  "Facebook VN Product",
+  "US Promotions",
+  "Cash for Gold US",
+];
+
 export function OptimizeAiPanel({
   initialSaved,
   canUseAdHocAnalysis,
   dateRange,
-  filters = DEFAULT_FILTERS,
+  initialFilters = DEFAULT_INITIAL_FILTERS,
 }: Props) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const [brand, setBrand] = useState<string | null>(initialFilters.brand);
+  const [delivery, setDelivery] = useState<"active" | "paused" | null>(
+    initialFilters.status === "active" || initialFilters.status === "paused"
+      ? initialFilters.status
+      : null,
+  );
+  const [umbrella, setUmbrella] = useState<string | null>(initialFilters.group);
+  const [startDate, setStartDate] = useState<string>(dateRange.startDate ?? "");
+  const [endDate, setEndDate] = useState<string>(dateRange.endDate ?? "");
+
   const [prompt, setPrompt] = useState("");
   const [mode, setMode] = useState<AnalysisMode>("fast");
   const [showModeHelp, setShowModeHelp] = useState(false);
@@ -76,35 +102,63 @@ export function OptimizeAiPanel({
   const [renameDraft, setRenameDraft] = useState("");
   const [editPrompt, setEditPrompt] = useState("");
 
-  const requestedRangeLabel = formatRequestedRange(dateRange);
+  // Live date range reflects user-applied changes; falls back to the
+  // server-resolved range until the user applies something.
+  const effectiveDateRange = useMemo(
+    () => ({
+      days: dateRange.days,
+      startDate: startDate || dateRange.startDate,
+      endDate: endDate || dateRange.endDate,
+    }),
+    [dateRange.days, dateRange.startDate, dateRange.endDate, startDate, endDate],
+  );
+
+  const requestedRangeLabel = formatRequestedRange(effectiveDateRange);
   const runtimeFilters = useMemo<AnalysisFilter[]>(() => {
     const nextFilters: AnalysisFilter[] = [];
-    if (filters.brand) {
-      nextFilters.push({ field: "brand", operator: "equals", value: filters.brand });
+    if (brand) {
+      nextFilters.push({ field: "brand", operator: "equals", value: brand });
     }
-    if (filters.group) {
+    if (umbrella) {
       nextFilters.push({
         field: "campaign_umbrella",
         operator: "equals",
-        value: filters.group,
+        value: umbrella,
       });
     }
-    if (filters.status) {
+    if (delivery) {
       nextFilters.push({
         field: "delivery_status",
         operator: "equals",
-        value: filters.status,
+        value: delivery,
       });
     }
     return nextFilters;
-  }, [filters.brand, filters.group, filters.status]);
+  }, [brand, delivery, umbrella]);
   const runtimeContext = useMemo(
     () => ({
-      dateRange,
+      dateRange: effectiveDateRange,
       filters: runtimeFilters,
     }),
-    [dateRange, runtimeFilters],
+    [effectiveDateRange, runtimeFilters],
   );
+
+  // URL sync — write current filter state on every change so reload +
+  // permalinks preserve the user's filter selection. Matches the
+  // /analyst pattern (router.replace, no scroll/refetch).
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    setOrDelete(params, "brand", brand);
+    setOrDelete(params, "group", umbrella);
+    setOrDelete(params, "status", delivery);
+    setOrDelete(params, "start", startDate || null);
+    setOrDelete(params, "end", endDate || null);
+    const next = params.toString();
+    const current = searchParams.toString();
+    if (next !== current) {
+      router.replace(`${pathname}?${next}`, { scroll: false });
+    }
+  }, [brand, delivery, umbrella, startDate, endDate, pathname, router, searchParams]);
 
   const refreshSaved = useCallback(async function refreshSaved() {
     try {
@@ -135,12 +189,12 @@ export function OptimizeAiPanel({
         body: JSON.stringify({
           sessionId: chatSessionId,
           message,
-          days: dateRange.days,
-          startDate: dateRange.startDate,
-          endDate: dateRange.endDate,
-          brand: filters.brand,
-          group: filters.group,
-          status: filters.status,
+          days: effectiveDateRange.days,
+          startDate: effectiveDateRange.startDate,
+          endDate: effectiveDateRange.endDate,
+          brand,
+          group: umbrella,
+          status: delivery,
         }),
       });
       const payload = await response.json();
@@ -168,12 +222,12 @@ export function OptimizeAiPanel({
     }
   }, [
     chatSessionId,
-    dateRange.days,
-    dateRange.endDate,
-    dateRange.startDate,
-    filters.brand,
-    filters.group,
-    filters.status,
+    effectiveDateRange.days,
+    effectiveDateRange.endDate,
+    effectiveDateRange.startDate,
+    brand,
+    delivery,
+    umbrella,
     prompt,
     requestedRangeLabel,
   ]);
@@ -346,6 +400,96 @@ export function OptimizeAiPanel({
 
   return (
     <section className="space-y-6">
+      <UniversalFilterBar
+        summary={buildAskAiFilterSummary({
+          brand,
+          delivery,
+          umbrella,
+          startDate: startDate || dateRange.startDate || "",
+          endDate: endDate || dateRange.endDate || "",
+        })}
+      >
+        <div className="mx-auto mt-2 flex max-w-7xl flex-col gap-4 border-y border-hp-rule py-4 xl:flex-row xl:flex-wrap xl:items-center xl:justify-between xl:gap-x-6">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+            <FilterChipGroup
+              label="Brand"
+              value={brand ?? "all"}
+              onChange={(value) => setBrand(value === "all" ? null : value)}
+              options={[
+                { value: "all", label: "All" },
+                { value: "HP", label: "HP" },
+                { value: "VVS", label: "VVS" },
+              ]}
+            />
+            <FilterChipGroup
+              label="Delivery"
+              value={delivery ?? "all"}
+              onChange={(value) =>
+                setDelivery(
+                  value === "active" || value === "paused" ? value : null,
+                )
+              }
+              options={[
+                { value: "all", label: "All" },
+                { value: "active", label: "Active" },
+                { value: "paused", label: "Paused" },
+              ]}
+            />
+            <label className="flex h-9 items-center gap-2 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+              <span>Umbrella</span>
+              <select
+                value={umbrella ?? "all"}
+                onChange={(event) =>
+                  setUmbrella(event.target.value === "all" ? null : event.target.value)
+                }
+                className="h-6 bg-transparent text-hp-ink outline-none"
+              >
+                <option value="all">All</option>
+                {UMBRELLA_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              const formData = new FormData(event.currentTarget);
+              setStartDate(String(formData.get("start") ?? startDate));
+              setEndDate(String(formData.get("end") ?? endDate));
+            }}
+            className="flex items-center gap-2"
+          >
+            <div className="flex items-center gap-2 border border-hp-rule px-3 py-2">
+              <input
+                aria-label="Start date"
+                name="start"
+                type="date"
+                defaultValue={startDate || dateRange.startDate || ""}
+                className="h-8 bg-transparent text-sm outline-none"
+              />
+              <span className="text-hp-muted">to</span>
+              <input
+                aria-label="End date"
+                name="end"
+                type="date"
+                defaultValue={endDate || dateRange.endDate || ""}
+                className="h-8 bg-transparent text-sm outline-none"
+              />
+              <button
+                type="submit"
+                className="h-8 border border-hp-ink px-3 text-[10px] uppercase tracking-[0.14em] text-hp-ink transition-colors hover:bg-hp-ink hover:text-hp-foundation"
+              >
+                Apply
+              </button>
+            </div>
+          </form>
+        </div>
+      </UniversalFilterBar>
+
       <header className="border-b border-hp-rule pb-6">
         <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
@@ -733,6 +877,14 @@ function formatRequestedRange(dateRange: Props["dateRange"]) {
     return `${dateRange.startDate || "earliest"} to ${dateRange.endDate || "latest"}`;
   }
   return `Last ${dateRange.days} days`;
+}
+
+function setOrDelete(params: URLSearchParams, key: string, value: string | null) {
+  if (value) {
+    params.set(key, value);
+  } else {
+    params.delete(key);
+  }
 }
 
 function formatSourceRange(source: unknown, fallback: string) {

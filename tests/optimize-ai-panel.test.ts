@@ -17,10 +17,30 @@ test("Optimize AI panel renders one copilot surface without reports or legacy an
         return React.createElement("section", null, "Analysis output");
       },
     },
+    "@/components/filter-chip-group": {
+      FilterChipGroup: function FilterChipGroup() {
+        return null;
+      },
+    },
+    "@/components/universal-filter-bar": {
+      UniversalFilterBar: function UniversalFilterBar(props: {
+        children: unknown;
+      }) {
+        return React.createElement(React.Fragment, null, props.children);
+      },
+    },
+    "@/lib/active-filter-summary": {
+      buildAskAiFilterSummary: () => [],
+    },
     "@/lib/glossary": {
       translateError(error: unknown) {
         return error instanceof Error ? error.message : "Something went wrong.";
       },
+    },
+    "next/navigation": {
+      usePathname: () => "/analysis",
+      useRouter: () => ({ replace: () => {} }),
+      useSearchParams: () => new URLSearchParams(),
     },
   });
 
@@ -53,7 +73,19 @@ test("Optimize AI panel renders one copilot surface without reports or legacy an
 test("Optimize AI saved analyses drawer is collapsed by default", () => {
   const { OptimizeAiPanel } = loadModule("src/components/v2/optimize/ai-panel.tsx", {
     "@/components/analysis-client": { AnalysisOutput: () => null },
+    "@/components/filter-chip-group": { FilterChipGroup: () => null },
+    "@/components/universal-filter-bar": {
+      UniversalFilterBar: function UniversalFilterBar(props: { children: unknown }) {
+        return React.createElement(React.Fragment, null, props.children);
+      },
+    },
+    "@/lib/active-filter-summary": { buildAskAiFilterSummary: () => [] },
     "@/lib/glossary": { translateError: () => "Something went wrong." },
+    "next/navigation": {
+      usePathname: () => "/analysis",
+      useRouter: () => ({ replace: () => {} }),
+      useSearchParams: () => new URLSearchParams(),
+    },
   });
 
   const markup = renderToStaticMarkup(
