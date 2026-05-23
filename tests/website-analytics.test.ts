@@ -253,6 +253,115 @@ describe("website analytics appointment reconciliation", () => {
     assert.equal(data.trend[0]?.metaAttributedBookings, 1001);
   });
 
+  it("counts funnel stages by unique session instead of raw events", async () => {
+    const events = [
+      websiteEvent({
+        event_id: "view-1",
+        event_name: "PageView",
+        page_group: "booking",
+        session_id: "session-a",
+      }),
+      websiteEvent({
+        event_id: "view-2",
+        event_name: "PageView",
+        page_group: "booking",
+        session_id: "session-a",
+      }),
+      websiteEvent({
+        event_id: "view-3",
+        event_name: "PageView",
+        page_group: "booking",
+        session_id: "session-b",
+      }),
+      websiteEvent({
+        event_id: "visit-1",
+        event_name: "BookingVisitSelected",
+        session_id: "session-a",
+      }),
+      websiteEvent({
+        event_id: "visit-2",
+        event_name: "BookingVisitSelected",
+        session_id: "session-a",
+      }),
+      websiteEvent({
+        event_id: "date-1",
+        event_name: "BookingDateSelected",
+        session_id: "session-a",
+      }),
+      websiteEvent({
+        event_id: "date-2",
+        event_name: "BookingDateSelected",
+        session_id: "session-b",
+      }),
+      websiteEvent({
+        event_id: "time-1",
+        event_name: "BookingTimeSelected",
+        session_id: "session-a",
+      }),
+      websiteEvent({
+        event_id: "time-2",
+        event_name: "BookingTimeSelected",
+        session_id: "session-a",
+      }),
+      websiteEvent({
+        event_id: "contact-1",
+        event_name: "BookingContactStarted",
+        session_id: "session-a",
+      }),
+      websiteEvent({
+        event_id: "submit-1",
+        event_name: "BookingSubmitAttempt",
+        session_id: "session-a",
+      }),
+      websiteEvent({
+        event_id: "schedule-1",
+        event_name: "BookingComplete",
+        meta_event_name: "Schedule",
+        session_id: "session-a",
+      }),
+      websiteEvent({
+        event_id: "schedule-2",
+        event_name: "BookingComplete",
+        meta_event_name: "Schedule",
+        session_id: "session-a",
+      }),
+      websiteEvent({
+        event_id: "schedule-3",
+        event_name: "Schedule",
+        session_id: "session-b",
+      }),
+    ];
+    const client = {
+      from(table: "website_events" | "website_conversions" | "meta_daily_insights") {
+        return {
+          select() {
+            return resolvedSelect(table === "website_events" ? events : []);
+          },
+        };
+      },
+    };
+
+    const data = await fetchWebsiteFunnelData(
+      { startDate: "2026-05-01", endDate: "2026-05-01" },
+      { client: client as never },
+    );
+
+    assert.equal(data.overview.pageViews, 3);
+    assert.equal(data.overview.schedules, 3);
+    assert.deepEqual(
+      Object.fromEntries(data.funnel.map((row) => [row.key, row.count])),
+      {
+        booking_page_view: 2,
+        visit_selected: 1,
+        date_selected: 2,
+        time_selected: 1,
+        contact_started: 1,
+        submit_attempt: 1,
+        schedule: 2,
+      },
+    );
+  });
+
   it("treats Meta click identifiers and ad IDs as paid touches", () => {
     assert.equal(
       isPaidTouch({

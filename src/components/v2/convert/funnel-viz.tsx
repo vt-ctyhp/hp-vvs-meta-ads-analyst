@@ -55,7 +55,7 @@ export function FunnelViz({ steps, bookingSignals = [] }: Props) {
       className="overflow-hidden border border-hp-rule bg-hp-card"
     >
       <header className="flex items-baseline justify-between border-b border-hp-rule bg-hp-inset px-5 py-3 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-        <span>Funnel</span>
+        <span>Funnel - unique sessions</span>
         <span>{steps.length} stages</span>
       </header>
 

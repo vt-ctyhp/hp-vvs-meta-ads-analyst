@@ -297,7 +297,7 @@ export function WebsiteFunnelClient({ initialData }: Props) {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-[11px] uppercase tracking-[0.16em] text-hp-muted">
-                  Booking funnel
+                  Booking funnel - unique sessions
                 </p>
                 <h2 className="mt-1 font-title text-2xl font-normal text-hp-ink">
                   Drop-off by step

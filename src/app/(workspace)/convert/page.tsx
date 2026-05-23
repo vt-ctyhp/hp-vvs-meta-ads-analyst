@@ -90,7 +90,7 @@ async function ConvertStatus({ data }: { data: ConvertData }) {
       sentence={sentence}
       metrics={[
         {
-          label: "Customers",
+          label: "Sessions",
           value: funnel.overview.sessions.toLocaleString(),
         },
         {
@@ -190,7 +190,7 @@ function StatusSentenceFallback() {
         <Skeleton className="h-6 w-[min(36rem,72vw)]" />
       </div>
       <div className="grid grid-cols-2 gap-4 sm:flex">
-        {["customers", "bookings", "gaps"].map((item) => (
+        {["sessions", "bookings", "gaps"].map((item) => (
           <div key={item} className="min-w-[88px] space-y-2">
             <Skeleton className="h-2 w-20" />
             <Skeleton className="h-5 w-12" />

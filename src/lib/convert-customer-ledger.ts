@@ -189,14 +189,14 @@ export function buildCustomerLedgerStatusSentence({
   const gaps = countCustomerLedgerCapiGaps(rows);
 
   if (sessions === 0 && bookings === 0 && unreadConversations === 0 && rows.length === 0) {
-    return "No customer activity in this range yet. Once the booking pixel + inbox sync are live, traffic + bookings + conversations land here.";
+    return "No session activity in this range yet. Once the booking pixel + inbox sync are live, traffic + bookings + conversations land here.";
   }
 
   const pieces: string[] = [];
   if (sessions > 0 || bookings > 0) {
     const rate = sessions > 0 ? ((bookings / sessions) * 100).toFixed(1) : null;
     pieces.push(
-      `${sessions.toLocaleString()} customers → ${bookings} booking${
+      `${sessions.toLocaleString()} sessions → ${bookings} booking${
         bookings === 1 ? "" : "s"
       }${rate ? ` (${rate}%)` : ""}.`,
     );

@@ -260,7 +260,7 @@ describe("Convert customer ledger adapter", () => {
         sessions: 10,
         unreadConversations: 2,
       }),
-      "10 customers → 1 booking (10.0%). 2 conversations waiting.",
+      "10 sessions → 1 booking (10.0%). 2 conversations waiting.",
     );
   });
 });

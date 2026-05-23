@@ -977,7 +977,7 @@ export async function fetchWebsiteFunnelData(input: {
       completeTrackingConversions,
       discrepancy: schedules.length - metaAttributedBookings,
     },
-    funnel: buildFunnel(events, schedules.length),
+    funnel: buildFunnel(events),
     pages: buildPages(events),
     locations: buildWebsiteLocationBreakdown(events),
     trend: buildTrend(events, conversions, metaRows, range.start, range.end),
@@ -2229,21 +2229,58 @@ function isScheduleConversion(conversion: WebsiteConversionRow) {
   return conversion.event_name === "Schedule" || conversion.meta_event_name === "Schedule";
 }
 
-function buildFunnel(events: WebsiteEventRow[], scheduleCount: number) {
+function countUniqueSessionsForEvents(
+  events: WebsiteEventRow[],
+  matchesStage: (event: WebsiteEventRow) => boolean,
+) {
+  return new Set(
+    events
+      .filter(matchesStage)
+      .map((event) => event.session_id)
+      .filter(Boolean),
+  ).size;
+}
+
+function buildFunnel(events: WebsiteEventRow[]) {
   const rows = [
     {
       key: "booking_page_view",
       label: "Viewed booking page",
-      count: events.filter(
+      count: countUniqueSessionsForEvents(
+        events,
         (event) => event.event_name === "PageView" && event.page_group === "booking",
-      ).length,
+      ),
     },
-    { key: "visit_selected", label: "Selected visit type", count: countEvents(events, "BookingVisitSelected") },
-    { key: "date_selected", label: "Selected date", count: countEvents(events, "BookingDateSelected") },
-    { key: "time_selected", label: "Selected time", count: countEvents(events, "BookingTimeSelected") },
-    { key: "contact_started", label: "Started contact form", count: countEvents(events, "BookingContactStarted") },
-    { key: "submit_attempt", label: "Submitted booking form", count: countEvents(events, "BookingSubmitAttempt") },
-    { key: "schedule", label: "Acuity appointment created", count: scheduleCount },
+    {
+      key: "visit_selected",
+      label: "Selected visit type",
+      count: countUniqueSessionsForEvents(events, (event) => event.event_name === "BookingVisitSelected"),
+    },
+    {
+      key: "date_selected",
+      label: "Selected date",
+      count: countUniqueSessionsForEvents(events, (event) => event.event_name === "BookingDateSelected"),
+    },
+    {
+      key: "time_selected",
+      label: "Selected time",
+      count: countUniqueSessionsForEvents(events, (event) => event.event_name === "BookingTimeSelected"),
+    },
+    {
+      key: "contact_started",
+      label: "Started contact form",
+      count: countUniqueSessionsForEvents(events, (event) => event.event_name === "BookingContactStarted"),
+    },
+    {
+      key: "submit_attempt",
+      label: "Submitted booking form",
+      count: countUniqueSessionsForEvents(events, (event) => event.event_name === "BookingSubmitAttempt"),
+    },
+    {
+      key: "schedule",
+      label: "Acuity appointment created",
+      count: countUniqueSessionsForEvents(events, isScheduleEvent),
+    },
   ];
   const start = rows[0]?.count || 0;
   return rows.map((row, index) => {
