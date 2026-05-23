@@ -937,6 +937,153 @@ describe("attribution ledger detail data", () => {
     assert.doesNotMatch(detail.summary || "", /Booking session started from Meta ad/);
   });
 
+  it("filters noisy same-session events from the curated timeline", () => {
+    const detail = buildAttributionLedgerDetailData({
+      conversions: [
+        conversionRow({
+          event_id: "acuity-noise-filter",
+          last_paid_touch: richPaidTouch("2026-05-22T17:00:00.000Z"),
+          meta_capi_status: "sent",
+          meta_event_id: "meta-noise-filter",
+          occurred_at: "2026-05-22T19:00:00.000Z",
+          received_at: "2026-05-22T19:00:01.000Z",
+          session_id: "session-booking",
+        }),
+      ],
+      events: [
+        eventRow({
+          event_id: "hp_evt-noise-paid-source",
+          event_name: "PageView",
+          occurred_at: "2026-05-22T17:05:00.000Z",
+          page_url:
+            "https://www.hungphatusa.com/products/oval-ring?utm_source=fb&utm_medium=paid_social&utm_ad_id=ad-one&utm_adset_id=adset-one&utm_campaign_id=campaign-one&fbclid=paid-click",
+          referrer: "https://l.facebook.com/",
+          session_id: "session-prior-paid",
+          source_type: "paid_meta",
+          utm_ad_id: "ad-one",
+          utm_adset_id: "adset-one",
+          utm_campaign_id: "campaign-one",
+          utm_medium: "paid_social",
+          utm_source: "fb",
+        }),
+        eventRow({
+          event_id: "hp_evt-noise-organic-source",
+          event_name: "PageView",
+          occurred_at: "2026-05-22T17:10:00.000Z",
+          page_url:
+            "https://www.hungphatusa.com/pages/book-an-appointment?utm_source=ig&utm_medium=social&utm_content=link_in_bio&fbclid=organic-click",
+          referrer: "https://l.instagram.com/",
+          session_id: "session-prior-organic",
+          source_type: "referral",
+        }),
+        eventRow({
+          event_id: "hp_evt-noise-fbclid-source",
+          event_name: "PageView",
+          fbclid: "weak-facebook-click",
+          occurred_at: "2026-05-22T17:15:00.000Z",
+          page_url: "https://www.hungphatusa.com/pages/book-an-appointment?fbclid=weak-facebook-click",
+          referrer: "https://l.facebook.com/",
+          session_id: "session-prior-fbclid",
+          source_type: "paid_meta",
+          utm_ad_id: null,
+          utm_adset_id: null,
+          utm_campaign_id: null,
+          utm_content: null,
+          utm_medium: null,
+          utm_source: null,
+        }),
+        eventRow({
+          event_id: "hp_evt-scroll",
+          event_name: "ScrollDepth",
+          event_type: "engagement",
+          occurred_at: "2026-05-22T18:51:00.000Z",
+          session_id: "session-booking",
+        }),
+        eventRow({
+          event_id: "hp_evt-engaged",
+          event_name: "Engaged60Seconds",
+          event_type: "engagement",
+          occurred_at: "2026-05-22T18:52:00.000Z",
+          session_id: "session-booking",
+        }),
+        eventRow({
+          event_id: "hp_evt-search",
+          event_name: "Search",
+          event_type: "search",
+          occurred_at: "2026-05-22T18:53:00.000Z",
+          session_id: "session-booking",
+        }),
+        eventRow({
+          event_id: "hp_evt-click",
+          event_name: "ProductTileClick",
+          event_type: "click",
+          occurred_at: "2026-05-22T18:54:00.000Z",
+          session_id: "session-booking",
+        }),
+        eventRow({
+          event_id: "hp_evt-custom",
+          event_name: "CustomSurveyEvent",
+          event_type: "custom",
+          occurred_at: "2026-05-22T18:54:30.000Z",
+          session_id: "session-booking",
+        }),
+        eventRow({
+          event_id: "hp_evt-booking-page-useful",
+          event_name: "PageView",
+          occurred_at: "2026-05-22T18:55:00.000Z",
+          page_url: "https://www.hungphatusa.com/pages/book-an-appointment",
+          referrer: null,
+          session_id: "session-booking",
+          source_type: "direct",
+          utm_ad_id: null,
+          utm_adset_id: null,
+          utm_campaign_id: null,
+          utm_content: null,
+          utm_medium: null,
+          utm_source: null,
+        }),
+        eventRow({
+          event_id: "hp_evt-visit-selected-useful",
+          event_name: "BookingVisitSelected",
+          event_type: "booking",
+          occurred_at: "2026-05-22T18:56:00.000Z",
+          session_id: "session-booking",
+        }),
+        eventRow({
+          event_id: "acuity-noise-filter",
+          event_name: "Schedule",
+          event_type: "conversion",
+          occurred_at: "2026-05-22T19:00:00.000Z",
+          session_id: "session-booking",
+        }),
+      ],
+      sessions: [sessionRow({ session_id: "session-booking" })],
+      visitor: visitorRow(),
+    });
+
+    const noisyEventIds = new Set([
+      "hp_evt-scroll",
+      "hp_evt-engaged",
+      "hp_evt-search",
+      "hp_evt-click",
+      "hp_evt-custom",
+    ]);
+    assert.equal(detail.timeline.some((event) => noisyEventIds.has(event.eventId || "")), false);
+    assert.deepEqual(
+      detail.timeline.map((event) => [event.eventId, event.label]),
+      [
+        [null, "Paid ad attribution captured"],
+        ["hp_evt-noise-paid-source", "Meta ad landing page viewed"],
+        ["hp_evt-noise-organic-source", "Instagram profile link landing viewed"],
+        ["hp_evt-noise-fbclid-source", "Page viewed from Facebook"],
+        ["hp_evt-booking-page-useful", "Booking page viewed"],
+        ["hp_evt-visit-selected-useful", "Appointment type selected"],
+        ["acuity-noise-filter", "Acuity booking created"],
+        ["meta-noise-filter", "Meta CAPI sent"],
+      ],
+    );
+  });
+
   it("labels every fresh paid Meta landing in the curated timeline", () => {
     const detail = buildAttributionLedgerDetailData({
       conversions: [

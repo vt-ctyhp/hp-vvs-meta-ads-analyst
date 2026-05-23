@@ -1248,6 +1248,7 @@ function buildDetailTimeline(input: {
   for (const event of input.events) {
     const sameSession = !sessionId || event.session_id === sessionId;
     if (!sameSession && !isJourneyEntryEvent(event)) continue;
+    if (!shouldIncludeTimelineWebsiteEvent(event)) continue;
     const eventTime = timestampValue(event.occurred_at);
     if (bookingTime && eventTime > (windowEnd || bookingTime)) continue;
     const touch = eventRowTouch(event);
@@ -1401,6 +1402,22 @@ function isJourneyEntryEvent(event: CustomerJourneyLedgerEventRow) {
     (isFreshPaidMetaLandingEvent(event) ||
       Boolean(organicSocialLandingLabel(event)) ||
       Boolean(metaOriginPageViewLabel(event)))
+  );
+}
+
+function shouldIncludeTimelineWebsiteEvent(event: CustomerJourneyLedgerEventRow) {
+  if (event.event_name === "PageView" || event.event_name === "ViewContent") return true;
+  if (event.event_type === "booking" || event.event_name.startsWith("Booking")) return true;
+  if (event.event_type === "conversion" || event.event_name === "Schedule") return true;
+  if (isTimelineNoiseEvent(event)) return false;
+  return false;
+}
+
+function isTimelineNoiseEvent(event: CustomerJourneyLedgerEventRow) {
+  return (
+    event.event_name === "ScrollDepth" ||
+    event.event_name.startsWith("Engaged") ||
+    event.event_type === "engagement"
   );
 }
 
