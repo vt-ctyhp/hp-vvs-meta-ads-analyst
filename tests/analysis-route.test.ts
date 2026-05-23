@@ -45,3 +45,54 @@ test("resolveAnalysisRouteDateRange accepts legacy and direct date params", () =
     },
   );
 });
+
+import { resolveAnalysisRouteFilters } from "../src/lib/analysis-route.ts";
+
+test("resolveAnalysisRouteFilters · empty params → all null", () => {
+  assert.deepEqual(resolveAnalysisRouteFilters({}), {
+    brand: null,
+    group: null,
+    status: null,
+  });
+});
+
+test("resolveAnalysisRouteFilters · reads brand/group/status verbatim", () => {
+  assert.deepEqual(
+    resolveAnalysisRouteFilters({
+      brand: "HP",
+      group: "Facebook US Product",
+      status: "active",
+    }),
+    {
+      brand: "HP",
+      group: "Facebook US Product",
+      status: "active",
+    },
+  );
+});
+
+test("resolveAnalysisRouteFilters · ignores empty strings", () => {
+  assert.deepEqual(
+    resolveAnalysisRouteFilters({ brand: "", group: "  ", status: "" }),
+    {
+      brand: null,
+      group: null,
+      status: null,
+    },
+  );
+});
+
+test("resolveAnalysisRouteFilters · handles array-valued params", () => {
+  assert.deepEqual(
+    resolveAnalysisRouteFilters({
+      brand: ["VVS", "HP"],
+      group: ["Book Appts US"],
+      status: ["paused"],
+    }),
+    {
+      brand: "VVS",
+      group: "Book Appts US",
+      status: "paused",
+    },
+  );
+});
