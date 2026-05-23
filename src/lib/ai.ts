@@ -14,6 +14,7 @@ import {
   getOpenAIModel,
 } from "./env";
 import { createAdsAnalystClient, withAdsAnalystEnvironment } from "./ads-analyst-db";
+import { buildOpenAICostBreakdown, type OpenAICostBreakdown } from "./openai-cost";
 
 export type ExecutiveReportContent = {
   executiveSummary: string[];
@@ -39,6 +40,7 @@ export type ChatResult = {
     mode: AnalysisMode;
     routing: CopilotRoute;
   };
+  apiCost: OpenAICostBreakdown;
 };
 
 const EMPTY_REPORT: ExecutiveReportContent = {
@@ -193,6 +195,15 @@ export async function answerExecutiveChat(input: {
   const answer =
     response.choices[0]?.message?.content ||
     "I could not generate an answer from the retrieved Supabase context.";
+  const apiCost = buildOpenAICostBreakdown({
+    model,
+    inputTokens:
+      response.usage?.prompt_tokens ||
+      estimateTokens(JSON.stringify(compactDashboard(dashboard))) +
+        estimateTokens(input.message) +
+        500,
+    outputTokens: response.usage?.completion_tokens || estimateTokens(answer),
+  });
 
   await supabase.from("ai_chat_messages").insert(withAdsAnalystEnvironment({
     session_id: sessionId,
@@ -210,6 +221,7 @@ export async function answerExecutiveChat(input: {
       mode: routing.mode,
       routing,
     },
+    apiCost,
   };
 }
 
@@ -278,6 +290,10 @@ function compactDashboard(dashboard: DashboardPayload) {
     recommendationQueue: dashboard.recommendationQueue,
     trendSample: dashboard.dailyTrend.slice(-28),
   };
+}
+
+function estimateTokens(value: string) {
+  return Math.ceil(value.length / 4);
 }
 
 function parseReport(content: string | null | undefined): ExecutiveReportContent {

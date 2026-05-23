@@ -101,6 +101,29 @@ test("Optimize AI chat formats markdown answers for readability", () => {
   assert.doesNotMatch(markup, /\| Priority \|/);
 });
 
+test("analysis output shows API cost even when diagnostics are hidden", () => {
+  const { AnalysisOutput } = loadModule("src/components/analysis-client.tsx", {
+    "@/lib/glossary": {
+      translateError(error: unknown) {
+        return error instanceof Error ? error.message : "Something went wrong.";
+      },
+    },
+  });
+
+  const markup = renderToStaticMarkup(
+    React.createElement(AnalysisOutput, {
+      result: minimalAnalysisResult(),
+      hideDiagnostics: true,
+    }),
+  );
+
+  assert.match(markup, /Est\. API cost/);
+  assert.match(markup, /\$0\.01235/);
+  assert.match(markup, /2,500 tokens/);
+  assert.doesNotMatch(markup, /Analyst Debug/);
+  assert.doesNotMatch(markup, /Plan Model/);
+});
+
 test("analysis POST applies Optimize defaults only to new dashboard builds", async () => {
   const calls: Array<{ name: string; args: unknown[] }> = [];
   const route = loadAnalysisRoute(calls);
@@ -239,6 +262,68 @@ function jsonRequest(body: unknown) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
+}
+
+function minimalAnalysisResult() {
+  const spec = {
+    title: "API Cost Check",
+    dateRange: { preset: "last_30_days" },
+    grain: "summary",
+    dimensions: ["campaign_umbrella"],
+    filters: [],
+    metrics: ["spend"],
+    sort: null,
+    limit: 10,
+    tableLayout: null,
+    widgets: [],
+  };
+
+  return {
+    status: "ready",
+    validationStatus: "ready",
+    dashboardId: "dashboard-1",
+    prompt: "Show spend",
+    mode: "deep",
+    title: "API Cost Check",
+    answer: "Built.",
+    spec,
+    resolvedSpec: spec,
+    table: { columns: [], rows: [] },
+    totals: {},
+    widgets: [],
+    sourceTransparency: {
+      timeRange: { start: "2026-04-23", end: "2026-05-22", days: 30 },
+      adAccountsAnalyzed: [],
+      recordCounts: {},
+    },
+    analystDebug: {
+      validationStatus: "ready",
+      dataSource: "meta_ads",
+      sourceTable: "meta_daily_insights",
+      sourceFunction: null,
+      resolvedDateRange: { start: "2026-04-23", end: "2026-05-22", days: 30 },
+      latestSyncedInsightDate: "2026-05-22",
+      filters: [],
+      metrics: ["spend"],
+      dimensions: ["campaign_umbrella"],
+      assumptions: [],
+      warnings: [],
+      unsupportedReasons: [],
+      recordCounts: {},
+      repairedSpec: false,
+    },
+    warnings: [],
+    unsupportedReasons: [],
+    clarificationQuestions: [],
+    modelUsed: { plan: "gpt-5.4", analysis: "gpt-5.5" },
+    tokenEstimate: {
+      planInputTokens: 1000,
+      planOutputTokens: 500,
+      analysisInputTokens: 700,
+      analysisOutputTokens: 300,
+      estimatedCostUsd: 0.01235,
+    },
+  };
 }
 
 function loadModule(filePath: string, stubs: Record<string, unknown>) {

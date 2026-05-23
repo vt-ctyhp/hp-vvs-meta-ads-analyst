@@ -24,11 +24,13 @@ import type {
 } from "@/lib/ad-hoc-analytics";
 import type { AnalysisMode } from "@/lib/env";
 import { translateError } from "@/lib/glossary";
+import type { OpenAICostBreakdown } from "@/lib/openai-cost";
 
 type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   rangeLabel: string;
+  apiCost?: OpenAICostBreakdown;
 };
 
 type Props = {
@@ -153,6 +155,7 @@ export function OptimizeAiPanel({
           role: "assistant",
           content: payload.answer,
           rangeLabel: formatSourceRange(payload.sourceTransparency, requestedRangeLabel),
+          apiCost: payload.apiCost,
         },
       ]);
     } catch (error) {
@@ -512,6 +515,16 @@ export function OptimizeAiPanel({
                   <span>{message.role}</span>
                   <span className="h-1 w-1 bg-hp-rule" />
                   <span>{message.rangeLabel}</span>
+                  {message.role === "assistant" && message.apiCost ? (
+                    <>
+                      <span className="h-1 w-1 bg-hp-rule" />
+                      <span>Est. API cost {formatApiCost(message.apiCost.estimatedCostUsd)}</span>
+                      <span className="h-1 w-1 bg-hp-rule" />
+                      <span>
+                        {message.apiCost.model} · {formatCount(message.apiCost.totalTokens)} tokens
+                      </span>
+                    </>
+                  ) : null}
                 </div>
                 {message.role === "assistant" ? (
                   <FormattedChatContent content={message.content} />
@@ -1054,6 +1067,14 @@ function formatSourceRange(source: unknown, fallback: string) {
 
 function formatAnalysisRange(result: AnalysisResult) {
   return formatSourceRange(result.sourceTransparency, "Range unavailable");
+}
+
+function formatApiCost(value: number) {
+  return `$${Math.max(0, value).toFixed(5)}`;
+}
+
+function formatCount(value: number) {
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
 }
 
 function sourceTransparencyRange(source: unknown) {
