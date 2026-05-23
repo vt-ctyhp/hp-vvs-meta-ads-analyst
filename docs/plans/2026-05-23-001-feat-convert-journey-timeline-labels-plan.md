@@ -113,9 +113,10 @@ The current drawer has the right raw ingredients, but too many important journey
 
 | Timeline input | Fresh signal source | Display label |
 |---|---|---|
-| `PageView` with current URL `fbclid`, Meta ad IDs, or URL paid Meta UTM | Current `page_url` query first; current referrer as support | `Meta ad landing page viewed` |
+| `PageView` with current URL Meta ad IDs or URL paid Meta UTM | Current `page_url` query first; current referrer as support | `Meta ad landing page viewed` |
 | `PageView` from Instagram profile without paid signal | Current referrer/source from Instagram | `Instagram profile link landing viewed` |
 | `PageView` from Facebook page without paid signal | Current referrer/source from Facebook | `Facebook page link landing viewed` |
+| `PageView` with current URL `fbclid` but no paid UTM/ad ID proof | Current `page_url` click ID plus current referrer/source when available | `Page viewed from Instagram`, `Page viewed from Facebook`, or `Page viewed from Facebook or Instagram` |
 | `PageView` on booking path without source-entry signal | Page path/group | `Booking page viewed` |
 | `PageView` on product path without source-entry signal | Page path/group | `Product page viewed` |
 | `PageView` on custom jewelry path without source-entry signal | Page path/group | `Custom jewelry page viewed` |

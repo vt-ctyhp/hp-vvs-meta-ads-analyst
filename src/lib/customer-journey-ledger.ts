@@ -1376,6 +1376,8 @@ function timelineLabel(event: CustomerJourneyLedgerEventRow) {
     if (isFreshPaidMetaLandingEvent(event)) return "Meta ad landing page viewed";
     const organicSocialLabel = organicSocialLandingLabel(event);
     if (organicSocialLabel) return organicSocialLabel;
+    const metaOriginLabel = metaOriginPageViewLabel(event);
+    if (metaOriginLabel) return metaOriginLabel;
     return pageViewLabel(event.page_url);
   }
   const labels: Record<string, string> = {
@@ -1394,7 +1396,12 @@ function timelineLabel(event: CustomerJourneyLedgerEventRow) {
 }
 
 function isJourneyEntryEvent(event: CustomerJourneyLedgerEventRow) {
-  return event.event_name === "PageView" && (isFreshPaidMetaLandingEvent(event) || Boolean(organicSocialLandingLabel(event)));
+  return (
+    event.event_name === "PageView" &&
+    (isFreshPaidMetaLandingEvent(event) ||
+      Boolean(organicSocialLandingLabel(event)) ||
+      Boolean(metaOriginPageViewLabel(event)))
+  );
 }
 
 function isFreshPaidMetaLandingEvent(event: CustomerJourneyLedgerEventRow) {
@@ -1404,21 +1411,18 @@ function isFreshPaidMetaLandingEvent(event: CustomerJourneyLedgerEventRow) {
   const referrer = (event.referrer || "").toLowerCase();
   const hasMetaSource = isMetaSourceText(source, referrer);
   const hasMetaAdIdentifier = Boolean(utm?.adId || utm?.adsetId || utm?.campaignId);
-  return hasMetaSource && (isPaidMediumValue(medium) || hasMetaAdIdentifier);
+  return hasMetaAdIdentifier || (hasMetaSource && isPaidMediumValue(medium));
 }
 
 function organicSocialLandingLabel(event: CustomerJourneyLedgerEventRow) {
   const utm = utmFromUrl(event.page_url);
-  const source = (
-    utm?.source ||
-    stringValue(event.utm_source) ||
-    event.source ||
-    ""
-  ).toLowerCase();
-  const medium = (utm?.medium || stringValue(event.utm_medium) || "").toLowerCase();
+  const source = (utm?.source || "").toLowerCase();
+  const medium = (utm?.medium || "").toLowerCase();
+  const content = (utm?.content || "").toLowerCase();
   const referrer = (event.referrer || "").toLowerCase();
+  const hasOrganicSocialProof = isOrganicSocialMedium(medium) || isProfileLinkContent(content);
 
-  if (isPaidMediumValue(medium) || Boolean(utm?.adId || utm?.adsetId || utm?.campaignId)) {
+  if (isFreshPaidMetaLandingEvent(event) || !hasOrganicSocialProof) {
     return null;
   }
 
@@ -1433,6 +1437,23 @@ function organicSocialLandingLabel(event: CustomerJourneyLedgerEventRow) {
   return null;
 }
 
+function metaOriginPageViewLabel(event: CustomerJourneyLedgerEventRow) {
+  const sourceName = metaOriginSourceName(event);
+  if (!sourceName) return null;
+  return `Page viewed from ${sourceName}`;
+}
+
+function metaOriginSourceName(event: CustomerJourneyLedgerEventRow) {
+  const utm = utmFromUrl(event.page_url);
+  if (!utm?.fbclid || isFreshPaidMetaLandingEvent(event) || organicSocialLandingLabel(event)) return null;
+  const source = (utm.source || "").toLowerCase();
+  const referrer = (event.referrer || "").toLowerCase();
+
+  if (isInstagramSourceText(source, referrer)) return "Instagram";
+  if (isFacebookSourceText(source, referrer)) return "Facebook";
+  return "Facebook or Instagram";
+}
+
 function pageViewLabel(pageUrl: string | null) {
   const group = pageGroupFromUrl(pageUrl);
   if (group === "booking") return "Booking page viewed";
@@ -1443,6 +1464,14 @@ function pageViewLabel(pageUrl: string | null) {
 
 function isPaidMediumValue(value: string) {
   return ["paid", "paid_social", "cpc", "ppc", "social_paid"].some((needle) => value.includes(needle));
+}
+
+function isOrganicSocialMedium(value: string) {
+  return ["social", "organic_social", "organic-social", "organic"].some((needle) => value.includes(needle));
+}
+
+function isProfileLinkContent(value: string) {
+  return value.includes("link_in_bio") || value.includes("link-in-bio") || value.includes("profile");
 }
 
 function isMetaSourceText(source: string, referrer: string) {
@@ -1564,6 +1593,8 @@ function bookingSessionSourceLabelFromEvent(
   const socialLabel = organicSocialLandingLabel(event);
   if (socialLabel === "Instagram profile link landing viewed") return "Instagram profile link";
   if (socialLabel === "Facebook page link landing viewed") return "Facebook page link";
+  const metaOriginSource = metaOriginSourceName(event);
+  if (metaOriginSource) return `${metaOriginSource} page view`;
 
   const pageGroup = pageGroupFromUrl(event.page_url);
   if (pageGroup === "booking") return "booking page";

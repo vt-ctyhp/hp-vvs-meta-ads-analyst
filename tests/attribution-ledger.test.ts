@@ -859,6 +859,84 @@ describe("attribution ledger detail data", () => {
     assert.doesNotMatch(detail.summary || "", /Booking session started from Meta ad/);
   });
 
+  it("labels fbclid-only Meta-origin page views without implying a paid ad", () => {
+    const detail = buildAttributionLedgerDetailData({
+      conversions: [
+        conversionRow({
+          event_id: "acuity-fbclid-only",
+          occurred_at: "2026-05-22T19:00:00.000Z",
+          session_id: "session-booking",
+        }),
+      ],
+      events: [
+        eventRow({
+          event_id: "hp_evt-facebook-fbclid",
+          event_name: "PageView",
+          fbclid: "weak-facebook-click",
+          occurred_at: "2026-05-21T17:00:00.000Z",
+          page_url: "https://www.hungphatusa.com/products/oval-ring?fbclid=weak-facebook-click",
+          referrer: "https://l.facebook.com/",
+          session_id: "session-prior-facebook",
+          source_type: "paid_meta",
+          utm_ad_id: null,
+          utm_adset_id: null,
+          utm_campaign_id: null,
+          utm_content: null,
+          utm_medium: null,
+          utm_source: null,
+        }),
+        eventRow({
+          event_id: "hp_evt-instagram-fbclid",
+          event_name: "PageView",
+          fbclid: "weak-instagram-click",
+          occurred_at: "2026-05-22T18:58:00.000Z",
+          page_url:
+            "https://www.hungphatusa.com/pages/book-an-appointment?fbclid=weak-instagram-click",
+          referrer: "https://l.instagram.com/",
+          session_id: "session-booking",
+          source_type: "paid_meta",
+          utm_ad_id: null,
+          utm_adset_id: null,
+          utm_campaign_id: null,
+          utm_content: null,
+          utm_medium: null,
+          utm_source: null,
+        }),
+        eventRow({
+          event_id: "hp_evt-generic-fbclid",
+          event_name: "PageView",
+          fbclid: "weak-meta-click",
+          occurred_at: "2026-05-22T18:59:00.000Z",
+          page_url: "https://www.hungphatusa.com/pages/book-an-appointment?fbclid=weak-meta-click",
+          referrer: null,
+          session_id: "session-booking",
+          source_type: "paid_meta",
+          utm_ad_id: null,
+          utm_adset_id: null,
+          utm_campaign_id: null,
+          utm_content: null,
+          utm_medium: null,
+          utm_source: null,
+        }),
+      ],
+      sessions: [sessionRow({ session_id: "session-booking" })],
+      visitor: visitorRow(),
+    });
+
+    assert.deepEqual(
+      detail.timeline
+        .filter((event) => event.eventId?.startsWith("hp_evt-"))
+        .map((event) => [event.eventId, event.label]),
+      [
+        ["hp_evt-facebook-fbclid", "Page viewed from Facebook"],
+        ["hp_evt-instagram-fbclid", "Page viewed from Instagram"],
+        ["hp_evt-generic-fbclid", "Page viewed from Facebook or Instagram"],
+      ],
+    );
+    assert.match(detail.summary || "", /Booking session started from Facebook or Instagram page view/);
+    assert.doesNotMatch(detail.summary || "", /Booking session started from Meta ad/);
+  });
+
   it("labels every fresh paid Meta landing in the curated timeline", () => {
     const detail = buildAttributionLedgerDetailData({
       conversions: [
