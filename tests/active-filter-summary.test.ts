@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 
 import {
   buildActiveFilterSummary,
+  buildAskAiFilterSummary,
   buildCreativeAnalysisFilterSummary,
   type ActiveFilterInput,
+  type AskAiFilterInput,
   type CreativeAnalysisFilterInput,
 } from "../src/lib/active-filter-summary.ts";
 
@@ -278,4 +280,60 @@ test("creative analysis · whitespace-only query is not active", () => {
   const summary = buildCreativeAnalysisFilterSummary({ ...CREATIVE_DEFAULTS, query: "   " });
   const q = summary.find((s) => s.key === "Query");
   assert.equal(q?.isActive, false);
+});
+
+// ─── /analysis (Ask AI) builder ──────────────────────────────────────
+
+const ASK_AI_DEFAULTS: AskAiFilterInput = {
+  brand: null,
+  delivery: null,
+  umbrella: null,
+  startDate: "2026-04-23",
+  endDate: "2026-05-22",
+};
+
+test("ask AI · all defaults → 4 segments, only Range is non-default", () => {
+  const summary = buildAskAiFilterSummary(ASK_AI_DEFAULTS);
+  assert.equal(summary.length, 4);
+  assert.deepEqual(
+    summary.map((s) => s.key),
+    ["Brand", "Delivery", "Umbrella", "Range"],
+  );
+  assert.deepEqual(
+    summary.map((s) => s.isActive),
+    [false, false, false, false],
+  );
+});
+
+test("ask AI · null filters render as 'All'", () => {
+  const summary = buildAskAiFilterSummary(ASK_AI_DEFAULTS);
+  assert.equal(summary.find((s) => s.key === "Brand")?.value, "All");
+  assert.equal(summary.find((s) => s.key === "Delivery")?.value, "All");
+  assert.equal(summary.find((s) => s.key === "Umbrella")?.value, "All");
+});
+
+test("ask AI · non-null brand → segment is active and shows brand code", () => {
+  const summary = buildAskAiFilterSummary({ ...ASK_AI_DEFAULTS, brand: "HP" });
+  const brand = summary.find((s) => s.key === "Brand");
+  assert.equal(brand?.value, "HP");
+  assert.equal(brand?.isActive, true);
+});
+
+test("ask AI · non-null delivery shows title case and is active", () => {
+  const summary = buildAskAiFilterSummary({ ...ASK_AI_DEFAULTS, delivery: "active" });
+  const delivery = summary.find((s) => s.key === "Delivery");
+  assert.equal(delivery?.value, "Active");
+  assert.equal(delivery?.isActive, true);
+});
+
+test("ask AI · non-null umbrella → segment is active and shows umbrella name", () => {
+  const summary = buildAskAiFilterSummary({ ...ASK_AI_DEFAULTS, umbrella: "Book Appts US" });
+  const um = summary.find((s) => s.key === "Umbrella");
+  assert.equal(um?.value, "Book Appts US");
+  assert.equal(um?.isActive, true);
+});
+
+test("ask AI · range always renders short month format", () => {
+  const range = buildAskAiFilterSummary(ASK_AI_DEFAULTS).find((s) => s.key === "Range");
+  assert.equal(range?.value, "Apr 23 — May 22");
 });

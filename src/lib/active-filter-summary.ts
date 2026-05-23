@@ -180,3 +180,47 @@ export function buildCreativeAnalysisFilterSummary(
   ];
 }
 
+// ─── /analysis (Ask AI) ──────────────────────────────────────────────
+
+export type AskAiFilterInput = {
+  brand: string | null;
+  delivery: "active" | "paused" | null;
+  umbrella: string | null;
+  startDate: string;
+  endDate: string;
+};
+
+/**
+ * Standfirst builder for /analysis (Ask AI) (4 segments).
+ *
+ * Filters are nullable on this page — `null` means "no filter set" and
+ * renders as "All" in the standfirst. Setting any filter narrows the
+ * dataset the AI sees on the next request.
+ */
+export function buildAskAiFilterSummary(
+  input: AskAiFilterInput,
+): ActiveFilterSummary {
+  return [
+    {
+      key: "Brand",
+      value: input.brand ?? "All",
+      isActive: input.brand !== null,
+    },
+    {
+      key: "Delivery",
+      value: input.delivery === null ? "All" : deliveryLabel(input.delivery),
+      isActive: input.delivery !== null,
+    },
+    {
+      key: "Umbrella",
+      value: input.umbrella ?? "All",
+      isActive: input.umbrella !== null,
+    },
+    {
+      key: "Range",
+      value: formatShortRange(input.startDate, input.endDate),
+      isActive: false,
+    },
+  ];
+}
+
