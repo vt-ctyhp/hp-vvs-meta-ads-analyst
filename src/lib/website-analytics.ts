@@ -492,6 +492,8 @@ export type WebsiteFunnelData = {
     scrollDepthEvents: number;
     bookingStarts: number;
     schedules: number;
+    websiteScheduleConversions: number;
+    paidMetaScheduleConversions: number;
     metaAttributedBookings: number;
     metaPaidSessions: number;
     customerLinkedEvents: number;
@@ -522,6 +524,8 @@ export type WebsiteFunnelData = {
     pageViews: number;
     bookingSteps: number;
     schedules: number;
+    websiteScheduleConversions: number;
+    paidMetaScheduleConversions: number;
     metaAttributedBookings: number;
   }>;
   recentEvents: Array<{
@@ -877,13 +881,30 @@ export async function fetchWebsiteFunnelData(input: {
     "properties",
   ].join(",");
 
-  const [events, metaRows] = await Promise.all([
+  const conversionColumns = [
+    "event_name",
+    "meta_event_name",
+    "occurred_at",
+    "source_type",
+  ].join(",");
+
+  const [events, conversions, metaRows] = await Promise.all([
     fetchWebsiteRows(
       () =>
         client
           .from("website_events")
           .select(eventColumns)
           .eq("environment", websiteAttributionEnvironment())
+          .gte("occurred_at", startIso)
+          .lte("occurred_at", endIso)
+          .order("occurred_at", { ascending: false }),
+      MAX_EVENTS,
+    ),
+    fetchWebsiteRows(
+      () =>
+        client
+          .from("website_conversions")
+          .select(conversionColumns)
           .gte("occurred_at", startIso)
           .lte("occurred_at", endIso)
           .order("occurred_at", { ascending: false }),
@@ -909,6 +930,10 @@ export async function fetchWebsiteFunnelData(input: {
       .filter(Boolean),
   );
   const schedules = events.filter(isScheduleEvent);
+  const scheduleConversions = conversions.filter(isScheduleConversion);
+  const paidMetaScheduleConversions = scheduleConversions.filter(
+    (conversion) => conversion.source_type === "paid_meta",
+  );
   const metaPaidSessions = new Set(
     events
       .filter((event) => event.source_type === "paid_meta")
@@ -932,6 +957,7 @@ export async function fetchWebsiteFunnelData(input: {
       recordCounts: {
         meta_daily_insights: metaRows.length,
         website_events: events.length,
+        website_conversions: conversions.length,
       },
     },
     overview: {
@@ -943,6 +969,8 @@ export async function fetchWebsiteFunnelData(input: {
       scrollDepthEvents: countEvents(events, "ScrollDepth"),
       bookingStarts: countEvents(events, "BookingVisitSelected"),
       schedules: schedules.length,
+      websiteScheduleConversions: scheduleConversions.length,
+      paidMetaScheduleConversions: paidMetaScheduleConversions.length,
       metaAttributedBookings,
       metaPaidSessions: metaPaidSessions.size,
       customerLinkedEvents,
@@ -952,7 +980,7 @@ export async function fetchWebsiteFunnelData(input: {
     funnel: buildFunnel(events, schedules.length),
     pages: buildPages(events),
     locations: buildWebsiteLocationBreakdown(events),
-    trend: buildTrend(events, metaRows, range.start, range.end),
+    trend: buildTrend(events, conversions, metaRows, range.start, range.end),
     recentEvents: events.slice(0, 50).map((event) => ({
       adId: event.utm_ad_id,
       adsetId: event.utm_adset_id,
@@ -2197,6 +2225,10 @@ function isScheduleEvent(event: WebsiteEventRow) {
   return event.event_name === "Schedule" || event.meta_event_name === "Schedule";
 }
 
+function isScheduleConversion(conversion: WebsiteConversionRow) {
+  return conversion.event_name === "Schedule" || conversion.meta_event_name === "Schedule";
+}
+
 function buildFunnel(events: WebsiteEventRow[], scheduleCount: number) {
   const rows = [
     {
@@ -2327,7 +2359,13 @@ export function buildWebsiteLocationBreakdown(events: WebsiteLocationEventInput[
     .slice(0, 10);
 }
 
-function buildTrend(events: WebsiteEventRow[], metaRows: MetaInsightRow[], start: string, end: string) {
+function buildTrend(
+  events: WebsiteEventRow[],
+  conversions: WebsiteConversionRow[],
+  metaRows: MetaInsightRow[],
+  start: string,
+  end: string,
+) {
   const rows = new Map<
     string,
     {
@@ -2335,6 +2373,8 @@ function buildTrend(events: WebsiteEventRow[], metaRows: MetaInsightRow[], start
       pageViews: number;
       bookingSteps: number;
       schedules: number;
+      websiteScheduleConversions: number;
+      paidMetaScheduleConversions: number;
       metaAttributedBookings: number;
     }
   >();
@@ -2347,6 +2387,8 @@ function buildTrend(events: WebsiteEventRow[], metaRows: MetaInsightRow[], start
       pageViews: 0,
       bookingSteps: 0,
       schedules: 0,
+      websiteScheduleConversions: 0,
+      paidMetaScheduleConversions: 0,
       metaAttributedBookings: 0,
     });
   }
@@ -2358,6 +2400,14 @@ function buildTrend(events: WebsiteEventRow[], metaRows: MetaInsightRow[], start
     if (event.event_name === "PageView") row.pageViews += 1;
     if (event.event_type === "booking") row.bookingSteps += 1;
     if (isScheduleEvent(event)) row.schedules += 1;
+  }
+
+  for (const conversion of conversions) {
+    const date = conversion.occurred_at.slice(0, 10);
+    const row = rows.get(date);
+    if (!row || !isScheduleConversion(conversion)) continue;
+    row.websiteScheduleConversions += 1;
+    if (conversion.source_type === "paid_meta") row.paidMetaScheduleConversions += 1;
   }
 
   for (const metaRow of metaRows) {
