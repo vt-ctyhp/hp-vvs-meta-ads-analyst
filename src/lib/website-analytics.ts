@@ -35,6 +35,7 @@ const MAX_EVENTS = 15000;
 const MAX_META_INSIGHT_ROWS = 50000;
 const SUPABASE_PAGE_SIZE = 1000;
 const MAX_APPOINTMENT_CONVERSIONS = 2000;
+const PAID_META_ATTRIBUTION_LOOKBACK_DAYS = 30;
 
 const jsonObjectSchema = z.record(z.string(), z.unknown()).catch({});
 const eventTypeSchema = z.enum([
@@ -47,6 +48,16 @@ const eventTypeSchema = z.enum([
   "error",
   "custom",
 ]);
+
+const customerSchema = z
+  .object({
+    email: z.string().trim().email().optional(),
+    firstName: z.string().trim().max(80).optional(),
+    lastName: z.string().trim().max(80).optional(),
+    name: z.string().trim().max(180).optional(),
+    phone: z.string().trim().max(40).optional(),
+  })
+  .optional();
 
 const utmSchema = z.object({
   ad: z.string().trim().max(180).optional(),
@@ -113,19 +124,10 @@ const websiteEventSchema = z.object({
   attribution: jsonObjectSchema.optional(),
   fbp: z.string().trim().max(300).optional(),
   fbc: z.string().trim().max(300).optional(),
+  customer: customerSchema,
   userAgent: z.string().trim().max(600).optional(),
   properties: jsonObjectSchema.optional(),
 });
-
-const customerSchema = z
-  .object({
-    email: z.string().trim().email().optional(),
-    firstName: z.string().trim().max(80).optional(),
-    lastName: z.string().trim().max(80).optional(),
-    name: z.string().trim().max(180).optional(),
-    phone: z.string().trim().max(40).optional(),
-  })
-  .optional();
 
 const conversionEventSchema = websiteEventSchema.extend({
   eventName: z.string().trim().min(1).max(80).default("Schedule"),
@@ -504,6 +506,8 @@ export type WebsiteFunnelData = {
     key: string;
     label: string;
     count: number;
+    dataMapping: string;
+    unit: "booking" | "unique_session";
     rateFromPrevious: number | null;
     rateFromStart: number | null;
   }>;
@@ -882,10 +886,18 @@ export async function fetchWebsiteFunnelData(input: {
   ].join(",");
 
   const conversionColumns = [
+    "event_id",
+    "visitor_id",
     "event_name",
     "meta_event_name",
     "occurred_at",
     "source_type",
+    "customer_email",
+    "customer_phone",
+    "last_paid_touch",
+    "conversion_touch",
+    "properties",
+    "raw_json",
   ].join(",");
 
   const [events, conversions, metaRows] = await Promise.all([
@@ -931,8 +943,8 @@ export async function fetchWebsiteFunnelData(input: {
   );
   const schedules = events.filter(isScheduleEvent);
   const scheduleConversions = conversions.filter(isScheduleConversion);
-  const paidMetaScheduleConversions = scheduleConversions.filter(
-    (conversion) => conversion.source_type === "paid_meta",
+  const paidMetaScheduleConversions = scheduleConversions.filter((conversion) =>
+    isPaidMetaAttributedScheduleConversion(conversion, scheduleConversions),
   );
   const metaPaidSessions = new Set(
     events
@@ -977,7 +989,7 @@ export async function fetchWebsiteFunnelData(input: {
       completeTrackingConversions,
       discrepancy: schedules.length - metaAttributedBookings,
     },
-    funnel: buildFunnel(events),
+    funnel: buildFunnel(events, scheduleConversions),
     pages: buildPages(events),
     locations: buildWebsiteLocationBreakdown(events),
     trend: buildTrend(events, conversions, metaRows, range.start, range.end),
@@ -1492,8 +1504,10 @@ async function recordWebsiteEvent(
     });
 
     if (customer.name || customer.email || customer.phone) {
-      await backfillLinkedCustomer(client, row, customer);
+      await backfillLinkedCustomer(client, row, customer, { conversionEventId: row.event_id });
     }
+  } else if (customer.name || customer.email || customer.phone) {
+    await backfillLinkedCustomer(client, row, customer);
   }
 
   return {
@@ -1726,12 +1740,13 @@ async function backfillLinkedCustomer(
   client: WebsiteSupabaseClient,
   row: WebsiteEventRow,
   customer: NormalizedCustomer,
+  options: { conversionEventId?: string | null } = {},
 ) {
   const patch = {
     customer_name: customer.name || null,
     customer_email: customer.email || null,
     customer_phone: customer.phone || null,
-    conversion_event_id: row.event_id,
+    ...(options.conversionEventId ? { conversion_event_id: options.conversionEventId } : {}),
   };
 
   if (row.visitor_id) {
@@ -2241,45 +2256,68 @@ function countUniqueSessionsForEvents(
   ).size;
 }
 
-function buildFunnel(events: WebsiteEventRow[]) {
+function buildFunnel(events: WebsiteEventRow[], scheduleConversions: WebsiteConversionRow[]) {
   const rows = [
     {
       key: "booking_page_view",
       label: "Viewed booking page",
+      dataMapping:
+        "website_events: distinct session_id where event_name = PageView and page_group = booking.",
+      unit: "unique_session" as const,
       count: countUniqueSessionsForEvents(
         events,
         (event) => event.event_name === "PageView" && event.page_group === "booking",
       ),
     },
     {
+      key: "booking_form_started",
+      label: "Started booking form",
+      dataMapping:
+        "website_events: distinct session_id where event_name is BookingFormStarted, BookingContactStarted, BookingVisitSelected, BookingDateSelected, BookingTimeSelected, or BookingIdentityCaptured.",
+      unit: "unique_session" as const,
+      count: countUniqueSessionsForEvents(events, isBookingFormStartedEvent),
+    },
+    {
       key: "visit_selected",
       label: "Selected visit type",
+      dataMapping:
+        "website_events: distinct session_id where event_name = BookingVisitSelected.",
+      unit: "unique_session" as const,
       count: countUniqueSessionsForEvents(events, (event) => event.event_name === "BookingVisitSelected"),
     },
     {
       key: "date_selected",
       label: "Selected date",
+      dataMapping:
+        "website_events: distinct session_id where event_name = BookingDateSelected.",
+      unit: "unique_session" as const,
       count: countUniqueSessionsForEvents(events, (event) => event.event_name === "BookingDateSelected"),
     },
     {
       key: "time_selected",
       label: "Selected time",
+      dataMapping:
+        "website_events: distinct session_id where event_name = BookingTimeSelected.",
+      unit: "unique_session" as const,
       count: countUniqueSessionsForEvents(events, (event) => event.event_name === "BookingTimeSelected"),
     },
     {
-      key: "contact_started",
-      label: "Started contact form",
-      count: countUniqueSessionsForEvents(events, (event) => event.event_name === "BookingContactStarted"),
+      key: "confirmed_website_bookings",
+      label: "Confirmed website bookings",
+      dataMapping:
+        "website_conversions: rows where event_name = Schedule or meta_event_name = Schedule. Grain is confirmed Acuity appointment.",
+      unit: "booking" as const,
+      count: scheduleConversions.length,
     },
     {
-      key: "submit_attempt",
-      label: "Submitted booking form",
-      count: countUniqueSessionsForEvents(events, (event) => event.event_name === "BookingSubmitAttempt"),
-    },
-    {
-      key: "schedule",
-      label: "Acuity appointment created",
-      count: countUniqueSessionsForEvents(events, isScheduleEvent),
+      key: "paid_meta_bookings",
+      label: "Paid Meta confirmed bookings",
+      dataMapping:
+        "website_conversions: Schedule rows with source_type = paid_meta or a paid Meta touch within 30 days before booking. Grain is confirmed Acuity appointment.",
+      unit: "booking" as const,
+      count: scheduleConversions.filter((conversion) =>
+        isPaidMetaAttributedScheduleConversion(conversion, scheduleConversions),
+      ).length,
     },
   ];
   const start = rows[0]?.count || 0;
@@ -2291,6 +2329,137 @@ function buildFunnel(events: WebsiteEventRow[]) {
       rateFromStart: start ? row.count / start : null,
     };
   });
+}
+
+function isBookingFormStartedEvent(event: WebsiteEventRow) {
+  return [
+    "BookingFormStarted",
+    "BookingContactStarted",
+    "BookingVisitSelected",
+    "BookingDateSelected",
+    "BookingTimeSelected",
+    "BookingIdentityCaptured",
+  ].includes(event.event_name);
+}
+
+function isPaidMetaAttributedScheduleConversion(
+  conversion: WebsiteConversionRow,
+  allConversions: WebsiteConversionRow[] = [],
+) {
+  if (!isScheduleConversion(conversion)) return false;
+  const previousBookingAt = previousBookingTimestamp(conversion, allConversions);
+  const touch = selectOriginalPaidTouch(
+    conversionPaidTouchCandidates(conversion).filter((candidate) =>
+      isAfterPreviousBooking(candidate, previousBookingAt),
+    ),
+    { maxCapturedAt: conversion.occurred_at },
+  );
+  if (touch) return isMetaPaidTouch(touch) && isWithinLookback(touch.capturedAt, conversion.occurred_at);
+  return previousBookingAt === null && conversion.source_type === "paid_meta";
+}
+
+function conversionPaidTouchCandidates(conversion: WebsiteConversionRow) {
+  const properties = objectRecord(conversion.properties);
+  const raw = objectRecord(conversion.raw_json);
+  const tracking = objectRecord(raw.tracking);
+  return [
+    touchWithUrlUtmFallback(conversion.last_paid_touch),
+    touchWithUrlUtmFallback(conversion.conversion_touch),
+    touchRecord(properties.attribution, conversion),
+    touchRecord(tracking.attribution, conversion),
+    touchRecord(raw.attribution, conversion),
+  ];
+}
+
+function touchRecord(value: unknown, conversion: WebsiteConversionRow): AttributionTouch | null {
+  const record = objectRecord(value);
+  const capturedAt = firstStringValue(record.capturedAt, record.timestamp, record.occurredAt);
+  if (!capturedAt) return null;
+  const pageUrl = firstStringValue(record.pageUrl, record.landingPageUrl, record.eventSourceUrl, conversion.page_url);
+  const fbc = firstStringValue(record.fbc, conversion.fbc) || undefined;
+  const referrer = firstStringValue(record.referrer, conversion.referrer) || undefined;
+  const utm = mergeUtmRecords(utmFromUrl(pageUrl), record.utm, record) || undefined;
+  return {
+    capturedAt,
+    eventId: firstStringValue(record.eventId, conversion.event_id),
+    eventName: firstStringValue(record.eventName, conversion.event_name),
+    fbc,
+    fbp: firstStringValue(record.fbp, conversion.fbp) || undefined,
+    pagePath: conversion.page_path || undefined,
+    pageUrl: pageUrl || undefined,
+    referrer,
+    source: firstStringValue(record.source, "booking_api"),
+    sourceType:
+      firstStringValue(record.sourceType, conversion.source_type) ||
+      classifySourceType({ fbc, referrer, utm: utm || {} }),
+    utm,
+  };
+}
+
+function isMetaPaidTouch(touch: AttributionTouch) {
+  const utm = touch.utm || {};
+  const source = String(utm.source || touch.source || "").toLowerCase();
+  const referrer = String(touch.referrer || "").toLowerCase();
+  return Boolean(
+    touch.sourceType === "paid_meta" ||
+      touch.fbc ||
+      utm.fbclid ||
+      source.includes("facebook") ||
+      source.includes("instagram") ||
+      source.includes("meta") ||
+      source === "fb" ||
+      source === "ig" ||
+      referrer.includes("facebook.com") ||
+      referrer.includes("instagram.com"),
+  );
+}
+
+function isWithinLookback(capturedAt: string | undefined, conversionAt: string) {
+  if (!capturedAt) return true;
+  const captured = Date.parse(capturedAt);
+  const converted = Date.parse(conversionAt);
+  if (!Number.isFinite(captured) || !Number.isFinite(converted)) return true;
+  const lookbackMs = PAID_META_ATTRIBUTION_LOOKBACK_DAYS * 864e5;
+  return captured <= converted && converted - captured <= lookbackMs;
+}
+
+function previousBookingTimestamp(
+  conversion: WebsiteConversionRow,
+  allConversions: WebsiteConversionRow[],
+) {
+  const currentAt = Date.parse(conversion.occurred_at);
+  if (!Number.isFinite(currentAt)) return null;
+  let previous: number | null = null;
+
+  for (const candidate of allConversions) {
+    if (candidate.event_id === conversion.event_id) continue;
+    if (!isScheduleConversion(candidate)) continue;
+    if (!sameConversionIdentity(candidate, conversion)) continue;
+    const candidateAt = Date.parse(candidate.occurred_at);
+    if (!Number.isFinite(candidateAt) || candidateAt >= currentAt) continue;
+    if (previous === null || candidateAt > previous) previous = candidateAt;
+  }
+
+  return previous;
+}
+
+function sameConversionIdentity(left: WebsiteConversionRow, right: WebsiteConversionRow) {
+  if (left.visitor_id && right.visitor_id && left.visitor_id === right.visitor_id) return true;
+  const leftEmail = normalizeEmail(left.customer_email || "");
+  const rightEmail = normalizeEmail(right.customer_email || "");
+  if (leftEmail && rightEmail && leftEmail === rightEmail) return true;
+  const leftPhone = normalizePhone(left.customer_phone || "");
+  const rightPhone = normalizePhone(right.customer_phone || "");
+  return Boolean(leftPhone && rightPhone && leftPhone === rightPhone);
+}
+
+function isAfterPreviousBooking(
+  touch: AttributionTouch | null | undefined,
+  previousBookingAt: number | null,
+) {
+  if (previousBookingAt === null) return true;
+  const capturedAt = Date.parse(touch?.capturedAt || "");
+  return Number.isFinite(capturedAt) && capturedAt > previousBookingAt;
 }
 
 function buildPages(events: WebsiteEventRow[]) {
@@ -2444,7 +2613,7 @@ function buildTrend(
     const row = rows.get(date);
     if (!row || !isScheduleConversion(conversion)) continue;
     row.websiteScheduleConversions += 1;
-    if (conversion.source_type === "paid_meta") row.paidMetaScheduleConversions += 1;
+    if (isPaidMetaAttributedScheduleConversion(conversion, conversions)) row.paidMetaScheduleConversions += 1;
   }
 
   for (const metaRow of metaRows) {

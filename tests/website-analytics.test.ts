@@ -331,11 +331,29 @@ describe("website analytics appointment reconciliation", () => {
         session_id: "session-b",
       }),
     ];
+    const conversions = [
+      {
+        event_id: "conversion-1",
+        event_name: "Schedule",
+        meta_event_name: "Schedule",
+        occurred_at: "2026-05-01T04:00:00.000Z",
+        source_type: "paid_meta",
+      },
+      {
+        event_id: "conversion-2",
+        event_name: "Schedule",
+        meta_event_name: "Schedule",
+        occurred_at: "2026-05-01T05:00:00.000Z",
+        source_type: "direct",
+      },
+    ];
     const client = {
       from(table: "website_events" | "website_conversions" | "meta_daily_insights") {
         return {
           select() {
-            return resolvedSelect(table === "website_events" ? events : []);
+            return resolvedSelect(
+              table === "website_events" ? events : table === "website_conversions" ? conversions : [],
+            );
           },
         };
       },
@@ -352,12 +370,12 @@ describe("website analytics appointment reconciliation", () => {
       Object.fromEntries(data.funnel.map((row) => [row.key, row.count])),
       {
         booking_page_view: 2,
+        booking_form_started: 2,
         visit_selected: 1,
         date_selected: 2,
         time_selected: 1,
-        contact_started: 1,
-        submit_attempt: 1,
-        schedule: 2,
+        confirmed_website_bookings: 2,
+        paid_meta_bookings: 1,
       },
     );
   });

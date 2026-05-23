@@ -3,14 +3,19 @@ import { Suspense } from "react";
 import {
   CustomerLedger,
 } from "@/components/v2/convert/customer-ledger";
+import { ConvertFilterBar } from "@/components/v2/convert/convert-filter-bar";
 import { FunnelViz } from "@/components/v2/convert/funnel-viz";
 import { StatusSentence } from "@/components/v2/status-sentence";
 import {
   buildCustomerLedgerStatusSentence,
+  convertFilterOptions,
+  convertLedgerFiltersFromSearchParams,
   countCustomerLedgerCapiGaps,
   customerJourneyLedgerRequestFromSearchParams,
+  filterCustomerLedgerRows,
   type CustomerJourneyLedgerRequest,
   customerLedgerRowsFromJourneys,
+  type ConvertLedgerFilters,
   type CustomerLedgerRow,
 } from "@/lib/convert-customer-ledger";
 import { enrichCustomerLedgerRowsWithCreativePreviews } from "@/lib/customer-ledger-creative-enrichment";
@@ -26,7 +31,16 @@ import {
 
 export const dynamic = "force-dynamic";
 
-type SearchParams = { days?: string; start?: string; end?: string };
+type SearchParams = {
+  capi?: string;
+  days?: string;
+  end?: string;
+  q?: string;
+  source?: string;
+  stage?: string;
+  start?: string;
+  type?: string;
+};
 
 export default async function ConvertPage({
   searchParams,
@@ -37,6 +51,7 @@ export default async function ConvertPage({
 
   const params = await searchParams;
   const rangeRequest = customerJourneyLedgerRequestFromSearchParams(params);
+  const filters = convertLedgerFiltersFromSearchParams(params);
 
   const data = {
     funnel: fetchWebsiteFunnelData(rangeRequest).catch((e) => {
@@ -55,14 +70,18 @@ export default async function ConvertPage({
         <ConvertStatus data={data} />
       </Suspense>
 
+      <Suspense fallback={<FilterFallback />}>
+        <ConvertFilters data={data} filters={filters} />
+      </Suspense>
+
       <Suspense fallback={<FunnelFallback />}>
-        <ConvertFunnel data={data} />
+        <ConvertFunnel data={data} filters={filters} params={params} />
       </Suspense>
 
       <div className="ornament-rule" />
 
       <Suspense fallback={<CustomerLedgerFallback />}>
-        <ConvertLedger data={data} />
+        <ConvertLedger data={data} filters={filters} />
       </Suspense>
     </div>
   );
@@ -110,30 +129,53 @@ async function ConvertStatus({ data }: { data: ConvertData }) {
   );
 }
 
-async function ConvertFunnel({ data }: { data: ConvertData }) {
-  const funnel = await data.funnel;
+async function ConvertFilters({
+  data,
+  filters,
+}: {
+  data: ConvertData;
+  filters: ConvertLedgerFilters;
+}) {
+  const [ledger, funnel] = await Promise.all([data.ledger, data.funnel]);
   return (
-    <FunnelViz
-      steps={funnel.funnel}
-      bookingSignals={[
-        {
-          label: "Confirmed Schedule conversions",
-          source: "website_conversions / Schedule",
-          count: funnel.overview.websiteScheduleConversions,
-        },
-        {
-          label: "Paid Meta Schedule conversions",
-          source: "website_conversions / Schedule / paid_meta",
-          count: funnel.overview.paidMetaScheduleConversions,
-        },
-      ]}
+    <ConvertFilterBar
+      appointmentTypes={convertFilterOptions(ledger).appointmentTypes}
+      filters={filters}
+      range={funnel.sourceTransparency.timeRange}
     />
   );
 }
 
-async function ConvertLedger({ data }: { data: ConvertData }) {
+async function ConvertFunnel({
+  data,
+  filters,
+  params,
+}: {
+  data: ConvertData;
+  filters: ConvertLedgerFilters;
+  params: SearchParams;
+}) {
+  const funnel = await data.funnel;
+  return (
+    <FunnelViz
+      steps={funnel.funnel.map((step) => ({
+        ...step,
+        filterHref: stageHref(params, step.key, filters.stage === step.key),
+        isActive: filters.stage === step.key,
+      }))}
+    />
+  );
+}
+
+async function ConvertLedger({
+  data,
+  filters,
+}: {
+  data: ConvertData;
+  filters: ConvertLedgerFilters;
+}) {
   const ledger = await data.ledger;
-  return <CustomerLedger rows={ledger} />;
+  return <CustomerLedger rows={filterCustomerLedgerRows(ledger, filters)} />;
 }
 
 // ── data fetchers ──────────────────────────────────────────────────────────
@@ -183,6 +225,18 @@ function emptyFunnel(rangeRequest: CustomerJourneyLedgerRequest): WebsiteFunnelD
   };
 }
 
+function stageHref(params: SearchParams, stage: string, isActive: boolean) {
+  const next = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (!value) continue;
+    next.set(key, value);
+  }
+  if (isActive) next.delete("stage");
+  else next.set("stage", stage);
+  const query = next.toString();
+  return query ? `/convert?${query}` : "/convert";
+}
+
 function StatusSentenceFallback() {
   return (
     <section
@@ -202,6 +256,16 @@ function StatusSentenceFallback() {
         ))}
       </div>
     </section>
+  );
+}
+
+function FilterFallback() {
+  return (
+    <div className="mx-auto mt-2 flex max-w-7xl flex-wrap items-center gap-3 border-y border-hp-rule py-4">
+      {[120, 150, 120, 180, 240].map((width, index) => (
+        <Skeleton key={index} className="h-9" style={{ width }} />
+      ))}
+    </div>
   );
 }
 

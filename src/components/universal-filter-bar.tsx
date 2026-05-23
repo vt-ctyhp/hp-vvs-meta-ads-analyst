@@ -78,7 +78,9 @@ export function UniversalFilterBar({ summary, children }: Props) {
   // Scrolling back to the top auto-closes any open panel — no need to
   // keep an overlay sticky over the original full filter UI.
   useEffect(() => {
-    if (!isStuck) setIsPanelOpen(false);
+    if (isStuck) return;
+    const handle = window.setTimeout(() => setIsPanelOpen(false), 0);
+    return () => window.clearTimeout(handle);
   }, [isStuck]);
 
   // Escape closes the panel.

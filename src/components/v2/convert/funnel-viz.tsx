@@ -1,53 +1,34 @@
 "use client";
 
-import { ParentSize } from "@visx/responsive";
-import { scaleLinear } from "@visx/scale";
-
-import { tokens } from "@/lib/design-tokens";
-
-/**
- * Funnel visualization for the Convert room.
- *
- * Renders the website funnel as a stack of stages with horizontal bars
- * scaled to the top stage. Each stage shows its count, conversion rate
- * from the previous step, and from the start. The widest bar is the
- * entry stage (e.g. Visitors); narrower bars below show drop-off.
- *
- * Built with Visx ParentSize + scaleLinear so the chart adapts to its
- * container width on mobile, tablet, and desktop.
- */
+import { CircleHelp } from "lucide-react";
 
 export type FunnelStep = {
+  count: number;
+  dataMapping: string;
+  filterHref?: string;
+  isActive?: boolean;
   key: string;
   label: string;
-  count: number;
   rateFromPrevious: number | null;
   rateFromStart: number | null;
-};
-
-export type FunnelBookingSignal = {
-  label: string;
-  source: string;
-  count: number;
+  unit: "booking" | "unique_session";
 };
 
 type Props = {
   steps: FunnelStep[];
-  bookingSignals?: FunnelBookingSignal[];
 };
 
-export function FunnelViz({ steps, bookingSignals = [] }: Props) {
+export function FunnelViz({ steps }: Props) {
   if (steps.length === 0) {
     return (
       <div className="border border-hp-rule bg-hp-card px-4 py-10 text-center text-sm text-hp-muted">
-        No funnel data in this range. Verify the booking pixel is firing on the
+        No funnel data in this range. Verify booking tracking is firing on the
         Shopify site.
       </div>
     );
   }
 
-  const maxCount = Math.max(...steps.map((s) => s.count), 1);
-  const accent = tokens.color.light.accent;
+  const maxCount = Math.max(...steps.map((step) => step.count), 1);
 
   return (
     <section
@@ -55,115 +36,84 @@ export function FunnelViz({ steps, bookingSignals = [] }: Props) {
       className="overflow-hidden border border-hp-rule bg-hp-card"
     >
       <header className="flex items-baseline justify-between border-b border-hp-rule bg-hp-inset px-5 py-3 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-        <span>Funnel - unique sessions</span>
+        <span>Funnel - unique sessions to bookings</span>
         <span>{steps.length} stages</span>
       </header>
 
-      {bookingSignals.length ? (
-        <div className="border-b border-hp-rule px-5 py-4">
-          <div className="mb-3 flex items-baseline justify-between gap-3 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-            <span>Booking source check</span>
-            <span>{bookingSignals.length} signals</span>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-hp-inset text-left text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-                <tr>
-                  <th className="px-4 py-3 font-normal">Signal</th>
-                  <th className="px-4 py-3 font-normal">Source</th>
-                  <th className="px-4 py-3 text-right font-normal">Count</th>
-                </tr>
-              </thead>
-              <tbody>
-                {bookingSignals.map((signal) => (
-                  <tr key={signal.source} className="border-t border-hp-rule">
-                    <td className="px-4 py-3 font-medium text-hp-ink">{signal.label}</td>
-                    <td className="px-4 py-3 text-hp-muted">{signal.source}</td>
-                    <td className="px-4 py-3 text-right tabular-nums text-hp-ink">
-                      {signal.count.toLocaleString()}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ) : null}
-
-      <ParentSize parentSizeStyles={{ height: steps.length * 56 + 16 }}>
-        {({ width }) => {
-          const labelWidth = 180;
-          const barWidth = Math.max(120, width - labelWidth - 96);
-          const xScale = scaleLinear<number>({
-            domain: [0, maxCount],
-            range: [0, barWidth],
-          });
-          return (
-            <svg
-              width={width}
-              height={steps.length * 56 + 16}
-              role="img"
-              aria-label="Funnel stages bar chart"
-            >
-              {steps.map((step, idx) => {
-                const y = idx * 56 + 8;
-                const barX = labelWidth;
-                const w = Math.max(2, xScale(step.count) ?? 0);
-                const fillIntensity = Math.max(
-                  0.35,
-                  1 - idx * (0.6 / Math.max(1, steps.length - 1)),
-                );
-                return (
-                  <g key={step.key} transform={`translate(0, ${y})`}>
-                    <text
-                      x={labelWidth - 12}
-                      y={26}
-                      textAnchor="end"
-                      className="text-xs"
-                      style={{ fill: "var(--ink-primary)" }}
-                    >
-                      {step.label}
-                    </text>
-                    <rect
-                      x={barX}
-                      y={8}
-                      width={w}
-                      height={36}
-                      rx={6}
-                      fill={accent}
-                      fillOpacity={fillIntensity}
+      <div className="space-y-3 px-5 py-5">
+        {steps.map((step, index) => {
+          const width = `${Math.max(2, (step.count / maxCount) * 100)}%`;
+          const fillOpacity = Math.max(0.34, 1 - index * (0.56 / Math.max(1, steps.length - 1)));
+          const content = (
+            <>
+              <div className="grid gap-1 md:grid-cols-[11rem_1fr_6rem] md:items-center md:gap-4">
+                <div className="flex min-w-0 items-center gap-1.5 text-xs text-hp-ink">
+                  <span className="truncate">{step.label}</span>
+                  <MappingHelp text={step.dataMapping} />
+                </div>
+                <div className="min-w-0">
+                  <div className="relative h-9 overflow-visible">
+                    <div
+                      className="h-9 bg-hp-pink"
+                      style={{ opacity: fillOpacity, width }}
                     />
-                    <text
-                      x={barX + w + 8}
-                      y={20}
-                      className="text-xs font-semibold tabular-nums"
-                      style={{ fill: "var(--ink-primary)" }}
-                    >
-                      {step.count.toLocaleString()}
-                    </text>
-                    <text
-                      x={barX + w + 8}
-                      y={36}
-                      className="text-[10px] tabular-nums"
-                      style={{ fill: "var(--ink-muted)" }}
-                    >
-                      {step.rateFromPrevious == null
-                        ? idx === 0
-                          ? "entry"
-                          : "-"
-                        : `${(step.rateFromPrevious * 100).toFixed(1)}% from prev - ${
-                            step.rateFromStart != null
-                              ? `${(step.rateFromStart * 100).toFixed(1)}% from start`
-                              : ""
-                          }`}
-                    </text>
-                  </g>
-                );
-              })}
-            </svg>
+                  </div>
+                  <div className="mt-1 text-[10px] tabular-nums text-hp-muted">
+                    {rateLabel(step, index)}
+                  </div>
+                </div>
+                <div className="text-left md:text-right">
+                  <div className="font-[family-name:var(--font-title)] text-lg tabular-nums text-hp-ink">
+                    {step.count.toLocaleString()}
+                  </div>
+                  <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                    {step.unit === "booking" ? "bookings" : "sessions"}
+                  </div>
+                </div>
+              </div>
+            </>
           );
-        }}
-      </ParentSize>
+
+          if (!step.filterHref) {
+            return (
+              <div key={step.key} className="border-b border-hp-rule-soft pb-3 last:border-b-0">
+                {content}
+              </div>
+            );
+          }
+
+          return (
+            <a
+              key={step.key}
+              aria-current={step.isActive ? "true" : undefined}
+              className={`block border-b border-hp-rule-soft pb-3 outline-none transition-colors last:border-b-0 hover:bg-hp-inset focus:bg-hp-inset focus:ring-2 focus:ring-inset focus:ring-hp-pink ${
+                step.isActive ? "bg-hp-inset" : ""
+              }`}
+              href={step.filterHref}
+            >
+              {content}
+            </a>
+          );
+        })}
+      </div>
     </section>
   );
+}
+
+function MappingHelp({ text }: { text: string }) {
+  return (
+    <span className="group relative inline-flex shrink-0 items-center" title={text}>
+      <CircleHelp className="text-hp-muted" size={13} aria-hidden />
+      <span className="pointer-events-none absolute left-1/2 top-5 z-20 hidden w-80 -translate-x-1/2 border border-hp-rule bg-hp-card p-3 text-[11px] normal-case leading-5 tracking-normal text-hp-body shadow-lg group-hover:block">
+        {text}
+      </span>
+    </span>
+  );
+}
+
+function rateLabel(step: FunnelStep, index: number) {
+  if (step.rateFromPrevious == null) return index === 0 ? "entry" : "-";
+  const fromStart =
+    step.rateFromStart == null ? "" : ` - ${(step.rateFromStart * 100).toFixed(1)}% from start`;
+  return `${(step.rateFromPrevious * 100).toFixed(1)}% from prev${fromStart}`;
 }

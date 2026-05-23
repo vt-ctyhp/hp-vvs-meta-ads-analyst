@@ -9,6 +9,7 @@ const MAX_LEDGER_VISITORS = 500;
 const MAX_RELATED_ROWS = 2500;
 const VISITOR_ID_QUERY_BATCH_SIZE = 100;
 const DETAIL_EVENT_WINDOW_AFTER_BOOKING_MS = 60_000;
+const PAID_META_ATTRIBUTION_LOOKBACK_DAYS = 30;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -49,6 +50,7 @@ export type CustomerJourneyLedgerRow = {
   osName: string | null;
   placement: string | null;
   sessionId: string | null;
+  stageKeys: string[];
   visitorId: string | null;
 };
 
@@ -170,6 +172,9 @@ export type CustomerJourneyLedgerEventRow = {
   session_id: string | null;
   source: string | null;
   source_type: string | null;
+  customer_email: string | null;
+  customer_name: string | null;
+  customer_phone: string | null;
   utm_ad: string | null;
   utm_ad_id: string | null;
   utm_adset: string | null;
@@ -378,6 +383,9 @@ const EVENT_COLUMNS = [
   "browser_name",
   "os_name",
   "source_type",
+  "customer_name",
+  "customer_email",
+  "customer_phone",
   "properties",
   "raw_json",
 ].join(",");
@@ -726,17 +734,22 @@ export function buildCustomerJourneyLedgerDetailData(input: {
     sessionsById: sessionsByVisitorAndId.get(input.visitor.visitor_id),
   });
   const eventTouches = input.events.flatMap(eventAttributionTouches);
-  const creditedTouch = selectOriginalPaidTouch(
-    [
-      attributionTouch(input.visitor.last_paid_touch),
-      attributionTouch(conversion?.last_paid_touch),
-      attributionTouch(conversion?.conversion_touch),
-      attributionTouch(session?.last_paid_touch),
-      ...conversionAttributionTouches(conversion),
-      ...eventTouches,
-    ],
-    { maxCapturedAt: conversion?.occurred_at },
-  );
+  const creditedTouch = conversion
+    ? selectPaidTouchForConversion(
+        conversion,
+        [
+          attributionTouch(input.visitor.last_paid_touch),
+          attributionTouch(conversion.last_paid_touch),
+          attributionTouch(conversion.conversion_touch),
+          attributionTouch(session?.last_paid_touch),
+          ...conversionAttributionTouches(conversion),
+          ...eventTouches,
+        ],
+        input.conversions,
+      )
+    : selectOriginalPaidTouch(
+        [attributionTouch(input.visitor.last_paid_touch), attributionTouch(session?.last_paid_touch), ...eventTouches],
+      );
   const returnEvent = selectReturnEvent(input.events, conversion);
   const returnTouch = returnEvent ? eventRowTouch(returnEvent) : null;
   const timeline = buildDetailTimeline({
@@ -781,13 +794,14 @@ export function buildCustomerJourneyLedgerConversionOnlyDetailData(input: {
   conversion: CustomerJourneyLedgerConversionRow;
 }): CustomerJourneyLedgerDetailData {
   const conversion = input.conversion;
-  const creditedTouch = selectOriginalPaidTouch(
+  const creditedTouch = selectPaidTouchForConversion(
+    conversion,
     [
       attributionTouch(conversion.last_paid_touch),
       attributionTouch(conversion.conversion_touch),
       ...conversionAttributionTouches(conversion),
     ],
-    { maxCapturedAt: conversion.occurred_at },
+    [conversion],
   );
   const timeline = buildDetailTimeline({
     conversion,
@@ -861,119 +875,127 @@ export function buildCustomerJourneyLedgerRows(input: {
 }): CustomerJourneyLedgerRow[] {
   const sessionsByVisitor = latestByVisitor(input.sessions, "last_seen_at");
   const sessionsByVisitorAndId = groupSessionsByVisitorAndId(input.sessions);
-  const conversionsByVisitor = latestByVisitor(input.conversions, "occurred_at");
   const eventsByVisitor = groupByVisitor(input.events || []);
-  const matchedVisitorIds = new Set(input.visitors.map((visitor) => visitor.visitor_id));
+  const visitorsById = new Map(input.visitors.map((visitor) => [visitor.visitor_id, visitor]));
 
-  const visitorRows = [...input.visitors]
-    .sort((a, b) => timestampValue(b.last_seen_at) - timestampValue(a.last_seen_at))
-    .map((visitor) => {
-      const conversion = conversionsByVisitor.get(visitor.visitor_id) || null;
-      const session = selectSessionForConversion({
-        conversion,
-        latestSession: sessionsByVisitor.get(visitor.visitor_id) || null,
-        sessionsById: sessionsByVisitorAndId.get(visitor.visitor_id),
-      });
-      const visitorEvents = eventsByVisitor.get(visitor.visitor_id) || [];
-      const eventTouches = visitorEvents.flatMap(eventAttributionTouches);
-      const paidTouch = selectOriginalPaidTouch(
-        [
-          attributionTouch(visitor.last_paid_touch),
-          attributionTouch(conversion?.last_paid_touch),
-          attributionTouch(conversion?.conversion_touch),
-          attributionTouch(session?.last_paid_touch),
-          ...conversionAttributionTouches(conversion),
-          ...eventTouches,
-        ],
-        { maxCapturedAt: conversion?.occurred_at },
-      );
-      const campaignId = paidTouch?.utm?.campaignId || null;
-      const adsetId = paidTouch?.utm?.adsetId || null;
-      const adId = paidTouch?.utm?.adId || null;
-      const placement = paidTouch?.utm?.placement || null;
-      const source =
-        paidTouch?.utm?.source || paidTouch?.sourceType || paidTouch?.source || conversion?.source_type || null;
-      const deviceCategory =
-        conversion?.device_category ||
-        visitor.device_category ||
-        session?.device_category ||
-        paidTouch?.deviceCategory ||
-        null;
-      const browserName =
-        conversion?.browser_name ||
-        visitor.browser_name ||
-        session?.browser_name ||
-        paidTouch?.browserName ||
-        null;
-      const osName = conversion?.os_name || visitor.os_name || session?.os_name || paidTouch?.osName || null;
-      const geo = geoFromRecords(conversion, visitor, session, ...visitorEvents);
-
-      return {
-        adId,
-        adsetId,
-        acuityAppointmentId: conversion?.acuity_appointment_id || null,
-        appointmentType: conversion?.appointment_type || null,
-        bookingTime: conversion?.occurred_at || null,
-        brand: conversion?.brand || null,
-        browserName,
-        campaignId,
-        capiStatus: conversion?.meta_capi_status || null,
-        conversionEventId: conversion?.event_id || null,
-        customerEmail:
-          conversion?.customer_email || visitor.customer_email || session?.customer_email || null,
-        customerName:
-          conversion?.customer_name || visitor.customer_name || session?.customer_name || null,
-        customerPhone:
-          conversion?.customer_phone || visitor.customer_phone || session?.customer_phone || null,
-        deviceBrowser: formatDeviceBrowser(deviceCategory, browserName, osName),
-        deviceCategory,
-        fbc: conversion?.fbc || visitor.fbc || session?.fbc || paidTouch?.fbc || null,
-        fbp: conversion?.fbp || visitor.fbp || session?.fbp || paidTouch?.fbp || null,
-        firstPage: visitor.first_page_url || session?.first_page_url || null,
-        geoCity: geo.geoCity,
-        geoCountry: geo.geoCountry,
-        geoRegion: geo.geoRegion,
-        geoTimezone: geo.geoTimezone,
-        hasConversion: Boolean(conversion),
-        hasPaidTouch: Boolean(paidTouch),
-        lastPaidSource: source,
-        lastPaidSourceType: paidTouch?.sourceType || conversion?.source_type || null,
-        lastSeen: visitor.last_seen_at,
-        metaEventId: conversion?.meta_event_id || null,
-        osName,
-        placement,
-        sessionId: conversion?.session_id || session?.session_id || null,
-        visitorId: visitor.visitor_id,
-      };
-    });
-
-  const conversionOnlyRows = input.conversions
-    .filter((conversion) => !conversion.visitor_id || !matchedVisitorIds.has(conversion.visitor_id))
-    .map((conversion) =>
-      conversionOnlyLedgerRow(
+  const conversionRows = input.conversions.map((conversion) => {
+    const visitor = conversion.visitor_id ? visitorsById.get(conversion.visitor_id) || null : null;
+    if (!visitor) {
+      return conversionOnlyLedgerRow(
         conversion,
         conversion.visitor_id ? eventsByVisitor.get(conversion.visitor_id) || [] : [],
-      ),
-    );
+        input.conversions,
+      );
+    }
 
-  return [...visitorRows, ...conversionOnlyRows].sort(
+    const session = selectSessionForConversion({
+      conversion,
+      latestSession: sessionsByVisitor.get(visitor.visitor_id) || null,
+      sessionsById: sessionsByVisitorAndId.get(visitor.visitor_id),
+    });
+    const visitorEvents = eventsByVisitor.get(visitor.visitor_id) || [];
+    return conversionLedgerRow({ allConversions: input.conversions, conversion, events: visitorEvents, session, visitor });
+  });
+
+  return conversionRows.sort(
     (a, b) => timestampValue(b.lastSeen) - timestampValue(a.lastSeen),
   );
+}
+
+function conversionLedgerRow(input: {
+  allConversions: CustomerJourneyLedgerConversionRow[];
+  conversion: CustomerJourneyLedgerConversionRow;
+  events: CustomerJourneyLedgerEventRow[];
+  session: CustomerJourneyLedgerSessionRow | null;
+  visitor: CustomerJourneyLedgerVisitorRow;
+}): CustomerJourneyLedgerRow {
+  const { allConversions, conversion, events, session, visitor } = input;
+  const eventTouches = events.flatMap(eventAttributionTouches);
+  const paidTouch = selectPaidTouchForConversion(
+    conversion,
+    [
+      attributionTouch(visitor.last_paid_touch),
+      attributionTouch(conversion.last_paid_touch),
+      attributionTouch(conversion.conversion_touch),
+      attributionTouch(session?.last_paid_touch),
+      ...conversionAttributionTouches(conversion),
+      ...eventTouches,
+    ],
+    allConversions,
+  );
+  const campaignId = paidTouch?.utm?.campaignId || null;
+  const adsetId = paidTouch?.utm?.adsetId || null;
+  const adId = paidTouch?.utm?.adId || null;
+  const placement = paidTouch?.utm?.placement || null;
+  const source =
+    paidTouch?.utm?.source || paidTouch?.sourceType || paidTouch?.source || conversion.source_type || null;
+  const deviceCategory =
+    conversion.device_category ||
+    visitor.device_category ||
+    session?.device_category ||
+    paidTouch?.deviceCategory ||
+    null;
+  const browserName =
+    conversion.browser_name ||
+    visitor.browser_name ||
+    session?.browser_name ||
+    paidTouch?.browserName ||
+    null;
+  const osName = conversion.os_name || visitor.os_name || session?.os_name || paidTouch?.osName || null;
+  const geo = geoFromRecords(conversion, visitor, session, ...events);
+
+  return {
+    adId,
+    adsetId,
+    acuityAppointmentId: conversion.acuity_appointment_id || null,
+    appointmentType: conversion.appointment_type || null,
+    bookingTime: conversion.occurred_at,
+    brand: conversion.brand || null,
+    browserName,
+    campaignId,
+    capiStatus: conversion.meta_capi_status || null,
+    conversionEventId: conversion.event_id,
+    customerEmail: conversion.customer_email || visitor.customer_email || session?.customer_email || null,
+    customerName: conversion.customer_name || visitor.customer_name || session?.customer_name || null,
+    customerPhone: conversion.customer_phone || visitor.customer_phone || session?.customer_phone || null,
+    deviceBrowser: formatDeviceBrowser(deviceCategory, browserName, osName),
+    deviceCategory,
+    fbc: conversion.fbc || visitor.fbc || session?.fbc || paidTouch?.fbc || null,
+    fbp: conversion.fbp || visitor.fbp || session?.fbp || paidTouch?.fbp || null,
+    firstPage: visitor.first_page_url || session?.first_page_url || null,
+    geoCity: geo.geoCity,
+    geoCountry: geo.geoCountry,
+    geoRegion: geo.geoRegion,
+    geoTimezone: geo.geoTimezone,
+    hasConversion: true,
+    hasPaidTouch: Boolean(paidTouch),
+    lastPaidSource: source,
+    lastPaidSourceType: paidTouch?.sourceType || conversion.source_type || null,
+    lastSeen: conversion.occurred_at,
+    metaEventId: conversion.meta_event_id || null,
+    osName,
+    placement,
+    sessionId: conversion.session_id || session?.session_id || null,
+    stageKeys: stageKeysForConversion({ conversion, events, paidTouch }),
+    visitorId: visitor.visitor_id,
+  };
 }
 
 function conversionOnlyLedgerRow(
   conversion: CustomerJourneyLedgerConversionRow,
   events: CustomerJourneyLedgerEventRow[],
+  allConversions: CustomerJourneyLedgerConversionRow[] = [conversion],
 ): CustomerJourneyLedgerRow {
   const eventTouches = events.flatMap(eventAttributionTouches);
-  const paidTouch = selectOriginalPaidTouch(
+  const paidTouch = selectPaidTouchForConversion(
+    conversion,
     [
       attributionTouch(conversion.last_paid_touch),
       attributionTouch(conversion.conversion_touch),
       ...conversionAttributionTouches(conversion),
       ...eventTouches,
     ],
-    { maxCapturedAt: conversion.occurred_at },
+    allConversions,
   );
   const campaignId = paidTouch?.utm?.campaignId || null;
   const adsetId = paidTouch?.utm?.adsetId || null;
@@ -1018,8 +1040,122 @@ function conversionOnlyLedgerRow(
     osName,
     placement,
     sessionId: conversion.session_id || null,
+    stageKeys: stageKeysForConversion({ conversion, events, paidTouch }),
     visitorId: conversion.visitor_id || null,
   };
+}
+
+function selectPaidTouchForConversion(
+  conversion: CustomerJourneyLedgerConversionRow,
+  touches: Array<AttributionTouch | null | undefined>,
+  allConversions: CustomerJourneyLedgerConversionRow[] = [conversion],
+) {
+  const previousBookingAt = previousBookingTimestamp(conversion, allConversions);
+  const eligibleTouches = touches
+    .filter((touch) => isTouchWithinLookback(touch, conversion.occurred_at))
+    .filter((touch) => isAfterPreviousBooking(touch, previousBookingAt));
+  return selectOriginalPaidTouch(eligibleTouches, { maxCapturedAt: conversion.occurred_at });
+}
+
+function previousBookingTimestamp(
+  conversion: CustomerJourneyLedgerConversionRow,
+  allConversions: CustomerJourneyLedgerConversionRow[],
+) {
+  const currentAt = timestampValue(conversion.occurred_at);
+  let previous: number | null = null;
+
+  for (const candidate of allConversions) {
+    if (candidate.event_id === conversion.event_id) continue;
+    if (!sameConversionIdentity(candidate, conversion)) continue;
+    const candidateAt = timestampValue(candidate.occurred_at);
+    if (!candidateAt || candidateAt >= currentAt) continue;
+    if (previous === null || candidateAt > previous) previous = candidateAt;
+  }
+
+  return previous;
+}
+
+function sameConversionIdentity(
+  left: CustomerJourneyLedgerConversionRow,
+  right: CustomerJourneyLedgerConversionRow,
+) {
+  if (left.visitor_id && right.visitor_id && left.visitor_id === right.visitor_id) return true;
+  const leftEmail = normalizeIdentityEmail(left.customer_email);
+  const rightEmail = normalizeIdentityEmail(right.customer_email);
+  if (leftEmail && rightEmail && leftEmail === rightEmail) return true;
+  const leftPhone = normalizeIdentityPhone(left.customer_phone);
+  const rightPhone = normalizeIdentityPhone(right.customer_phone);
+  return Boolean(leftPhone && rightPhone && leftPhone === rightPhone);
+}
+
+function normalizeIdentityEmail(value: string | null) {
+  return (value || "").trim().toLowerCase();
+}
+
+function normalizeIdentityPhone(value: string | null) {
+  return (value || "").replace(/\D/g, "");
+}
+
+function isAfterPreviousBooking(
+  touch: AttributionTouch | null | undefined,
+  previousBookingAt: number | null,
+) {
+  if (previousBookingAt === null) return true;
+  const capturedAt = timestampValue(touch?.capturedAt);
+  return Boolean(capturedAt && capturedAt > previousBookingAt);
+}
+
+function isTouchWithinLookback(touch: AttributionTouch | null | undefined, conversionAt: string) {
+  if (!touch?.capturedAt) return true;
+  const captured = Date.parse(touch.capturedAt);
+  const converted = Date.parse(conversionAt);
+  if (!Number.isFinite(captured) || !Number.isFinite(converted)) return true;
+  return captured <= converted && converted - captured <= PAID_META_ATTRIBUTION_LOOKBACK_DAYS * 864e5;
+}
+
+function stageKeysForConversion(input: {
+  conversion: CustomerJourneyLedgerConversionRow;
+  events: CustomerJourneyLedgerEventRow[];
+  paidTouch: AttributionTouch | null;
+}) {
+  const keys = new Set<string>(["confirmed_website_bookings"]);
+  const conversionAt = timestampValue(input.conversion.occurred_at);
+  const sessionId = input.conversion.session_id;
+  const relevantEvents = input.events.filter((event) => {
+    if (sessionId && event.session_id !== sessionId) return false;
+    return timestampValue(event.occurred_at) <= conversionAt;
+  });
+
+  if (input.paidTouch) keys.add("paid_meta_bookings");
+  if (relevantEvents.some((event) => event.event_name === "PageView" && pageGroupFromUrl(event.page_url) === "booking")) {
+    keys.add("booking_page_view");
+  }
+  if (relevantEvents.some(isBookingFormStartedLedgerEvent)) keys.add("booking_form_started");
+  if (relevantEvents.some((event) => event.event_name === "BookingVisitSelected")) keys.add("visit_selected");
+  if (relevantEvents.some((event) => event.event_name === "BookingDateSelected")) keys.add("date_selected");
+  if (relevantEvents.some((event) => event.event_name === "BookingTimeSelected")) keys.add("time_selected");
+  return Array.from(keys);
+}
+
+function isBookingFormStartedLedgerEvent(event: CustomerJourneyLedgerEventRow) {
+  return [
+    "BookingFormStarted",
+    "BookingContactStarted",
+    "BookingVisitSelected",
+    "BookingDateSelected",
+    "BookingTimeSelected",
+    "BookingIdentityCaptured",
+  ].includes(event.event_name);
+}
+
+function pageGroupFromUrl(value: string | null) {
+  if (!value) return null;
+  try {
+    const path = new URL(value).pathname.toLowerCase();
+    return path.includes("/book-an-appointment") ? "booking" : null;
+  } catch {
+    return value.toLowerCase().includes("/book-an-appointment") ? "booking" : null;
+  }
 }
 
 function selectDetailConversion(
@@ -1095,7 +1231,8 @@ function buildDetailTimeline(input: {
   }
 
   for (const event of input.events) {
-    if (sessionId && event.session_id !== sessionId) continue;
+    const sameSession = !sessionId || event.session_id === sessionId;
+    if (!sameSession && !isPaidMetaLandingEvent(event)) continue;
     const eventTime = timestampValue(event.occurred_at);
     if (bookingTime && eventTime > (windowEnd || bookingTime)) continue;
     const touch = eventRowTouch(event);
@@ -1198,8 +1335,10 @@ function timelineLabel(event: CustomerJourneyLedgerEventRow, returnEvent: Custom
   }
   const labels: Record<string, string> = {
     BookingClientConfirmed: "Booking confirmed in browser",
-    BookingContactStarted: "Contact form started",
+    BookingContactStarted: "Started booking form",
     BookingDateSelected: "Date selected",
+    BookingFormStarted: "Started booking form",
+    BookingIdentityCaptured: "Email or phone captured before submit",
     BookingSubmitAttempt: "Booking submitted",
     BookingTimeSelected: "Time selected",
     BookingVisitSelected: "Appointment type selected",

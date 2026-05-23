@@ -230,3 +230,84 @@ export function buildAskAiFilterSummary(
   ];
 }
 
+export type ConvertFilterSummaryInput = {
+  capi: string;
+  endDate: string;
+  query: string;
+  source: string;
+  stage: string;
+  startDate: string;
+  type: string;
+};
+
+export function buildConvertFilterSummary(
+  input: ConvertFilterSummaryInput,
+): ActiveFilterSummary {
+  return [
+    {
+      key: "Range",
+      value: formatShortRange(input.startDate, input.endDate),
+      isActive: false,
+    },
+    {
+      key: "Stage",
+      value: convertStageLabel(input.stage),
+      isActive: input.stage !== "all",
+    },
+    {
+      key: "Source",
+      value: convertSourceLabel(input.source),
+      isActive: input.source !== "all",
+    },
+    {
+      key: "CAPI",
+      value: convertCapiLabel(input.capi),
+      isActive: input.capi !== "all",
+    },
+    {
+      key: "Type",
+      value: input.type === "all" ? "All" : input.type,
+      isActive: input.type !== "all",
+    },
+    {
+      key: "Search",
+      value: input.query || "None",
+      isActive: Boolean(input.query),
+    },
+  ];
+}
+
+function convertStageLabel(value: string) {
+  const labels: Record<string, string> = {
+    all: "All",
+    booking_form_started: "Started form",
+    booking_page_view: "Viewed page",
+    confirmed_website_bookings: "Confirmed bookings",
+    date_selected: "Selected date",
+    paid_meta_bookings: "Paid Meta bookings",
+    time_selected: "Selected time",
+    visit_selected: "Selected type",
+  };
+  return labels[value] || value;
+}
+
+function convertSourceLabel(value: string) {
+  const labels: Record<string, string> = {
+    all: "All",
+    direct: "Direct",
+    paid_meta: "Paid Meta",
+    unattributed: "Unattributed",
+  };
+  return labels[value] || value;
+}
+
+function convertCapiLabel(value: string) {
+  const labels: Record<string, string> = {
+    all: "All",
+    failed: "Failed",
+    gap: "Gaps",
+    missing: "Missing",
+    sent: "Sent",
+  };
+  return labels[value] || value;
+}

@@ -591,6 +591,7 @@ function emptyJourneyRow(
     rowId: visitorId || eventId || acuityAppointmentId || "journey-detail",
     sessionId: null,
     sourceType: null,
+    stageKeys: [],
     visitorId,
   };
 }

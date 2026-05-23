@@ -1,9 +1,14 @@
 import type { CustomerJourneyLedgerRow } from "./customer-journey-ledger.ts";
 
 export type CustomerLedgerSearchParams = {
+  capi?: string | null;
   days?: string | null;
   end?: string | null;
+  q?: string | null;
+  source?: string | null;
   start?: string | null;
+  stage?: string | null;
+  type?: string | null;
 };
 
 export type CustomerLedgerCreativePreview = {
@@ -48,6 +53,7 @@ export type CustomerLedgerRow = {
   rowId: string;
   sessionId: string | null;
   sourceType: string | null;
+  stageKeys: string[];
   visitorId: string | null;
 };
 
@@ -55,6 +61,14 @@ export type CustomerJourneyLedgerRequest = {
   days?: number | null;
   endDate?: string | null;
   startDate?: string | null;
+};
+
+export type ConvertLedgerFilters = {
+  capi: string;
+  query: string;
+  source: string;
+  stage: string;
+  type: string;
 };
 
 export type CustomerLedgerDetailIdentity =
@@ -116,9 +130,45 @@ export function customerLedgerRowsFromJourneys(
       rowId: eventId || row.visitorId || row.acuityAppointmentId || row.lastSeen,
       sessionId: row.sessionId,
       sourceType: row.lastPaidSourceType,
+      stageKeys: row.stageKeys || [],
       visitorId: row.visitorId,
     };
   });
+}
+
+export function convertLedgerFiltersFromSearchParams(
+  params: CustomerLedgerSearchParams,
+): ConvertLedgerFilters {
+  return {
+    capi: normalizedOption(params.capi, ["all", "sent", "gap", "failed", "missing"], "all"),
+    query: params.q?.trim() || "",
+    source: normalizedOption(params.source, ["all", "paid_meta", "direct", "unattributed"], "all"),
+    stage: params.stage?.trim() || "all",
+    type: params.type?.trim() || "all",
+  };
+}
+
+export function filterCustomerLedgerRows(
+  rows: CustomerLedgerRow[],
+  filters: ConvertLedgerFilters,
+): CustomerLedgerRow[] {
+  const query = filters.query.toLowerCase();
+  return rows.filter((row) => {
+    if (filters.stage !== "all" && !row.stageKeys.includes(filters.stage)) return false;
+    if (filters.type !== "all" && row.appointmentType !== filters.type) return false;
+    if (!matchesSource(row, filters.source)) return false;
+    if (!matchesCapi(row, filters.capi)) return false;
+    if (query && !searchableRowText(row).includes(query)) return false;
+    return true;
+  });
+}
+
+export function convertFilterOptions(rows: CustomerLedgerRow[]) {
+  return {
+    appointmentTypes: Array.from(
+      new Set(rows.map((row) => row.appointmentType).filter((value): value is string => Boolean(value))),
+    ).sort((a, b) => a.localeCompare(b)),
+  };
 }
 
 export function customerLedgerDetailIdentityFromSearchParams(
@@ -217,6 +267,59 @@ export function buildCustomerLedgerStatusSentence({
     );
   }
   return pieces.join(" ");
+}
+
+function normalizedOption(value: string | null | undefined, allowed: string[], fallback: string) {
+  const normalized = value?.trim() || "";
+  return allowed.includes(normalized) ? normalized : fallback;
+}
+
+function matchesSource(row: CustomerLedgerRow, source: string) {
+  if (source === "all") return true;
+  if (source === "paid_meta") {
+    return row.sourceType === "paid_meta" || row.stageKeys.includes("paid_meta_bookings");
+  }
+  if (source === "direct") {
+    return !row.hasPaidTouch && (row.sourceType === "direct" || row.sourceType === null);
+  }
+  if (source === "unattributed") {
+    return !row.hasPaidTouch && !row.sourceType;
+  }
+  return true;
+}
+
+function matchesCapi(row: CustomerLedgerRow, capi: string) {
+  const status = (row.capiStatus || "").toLowerCase();
+  if (capi === "all") return true;
+  if (capi === "sent") return status === "sent" || status === "success";
+  if (capi === "failed") return status === "failed" || status === "error";
+  if (capi === "missing") return !row.capiStatus;
+  if (capi === "gap") return !row.capiStatus || status === "failed" || status === "error";
+  return true;
+}
+
+function searchableRowText(row: CustomerLedgerRow) {
+  return [
+    row.adId,
+    row.adsetId,
+    row.acuityAppointmentId,
+    row.appointmentType,
+    row.brand,
+    row.campaignId,
+    row.customerEmail,
+    row.customerName,
+    row.customerPhone,
+    row.eventId,
+    row.paidTouchCampaign,
+    row.paidTouchSource,
+    row.placement,
+    row.sessionId,
+    row.sourceType,
+    row.visitorId,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
 }
 
 function parseDays(value?: string | null) {

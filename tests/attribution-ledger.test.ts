@@ -135,7 +135,7 @@ describe("attribution ledger row merging", () => {
     assert.equal(rows[0].lastPaidSource, "direct");
   });
 
-  it("keeps visitors without conversions and uses session context", () => {
+  it("omits visitors without conversions from the booking-grain ledger", () => {
     const rows = buildAttributionLedgerRows({
       conversions: [],
       sessions: [
@@ -157,14 +157,7 @@ describe("attribution ledger row merging", () => {
       ],
     });
 
-    assert.equal(rows.length, 1);
-    assert.equal(rows[0].visitorId, "visitor-1");
-    assert.equal(rows[0].sessionId, "session-latest");
-    assert.equal(rows[0].customerName, "Session Customer");
-    assert.equal(rows[0].customerEmail, "session@example.com");
-    assert.equal(rows[0].customerPhone, "555-0199");
-    assert.equal(rows[0].firstPage, "https://www.hungphatusa.com/pages/book-an-appointment");
-    assert.equal(rows[0].hasConversion, false);
+    assert.equal(rows.length, 0);
   });
 
   it("batches related visitor lookups so Supabase request URLs stay bounded", async () => {
@@ -201,7 +194,7 @@ describe("attribution ledger row merging", () => {
       ),
     );
 
-    assert.equal(data.rows.length, 240);
+    assert.equal(data.rows.length, 0);
     assert.equal(inFilters.filter((filter) => filter.table === "website_sessions").length, 3);
     assert.equal(inFilters.filter((filter) => filter.table === "website_events").length, 3);
     assert.equal(inFilters.filter((filter) => filter.table === "website_conversions").length, 3);
@@ -257,7 +250,15 @@ describe("attribution ledger row merging", () => {
 
   it("does not treat device-only event rows as paid touch candidates", () => {
     const rows = buildAttributionLedgerRows({
-      conversions: [],
+      conversions: [
+        conversionRow({
+          conversion_touch: null,
+          last_paid_touch: null,
+          properties: null,
+          raw_json: null,
+          source_type: null,
+        }),
+      ],
       events: [
         eventRow({
           event_id: "hp_evt-device-only",
@@ -331,7 +332,7 @@ describe("attribution ledger row merging", () => {
       ],
     });
 
-    assert.equal(data.rows.length, 3);
+    assert.equal(data.rows.length, 2);
     assert.equal(data.summary.visitorsShown, 3);
     assert.equal(data.summary.visitorsWithConversions, 2);
     assert.equal(data.summary.visitorsWithPaidTouch, 1);

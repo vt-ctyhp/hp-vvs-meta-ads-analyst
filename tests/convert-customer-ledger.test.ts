@@ -62,6 +62,7 @@ describe("Convert customer ledger adapter", () => {
       rowId: "conversion-1",
       sessionId: "session-1",
       sourceType: "paid_meta",
+      stageKeys: [],
       visitorId: "visitor-1",
     });
   });
