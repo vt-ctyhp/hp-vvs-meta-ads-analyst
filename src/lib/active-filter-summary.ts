@@ -110,3 +110,73 @@ function parseIsoDate(value: string): Date | null {
   return new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
 }
 
+// ─── /analyst/creative-analysis ──────────────────────────────────────
+
+export type CreativeAnalysisFilterInput = {
+  brand: string;
+  delivery: "all" | "active" | "paused";
+  startDate: string;
+  endDate: string;
+  umbrella: string;
+  campaign: string;
+  adSet: string;
+  status: string;
+  query: string;
+};
+
+/**
+ * Standfirst builder for /analyst/creative-analysis (8 segments).
+ *
+ * Cascading dropdowns (Umbrella → Campaign → Ad Set) each render as
+ * their own segment; their values surface verbatim when set. The query
+ * segment renders the trimmed search string in quotes, or "—" when
+ * empty / whitespace-only.
+ */
+export function buildCreativeAnalysisFilterSummary(
+  input: CreativeAnalysisFilterInput,
+): ActiveFilterSummary {
+  const trimmedQuery = input.query.trim();
+  return [
+    {
+      key: "Brand",
+      value: input.brand === "all" ? "All" : input.brand,
+      isActive: input.brand !== "all",
+    },
+    {
+      key: "Delivery",
+      value: deliveryLabel(input.delivery),
+      isActive: input.delivery !== "all",
+    },
+    {
+      key: "Range",
+      value: formatShortRange(input.startDate, input.endDate),
+      isActive: false,
+    },
+    {
+      key: "Umbrella",
+      value: input.umbrella === "all" ? "All" : input.umbrella,
+      isActive: input.umbrella !== "all",
+    },
+    {
+      key: "Campaign",
+      value: input.campaign === "all" ? "All" : input.campaign,
+      isActive: input.campaign !== "all",
+    },
+    {
+      key: "Ad Set",
+      value: input.adSet === "all" ? "All" : input.adSet,
+      isActive: input.adSet !== "all",
+    },
+    {
+      key: "Status",
+      value: input.status === "all" ? "All" : input.status,
+      isActive: input.status !== "all",
+    },
+    {
+      key: "Query",
+      value: trimmedQuery ? `"${trimmedQuery}"` : "—",
+      isActive: trimmedQuery.length > 0,
+    },
+  ];
+}
+

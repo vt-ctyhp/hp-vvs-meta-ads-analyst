@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 
 import {
   buildActiveFilterSummary,
+  buildCreativeAnalysisFilterSummary,
   type ActiveFilterInput,
+  type CreativeAnalysisFilterInput,
 } from "../src/lib/active-filter-summary.ts";
 
 const DEFAULTS: ActiveFilterInput = {
@@ -187,4 +189,93 @@ test("everything customised → every segment except Range is active", () => {
       { key: "Umbrella", isActive: true },
     ],
   );
+});
+
+// ─── /analyst/creative-analysis builder ──────────────────────────────
+
+const CREATIVE_DEFAULTS: CreativeAnalysisFilterInput = {
+  brand: "all",
+  delivery: "all",
+  startDate: "2026-04-23",
+  endDate: "2026-05-22",
+  umbrella: "all",
+  campaign: "all",
+  adSet: "all",
+  status: "all",
+  query: "",
+};
+
+test("creative analysis · all defaults → 8 segments, only Range is non-default, nothing active", () => {
+  const summary = buildCreativeAnalysisFilterSummary(CREATIVE_DEFAULTS);
+  assert.equal(summary.length, 8);
+  assert.deepEqual(
+    summary.map((s) => s.key),
+    ["Brand", "Delivery", "Range", "Umbrella", "Campaign", "Ad Set", "Status", "Query"],
+  );
+  assert.deepEqual(
+    summary.map((s) => s.isActive),
+    [false, false, false, false, false, false, false, false],
+  );
+});
+
+test("creative analysis · range formats short month names", () => {
+  const range = buildCreativeAnalysisFilterSummary(CREATIVE_DEFAULTS)
+    .find((s) => s.key === "Range");
+  assert.equal(range?.value, "Apr 23 — May 22");
+});
+
+test("creative analysis · brand non-default → segment shows brand code and is active", () => {
+  const summary = buildCreativeAnalysisFilterSummary({ ...CREATIVE_DEFAULTS, brand: "HP" });
+  const brand = summary.find((s) => s.key === "Brand");
+  assert.equal(brand?.value, "HP");
+  assert.equal(brand?.isActive, true);
+});
+
+test("creative analysis · delivery non-default uses title case and is active", () => {
+  const summary = buildCreativeAnalysisFilterSummary({ ...CREATIVE_DEFAULTS, delivery: "paused" });
+  const delivery = summary.find((s) => s.key === "Delivery");
+  assert.equal(delivery?.value, "Paused");
+  assert.equal(delivery?.isActive, true);
+});
+
+test("creative analysis · umbrella/campaign/ad set cascade — each non-default is active", () => {
+  const summary = buildCreativeAnalysisFilterSummary({
+    ...CREATIVE_DEFAULTS,
+    umbrella: "Facebook US Product",
+    campaign: "CBI_Evergreen_FB_Product_2026",
+    adSet: "Lookalike 1% — US",
+  });
+  assert.equal(summary.find((s) => s.key === "Umbrella")?.value, "Facebook US Product");
+  assert.equal(summary.find((s) => s.key === "Campaign")?.value, "CBI_Evergreen_FB_Product_2026");
+  assert.equal(summary.find((s) => s.key === "Ad Set")?.value, "Lookalike 1% — US");
+  for (const key of ["Umbrella", "Campaign", "Ad Set"]) {
+    assert.equal(summary.find((s) => s.key === key)?.isActive, true);
+  }
+});
+
+test("creative analysis · status non-default shows label as-is and is active", () => {
+  const summary = buildCreativeAnalysisFilterSummary({ ...CREATIVE_DEFAULTS, status: "ACTIVE" });
+  const status = summary.find((s) => s.key === "Status");
+  assert.equal(status?.value, "ACTIVE");
+  assert.equal(status?.isActive, true);
+});
+
+test("creative analysis · empty query → '—' and not active", () => {
+  const summary = buildCreativeAnalysisFilterSummary({ ...CREATIVE_DEFAULTS, query: "" });
+  const q = summary.find((s) => s.key === "Query");
+  assert.equal(q?.value, "—");
+  assert.equal(q?.isActive, false);
+});
+
+test("creative analysis · non-empty query → quoted and active", () => {
+  const summary = buildCreativeAnalysisFilterSummary({ ...CREATIVE_DEFAULTS, query: "ring" });
+  const q = summary.find((s) => s.key === "Query");
+  assert.equal(q?.value, "\"ring\"");
+  assert.equal(q?.isActive, true);
+});
+
+test("creative analysis · whitespace-only query is not active", () => {
+  const summary = buildCreativeAnalysisFilterSummary({ ...CREATIVE_DEFAULTS, query: "   " });
+  const q = summary.find((s) => s.key === "Query");
+  assert.equal(q?.isActive, false);
 });
