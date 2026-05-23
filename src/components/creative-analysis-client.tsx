@@ -18,14 +18,15 @@ import {
   type CreativeAnalysisRow,
 } from "@/lib/creative-analysis";
 import { formatMetaStatus, formatRanking, TERMS, translateError } from "@/lib/glossary";
+import { buildCreativeAnalysisFilterSummary } from "@/lib/active-filter-summary";
 import {
   FilterBar,
   FilterField,
-  FilterNumberField,
   type ActiveFilter,
 } from "./filter-bar";
 import { StatusSentence, type StatusHighlight } from "./status-sentence";
 import { TechnicalId } from "./technical-id";
+import { UniversalFilterBar } from "./universal-filter-bar";
 
 type Props = {
   initialData: CreativeAnalysisPayload;
@@ -78,7 +79,6 @@ export function CreativeAnalysisClient({ initialData }: Props) {
   const [campaign, setCampaign] = useState("all");
   const [adSet, setAdSet] = useState("all");
   const [status, setStatus] = useState("all");
-  const [minSpend, setMinSpend] = useState("");
   const [query, setQuery] = useState("");
   const [startDate, setStartDate] = useState(data.sourceTransparency.timeRange.start || "");
   const [endDate, setEndDate] = useState(data.sourceTransparency.timeRange.end || "");
@@ -145,7 +145,6 @@ export function CreativeAnalysisClient({ initialData }: Props) {
 
   const filteredRows = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    const minimumSpend = Number(minSpend);
     return data.rows
       .filter((row) => brand === "all" || row.brandCode === brand)
       .filter((row) => delivery === "all" || adDeliveryState(row) === delivery)
@@ -153,7 +152,6 @@ export function CreativeAnalysisClient({ initialData }: Props) {
       .filter((row) => campaign === "all" || row.campaignName === campaign)
       .filter((row) => adSet === "all" || row.adSetName === adSet)
       .filter((row) => status === "all" || row.status === status)
-      .filter((row) => !Number.isFinite(minimumSpend) || row.spend >= minimumSpend)
       .filter((row) => {
         if (!normalizedQuery) return true;
         return [
@@ -169,7 +167,7 @@ export function CreativeAnalysisClient({ initialData }: Props) {
           .includes(normalizedQuery);
       })
       .sort(compareCreativeRank);
-  }, [adSet, brand, campaign, data.rows, delivery, minSpend, query, status, umbrella]);
+  }, [adSet, brand, campaign, data.rows, delivery, query, status, umbrella]);
 
   const summary = useMemo(() => buildSummary(filteredRows), [filteredRows]);
 
@@ -184,10 +182,8 @@ export function CreativeAnalysisClient({ initialData }: Props) {
       list.push({ label: `Ad set: ${adSet}`, onClear: () => setAdSet("all") });
     if (status !== "all")
       list.push({ label: `Status: ${status}`, onClear: () => setStatus("all") });
-    if (minSpend.trim())
-      list.push({ label: `Min spend: $${minSpend}`, onClear: () => setMinSpend("") });
     return list;
-  }, [brand, umbrella, campaign, adSet, status, minSpend]);
+  }, [brand, umbrella, campaign, adSet, status]);
 
   function clearAllSecondary() {
     setBrand("all");
@@ -195,7 +191,6 @@ export function CreativeAnalysisClient({ initialData }: Props) {
     setCampaign("all");
     setAdSet("all");
     setStatus("all");
-    setMinSpend("");
   }
 
   const statusHighlights = useMemo<StatusHighlight[]>(() => {
@@ -395,6 +390,19 @@ export function CreativeAnalysisClient({ initialData }: Props) {
         </div>
       </header>
 
+      <UniversalFilterBar
+        summary={buildCreativeAnalysisFilterSummary({
+          brand,
+          delivery: delivery === "inactive" ? "paused" : delivery,
+          startDate: data.sourceTransparency.timeRange.start || "",
+          endDate: data.sourceTransparency.timeRange.end || "",
+          umbrella,
+          campaign,
+          adSet,
+          status,
+          query,
+        })}
+      >
       <section className="mx-auto mt-8 max-w-7xl">
         <FilterBar
           primary={
@@ -488,12 +496,6 @@ export function CreativeAnalysisClient({ initialData }: Props) {
                   label: option === "all" ? "All statuses" : option,
                 }))}
               />
-              <FilterNumberField
-                label="Minimum spend"
-                value={minSpend}
-                placeholder="0"
-                onChange={setMinSpend}
-              />
               <div className="mt-3 border-t border-hp-rule pt-3">
                 <span className="block text-[10px] uppercase tracking-[0.14em] text-hp-muted">
                   Custom date range
@@ -532,6 +534,7 @@ export function CreativeAnalysisClient({ initialData }: Props) {
           </p>
         ) : null}
       </section>
+      </UniversalFilterBar>
 
       {data.warnings.length || data.sourceTransparency.unavailableFields.length ? (
         <section className="mx-auto mt-4 max-w-7xl border border-hp-rule bg-hp-card p-4 text-sm leading-6 text-hp-body">
