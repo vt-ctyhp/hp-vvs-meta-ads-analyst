@@ -1491,6 +1491,18 @@ function mockLedgerSelectChain(sourceRows: object[], options?: {
       rows = rows.filter((row) => String(row[column] ?? "") >= String(value ?? ""));
       return chain;
     },
+    ilike(column: string, pattern: string) {
+      const re = new RegExp(
+        "^" +
+          pattern
+            .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+            .replace(/%/g, ".*") +
+          "$",
+        "i",
+      );
+      rows = rows.filter((row) => re.test(String(row[column] ?? "")));
+      return chain;
+    },
     in(column: string, values: unknown[]) {
       options?.onInFilter?.(values);
       rows = rows.filter((row) => values.includes(row[column]));

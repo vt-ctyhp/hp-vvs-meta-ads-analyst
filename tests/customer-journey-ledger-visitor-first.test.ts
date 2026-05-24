@@ -285,3 +285,239 @@ test(
     );
   },
 );
+
+test(
+  "visitor-only row gets booking_form_started stage from a BookingFormStarted event",
+  async () => {
+    const appointment = makeAppointment({ external_booking_id: "anchor" });
+    const apptVisitor = makeVisitor({ visitor_id: "v-anchor" });
+    const browseVisitor = makeVisitor({ visitor_id: "v-form", last_seen_at: "2026-05-20T13:00:00.000Z" });
+    const formEvent = makeEvent({
+      event_id: "evt-form",
+      visitor_id: "v-form",
+      event_name: "BookingFormStarted",
+      occurred_at: "2026-05-20T12:50:00.000Z",
+    });
+    const client = makeMockClient({
+      appointment_events: [appointment],
+      website_visitors: [apptVisitor, browseVisitor],
+      website_events: [formEvent],
+      website_conversions: [],
+      website_sessions: [],
+    });
+
+    const data = await fetchCustomerJourneyLedgerData(
+      { startDate: "2026-04-24", endDate: "2026-05-23" },
+      client as any,
+    );
+
+    const row = data.rows.find((r) => r.visitorId === "v-form");
+    assert.ok(row, "expected a row for the form-started visitor");
+    assert.ok(
+      row!.stageKeys.includes("booking_form_started"),
+      `expected stageKeys to include "booking_form_started"; got ${JSON.stringify(row!.stageKeys)}`,
+    );
+  },
+);
+
+test(
+  "visitor-only row with no booking events has only the baseline stageKey",
+  async () => {
+    const appointment = makeAppointment({ external_booking_id: "anchor2" });
+    const apptVisitor = makeVisitor({ visitor_id: "v-anchor2" });
+    const browseVisitor = makeVisitor({
+      visitor_id: "v-empty",
+      last_seen_at: "2026-05-20T14:00:00.000Z",
+    });
+    // Non-booking event that should be ignored by the narrow fetch
+    const noiseEvent = makeEvent({
+      event_id: "evt-noise",
+      visitor_id: "v-empty",
+      event_name: "PageView",
+      page_url: "https://www.hungphatusa.com/collections/all", // NOT booking
+    });
+    const client = makeMockClient({
+      appointment_events: [appointment],
+      website_visitors: [apptVisitor, browseVisitor],
+      website_events: [noiseEvent],
+      website_conversions: [],
+      website_sessions: [],
+    });
+
+    const data = await fetchCustomerJourneyLedgerData(
+      { startDate: "2026-04-24", endDate: "2026-05-23" },
+      client as any,
+    );
+
+    const row = data.rows.find((r) => r.visitorId === "v-empty");
+    assert.ok(row, "expected a row for the noise-only visitor");
+    assert.deepEqual(
+      row!.stageKeys,
+      ["visitor_only"],
+      `expected only ["visitor_only"]; got ${JSON.stringify(row!.stageKeys)}`,
+    );
+  },
+);
+
+test(
+  "anchored visitor row stage keys are unaffected by the new fetch",
+  async () => {
+    const apptId = "acuity-anchor3";
+    const apptVisitor = makeVisitor({ visitor_id: "v-anchored3" });
+    const appointment = makeAppointment({
+      external_booking_id: apptId,
+      visit_date_time: "2026-05-20T18:00:00.000Z",
+    });
+    // Conversion that links the appointment to the anchored visitor
+    const conversion = {
+      event_id: "conv-anchored",
+      session_id: null,
+      visitor_id: "v-anchored3",
+      occurred_at: "2026-05-20T17:00:00.000Z",
+      received_at: null,
+      source_type: "direct",
+      acuity_appointment_id: apptId,
+      appointment_type: "General Meeting",
+      brand: "hpusa",
+      customer_name: null,
+      customer_email: null,
+      customer_phone: null,
+      meta_event_id: null,
+      meta_capi_status: "sent",
+      meta_capi_test_mode: null,
+      fbp: null,
+      fbc: null,
+      geo_country: null,
+      geo_region: null,
+      geo_city: null,
+      geo_timezone: null,
+      user_agent: null,
+      device_category: null,
+      browser_name: null,
+      os_name: null,
+      page_url: null,
+      referrer: null,
+      first_touch: null,
+      last_touch: null,
+      last_paid_touch: null,
+      conversion_touch: null,
+      properties: null,
+      raw_json: null,
+    };
+    const client = makeMockClient({
+      appointment_events: [appointment],
+      website_visitors: [apptVisitor],
+      website_events: [],
+      website_conversions: [conversion],
+      website_sessions: [],
+    });
+
+    const data = await fetchCustomerJourneyLedgerData(
+      { startDate: "2026-04-24", endDate: "2026-05-23" },
+      client as any,
+    );
+
+    const row = data.rows.find((r) => r.visitorId === "v-anchored3");
+    assert.ok(row, "expected a row for the anchored visitor");
+    assert.equal(row!.hasConversion, true, "anchored visitor should have hasConversion=true");
+    assert.ok(
+      row!.stageKeys.includes("confirmed_website_bookings"),
+      `anchored row should still include "confirmed_website_bookings"; got ${JSON.stringify(row!.stageKeys)}`,
+    );
+  },
+);
+
+test(
+  "no booking-event query is issued when there are no unanchored visitors",
+  async () => {
+    const apptId = "acuity-anchor4";
+    const apptVisitor = makeVisitor({ visitor_id: "v-only-anchored" });
+    const appointment = makeAppointment({
+      external_booking_id: apptId,
+      visit_date_time: "2026-05-20T18:00:00.000Z",
+    });
+    const conversion = {
+      event_id: "conv-only-anchored",
+      session_id: null,
+      visitor_id: "v-only-anchored",
+      occurred_at: "2026-05-20T17:00:00.000Z",
+      received_at: null,
+      source_type: "direct",
+      acuity_appointment_id: apptId,
+      appointment_type: "General Meeting",
+      brand: "hpusa",
+      customer_name: null,
+      customer_email: null,
+      customer_phone: null,
+      meta_event_id: null,
+      meta_capi_status: "sent",
+      meta_capi_test_mode: null,
+      fbp: null,
+      fbc: null,
+      geo_country: null,
+      geo_region: null,
+      geo_city: null,
+      geo_timezone: null,
+      user_agent: null,
+      device_category: null,
+      browser_name: null,
+      os_name: null,
+      page_url: null,
+      referrer: null,
+      first_touch: null,
+      last_touch: null,
+      last_paid_touch: null,
+      conversion_touch: null,
+      properties: null,
+      raw_json: null,
+    };
+
+    // Track every .in() call to website_events with booking-form event names
+    const bookingEventQueries: unknown[] = [];
+    const wrappedClient = {
+      from(table: string) {
+        return {
+          select(_cols: string) {
+            const inner = makeMockClient({
+              appointment_events: [appointment],
+              website_visitors: [apptVisitor],
+              website_events: [],
+              website_conversions: [conversion],
+              website_sessions: [],
+            }).from(table as any).select();
+            const proxy: any = new Proxy(inner, {
+              get(target, prop) {
+                if (prop === "in") {
+                  return (column: string, values: unknown[]) => {
+                    if (
+                      table === "website_events" &&
+                      column === "event_name" &&
+                      Array.isArray(values) &&
+                      (values as string[]).includes("BookingFormStarted")
+                    ) {
+                      bookingEventQueries.push(values);
+                    }
+                    return proxy;
+                  };
+                }
+                return (target as any)[prop];
+              },
+            });
+            return proxy;
+          },
+        };
+      },
+    };
+
+    await fetchCustomerJourneyLedgerData(
+      { startDate: "2026-04-24", endDate: "2026-05-23" },
+      wrappedClient as any,
+    );
+
+    assert.equal(
+      bookingEventQueries.length,
+      0,
+      "fetchBookingStageEventsForVisitors should NOT have been called when there are no unanchored visitors",
+    );
+  },
+);
