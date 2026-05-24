@@ -287,6 +287,48 @@ test(
 );
 
 test(
+  "visitor-only stage keys ignore booking events outside the selected date range",
+  async () => {
+    const apptVisitor = makeVisitor({ visitor_id: "v-anchored-old-stage" });
+    const browseOnlyVisitor = makeVisitor({
+      visitor_id: "v-browse-old-stage",
+      last_seen_at: "2026-05-20T13:00:00.000Z",
+    });
+    const appointment = makeAppointment({
+      external_booking_id: "acuity-old-stage-anchor",
+      visit_date_time: "2026-05-20T18:00:00.000Z",
+    });
+    const oldBookingPageView = makeEvent({
+      event_id: "evt-old-booking-pv",
+      visitor_id: "v-browse-old-stage",
+      event_name: "PageView",
+      page_url: "https://www.hungphatusa.com/pages/book-an-appointment",
+      occurred_at: "2026-04-01T12:30:00.000Z",
+    });
+    const client = makeMockClient({
+      appointment_events: [appointment],
+      website_visitors: [apptVisitor, browseOnlyVisitor],
+      website_events: [oldBookingPageView],
+      website_conversions: [],
+      website_sessions: [],
+    });
+
+    const data = await fetchCustomerJourneyLedgerData(
+      { startDate: "2026-04-24", endDate: "2026-05-23" },
+      client as any,
+    );
+
+    const browseRow = data.rows.find((r) => r.visitorId === "v-browse-old-stage");
+    assert.ok(browseRow, "expected a row for the browse-only visitor");
+    assert.deepEqual(
+      browseRow!.stageKeys,
+      ["visitor_only"],
+      `expected only in-range booking events to affect stageKeys; got ${JSON.stringify(browseRow!.stageKeys)}`,
+    );
+  },
+);
+
+test(
   "every website_events fetch projects event_id (regression: uniqueEvents dedupes by event_id; missing it collapses helper rows to one Map entry, surfaced via bug where 211 unanchored visitors with booking PageViews showed as only 1)",
   async () => {
     const appointment = makeAppointment({ external_booking_id: "anchor-dedup" });

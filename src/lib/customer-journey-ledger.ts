@@ -719,6 +719,8 @@ async function fetchCustomerJourneyLedgerDataUncached(
     const unanchoredBookingEvents = await fetchBookingStageEventsForVisitors(
       client,
       unanchoredVisitorIdList,
+      startIso,
+      endIso,
     );
     return buildCustomerJourneyLedgerData({
       appointments,
@@ -764,7 +766,7 @@ async function fetchCustomerJourneyLedgerDataUncached(
           .limit(MAX_RELATED_ROWS),
       "occurred_at",
     ),
-    fetchBookingStageEventsForVisitors(client, unanchoredVisitorIdList),
+    fetchBookingStageEventsForVisitors(client, unanchoredVisitorIdList, startIso, endIso),
   ]);
 
   return buildCustomerJourneyLedgerData({
@@ -802,7 +804,8 @@ async function fetchRowsByVisitorIds<Row>(
     .slice(0, MAX_RELATED_ROWS);
 }
 
-// Phase 2.6: pull only booking-funnel events for the given visitor IDs.
+// Phase 2.6: pull only booking-funnel events for the given visitor IDs in the
+// selected date range.
 // Used to populate stageKeysForVisitorOnly for unanchored visitors without
 // re-paying the full fan-out cost that Phase 2.5 Fix A optimized away.
 // Returns SPARSE event rows — only visitor_id, session_id, event_name,
@@ -813,6 +816,8 @@ async function fetchRowsByVisitorIds<Row>(
 async function fetchBookingStageEventsForVisitors(
   client: CustomerJourneyLedgerClient,
   visitorIds: string[],
+  startIso: string,
+  endIso: string,
 ): Promise<CustomerJourneyLedgerEventRow[]> {
   if (!visitorIds.length) return [];
 
@@ -831,6 +836,8 @@ async function fetchBookingStageEventsForVisitors(
         .eq("environment", env)
         .in("visitor_id", batch)
         .in("event_name", [...BOOKING_FORM_EVENT_NAMES])
+        .gte("occurred_at", startIso)
+        .lte("occurred_at", endIso)
         .limit(MAX_RELATED_ROWS),
       client
         .from("website_events")
@@ -839,6 +846,8 @@ async function fetchBookingStageEventsForVisitors(
         .in("visitor_id", batch)
         .eq("event_name", "PageView")
         .ilike("page_url", BOOKING_PAGE_URL_PATTERN)
+        .gte("occurred_at", startIso)
+        .lte("occurred_at", endIso)
         .limit(MAX_RELATED_ROWS),
     ]);
 
