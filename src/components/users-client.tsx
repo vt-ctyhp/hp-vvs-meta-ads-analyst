@@ -72,7 +72,7 @@ const ROLE_ORDER: UserRole[] = [
 
 const CAN_EDIT_USERS = false;
 
-export function UsersClient({ loginNextPath = "/users" }: { loginNextPath?: string } = {}) {
+export function UsersClient({ loginNextPath = "/operate/users" }: { loginNextPath?: string } = {}) {
   const [profile, setProfile] = useState<AccessProfile | null>(null);
   const [payload, setPayload] = useState<UsersPayload | null>(null);
   const [users, setUsers] = useState<EditableUser[]>([]);
