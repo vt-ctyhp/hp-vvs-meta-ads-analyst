@@ -331,8 +331,20 @@ async function fetchTableRows(supabase, table, columns, apply, pageSize = 1000) 
   const rows = [];
   let from = 0;
 
+  // A stable ORDER BY is required for paginated reads. Without one, PostgreSQL
+  // does not guarantee row order across separate queries, so .range() can
+  // return overlapping pages (double-counting) or gaps (under-counting).
+  // For meta_daily_insights, ordering by date_start uses the existing
+  // (date_start desc) index, and adding id as tiebreaker makes the order strict.
+  // For the small metadata tables (brands, meta_campaigns, etc.), ordering by
+  // id alone is cheap and sufficient.
+  const orderingForTable = (q) =>
+    table === "meta_daily_insights"
+      ? q.order("date_start", { ascending: true }).order("id", { ascending: true })
+      : q.order("id", { ascending: true });
+
   while (true) {
-    let query = supabase.from(table).select(columns).range(from, from + pageSize - 1);
+    let query = orderingForTable(supabase.from(table).select(columns)).range(from, from + pageSize - 1);
     query = apply(query);
     const { data, error } = await query;
     if (error) throw new Error(`${table} query failed: ${error.message}`);
