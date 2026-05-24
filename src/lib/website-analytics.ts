@@ -1039,20 +1039,34 @@ async function fetchWebsiteRows<T>(
   buildQuery: () => WebsiteSelectChain<T[]>,
   limit: number,
 ): Promise<T[]> {
-  const rows: T[] = [];
+  if (limit <= 0) return [];
 
-  for (let from = 0; from < limit; from += SUPABASE_PAGE_SIZE) {
-    const to = Math.min(from + SUPABASE_PAGE_SIZE - 1, limit - 1);
-    const result = await buildQuery().range(from, to);
+  // Fetch the first page sequentially. If it's not full, the dataset fits in
+  // one round-trip and no further requests are needed (small-data fast path).
+  const firstTo = Math.min(SUPABASE_PAGE_SIZE, limit) - 1;
+  const firstResult = await buildQuery().range(0, firstTo);
+  if (firstResult.error) throw firstResult.error;
+  const firstPage = firstResult.data || [];
+  if (firstPage.length < SUPABASE_PAGE_SIZE) return firstPage;
 
-    if (result.error) throw result.error;
-
-    const page = result.data || [];
-    rows.push(...page);
-
-    if (page.length < to - from + 1) break;
+  // Fire remaining page ranges in parallel. Each buildQuery() invocation
+  // produces a fresh, independent query chain, so paginating concurrently is
+  // safe. For datasets smaller than `limit`, the tail batches return zero
+  // rows — wasted Postgres work, but they run concurrently so wall time is
+  // bounded by the slowest single batch.
+  const remainingRanges: Array<[number, number]> = [];
+  for (let from = SUPABASE_PAGE_SIZE; from < limit; from += SUPABASE_PAGE_SIZE) {
+    remainingRanges.push([from, Math.min(from + SUPABASE_PAGE_SIZE - 1, limit - 1)]);
   }
+  const restResults = await Promise.all(
+    remainingRanges.map(([from, to]) => buildQuery().range(from, to)),
+  );
 
+  const rows: T[] = [...firstPage];
+  for (const result of restResults) {
+    if (result.error) throw result.error;
+    rows.push(...(result.data || []));
+  }
   return rows;
 }
 
