@@ -1,3 +1,4 @@
+import { AuthorizationError } from "./app-auth.ts";
 import { ConfigurationError, getMetaApiVersion } from "./env";
 import { getMetaPermissionHealth } from "./meta";
 import {
@@ -12,11 +13,16 @@ import {
   type MetaInboxNormalizationInput,
 } from "./meta-inbox-normalization.ts";
 import {
+  canReadMetaInboxConversationForQueueAccess,
   filterSocialInboxDataForQueueAccess,
   metaInboxQueueAccessScopeForProfile,
   type MetaInboxAccessProfile,
   type MetaInboxQueueAccessDecision,
 } from "./meta-inbox-access.ts";
+import {
+  buildSocialInboxConversationHistoryPage,
+  type SocialInboxConversationHistory,
+} from "./meta-inbox-history.ts";
 import { metaInboxAllowedQueueCategoriesForTeams } from "./meta-inbox-foundation.ts";
 import type {
   MetaInboxConversationStatusKey,
@@ -261,6 +267,8 @@ export type MetaWebhookIngestResult = {
   comments: number;
 };
 
+export type { SocialInboxConversationHistory };
+
 class MetaSocialGraphError extends Error {
   details?: unknown;
 
@@ -411,6 +419,46 @@ export async function getSocialInboxData(
   }, queueAccess);
 }
 
+export async function getSocialInboxConversationHistory(
+  conversationId: string,
+  profile: MetaInboxAccessProfile,
+  options: { cursor?: string | null; pageSize?: number | null } = {},
+): Promise<SocialInboxConversationHistory | null> {
+  const supabase = dynamicSupabase("web");
+  const queueAccess = await resolveSocialInboxQueueAccess(supabase, profile);
+  const conversationResult = await supabase
+    .from("meta_inbox_conversations")
+    .select("*")
+    .eq("id", conversationId)
+    .limit(1);
+  if (conversationResult.error) throw conversationResult.error;
+
+  const conversationRow = rows<JsonRecord>(conversationResult.data)[0];
+  if (!conversationRow) return null;
+
+  const conversation = mapInboxConversation(conversationRow);
+  if (!canReadMetaInboxConversationForQueueAccess(conversation, queueAccess)) {
+    throw new AuthorizationError("You do not have access to this inbox queue.", 403);
+  }
+
+  const [messages, comments] = await Promise.all([
+    selectKnownMessagesForConversation(supabase, conversation),
+    selectKnownCommentsForConversation(supabase, conversation),
+  ]);
+
+  return buildSocialInboxConversationHistoryPage(
+    conversation,
+    {
+      messages,
+      comments,
+    },
+    {
+      cursor: options.cursor,
+      pageSize: options.pageSize,
+    },
+  );
+}
+
 async function resolveSocialInboxQueueAccess(
   supabase: DynamicSupabaseClient,
   profile: MetaInboxAccessProfile | null | undefined,
@@ -497,6 +545,66 @@ function selectInboxConversationsForQueueAccess(
 
 function emptyQueryResult(): Promise<DynamicQueryResult> {
   return Promise.resolve({ data: [], error: null });
+}
+
+async function selectKnownMessagesForConversation(
+  supabase: DynamicSupabaseClient,
+  conversation: SocialInboxConversation,
+) {
+  if (conversation.source_type !== "message_thread" || !conversation.platform_thread_id) {
+    return [];
+  }
+
+  const result = await supabase
+    .from("meta_social_messages")
+    .select("*")
+    .eq("platform", conversation.platform)
+    .eq("thread_id", conversation.platform_thread_id)
+    .order("sent_at", { ascending: true, nullsFirst: true })
+    .limit(500);
+  if (result.error) throw result.error;
+
+  return rows<JsonRecord>(result.data).map(mapMessage);
+}
+
+async function selectKnownCommentsForConversation(
+  supabase: DynamicSupabaseClient,
+  conversation: SocialInboxConversation,
+) {
+  if (conversation.source_type !== "public_comment" || !conversation.source_id) {
+    return [];
+  }
+
+  const [root, replies] = await Promise.all([
+    supabase
+      .from("meta_social_comments")
+      .select("*")
+      .eq("platform", conversation.platform)
+      .eq("comment_id", conversation.source_id)
+      .order("created_time", { ascending: true, nullsFirst: true })
+      .limit(1),
+    supabase
+      .from("meta_social_comments")
+      .select("*")
+      .eq("platform", conversation.platform)
+      .eq("parent_comment_id", conversation.source_id)
+      .order("created_time", { ascending: true, nullsFirst: true })
+      .limit(500),
+  ]);
+  if (root.error) throw root.error;
+  if (replies.error) throw replies.error;
+
+  const byId = new Map<string, SocialInboxComment>();
+  for (const comment of [
+    ...rows<JsonRecord>(root.data).map(mapComment),
+    ...rows<JsonRecord>(replies.data).map(mapComment),
+  ]) {
+    byId.set(comment.id, comment);
+  }
+
+  return Array.from(byId.values()).sort((a, b) =>
+    String(a.created_time || "").localeCompare(String(b.created_time || "")),
+  );
 }
 
 export function emptySocialInboxData(): SocialInboxData {

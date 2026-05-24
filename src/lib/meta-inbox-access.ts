@@ -123,3 +123,13 @@ export function filterSocialInboxDataForQueueAccess(
     ),
   };
 }
+
+export function canReadMetaInboxConversationForQueueAccess(
+  conversation: Pick<SocialInboxData["inboxConversations"][number], "queue_category_key">,
+  access: MetaInboxQueueAccessDecision,
+) {
+  if (access.mode === "all") return true;
+  if (access.mode === "none") return false;
+
+  return access.allowedQueueCategoryKeys.includes(conversation.queue_category_key);
+}

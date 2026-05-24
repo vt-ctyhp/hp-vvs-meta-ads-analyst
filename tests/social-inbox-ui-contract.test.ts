@@ -22,4 +22,11 @@ describe("social inbox UI contract", () => {
     assert.equal(combined.includes("Suggest Reply"), false);
     assert.equal(combined.includes("AI Suggestion"), false);
   });
+
+  it("loads selected desktop conversation history through the conversation-specific endpoint", () => {
+    assert.match(DESKTOP_INBOX, /loadConversationHistory/);
+    assert.match(DESKTOP_INBOX, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/messages/);
+    assert.match(DESKTOP_INBOX, /HistoryStatusStrip/);
+    assert.match(DESKTOP_INBOX, /Load Older History/);
+  });
 });

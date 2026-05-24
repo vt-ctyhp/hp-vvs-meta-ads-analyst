@@ -9,6 +9,7 @@ import {
   Filter,
   Inbox,
   Link2,
+  Loader2,
   MessageCircle,
   RefreshCw,
   Search,
@@ -18,7 +19,7 @@ import {
   Tags,
   UserRound,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { SYNC, translateError } from "@/lib/glossary";
 import {
@@ -38,9 +39,11 @@ import type {
   SocialInboxConversation,
   SocialInboxCustomerProfile,
   SocialInboxData,
+  SocialInboxConversationHistory,
   SocialInboxFirstTouchSource,
   SocialInboxMessage,
 } from "@/lib/social-inbox";
+import { mergeSocialInboxConversationHistory } from "@/lib/meta-inbox-history";
 
 type PermissionBlock = {
   ok: boolean;
@@ -125,6 +128,18 @@ type SyncResponse = {
   error?: string;
 };
 
+type ConversationHistoryLoadState = {
+  status: "idle" | "loading" | "ready" | "error";
+  data: SocialInboxConversationHistory | null;
+  error: string | null;
+};
+
+const IDLE_HISTORY_STATE: ConversationHistoryLoadState = {
+  status: "idle",
+  data: null,
+  error: null,
+};
+
 export function SocialInboxClient({
   status,
   initialData,
@@ -148,6 +163,9 @@ export function SocialInboxClient({
   const [replyContextId, setReplyContextId] = useState<string | null>(null);
   const [replyInstruction, setReplyInstruction] = useState("");
   const [replyDraft, setReplyDraft] = useState("");
+  const [historyByConversationId, setHistoryByConversationId] = useState<
+    Record<string, ConversationHistoryLoadState>
+  >({});
 
   const queue = useMemo(() => buildQueue(inboxData), [inboxData]);
   const queueCategories = useMemo(() => visibleQueueCategories(inboxData), [inboxData]);
@@ -230,27 +248,96 @@ export function SocialInboxClient({
   );
   const selectedItem =
     filteredQueue.find((item) => item.id === selectedId) || filteredQueue[0] || null;
+  const selectedConversationId = selectedItem?.inboxConversation?.id || null;
+  const selectedHistoryState = selectedConversationId
+    ? historyByConversationId[selectedConversationId] || IDLE_HISTORY_STATE
+    : null;
   const selectedMessages = useMemo(
-    () =>
-      selectedItem?.type === "message"
+    () => {
+      if (selectedHistoryState?.data) return selectedHistoryState.data.messages;
+      return selectedItem?.type === "message"
         ? inboxData.messages
-            .filter(
-              (message) =>
-                message.platform === selectedItem.platform &&
-                message.thread_id === selectedItem.sourceId,
-            )
-            .sort((a, b) => String(a.sent_at || "").localeCompare(String(b.sent_at || "")))
-        : [],
-    [inboxData.messages, selectedItem],
+          .filter(
+            (message) =>
+              message.platform === selectedItem.platform &&
+              message.thread_id === selectedItem.sourceId,
+          )
+          .sort((a, b) => String(a.sent_at || "").localeCompare(String(b.sent_at || "")))
+        : [];
+    },
+    [inboxData.messages, selectedHistoryState?.data, selectedItem],
   );
-  const selectedComment =
-    selectedItem?.type === "comment"
-      ? inboxData.comments.find((comment) => comment.comment_id === selectedItem.sourceId) || null
-      : null;
+  const selectedComments = useMemo(() => {
+    if (selectedHistoryState?.data) return selectedHistoryState.data.comments;
+    if (selectedItem?.type !== "comment") return [];
+    const root = inboxData.comments.find((comment) => comment.comment_id === selectedItem.sourceId);
+    return root ? [root] : [];
+  }, [inboxData.comments, selectedHistoryState?.data, selectedItem]);
   const selectedContextId = selectedItem?.id || null;
   const isReplyContextActive = replyContextId === selectedContextId;
   const activeReplyDraft = isReplyContextActive ? replyDraft : "";
   const activeReplyInstruction = isReplyContextActive ? replyInstruction : "";
+  const selectedHistoryNextCursor = selectedHistoryState?.data?.pageInfo.nextCursor || null;
+
+  const loadConversationHistory = useCallback(
+    async (conversationId: string, cursor?: string | null) => {
+      setHistoryByConversationId((current) => ({
+        ...current,
+        [conversationId]: {
+          status: "loading",
+          data: current[conversationId]?.data || null,
+          error: null,
+        },
+      }));
+
+      try {
+        const url = new URL(
+          `/api/social-inbox/conversations/${encodeURIComponent(conversationId)}/messages`,
+          window.location.origin,
+        );
+        url.searchParams.set("limit", "50");
+        if (cursor) url.searchParams.set("cursor", cursor);
+
+        const response = await fetch(url, { cache: "no-store" });
+        const payload = (await response.json()) as SocialInboxConversationHistory | { error: string };
+        if (!response.ok || isHistoryErrorPayload(payload)) {
+          throw new Error(isHistoryErrorPayload(payload) ? payload.error : "Could not load history.");
+        }
+
+        setHistoryByConversationId((current) => {
+          const existing = current[conversationId]?.data || null;
+          return {
+            ...current,
+            [conversationId]: {
+              status: "ready",
+              data: cursor && existing
+                ? mergeSocialInboxConversationHistory(existing, payload)
+                : payload,
+              error: null,
+            },
+          };
+        });
+      } catch (error) {
+        setHistoryByConversationId((current) => ({
+          ...current,
+          [conversationId]: {
+            status: "error",
+            data: current[conversationId]?.data || null,
+            error: translateError(error),
+          },
+        }));
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!selectedConversationId) return;
+    const state = historyByConversationId[selectedConversationId];
+    if (state && state.status !== "idle") return;
+
+    void loadConversationHistory(selectedConversationId);
+  }, [historyByConversationId, loadConversationHistory, selectedConversationId]);
 
   async function handleSync() {
     setIsSyncing(true);
@@ -473,7 +560,13 @@ export function SocialInboxClient({
                   <SelectedItemDetail
                     item={selectedItem}
                     messages={selectedMessages}
-                    comment={selectedComment}
+                    comments={selectedComments}
+                    historyState={selectedHistoryState}
+                    onLoadOlderHistory={
+                      selectedConversationId && selectedHistoryNextCursor
+                        ? () => loadConversationHistory(selectedConversationId, selectedHistoryNextCursor)
+                        : null
+                    }
                   />
                 ) : (
                   <EmptyThreadState />
@@ -688,31 +781,45 @@ function queueCategoryCounts(
 function SelectedItemDetail({
   item,
   messages,
-  comment,
+  comments,
+  historyState,
+  onLoadOlderHistory,
 }: {
   item: QueueDisplayItem;
   messages: SocialInboxMessage[];
-  comment: SocialInboxComment | null;
+  comments: SocialInboxComment[];
+  historyState: ConversationHistoryLoadState | null;
+  onLoadOlderHistory: (() => void) | null;
 }) {
   if (item.type === "comment") {
+    const rootComment =
+      comments.find((comment) => comment.comment_id === item.sourceId) ||
+      comments.find((comment) => !comment.parent_comment_id) ||
+      null;
+    const replyComments = comments.filter((comment) => comment.id !== rootComment?.id);
+
     return (
       <div className="max-h-[560px] min-h-[420px] overflow-y-auto border border-hp-rule p-5">
+        <HistoryStatusStrip
+          historyState={historyState}
+          onLoadOlderHistory={onLoadOlderHistory}
+        />
         <div className="mb-4 flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
           <Camera size={15} />
           {item.brand} · {item.channel} Comment
         </div>
         <p className="whitespace-pre-wrap break-words text-lg leading-8 text-hp-ink">
-          {comment?.body || item.preview}
+          {rootComment?.body || item.preview}
         </p>
         <div className="mt-5 grid gap-3 border-t border-hp-rule pt-4 text-sm text-hp-muted sm:grid-cols-2">
-          <div>Author: {comment?.author_name || item.sender}</div>
-          <div>Created: {formatDateLabel(comment?.created_time || item.timestamp)}</div>
-          <div>Likes: {comment?.like_count || 0}</div>
-          <div>Replies: {comment?.reply_count || 0}</div>
+          <div>Author: {rootComment?.author_name || item.sender}</div>
+          <div>Created: {formatDateLabel(rootComment?.created_time || item.timestamp)}</div>
+          <div>Likes: {rootComment?.like_count || 0}</div>
+          <div>Replies: {Math.max(rootComment?.reply_count || 0, replyComments.length)}</div>
         </div>
-        {comment?.content_permalink ? (
+        {rootComment?.content_permalink ? (
           <a
-            href={comment.content_permalink}
+            href={rootComment.content_permalink}
             target="_blank"
             rel="noreferrer"
             className="mt-5 inline-flex border border-hp-rule px-4 py-2 text-[11px] uppercase tracking-[0.14em] text-hp-ink hover:bg-hp-inset"
@@ -720,12 +827,33 @@ function SelectedItemDetail({
             Open on Meta
           </a>
         ) : null}
+        {replyComments.length ? (
+          <div className="mt-6 space-y-3 border-t border-hp-rule pt-4">
+            <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+              Comment Replies
+            </div>
+            {replyComments.map((reply) => (
+              <div key={reply.id} className="border border-hp-rule bg-hp-inset p-3">
+                <div className="mb-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                  {reply.author_name || "Unknown"} · {formatDateLabel(reply.created_time)}
+                </div>
+                <p className="whitespace-pre-wrap break-words text-sm leading-6 text-hp-body">
+                  {reply.body || "Reply text unavailable"}
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
     );
   }
 
   return (
     <div className="max-h-[560px] min-h-[420px] overflow-y-auto border border-dashed border-hp-rule p-5">
+      <HistoryStatusStrip
+        historyState={historyState}
+        onLoadOlderHistory={onLoadOlderHistory}
+      />
       {messages.length ? (
         <div className="space-y-4">
           {messages.map((message) => (
@@ -752,16 +880,73 @@ function SelectedItemDetail({
             <div className="mx-auto flex h-14 w-14 items-center justify-center border border-hp-rule text-hp-muted">
               <MessageCircle size={20} />
             </div>
-            <h3 className="mt-5 font-title text-3xl text-hp-ink">Thread detected</h3>
+            <h3 className="mt-5 font-title text-3xl text-hp-ink">
+              {historyState?.status === "loading" ? "Loading known history" : "Thread detected"}
+            </h3>
             <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-hp-muted">
-              Meta returned this conversation thread. If message bodies are blank after sync, the
-              next step is webhook delivery, which receives new messages as they arrive.
+              {historyState?.status === "error"
+                ? "Known history could not load. Current conversation source and reply tools stay visible."
+                : "Meta returned this conversation thread. If message bodies are blank after sync, webhook delivery receives new messages as they arrive."}
             </p>
           </div>
         </div>
       )}
     </div>
   );
+}
+
+function HistoryStatusStrip({
+  historyState,
+  onLoadOlderHistory,
+}: {
+  historyState: ConversationHistoryLoadState | null;
+  onLoadOlderHistory: (() => void) | null;
+}) {
+  if (!historyState || historyState.status === "idle") return null;
+
+  const pageInfo = historyState.data?.pageInfo || null;
+  const canLoadOlder = Boolean(pageInfo?.nextCursor && onLoadOlderHistory);
+  const isLoading = historyState.status === "loading";
+  const label =
+    historyState.status === "error"
+      ? historyState.error || "Could not load conversation history."
+      : isLoading
+        ? "Loading selected conversation history..."
+        : pageInfo
+          ? `${pageInfo.returned} of ${pageInfo.knownTotal} known item(s) loaded · ${historyCompletenessLabel(pageInfo.historyCompleteness)}`
+          : "Conversation history ready.";
+
+  return (
+    <div className="mb-4 flex flex-col gap-3 border border-hp-rule bg-hp-inset p-3 text-xs leading-5 text-hp-muted sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex min-w-0 items-center gap-2">
+        {isLoading ? (
+          <Loader2 size={14} className="shrink-0 animate-spin text-hp-ink" />
+        ) : (
+          <Clock size={14} className="shrink-0 text-hp-ink" />
+        )}
+        <span className="min-w-0 break-words">{label}</span>
+      </div>
+      {canLoadOlder ? (
+        <button
+          type="button"
+          onClick={onLoadOlderHistory || undefined}
+          disabled={isLoading}
+          className="shrink-0 border border-hp-rule px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] text-hp-ink transition hover:border-hp-ink disabled:opacity-50"
+        >
+          Load Older History
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function historyCompletenessLabel(
+  value: SocialInboxConversationHistory["pageInfo"]["historyCompleteness"],
+) {
+  if (value === "complete_known_history") return "Known history complete";
+  if (value === "partial_known_history") return "Older known history available";
+  if (value === "source_missing") return "Source identity missing";
+  return "No known message history";
 }
 
 function QueueTabs({
@@ -1350,5 +1535,11 @@ function formatDateLabel(value: string | null | undefined) {
 }
 
 function isErrorPayload(value: SocialInboxData | { error: string }): value is { error: string } {
+  return "error" in value;
+}
+
+function isHistoryErrorPayload(
+  value: SocialInboxConversationHistory | { error: string },
+): value is { error: string } {
   return "error" in value;
 }
