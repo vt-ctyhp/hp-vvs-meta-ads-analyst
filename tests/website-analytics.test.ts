@@ -240,24 +240,27 @@ describe("website analytics appointment reconciliation", () => {
       { client: client as never },
     );
 
-    assert.deepEqual(rangeCalls.website_events, [
-      [0, 999],
-      [1000, 1999],
-    ]);
-    assert.deepEqual(rangeCalls.meta_daily_insights, [
-      [0, 999],
-      [1000, 1999],
-    ]);
+    // After commit a30b457 ("perf(convert): parallelize fetchWebsiteRows
+    // pagination"), fetchWebsiteRows fires the first page sequentially and
+    // then enumerates all remaining ranges up to `limit` in parallel via
+    // Promise.all. So the number of range calls is bounded by the limit
+    // (MAX_EVENTS=15000, MAX_META_INSIGHT_ROWS=50000), not by how many
+    // pages of real data exist.
+    const expectedRanges = (limit: number, pageSize: number) => {
+      const ranges: Array<[number, number]> = [];
+      for (let from = 0; from < limit; from += pageSize) {
+        ranges.push([from, Math.min(from + pageSize - 1, limit - 1)]);
+      }
+      return ranges;
+    };
+    assert.deepEqual(rangeCalls.website_events, expectedRanges(15000, 1000));
+    assert.deepEqual(rangeCalls.meta_daily_insights, expectedRanges(50000, 1000));
     assert.deepEqual(rangeCalls.appointment_events, []);
-    assert.deepEqual(eqCalls.website_events, [
-      ["environment", "production"],
-      ["environment", "production"],
-    ]);
+    const repeatEq = (n: number) =>
+      Array.from({ length: n }, () => ["environment", "production"] as [string, string]);
+    assert.deepEqual(eqCalls.website_events, repeatEq(15));
     assert.deepEqual(eqCalls.website_conversions, []);
-    assert.deepEqual(eqCalls.meta_daily_insights, [
-      ["environment", "production"],
-      ["environment", "production"],
-    ]);
+    assert.deepEqual(eqCalls.meta_daily_insights, repeatEq(50));
     assert.match(selectedColumns.website_events[0], /meta_event_name/);
     assert.equal(data.sourceTransparency.recordCounts.website_events, 1002);
     assert.equal(data.sourceTransparency.recordCounts.website_conversions, 2);
