@@ -11,34 +11,32 @@
 -- full hash joins. For full-year scans (~28k outer rows), this is the
 -- bottleneck that pushes the RPC over the default statement_timeout.
 --
--- This migration adds composite indexes that let PG use nested-loop joins.
--- CREATE INDEX CONCURRENTLY is non-blocking. It cannot run inside an
--- explicit transaction, so this migration has no BEGIN/COMMIT.
+-- Plain CREATE INDEX (not CONCURRENTLY) because Supabase CLI wraps each
+-- migration in a transaction. The lock impact is small at current data scale
+-- (120k insight rows; metadata tables under 2k rows each) — measured in
+-- seconds, not minutes, with negligible concurrent-write contention given
+-- the periodic-sync write pattern.
 
 -- meta_daily_insights: composite for the env+date filter on the outer scan.
--- Env is not selective for prod-default queries (~99.96% prod), but ordering
--- by (environment, date_start) lets future selective-env queries also benefit
--- without re-scanning, and the existing (date_start) index continues to serve
--- env-agnostic date-only queries.
-create index concurrently if not exists meta_daily_insights_env_date_idx
+create index if not exists meta_daily_insights_env_date_idx
   on public.meta_daily_insights (environment, date_start);
 
 -- brands: composite for the env-scoped (environment, id) join used at
 -- 20260522120000_aggregate_meta_insights_environment_scope.sql:97-99.
-create index concurrently if not exists brands_env_id_idx
+create index if not exists brands_env_id_idx
   on public.brands (environment, id);
 
 -- meta_campaigns: composite for env + (meta_account_id, campaign_id) join
 -- used at 20260522120000_aggregate_meta_insights_environment_scope.sql:100-103.
-create index concurrently if not exists meta_campaigns_env_account_campaign_idx
+create index if not exists meta_campaigns_env_account_campaign_idx
   on public.meta_campaigns (environment, meta_account_id, campaign_id);
 
 -- meta_ad_sets: composite for env + (meta_account_id, ad_set_id) join
 -- used at 20260522120000_aggregate_meta_insights_environment_scope.sql:104-107.
-create index concurrently if not exists meta_ad_sets_env_account_adset_idx
+create index if not exists meta_ad_sets_env_account_adset_idx
   on public.meta_ad_sets (environment, meta_account_id, ad_set_id);
 
 -- meta_ads: composite for env + (meta_account_id, ad_id) join
 -- used at 20260522120000_aggregate_meta_insights_environment_scope.sql:108-111.
-create index concurrently if not exists meta_ads_env_account_ad_idx
+create index if not exists meta_ads_env_account_ad_idx
   on public.meta_ads (environment, meta_account_id, ad_id);
