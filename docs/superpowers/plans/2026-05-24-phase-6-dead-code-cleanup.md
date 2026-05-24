@@ -1,5 +1,7 @@
 # Phase 6 — Dead application code cleanup — implementation plan
 
+> **Status (closed 2026-05-24):** Batches 1, 2, 5, 4, 3 shipped (−6,306 LOC across 5 PRs: #25, #26, #27, #28, #30). Batches 6 and 7 skipped — Track 4c misclassified live components as orphan. See [§Closing](#closing) below and the spec's deferrals section for the Phase 6.5 follow-up.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Remove ~9.5–10.5K LOC of dead application code from `src/` + `tests/` (the Next.js app router lives at `src/app/`) across 7 small, independently revertable PRs. No SQL changes. No refactoring. No regeneration of generated files.
@@ -400,22 +402,45 @@ Vercel preview deploys are a real production build. The dev-mode top-nav-hiding 
 
 ## Closing
 
-After all 7 batches merge, verify the deletion totals:
+Actual outcome (2026-05-24):
+
+```
+Batch 1 (#25)  −242   redirects + placeholders             [aggressive: 8 deletes + 3 edits]
+Batch 2 (#26)  −71    /api/optimize/pivot-children
+Batch 5 (#27)  −3122  9 of 11 orphan v2 components         [2 deferred: metric-format, customer-journey-drawer]
+Batch 4 (#28)  −1218  executive-snapshot/ + 3 primitives
+Batch 3 (#30)  −1653  4 of 6 orphan libs + 3 cascading tests [2 deferred: period-pivot-data, pivot-by-period]
+Batch 6        skip   both files live (filter-bar, status-sentence)
+Batch 7        skip   top-navigation.tsx live on /website-funnel + /attribution-ledger + /admin/backfill
+────────────
+Total          −6,306 LOC across 5 PRs (60–66% of spec target)
+```
+
+Verify locally:
 
 ```bash
 cd "/Users/viv/Meta Ads AI Analysis"
 git fetch origin --quiet
-git log --oneline ba98446..origin/main  # ba98446 = pre-Phase-6 main tip
-git diff --stat ba98446..origin/main | tail -3
+git log --oneline ba98446..origin/main          # ba98446 = pre-Phase-6 main tip
+git diff --stat ba98446..origin/main | tail -3  # should show ~6,300 deletions
 ```
 
-Expected: ~9.5–10.5K LOC of `-` deletions across `src/` + `app/` + `tests/`. ~7 merge commits.
-
-Update this plan's title section to mark Phase 6 done. Optionally update [2026-05-23-v3-scope.md](2026-05-23-v3-scope.md) to mark Phase 6 complete.
+The v3-scope plan should be updated separately to mark Phase 6 as partially-complete (and to add Phase 6.5 as a follow-up).
 
 ## Hand-off
 
-After Phase 6 ships:
-- **Phase 7** (schema-as-code) becomes more attractive — the SQL surface is the next big chunk of dead weight.
-- **File-size outliers** (`dashboard-client.tsx`, `lib/website-analytics.ts`, etc.) deserve their own design conversation; not part of v3 plan today.
-- **Duplicated UX patterns** (4 filter-bar implementations, 2 status-sentence components) need a UX/architecture pass before consolidation. Track as separate work.
+**Phase 6.5 (immediate follow-up — unblocks the 7 deferrals).** See the deferrals table in the [spec](../specs/2026-05-24-phase-6-dead-code-cleanup-design.md#deferrals--phase-65-follow-up) for the live-consumer chain per file and the unblocker required. Recommended ship order (easiest → hardest):
+
+1. **Extract type-only module from `period-pivot-data.ts`** — most live consumers only need types. Unblocks `period-pivot-data.ts` + `pivot-by-period.ts` (cascading).
+2. **Rename or inline `metric-format` imports in `dashboard-client.tsx`** — 36 call sites with simple aliases.
+3. **Migrate `creative-analysis-client.tsx`** off legacy `filter-bar.tsx` → `UniversalFilterBar` or `convert-filter-bar`.
+4. **Migrate 4 components off legacy `status-sentence.tsx`** → `v2/status-sentence.tsx`.
+5. **Move `customer-journey-drawer.tsx`** into the live convert surface (or eliminate the drawer).
+6. **Decide top-nav strategy** — either migrate `/website-funnel`, `/attribution-ledger`, `/admin/backfill` to the v2 shell, ship a v2 nav for them, or accept the UX change.
+
+**Beyond Phase 6.5:**
+- **Phase 7** (schema-as-code) is still the next big chunk — the SQL surface is the largest remaining dead weight.
+- **File-size outliers** (`dashboard-client.tsx`, `lib/website-analytics.ts`, etc.) deserve their own design conversation.
+- **Duplicated UX patterns** (filter-bar variants, status-sentence variants) need a UX/architecture pass before full consolidation.
+
+**Process lesson for next dead-code phase:** Track 4c missed live consumers in 3 of 7 batches. The "verify-before-delete" gate caught all of them, so no breakage shipped — but the spec inventory should always be treated as a hypothesis to validate per-batch, not as ground truth.
