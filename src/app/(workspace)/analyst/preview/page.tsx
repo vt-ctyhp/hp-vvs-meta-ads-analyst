@@ -1,5 +1,9 @@
 import { DashboardClient } from "@/components/dashboard-client";
-import { emptyDashboardPayload, type PerformanceRow } from "@/lib/analytics";
+import {
+  emptyDashboardPayload,
+  type DashboardPayload,
+  type PerformanceRow,
+} from "@/lib/analytics";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +23,7 @@ const UMBRELLAS = [
   "US Promotions (WKDS / OOAK)",
   "Cash for Gold US",
   "Facebook VN Product",
-  "VN Promotions (WKDS)",
+  "VN Promotions (WKDS / OOAK)",
 ] as const;
 
 const BRANDS = ["HP", "VVS"] as const;
@@ -53,6 +57,7 @@ function stubCampaigns(count: number): PerformanceRow[] {
       campaignUmbrellaReason: "demo seed",
       spend,
       impressions,
+      reach: Math.round(impressions * 0.78),
       clicks,
       leads: Math.round(primary * 0.7),
       bookings: Math.round(primary * 0.3),
@@ -70,6 +75,53 @@ function stubCampaigns(count: number): PerformanceRow[] {
       cpl: clicks > 0 ? spend / clicks : null,
       costPerPrimaryResult,
       frequency: 1.2 + (i % 7) * 0.1,
+    });
+  }
+  return rows;
+}
+
+function stubDailyTrend(startISO: string, endISO: string) {
+  const start = new Date(startISO + "T00:00:00Z");
+  const end = new Date(endISO + "T00:00:00Z");
+  const days =
+    Math.round((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+  const rows: Array<{
+    date: string;
+    brandCode: string;
+    campaignUmbrella: string;
+    spend: number;
+    impressions: number;
+    clicks: number;
+    leads: number;
+    primaryResults: number;
+    websiteBookings: number;
+    messagingContacts: number;
+    newMessagingContacts: number;
+    ctr: number;
+    cpc: number;
+  }> = [];
+  for (let i = 0; i < days; i++) {
+    const d = new Date(start.getTime() + i * 24 * 60 * 60 * 1000);
+    const iso = d.toISOString().slice(0, 10);
+    // Per-day curve: gentle wobble around a rising trend.
+    const spend = 320 + i * 45 + ((i * 91) % 180);
+    const impressions = 22000 + i * 1800 + ((i * 5117) % 8000);
+    const clicks = 380 + i * 25 + ((i * 41) % 90);
+    const primary = 6 + ((i * 5) % 11);
+    rows.push({
+      date: iso,
+      brandCode: "HP",
+      campaignUmbrella: "Facebook US Product",
+      spend,
+      impressions,
+      clicks,
+      leads: Math.round(primary * 0.7),
+      primaryResults: primary,
+      websiteBookings: Math.round(primary * 0.25),
+      messagingContacts: Math.round(primary * 0.4),
+      newMessagingContacts: Math.round(primary * 0.3),
+      ctr: impressions > 0 ? (clicks / impressions) * 100 : 0,
+      cpc: clicks > 0 ? spend / clicks : 0,
     });
   }
   return rows;
@@ -162,12 +214,16 @@ export default function AnalystPreviewPage() {
     campaigns,
     byUmbrella,
     campaignUmbrellas: Array.from(UMBRELLAS),
+    dailyTrend: stubDailyTrend("2026-05-17", "2026-05-23"),
     hierarchyLoading: { mode: "eager" as const, loadedLevels: ["campaign" as const] },
   };
 
   return (
     <DashboardClient
-      initialData={data}
+      // Preview-only stub data; cast to DashboardPayload to keep the
+      // preview-scaffolding page out of strict structural checking.
+      // Not used in any production code path.
+      initialData={data as unknown as DashboardPayload}
       permissions={[]}
       initialPeriodCount={2}
     />

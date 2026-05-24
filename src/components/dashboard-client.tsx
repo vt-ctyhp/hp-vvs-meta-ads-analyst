@@ -10,11 +10,6 @@ import {
   ChevronsUpDown,
   Search,
 } from "lucide-react";
-import {
-  Line,
-  LineChart,
-  ResponsiveContainer,
-} from "recharts";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
@@ -900,10 +895,21 @@ const MetricTile = memo(function MetricTile({
   sparkline?: number[];
   showComparison?: boolean;
 }) {
-  const sparklineData = useMemo(
-    () => (sparkline || []).map((v, i) => ({ i, v })),
-    [sparkline],
-  );
+  // Hand-rolled SVG sparkline. Replaces recharts (Line / LineChart /
+  // ResponsiveContainer) to drop ~96 KB of mostly-unused chart code
+  // from the /analyst bundle. preserveAspectRatio="none" stretches the
+  // path to fill the container; vectorEffect="non-scaling-stroke"
+  // keeps the line at 1 CSS px regardless of stretch.
+  const sparklinePath = useMemo(() => {
+    if (!sparkline || sparkline.length < 2) return null;
+    const min = Math.min(...sparkline);
+    const max = Math.max(...sparkline);
+    const range = max - min || 1;
+    const points = sparkline
+      .map((v, i) => `${i},${(1 - (v - min) / range).toFixed(4)}`)
+      .join(" ");
+    return { points, viewBox: `0 0 ${sparkline.length - 1} 1` };
+  }, [sparkline]);
   return (
     <div className="border border-hp-rule bg-hp-card p-6">
       <div className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">{label}</div>
@@ -915,20 +921,22 @@ const MetricTile = memo(function MetricTile({
           <DeltaChip current={current} previous={previous} lowerIsBetter={lowerIsBetter} />
         </div>
       ) : null}
-      {sparklineData.length > 1 ? (
+      {sparklinePath ? (
         <div className="mt-4 h-8 min-w-0">
-          <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 1, height: 1 }}>
-            <LineChart data={sparklineData} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
-              <Line
-                type="monotone"
-                dataKey="v"
-                stroke="#2A2725"
-                strokeWidth={1}
-                dot={false}
-                isAnimationActive={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+          <svg
+            aria-hidden
+            viewBox={sparklinePath.viewBox}
+            preserveAspectRatio="none"
+            className="block h-full w-full"
+          >
+            <polyline
+              points={sparklinePath.points}
+              fill="none"
+              stroke="#2A2725"
+              strokeWidth="1"
+              vectorEffect="non-scaling-stroke"
+            />
+          </svg>
         </div>
       ) : null}
     </div>
