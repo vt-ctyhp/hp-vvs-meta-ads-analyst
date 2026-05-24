@@ -941,7 +941,15 @@ export async function fetchWebsiteFunnelData(input: {
       MAX_META_INSIGHT_ROWS,
     ),
   ]);
-  const appointmentRows = uniqueValidAcuityAppointments(appointmentRowsRaw);
+  // The two appointment-source branches above return arrays of different row
+  // shapes (AppointmentEventConversionRow[] vs SalesAppointmentConversionViewRow[]).
+  // TypeScript widens that to a union-of-arrays, which can't unify with
+  // uniqueValidAcuityAppointments' Row generic. The function already accepts
+  // WebsiteAcuityAppointmentRow (the union of the two), so widen the array
+  // element type to that union — type-level only, no runtime change.
+  const appointmentRows = uniqueValidAcuityAppointments(
+    appointmentRowsRaw as WebsiteAcuityAppointmentRow[],
+  );
   const appointmentIds = appointmentRows.map((appointment) => acuityAppointmentIdForRow(appointment));
   const conversions = await fetchConversionsByAcuityAppointmentIds(client, appointmentIds, conversionColumns);
   const sessions = new Set(events.map((event) => event.session_id).filter(Boolean));
