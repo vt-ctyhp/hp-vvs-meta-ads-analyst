@@ -3,6 +3,7 @@ import { unstable_cache } from "next/cache.js";
 
 import { selectOriginalPaidTouch } from "./attribution-touch-selection.ts";
 import { createAdsAnalystClient } from "./ads-analyst-db.ts";
+import { websiteAttributionEnvironment } from "./website-analytics.ts";
 
 // Phase 2.5 (v3 plan): per-loader server-side cache. 30s TTL gives users
 // near-instant subsequent loads + filter clicks while staying fresh enough
@@ -18,6 +19,20 @@ const ACUITY_APPOINTMENT_ID_BATCH_SIZE = 100;
 const DETAIL_EVENT_WINDOW_AFTER_BOOKING_MS = 60_000;
 const PAID_META_ATTRIBUTION_LOOKBACK_DAYS = 30;
 const INVALID_APPOINTMENT_STATUSES = new Set(["canceled", "cancelled", "rescheduled"]);
+
+// Phase 2.6 (visitor-only stage-key fix): event names that drive
+// stageKeysForVisitorOnly when no full event history is fetched for
+// unanchored visitors. Keep in sync with isBookingFormStartedLedgerEvent.
+const BOOKING_FORM_EVENT_NAMES = [
+  "BookingFormStarted",
+  "BookingContactStarted",
+  "BookingVisitSelected",
+  "BookingDateSelected",
+  "BookingTimeSelected",
+  "BookingIdentityCaptured",
+] as const;
+
+const BOOKING_PAGE_URL_PATTERN = "%/book-an-appointment%";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -336,6 +351,7 @@ export type CustomerJourneyLedgerClient = {
 type LedgerSelectChain<T> = PromiseLike<{ data: T | null; error: Error | null }> & {
   eq: (column: string, value: unknown) => LedgerSelectChain<T>;
   gte: (column: string, value: unknown) => LedgerSelectChain<T>;
+  ilike: (column: string, pattern: string) => LedgerSelectChain<T>;
   in: (column: string, values: unknown[]) => LedgerSelectChain<T>;
   limit: (count: number) => LedgerSelectChain<T>;
   lte: (column: string, value: unknown) => LedgerSelectChain<T>;
@@ -775,6 +791,53 @@ async function fetchRowsByVisitorIds<Row>(
   return rows
     .sort((left, right) => timestampValue(right[timestampColumn]) - timestampValue(left[timestampColumn]))
     .slice(0, MAX_RELATED_ROWS);
+}
+
+// Phase 2.6: pull only booking-funnel events for the given visitor IDs.
+// Used to populate stageKeysForVisitorOnly for unanchored visitors without
+// re-paying the full fan-out cost that Phase 2.5 Fix A optimized away.
+// Returns SPARSE event rows — only visitor_id, session_id, event_name,
+// page_url, occurred_at are populated. Safe to merge into the events array
+// passed to buildCustomerJourneyLedgerData because the consumers
+// (eventAttributionTouches, geoFromRecords, etc.) gracefully handle null
+// fields.
+async function fetchBookingStageEventsForVisitors(
+  client: CustomerJourneyLedgerClient,
+  visitorIds: string[],
+): Promise<CustomerJourneyLedgerEventRow[]> {
+  if (!visitorIds.length) return [];
+
+  const env = websiteAttributionEnvironment();
+  const cols = "visitor_id,session_id,event_name,page_url,occurred_at";
+  const rows: CustomerJourneyLedgerEventRow[] = [];
+
+  for (const batch of chunks(visitorIds, VISITOR_ID_QUERY_BATCH_SIZE)) {
+    const [funnelResult, pageViewResult] = await Promise.all([
+      client
+        .from("website_events")
+        .select(cols)
+        .eq("environment", env)
+        .in("visitor_id", batch)
+        .in("event_name", [...BOOKING_FORM_EVENT_NAMES])
+        .limit(MAX_RELATED_ROWS),
+      client
+        .from("website_events")
+        .select(cols)
+        .eq("environment", env)
+        .in("visitor_id", batch)
+        .eq("event_name", "PageView")
+        .ilike("page_url", BOOKING_PAGE_URL_PATTERN)
+        .limit(MAX_RELATED_ROWS),
+    ]);
+
+    if (funnelResult.error) throw funnelResult.error;
+    if (pageViewResult.error) throw pageViewResult.error;
+
+    rows.push(...((funnelResult.data ?? []) as CustomerJourneyLedgerEventRow[]));
+    rows.push(...((pageViewResult.data ?? []) as CustomerJourneyLedgerEventRow[]));
+  }
+
+  return rows;
 }
 
 async function fetchRowsByAcuityAppointmentIds<Row>(

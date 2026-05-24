@@ -1884,7 +1884,7 @@ async function materializeWebsiteConversionFromExistingEvent(
   }
 }
 
-function websiteAttributionEnvironment() {
+export function websiteAttributionEnvironment() {
   return process.env.WEBSITE_ATTRIBUTION_ENVIRONMENT?.trim() || getAdsAnalystEnvironment();
 }
 
