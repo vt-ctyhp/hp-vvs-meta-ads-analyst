@@ -57,6 +57,14 @@ describe("social inbox UI contract", () => {
     assert.match(DESKTOP_INBOX, /live Meta delivery remains disabled/);
   });
 
+  it("surfaces normalized message attachments in conversation history", () => {
+    assert.match(DESKTOP_INBOX, /MessageAttachmentList/);
+    assert.match(DESKTOP_INBOX, /message\.attachments\.length/);
+    assert.match(DESKTOP_INBOX, /attachment\.mediaUrl/);
+    assert.match(SOCIAL_INBOX_LIB, /normalizeMetaInboxAttachments/);
+    assert.match(SOCIAL_INBOX_LIB, /attachmentIds\?: string\[\] \| null/);
+  });
+
   it("keeps inbox error copy human-readable instead of rendering object strings", () => {
     assert.match(DESKTOP_INBOX_PAGE, /safeErrorMessage\(error\)/);
     assert.match(SOCIAL_INBOX_LIB, /return safeErrorMessage\(error\)/);

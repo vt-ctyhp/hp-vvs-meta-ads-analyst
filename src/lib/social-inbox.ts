@@ -36,6 +36,10 @@ import {
   type MetaInboxContactMethodRecord,
 } from "./meta-inbox-contact-methods.ts";
 import {
+  normalizeMetaInboxAttachments,
+  type MetaInboxNormalizedAttachment,
+} from "./meta-inbox-attachments.ts";
+import {
   buildMetaInboxQueueAttemptUpdate,
   buildMetaInboxRetryAttemptUpdate,
   buildMetaInboxSendAttemptDraft,
@@ -163,7 +167,7 @@ export type SocialInboxMessage = {
   recipient_id: string | null;
   recipient_name: string | null;
   body: string | null;
-  attachments: unknown[];
+  attachments: MetaInboxNormalizedAttachment[];
   sent_at: string | null;
 };
 
@@ -335,6 +339,7 @@ export type { MetaInboxContactMethodMutationInput };
 export type MetaInboxSendAttemptInput = {
   replyText?: string | null;
   idempotencyKey?: string | null;
+  attachmentIds?: string[] | null;
 };
 
 export type MetaInboxRetrySendAttemptInput = {
@@ -735,6 +740,7 @@ export async function createSocialInboxSendAttempt(
     {
       replyText: input.replyText || "",
       idempotencyKey: input.idempotencyKey,
+      attachmentIds: input.attachmentIds || [],
     },
     {
       actorUserId,
@@ -1525,7 +1531,7 @@ function webhookMessageRow(object: string | null, entry: JsonRecord, event: Json
       recipient_id: recipientId,
       recipient_name: null,
       body,
-      attachments: arrayField(recordField(message.attachments).data),
+      attachments: normalizeMetaInboxAttachments(recordField(message.attachments).data),
       sent_at: sentAt,
       raw_json: event,
     },
@@ -1598,7 +1604,7 @@ async function upsertMessages({
           recipient_id: recipientId,
           recipient_name: stringField(to.name) || stringField(to.username),
           body: stringField(message.message),
-          attachments: arrayField(recordField(message.attachments).data),
+          attachments: normalizeMetaInboxAttachments(recordField(message.attachments).data),
           sent_at: stringField(message.created_time),
           raw_json: message,
         };
@@ -2080,7 +2086,7 @@ function mapMessage(row: JsonRecord): SocialInboxMessage {
     recipient_id: stringField(row.recipient_id),
     recipient_name: stringField(row.recipient_name),
     body: stringField(row.body),
-    attachments: arrayField(row.attachments),
+    attachments: normalizeMetaInboxAttachments(row.attachments),
     sent_at: stringField(row.sent_at),
   };
 }

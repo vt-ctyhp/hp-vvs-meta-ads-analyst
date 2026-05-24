@@ -1,3 +1,5 @@
+import { normalizeAttachmentIds } from "./meta-inbox-attachments.ts";
+
 type JsonRecord = Record<string, unknown>;
 
 export type MetaInboxSendEligibility =
@@ -135,12 +137,13 @@ export function resolveMetaInboxReplyWindow(
 
 export function buildMetaInboxSendAttemptDraft(
   conversation: MetaInboxReplyConversationInput,
-  input: { replyText: string; idempotencyKey?: string | null },
+  input: { replyText: string; idempotencyKey?: string | null; attachmentIds?: string[] | null },
   context: ReplyContext,
 ): MetaInboxSendAttemptDraft {
   const actorUserId = requireUuid(context.actorUserId, "A valid sales user");
   const conversationId = requireUuid(conversation.id, "Conversation");
-  const replyText = normalizeReplyText(input.replyText);
+  const attachmentIds = normalizeAttachmentIds(input.attachmentIds);
+  const replyText = normalizeReplyText(input.replyText, attachmentIds.length > 0);
   const windowState = resolveMetaInboxReplyWindow(conversation, context);
   if (!windowState.canAttemptSend) {
     throw new Error(`${windowState.reason} Cannot record a send attempt.`);
@@ -162,7 +165,7 @@ export function buildMetaInboxSendAttemptDraft(
       status: "approved",
       messaging_type: windowState.messagingType,
       tag: windowState.tag,
-      attachment_ids: [],
+      attachment_ids: attachmentIds,
       attempt_count: 0,
       idempotency_key: idempotencyKey,
     },
@@ -175,6 +178,7 @@ export function buildMetaInboxSendAttemptDraft(
         messagingType: windowState.messagingType,
         tag: windowState.tag,
         idempotencyKey,
+        attachmentCount: attachmentIds.length,
       },
       metadata: {
         source: "inbox_send_attempt",
@@ -298,9 +302,9 @@ export function buildMetaInboxQueueAttemptUpdate(
   };
 }
 
-function normalizeReplyText(value: string) {
+function normalizeReplyText(value: string, attachmentBacked = false) {
   const replyText = String(value || "").trim();
-  if (!replyText) {
+  if (!replyText && !attachmentBacked) {
     throw new Error("Reply text is required.");
   }
   if (replyText.length > MAX_REPLY_TEXT_LENGTH) {
