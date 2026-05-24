@@ -317,7 +317,7 @@ test(
         return {
           select(cols: string) {
             selectColsOnWebsiteEvents.push(cols);
-            return innerFrom.select(cols);
+            return innerFrom.select();
           },
         };
       },

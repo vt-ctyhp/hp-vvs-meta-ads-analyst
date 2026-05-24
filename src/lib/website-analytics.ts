@@ -973,7 +973,13 @@ async function fetchWebsiteFunnelDataUncached(
       MAX_META_INSIGHT_ROWS,
     ),
   ]);
-  const appointmentRows = uniqueValidAcuityAppointments(appointmentRowsRaw);
+  // appointmentRowsRaw is a union of two array types (boundary view vs core
+  // table). Both element types satisfy WebsiteAcuityAppointmentRow, but TS
+  // can't auto-unify `A[] | B[]` into `(A|B)[]`. Widen explicitly so the
+  // generic in uniqueValidAcuityAppointments resolves cleanly.
+  const appointmentRows = uniqueValidAcuityAppointments(
+    appointmentRowsRaw as WebsiteAcuityAppointmentRow[],
+  );
   const appointmentIds = appointmentRows.map((appointment) => acuityAppointmentIdForRow(appointment));
   const conversions = await fetchConversionsByAcuityAppointmentIds(client, appointmentIds, conversionColumns);
   // Reverts the paid-Meta count narrowing introduced by 1d0a630: that
