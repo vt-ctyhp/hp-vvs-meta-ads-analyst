@@ -126,10 +126,14 @@ describe("website analytics appointment reconciliation", () => {
       { client: client as never },
     );
 
+    // The 4th table query (website_conversions) was re-added by the
+    // Phase 2.5 revert of the paid-Meta count narrowing introduced in
+    // commit 1d0a630. See docs/superpowers/plans/2026-05-23-phase-2-execution/paid-meta-the-actual-bug.md
     assert.deepEqual(selectedTables, [
       "website_events",
       "appointment_events",
       "meta_daily_insights",
+      "website_conversions",
     ]);
     assert.equal(data.sourceTransparency.recordCounts.website_events, 0);
     assert.equal(data.sourceTransparency.recordCounts.website_conversions, 0);
@@ -236,24 +240,27 @@ describe("website analytics appointment reconciliation", () => {
       { client: client as never },
     );
 
-    assert.deepEqual(rangeCalls.website_events, [
-      [0, 999],
-      [1000, 1999],
-    ]);
-    assert.deepEqual(rangeCalls.meta_daily_insights, [
-      [0, 999],
-      [1000, 1999],
-    ]);
+    // After commit a30b457 ("perf(convert): parallelize fetchWebsiteRows
+    // pagination"), fetchWebsiteRows fires the first page sequentially and
+    // then enumerates all remaining ranges up to `limit` in parallel via
+    // Promise.all. So the number of range calls is bounded by the limit
+    // (MAX_EVENTS=15000, MAX_META_INSIGHT_ROWS=50000), not by how many
+    // pages of real data exist.
+    const expectedRanges = (limit: number, pageSize: number) => {
+      const ranges: Array<[number, number]> = [];
+      for (let from = 0; from < limit; from += pageSize) {
+        ranges.push([from, Math.min(from + pageSize - 1, limit - 1)]);
+      }
+      return ranges;
+    };
+    assert.deepEqual(rangeCalls.website_events, expectedRanges(15000, 1000));
+    assert.deepEqual(rangeCalls.meta_daily_insights, expectedRanges(50000, 1000));
     assert.deepEqual(rangeCalls.appointment_events, []);
-    assert.deepEqual(eqCalls.website_events, [
-      ["environment", "production"],
-      ["environment", "production"],
-    ]);
+    const repeatEq = (n: number) =>
+      Array.from({ length: n }, () => ["environment", "production"] as [string, string]);
+    assert.deepEqual(eqCalls.website_events, repeatEq(15));
     assert.deepEqual(eqCalls.website_conversions, []);
-    assert.deepEqual(eqCalls.meta_daily_insights, [
-      ["environment", "production"],
-      ["environment", "production"],
-    ]);
+    assert.deepEqual(eqCalls.meta_daily_insights, repeatEq(50));
     assert.match(selectedColumns.website_events[0], /meta_event_name/);
     assert.equal(data.sourceTransparency.recordCounts.website_events, 1002);
     assert.equal(data.sourceTransparency.recordCounts.website_conversions, 2);
@@ -474,7 +481,15 @@ describe("website analytics appointment reconciliation", () => {
     assert.equal(may2.trend[0]?.websiteScheduleConversions, 1);
   });
 
-  it("joins paid Meta conversion by Acuity ID even when conversion occurred outside the date range", async () => {
+  it("counts paid Meta only when the conversion itself falls in the window (post-revert)", async () => {
+    // Originally this test was added by commit 1d0a630 to assert the new
+    // behavior of "count an appointment with matching paid-Meta conversion
+    // even when the conversion occurred outside the date range." That
+    // semantics produced misleadingly small numbers in production because
+    // 96% of bookings don't have matching website_conversions rows. The
+    // user-meaningful count is conversion-grain (whatever attribution rows
+    // we recorded in the window), so the revert restored pre-1d0a630 logic.
+    // See docs/superpowers/plans/2026-05-23-phase-2-execution/paid-meta-the-actual-bug.md
     const appointments = [
       appointmentEvent({ external_booking_id: "apt-paid", visit_date_time: "2026-05-01T13:00:00.000Z" }),
     ];
@@ -484,7 +499,7 @@ describe("website analytics appointment reconciliation", () => {
         event_id: "conversion-paid",
         event_name: "Schedule",
         meta_event_name: "Schedule",
-        occurred_at: "2026-04-29T20:00:00.000Z",
+        occurred_at: "2026-04-29T20:00:00.000Z", // OUTSIDE the May 1 window
         source_type: "paid_meta",
       },
     ];
@@ -495,8 +510,34 @@ describe("website analytics appointment reconciliation", () => {
     );
 
     assert.equal(data.overview.websiteScheduleConversions, 1);
+    // 0 because the conversion is outside the window. Confirmed bookings come
+    // from appointment_events; paid-Meta count comes from conversions-in-window.
+    assert.equal(data.overview.paidMetaScheduleConversions, 0);
+    assert.equal(data.trend[0]?.paidMetaScheduleConversions, 0);
+  });
+
+  it("counts paid Meta conversion-in-window regardless of appointment match (the user-meaningful count)", async () => {
+    // Demonstrates the reverted (pre-1d0a630) behavior: a paid-Meta
+    // Schedule conversion in window is counted even if no appointment_events
+    // row exists for it. This is the practical reality — 96% of bookings
+    // don't have a matched appointment row at the time the metric reads.
+    const conversions = [
+      {
+        acuity_appointment_id: "no-matching-appointment",
+        event_id: "conversion-paid",
+        event_name: "Schedule",
+        meta_event_name: "Schedule",
+        occurred_at: "2026-05-01T12:00:00.000Z",
+        source_type: "paid_meta",
+      },
+    ];
+
+    const data = await fetchWebsiteFunnelData(
+      { startDate: "2026-05-01", endDate: "2026-05-01" },
+      { client: funnelClient({ appointments: [], conversions }) as never },
+    );
+
     assert.equal(data.overview.paidMetaScheduleConversions, 1);
-    assert.equal(data.trend[0]?.paidMetaScheduleConversions, 1);
   });
 
   it("reconciles missing conversions from existing rich website events without overwriting the event", async () => {

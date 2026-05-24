@@ -1,0 +1,1426 @@
+[
+  {
+    "key": "campaign=120204385505670650",
+    "metric": "spend",
+    "raw": 734.4,
+    "rpc": 883.97,
+    "delta": 149.57,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385505670650",
+    "metric": "impressions",
+    "raw": 159698,
+    "rpc": 182247,
+    "delta": 22549,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385505670650",
+    "metric": "reach",
+    "raw": 132892,
+    "rpc": 151451,
+    "delta": 18559,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385505670650",
+    "metric": "clicks",
+    "raw": 6602,
+    "rpc": 7611,
+    "delta": 1009,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385505670650",
+    "metric": "leads",
+    "raw": 18,
+    "rpc": 21,
+    "delta": 3,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385505670650",
+    "metric": "conversions",
+    "raw": 35,
+    "rpc": 42,
+    "delta": 7,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385505670650",
+    "metric": "messaging_contacts",
+    "raw": 481,
+    "rpc": 556,
+    "delta": 75,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385505670650",
+    "metric": "new_messaging_contacts",
+    "raw": 380,
+    "rpc": 434,
+    "delta": 54,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385505670650",
+    "metric": "primary_results",
+    "raw": 481,
+    "rpc": 556,
+    "delta": 75,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385505670650",
+    "metric": "secondary_results",
+    "raw": 380,
+    "rpc": 434,
+    "delta": 54,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385505670650",
+    "metric": "ctr",
+    "raw": 4.13,
+    "rpc": 4.18,
+    "delta": 0.05,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385505670650",
+    "metric": "cpm",
+    "raw": 4.6,
+    "rpc": 4.85,
+    "delta": 0.25,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385505670650",
+    "metric": "cpl",
+    "raw": 40.8,
+    "rpc": 42.09,
+    "delta": 1.29,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385505670650",
+    "metric": "source_rows",
+    "raw": 280,
+    "rpc": 350,
+    "delta": 70,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385704650650",
+    "metric": "spend",
+    "raw": 642.93,
+    "rpc": 581.09,
+    "delta": -61.84,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385704650650",
+    "metric": "impressions",
+    "raw": 54099,
+    "rpc": 49696,
+    "delta": -4403,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385704650650",
+    "metric": "reach",
+    "raw": 46262,
+    "rpc": 42570,
+    "delta": -3692,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385704650650",
+    "metric": "clicks",
+    "raw": 3017,
+    "rpc": 2712,
+    "delta": -305,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385704650650",
+    "metric": "leads",
+    "raw": 17,
+    "rpc": 14,
+    "delta": -3,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385704650650",
+    "metric": "conversions",
+    "raw": 33,
+    "rpc": 26,
+    "delta": -7,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385704650650",
+    "metric": "messaging_contacts",
+    "raw": 143,
+    "rpc": 131,
+    "delta": -12,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385704650650",
+    "metric": "new_messaging_contacts",
+    "raw": 58,
+    "rpc": 55,
+    "delta": -3,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385704650650",
+    "metric": "primary_results",
+    "raw": 143,
+    "rpc": 131,
+    "delta": -12,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385704650650",
+    "metric": "secondary_results",
+    "raw": 58,
+    "rpc": 55,
+    "delta": -3,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385704650650",
+    "metric": "ctr",
+    "raw": 5.58,
+    "rpc": 5.46,
+    "delta": -0.12,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385704650650",
+    "metric": "cpm",
+    "raw": 11.88,
+    "rpc": 11.69,
+    "delta": -0.19,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385704650650",
+    "metric": "cpl",
+    "raw": 37.82,
+    "rpc": 41.51,
+    "delta": 3.69,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120204385704650650",
+    "metric": "source_rows",
+    "raw": 369,
+    "rpc": 332,
+    "delta": -37,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211070105150650",
+    "metric": "spend",
+    "raw": 583.8,
+    "rpc": 709.59,
+    "delta": 125.79,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211070105150650",
+    "metric": "impressions",
+    "raw": 160093,
+    "rpc": 189194,
+    "delta": 29101,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211070105150650",
+    "metric": "reach",
+    "raw": 126435,
+    "rpc": 147854,
+    "delta": 21419,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211070105150650",
+    "metric": "clicks",
+    "raw": 5795,
+    "rpc": 6832,
+    "delta": 1037,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211070105150650",
+    "metric": "leads",
+    "raw": 11,
+    "rpc": 16,
+    "delta": 5,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211070105150650",
+    "metric": "conversions",
+    "raw": 22,
+    "rpc": 30,
+    "delta": 8,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211070105150650",
+    "metric": "messaging_contacts",
+    "raw": 282,
+    "rpc": 334,
+    "delta": 52,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211070105150650",
+    "metric": "new_messaging_contacts",
+    "raw": 203,
+    "rpc": 240,
+    "delta": 37,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211070105150650",
+    "metric": "primary_results",
+    "raw": 282,
+    "rpc": 334,
+    "delta": 52,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211070105150650",
+    "metric": "secondary_results",
+    "raw": 203,
+    "rpc": 240,
+    "delta": 37,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211070105150650",
+    "metric": "cpm",
+    "raw": 3.65,
+    "rpc": 3.75,
+    "delta": 0.1,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211070105150650",
+    "metric": "cpl",
+    "raw": 53.07,
+    "rpc": 44.35,
+    "delta": -8.72,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211070105150650",
+    "metric": "source_rows",
+    "raw": 87,
+    "rpc": 111,
+    "delta": 24,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211096155910650",
+    "metric": "spend",
+    "raw": 909.8,
+    "rpc": 1148.51,
+    "delta": 238.71,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211096155910650",
+    "metric": "impressions",
+    "raw": 324204,
+    "rpc": 461284,
+    "delta": 137080,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211096155910650",
+    "metric": "reach",
+    "raw": 278610,
+    "rpc": 400335,
+    "delta": 121725,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211096155910650",
+    "metric": "clicks",
+    "raw": 7363,
+    "rpc": 9248,
+    "delta": 1885,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211096155910650",
+    "metric": "leads",
+    "raw": 21,
+    "rpc": 25,
+    "delta": 4,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211096155910650",
+    "metric": "conversions",
+    "raw": 36,
+    "rpc": 44,
+    "delta": 8,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211096155910650",
+    "metric": "messaging_contacts",
+    "raw": 362,
+    "rpc": 500,
+    "delta": 138,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211096155910650",
+    "metric": "new_messaging_contacts",
+    "raw": 321,
+    "rpc": 449,
+    "delta": 128,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211096155910650",
+    "metric": "primary_results",
+    "raw": 362,
+    "rpc": 500,
+    "delta": 138,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211096155910650",
+    "metric": "ctr",
+    "raw": 2.27,
+    "rpc": 2,
+    "delta": -0.27,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211096155910650",
+    "metric": "cpm",
+    "raw": 2.81,
+    "rpc": 2.49,
+    "delta": -0.32,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211096155910650",
+    "metric": "cpl",
+    "raw": 43.32,
+    "rpc": 45.94,
+    "delta": 2.62,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211096155910650",
+    "metric": "source_rows",
+    "raw": 252,
+    "rpc": 306,
+    "delta": 54,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211138936570650",
+    "metric": "spend",
+    "raw": 1029.55,
+    "rpc": 1239.34,
+    "delta": 209.79,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211138936570650",
+    "metric": "impressions",
+    "raw": 410203,
+    "rpc": 688235,
+    "delta": 278032,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211138936570650",
+    "metric": "reach",
+    "raw": 353005,
+    "rpc": 591205,
+    "delta": 238200,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211138936570650",
+    "metric": "clicks",
+    "raw": 5553,
+    "rpc": 7678,
+    "delta": 2125,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211138936570650",
+    "metric": "leads",
+    "raw": 26,
+    "rpc": 37,
+    "delta": 11,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211138936570650",
+    "metric": "conversions",
+    "raw": 36,
+    "rpc": 47,
+    "delta": 11,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211138936570650",
+    "metric": "messaging_contacts",
+    "raw": 197,
+    "rpc": 239,
+    "delta": 42,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211138936570650",
+    "metric": "new_messaging_contacts",
+    "raw": 134,
+    "rpc": 166,
+    "delta": 32,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211138936570650",
+    "metric": "primary_results",
+    "raw": 197,
+    "rpc": 239,
+    "delta": 42,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211138936570650",
+    "metric": "ctr",
+    "raw": 1.35,
+    "rpc": 1.12,
+    "delta": -0.23,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211138936570650",
+    "metric": "cpm",
+    "raw": 2.51,
+    "rpc": 1.8,
+    "delta": -0.71,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211138936570650",
+    "metric": "cpc",
+    "raw": 0.19,
+    "rpc": 0.16,
+    "delta": -0.03,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211138936570650",
+    "metric": "cpl",
+    "raw": 39.6,
+    "rpc": 33.5,
+    "delta": -6.1,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211138936570650",
+    "metric": "source_rows",
+    "raw": 316,
+    "rpc": 403,
+    "delta": 87,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211675857220650",
+    "metric": "spend",
+    "raw": 729.54,
+    "rpc": 879.34,
+    "delta": 149.8,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211675857220650",
+    "metric": "impressions",
+    "raw": 124051,
+    "rpc": 139881,
+    "delta": 15830,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211675857220650",
+    "metric": "reach",
+    "raw": 101473,
+    "rpc": 114091,
+    "delta": 12618,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211675857220650",
+    "metric": "clicks",
+    "raw": 5025,
+    "rpc": 5734,
+    "delta": 709,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211675857220650",
+    "metric": "leads",
+    "raw": 19,
+    "rpc": 22,
+    "delta": 3,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211675857220650",
+    "metric": "conversions",
+    "raw": 37,
+    "rpc": 43,
+    "delta": 6,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211675857220650",
+    "metric": "messaging_contacts",
+    "raw": 445,
+    "rpc": 496,
+    "delta": 51,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211675857220650",
+    "metric": "new_messaging_contacts",
+    "raw": 315,
+    "rpc": 348,
+    "delta": 33,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211675857220650",
+    "metric": "primary_results",
+    "raw": 445,
+    "rpc": 496,
+    "delta": 51,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211675857220650",
+    "metric": "secondary_results",
+    "raw": 315,
+    "rpc": 348,
+    "delta": 33,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211675857220650",
+    "metric": "ctr",
+    "raw": 4.05,
+    "rpc": 4.1,
+    "delta": 0.05,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211675857220650",
+    "metric": "cpm",
+    "raw": 5.88,
+    "rpc": 6.29,
+    "delta": 0.41,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211675857220650",
+    "metric": "cpl",
+    "raw": 38.4,
+    "rpc": 39.97,
+    "delta": 1.57,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120211675857220650",
+    "metric": "source_rows",
+    "raw": 417,
+    "rpc": 518,
+    "delta": 101,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120212347891840650",
+    "metric": "spend",
+    "raw": 837.87,
+    "rpc": 769.53,
+    "delta": -68.34,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120212347891840650",
+    "metric": "impressions",
+    "raw": 73891,
+    "rpc": 67954,
+    "delta": -5937,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120212347891840650",
+    "metric": "reach",
+    "raw": 62796,
+    "rpc": 57725,
+    "delta": -5071,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120212347891840650",
+    "metric": "clicks",
+    "raw": 3613,
+    "rpc": 3310,
+    "delta": -303,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120212347891840650",
+    "metric": "leads",
+    "raw": 7,
+    "rpc": 5,
+    "delta": -2,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120212347891840650",
+    "metric": "conversions",
+    "raw": 12,
+    "rpc": 9,
+    "delta": -3,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120212347891840650",
+    "metric": "messaging_contacts",
+    "raw": 145,
+    "rpc": 132,
+    "delta": -13,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120212347891840650",
+    "metric": "new_messaging_contacts",
+    "raw": 79,
+    "rpc": 74,
+    "delta": -5,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120212347891840650",
+    "metric": "primary_results",
+    "raw": 145,
+    "rpc": 132,
+    "delta": -13,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120212347891840650",
+    "metric": "secondary_results",
+    "raw": 79,
+    "rpc": 74,
+    "delta": -5,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120212347891840650",
+    "metric": "ctr",
+    "raw": 4.89,
+    "rpc": 4.87,
+    "delta": -0.02,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120212347891840650",
+    "metric": "cpm",
+    "raw": 11.34,
+    "rpc": 11.32,
+    "delta": -0.02,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120212347891840650",
+    "metric": "cpl",
+    "raw": 119.7,
+    "rpc": 153.91,
+    "delta": 34.21,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120212347891840650",
+    "metric": "source_rows",
+    "raw": 204,
+    "rpc": 186,
+    "delta": -18,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120226115949280650",
+    "metric": "spend",
+    "raw": 2088.75,
+    "rpc": 1513.2,
+    "delta": -575.55,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120226115949280650",
+    "metric": "impressions",
+    "raw": 144593,
+    "rpc": 107424,
+    "delta": -37169,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120226115949280650",
+    "metric": "reach",
+    "raw": 116344,
+    "rpc": 86484,
+    "delta": -29860,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120226115949280650",
+    "metric": "clicks",
+    "raw": 7141,
+    "rpc": 5253,
+    "delta": -1888,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120226115949280650",
+    "metric": "leads",
+    "raw": 105,
+    "rpc": 63,
+    "delta": -42,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120226115949280650",
+    "metric": "conversions",
+    "raw": 125,
+    "rpc": 78,
+    "delta": -47,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120226115949280650",
+    "metric": "messaging_contacts",
+    "raw": 562,
+    "rpc": 371,
+    "delta": -191,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120226115949280650",
+    "metric": "new_messaging_contacts",
+    "raw": 300,
+    "rpc": 190,
+    "delta": -110,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120226115949280650",
+    "metric": "primary_results",
+    "raw": 562,
+    "rpc": 371,
+    "delta": -191,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120226115949280650",
+    "metric": "secondary_results",
+    "raw": 300,
+    "rpc": 190,
+    "delta": -110,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120226115949280650",
+    "metric": "ctr",
+    "raw": 4.94,
+    "rpc": 4.89,
+    "delta": -0.05,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120226115949280650",
+    "metric": "cpm",
+    "raw": 14.45,
+    "rpc": 14.09,
+    "delta": -0.36,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120226115949280650",
+    "metric": "cpl",
+    "raw": 19.89,
+    "rpc": 24.02,
+    "delta": 4.13,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120226115949280650",
+    "metric": "source_rows",
+    "raw": 631,
+    "rpc": 437,
+    "delta": -194,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120227242817280650",
+    "metric": "spend",
+    "raw": 2181.05,
+    "rpc": 2163.53,
+    "delta": -17.52,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120227242817280650",
+    "metric": "impressions",
+    "raw": 146959,
+    "rpc": 141310,
+    "delta": -5649,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120227242817280650",
+    "metric": "reach",
+    "raw": 108387,
+    "rpc": 104658,
+    "delta": -3729,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120227242817280650",
+    "metric": "clicks",
+    "raw": 6486,
+    "rpc": 6275,
+    "delta": -211,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120227242817280650",
+    "metric": "leads",
+    "raw": 45,
+    "rpc": 74,
+    "delta": 29,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120227242817280650",
+    "metric": "conversions",
+    "raw": 59,
+    "rpc": 85,
+    "delta": 26,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120227242817280650",
+    "metric": "messaging_contacts",
+    "raw": 474,
+    "rpc": 523,
+    "delta": 49,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120227242817280650",
+    "metric": "new_messaging_contacts",
+    "raw": 315,
+    "rpc": 362,
+    "delta": 47,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120227242817280650",
+    "metric": "primary_results",
+    "raw": 474,
+    "rpc": 523,
+    "delta": 49,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120227242817280650",
+    "metric": "ctr",
+    "raw": 4.41,
+    "rpc": 4.44,
+    "delta": 0.03,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120227242817280650",
+    "metric": "cpm",
+    "raw": 14.84,
+    "rpc": 15.31,
+    "delta": 0.47,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120227242817280650",
+    "metric": "cpl",
+    "raw": 48.47,
+    "rpc": 29.24,
+    "delta": -19.23,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120227242817280650",
+    "metric": "source_rows",
+    "raw": 481,
+    "rpc": 423,
+    "delta": -58,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228013146220650",
+    "metric": "spend",
+    "raw": 3419.36,
+    "rpc": 2612.54,
+    "delta": -806.82,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228013146220650",
+    "metric": "impressions",
+    "raw": 300861,
+    "rpc": 229075,
+    "delta": -71786,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228013146220650",
+    "metric": "reach",
+    "raw": 257990,
+    "rpc": 196920,
+    "delta": -61070,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228013146220650",
+    "metric": "clicks",
+    "raw": 15346,
+    "rpc": 11490,
+    "delta": -3856,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228013146220650",
+    "metric": "leads",
+    "raw": 139,
+    "rpc": 94,
+    "delta": -45,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228013146220650",
+    "metric": "conversions",
+    "raw": 168,
+    "rpc": 116,
+    "delta": -52,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228013146220650",
+    "metric": "messaging_contacts",
+    "raw": 1276,
+    "rpc": 913,
+    "delta": -363,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228013146220650",
+    "metric": "new_messaging_contacts",
+    "raw": 765,
+    "rpc": 532,
+    "delta": -233,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228013146220650",
+    "metric": "primary_results",
+    "raw": 1276,
+    "rpc": 913,
+    "delta": -363,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228013146220650",
+    "metric": "secondary_results",
+    "raw": 765,
+    "rpc": 532,
+    "delta": -233,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228013146220650",
+    "metric": "ctr",
+    "raw": 5.1,
+    "rpc": 5.02,
+    "delta": -0.08,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228013146220650",
+    "metric": "cpm",
+    "raw": 11.37,
+    "rpc": 11.4,
+    "delta": 0.03,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228013146220650",
+    "metric": "cpl",
+    "raw": 24.6,
+    "rpc": 27.79,
+    "delta": 3.19,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228013146220650",
+    "metric": "source_rows",
+    "raw": 1045,
+    "rpc": 798,
+    "delta": -247,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228016965700650",
+    "metric": "spend",
+    "raw": 1266.79,
+    "rpc": 1561.76,
+    "delta": 294.97,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228016965700650",
+    "metric": "impressions",
+    "raw": 240355,
+    "rpc": 304395,
+    "delta": 64040,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228016965700650",
+    "metric": "reach",
+    "raw": 200027,
+    "rpc": 252699,
+    "delta": 52672,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228016965700650",
+    "metric": "clicks",
+    "raw": 11986,
+    "rpc": 14219,
+    "delta": 2233,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228016965700650",
+    "metric": "leads",
+    "raw": 24,
+    "rpc": 32,
+    "delta": 8,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228016965700650",
+    "metric": "conversions",
+    "raw": 44,
+    "rpc": 59,
+    "delta": 15,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228016965700650",
+    "metric": "messaging_contacts",
+    "raw": 1103,
+    "rpc": 1395,
+    "delta": 292,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228016965700650",
+    "metric": "new_messaging_contacts",
+    "raw": 761,
+    "rpc": 1002,
+    "delta": 241,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228016965700650",
+    "metric": "primary_results",
+    "raw": 1103,
+    "rpc": 1395,
+    "delta": 292,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228016965700650",
+    "metric": "secondary_results",
+    "raw": 761,
+    "rpc": 1002,
+    "delta": 241,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228016965700650",
+    "metric": "ctr",
+    "raw": 4.99,
+    "rpc": 4.67,
+    "delta": -0.32,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228016965700650",
+    "metric": "cpm",
+    "raw": 5.27,
+    "rpc": 5.13,
+    "delta": -0.14,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228016965700650",
+    "metric": "cpl",
+    "raw": 52.78,
+    "rpc": 48.81,
+    "delta": -3.97,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120228016965700650",
+    "metric": "source_rows",
+    "raw": 458,
+    "rpc": 526,
+    "delta": 68,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120233678164080650",
+    "metric": "spend",
+    "raw": 1130.08,
+    "rpc": 1438.89,
+    "delta": 308.81,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120233678164080650",
+    "metric": "impressions",
+    "raw": 43351,
+    "rpc": 53567,
+    "delta": 10216,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120233678164080650",
+    "metric": "reach",
+    "raw": 32161,
+    "rpc": 39860,
+    "delta": 7699,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120233678164080650",
+    "metric": "clicks",
+    "raw": 1065,
+    "rpc": 1315,
+    "delta": 250,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120233678164080650",
+    "metric": "bookings",
+    "raw": 23,
+    "rpc": 40,
+    "delta": 17,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120233678164080650",
+    "metric": "website_bookings",
+    "raw": 23,
+    "rpc": 40,
+    "delta": 17,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120233678164080650",
+    "metric": "messaging_contacts",
+    "raw": 9,
+    "rpc": 12,
+    "delta": 3,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120233678164080650",
+    "metric": "new_messaging_contacts",
+    "raw": 4,
+    "rpc": 5,
+    "delta": 1,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120233678164080650",
+    "metric": "primary_results",
+    "raw": 23,
+    "rpc": 40,
+    "delta": 17,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120233678164080650",
+    "metric": "cpm",
+    "raw": 26.07,
+    "rpc": 26.86,
+    "delta": 0.79,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120233678164080650",
+    "metric": "cpc",
+    "raw": 1.06,
+    "rpc": 1.09,
+    "delta": 0.03,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120233678164080650",
+    "metric": "cpl",
+    "raw": 1130.08,
+    "rpc": 1438.89,
+    "delta": 308.81,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120233678164080650",
+    "metric": "source_rows",
+    "raw": 141,
+    "rpc": 192,
+    "delta": 51,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120234691669940650",
+    "metric": "spend",
+    "raw": 4479.26,
+    "rpc": 5293.75,
+    "delta": 814.49,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120234691669940650",
+    "metric": "impressions",
+    "raw": 173145,
+    "rpc": 199829,
+    "delta": 26684,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120234691669940650",
+    "metric": "reach",
+    "raw": 145572,
+    "rpc": 168371,
+    "delta": 22799,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120234691669940650",
+    "metric": "clicks",
+    "raw": 4019,
+    "rpc": 4577,
+    "delta": 558,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120234691669940650",
+    "metric": "bookings",
+    "raw": 518,
+    "rpc": 764,
+    "delta": 246,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120234691669940650",
+    "metric": "website_bookings",
+    "raw": 518,
+    "rpc": 764,
+    "delta": 246,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120234691669940650",
+    "metric": "messaging_contacts",
+    "raw": 35,
+    "rpc": 43,
+    "delta": 8,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120234691669940650",
+    "metric": "new_messaging_contacts",
+    "raw": 14,
+    "rpc": 20,
+    "delta": 6,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120234691669940650",
+    "metric": "primary_results",
+    "raw": 518,
+    "rpc": 764,
+    "delta": 246,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120234691669940650",
+    "metric": "ctr",
+    "raw": 2.32,
+    "rpc": 2.29,
+    "delta": -0.03,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120234691669940650",
+    "metric": "cpm",
+    "raw": 25.87,
+    "rpc": 26.49,
+    "delta": 0.62,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120234691669940650",
+    "metric": "cpc",
+    "raw": 1.11,
+    "rpc": 1.16,
+    "delta": 0.05,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120234691669940650",
+    "metric": "cpl",
+    "raw": 1119.82,
+    "rpc": 1323.44,
+    "delta": 203.62,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign=120234691669940650",
+    "metric": "source_rows",
+    "raw": 341,
+    "rpc": 440,
+    "delta": 99,
+    "tolerance": 0.01
+  }
+]

@@ -1,0 +1,32 @@
+{
+  "source": "supabase.meta_daily_insights",
+  "environment": "production",
+  "start": "2026-01-01",
+  "end": "2026-03-31",
+  "filters": [],
+  "dimensions": [
+    "campaign"
+  ],
+  "sourceRowCount": 5428,
+  "filteredRowCount": 5428,
+  "metrics": {
+    "spend": 22472.9,
+    "impressions": 2950249,
+    "reach": 2467020,
+    "clicks": 91412,
+    "leads": 511,
+    "bookings": 814,
+    "conversions": 716,
+    "website_bookings": 814,
+    "messaging_contacts": 5849,
+    "new_messaging_contacts": 4010,
+    "primary_results": 6605,
+    "secondary_results": 2964,
+    "ctr": 3.1,
+    "cpm": 7.62,
+    "cpc": 0.25,
+    "cpl": 43.98,
+    "frequency": 1.2,
+    "source_rows": 5428
+  }
+}

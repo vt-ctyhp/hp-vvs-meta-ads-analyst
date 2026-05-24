@@ -1,0 +1,32 @@
+{
+  "source": "supabase.meta_daily_insights",
+  "environment": "production",
+  "start": "2026-04-23",
+  "end": "2026-05-22",
+  "filters": [],
+  "dimensions": [
+    "creative"
+  ],
+  "sourceRowCount": 1391,
+  "filteredRowCount": 1391,
+  "metrics": {
+    "spend": 8572.22,
+    "impressions": 686318,
+    "reach": 556525,
+    "clicks": 22220,
+    "leads": 227,
+    "bookings": 18,
+    "conversions": 256,
+    "website_bookings": 18,
+    "messaging_contacts": 1853,
+    "new_messaging_contacts": 1363,
+    "primary_results": 1845,
+    "secondary_results": 543,
+    "ctr": 3.24,
+    "cpm": 12.49,
+    "cpc": 0.39,
+    "cpl": 37.76,
+    "frequency": 1.23,
+    "source_rows": 1391
+  }
+}

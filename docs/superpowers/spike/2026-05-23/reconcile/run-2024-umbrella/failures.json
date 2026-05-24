@@ -1,0 +1,602 @@
+[
+  {
+    "key": "campaign_umbrella=Excluded / Non-umbrella",
+    "metric": "spend",
+    "raw": 3124.37,
+    "rpc": 1632.15,
+    "delta": -1492.22,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Excluded / Non-umbrella",
+    "metric": "impressions",
+    "raw": 1569260,
+    "rpc": 788096,
+    "delta": -781164,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Excluded / Non-umbrella",
+    "metric": "reach",
+    "raw": 1502052,
+    "rpc": 753658,
+    "delta": -748394,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Excluded / Non-umbrella",
+    "metric": "clicks",
+    "raw": 15159,
+    "rpc": 7805,
+    "delta": -7354,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Excluded / Non-umbrella",
+    "metric": "messaging_contacts",
+    "raw": 209,
+    "rpc": 117,
+    "delta": -92,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Excluded / Non-umbrella",
+    "metric": "new_messaging_contacts",
+    "raw": 27,
+    "rpc": 15,
+    "delta": -12,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Excluded / Non-umbrella",
+    "metric": "primary_results",
+    "raw": 209,
+    "rpc": 117,
+    "delta": -92,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Excluded / Non-umbrella",
+    "metric": "ctr",
+    "raw": 0.97,
+    "rpc": 0.99,
+    "delta": 0.02,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Excluded / Non-umbrella",
+    "metric": "cpm",
+    "raw": 1.99,
+    "rpc": 2.07,
+    "delta": 0.08,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Excluded / Non-umbrella",
+    "metric": "source_rows",
+    "raw": 1345,
+    "rpc": 743,
+    "delta": -602,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook US Product",
+    "metric": "spend",
+    "raw": 71689.12,
+    "rpc": 65717.83,
+    "delta": -5971.29,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook US Product",
+    "metric": "impressions",
+    "raw": 6500613,
+    "rpc": 5958087,
+    "delta": -542526,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook US Product",
+    "metric": "reach",
+    "raw": 5519995,
+    "rpc": 5057482,
+    "delta": -462513,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook US Product",
+    "metric": "clicks",
+    "raw": 289559,
+    "rpc": 263811,
+    "delta": -25748,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook US Product",
+    "metric": "leads",
+    "raw": 123,
+    "rpc": 96,
+    "delta": -27,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook US Product",
+    "metric": "conversions",
+    "raw": 128,
+    "rpc": 101,
+    "delta": -27,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook US Product",
+    "metric": "messaging_contacts",
+    "raw": 12343,
+    "rpc": 11151,
+    "delta": -1192,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook US Product",
+    "metric": "new_messaging_contacts",
+    "raw": 5942,
+    "rpc": 5377,
+    "delta": -565,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook US Product",
+    "metric": "primary_results",
+    "raw": 12343,
+    "rpc": 11151,
+    "delta": -1192,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook US Product",
+    "metric": "secondary_results",
+    "raw": 5942,
+    "rpc": 5377,
+    "delta": -565,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook US Product",
+    "metric": "ctr",
+    "raw": 4.45,
+    "rpc": 4.43,
+    "delta": -0.02,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook US Product",
+    "metric": "cpl",
+    "raw": 582.84,
+    "rpc": 684.56,
+    "delta": 101.72,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook US Product",
+    "metric": "source_rows",
+    "raw": 31984,
+    "rpc": 28304,
+    "delta": -3680,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook VN Product",
+    "metric": "spend",
+    "raw": 35177.79,
+    "rpc": 52313.12,
+    "delta": 17135.33,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook VN Product",
+    "metric": "impressions",
+    "raw": 9150716,
+    "rpc": 12439445,
+    "delta": 3288729,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook VN Product",
+    "metric": "reach",
+    "raw": 8203343,
+    "rpc": 11031038,
+    "delta": 2827695,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook VN Product",
+    "metric": "clicks",
+    "raw": 317984,
+    "rpc": 444381,
+    "delta": 126397,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook VN Product",
+    "metric": "leads",
+    "raw": 31,
+    "rpc": 175,
+    "delta": 144,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook VN Product",
+    "metric": "conversions",
+    "raw": 33,
+    "rpc": 177,
+    "delta": 144,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook VN Product",
+    "metric": "messaging_contacts",
+    "raw": 19311,
+    "rpc": 25726,
+    "delta": 6415,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook VN Product",
+    "metric": "new_messaging_contacts",
+    "raw": 15815,
+    "rpc": 20763,
+    "delta": 4948,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook VN Product",
+    "metric": "primary_results",
+    "raw": 19311,
+    "rpc": 25726,
+    "delta": 6415,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook VN Product",
+    "metric": "secondary_results",
+    "raw": 15815,
+    "rpc": 20763,
+    "delta": 4948,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook VN Product",
+    "metric": "ctr",
+    "raw": 3.47,
+    "rpc": 3.57,
+    "delta": 0.1,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook VN Product",
+    "metric": "cpm",
+    "raw": 3.84,
+    "rpc": 4.21,
+    "delta": 0.37,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook VN Product",
+    "metric": "cpl",
+    "raw": 1134.77,
+    "rpc": 298.93,
+    "delta": -835.84,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Facebook VN Product",
+    "metric": "source_rows",
+    "raw": 11256,
+    "rpc": 14454,
+    "delta": 3198,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Needs review",
+    "metric": "spend",
+    "raw": 573.57,
+    "rpc": 1119.81,
+    "delta": 546.24,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Needs review",
+    "metric": "impressions",
+    "raw": 131817,
+    "rpc": 261840,
+    "delta": 130023,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Needs review",
+    "metric": "reach",
+    "raw": 97371,
+    "rpc": 192402,
+    "delta": 95031,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Needs review",
+    "metric": "clicks",
+    "raw": 3916,
+    "rpc": 8274,
+    "delta": 4358,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Needs review",
+    "metric": "messaging_contacts",
+    "raw": 263,
+    "rpc": 580,
+    "delta": 317,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Needs review",
+    "metric": "new_messaging_contacts",
+    "raw": 249,
+    "rpc": 546,
+    "delta": 297,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Needs review",
+    "metric": "primary_results",
+    "raw": 263,
+    "rpc": 580,
+    "delta": 317,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Needs review",
+    "metric": "ctr",
+    "raw": 2.97,
+    "rpc": 3.16,
+    "delta": 0.19,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Needs review",
+    "metric": "cpm",
+    "raw": 4.35,
+    "rpc": 4.28,
+    "delta": -0.07,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=Needs review",
+    "metric": "source_rows",
+    "raw": 101,
+    "rpc": 208,
+    "delta": 107,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=US Promotions (WKDS / OOAK)",
+    "metric": "spend",
+    "raw": 6061.14,
+    "rpc": 7811.05,
+    "delta": 1749.91,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=US Promotions (WKDS / OOAK)",
+    "metric": "impressions",
+    "raw": 333011,
+    "rpc": 433265,
+    "delta": 100254,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=US Promotions (WKDS / OOAK)",
+    "metric": "reach",
+    "raw": 226323,
+    "rpc": 302225,
+    "delta": 75902,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=US Promotions (WKDS / OOAK)",
+    "metric": "clicks",
+    "raw": 23662,
+    "rpc": 29742,
+    "delta": 6080,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=US Promotions (WKDS / OOAK)",
+    "metric": "leads",
+    "raw": 1,
+    "rpc": 5,
+    "delta": 4,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=US Promotions (WKDS / OOAK)",
+    "metric": "conversions",
+    "raw": 6,
+    "rpc": 10,
+    "delta": 4,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=US Promotions (WKDS / OOAK)",
+    "metric": "messaging_contacts",
+    "raw": 385,
+    "rpc": 491,
+    "delta": 106,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=US Promotions (WKDS / OOAK)",
+    "metric": "new_messaging_contacts",
+    "raw": 75,
+    "rpc": 130,
+    "delta": 55,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=US Promotions (WKDS / OOAK)",
+    "metric": "primary_results",
+    "raw": 385,
+    "rpc": 491,
+    "delta": 106,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=US Promotions (WKDS / OOAK)",
+    "metric": "ctr",
+    "raw": 7.11,
+    "rpc": 6.86,
+    "delta": -0.25,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=US Promotions (WKDS / OOAK)",
+    "metric": "cpm",
+    "raw": 18.2,
+    "rpc": 18.03,
+    "delta": -0.17,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=US Promotions (WKDS / OOAK)",
+    "metric": "cpl",
+    "raw": 6061.14,
+    "rpc": 1562.21,
+    "delta": -4498.93,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=US Promotions (WKDS / OOAK)",
+    "metric": "frequency",
+    "raw": 1.47,
+    "rpc": 1.43,
+    "delta": -0.04,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=US Promotions (WKDS / OOAK)",
+    "metric": "source_rows",
+    "raw": 755,
+    "rpc": 1193,
+    "delta": 438,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=VN Promotions (WKDS / OOAK)",
+    "metric": "spend",
+    "raw": 4040.76,
+    "rpc": 5766.99,
+    "delta": 1726.23,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=VN Promotions (WKDS / OOAK)",
+    "metric": "impressions",
+    "raw": 679072,
+    "rpc": 900671,
+    "delta": 221599,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=VN Promotions (WKDS / OOAK)",
+    "metric": "reach",
+    "raw": 575040,
+    "rpc": 753094,
+    "delta": 178054,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=VN Promotions (WKDS / OOAK)",
+    "metric": "clicks",
+    "raw": 27253,
+    "rpc": 39003,
+    "delta": 11750,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=VN Promotions (WKDS / OOAK)",
+    "metric": "leads",
+    "raw": 5,
+    "rpc": 17,
+    "delta": 12,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=VN Promotions (WKDS / OOAK)",
+    "metric": "conversions",
+    "raw": 5,
+    "rpc": 17,
+    "delta": 12,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=VN Promotions (WKDS / OOAK)",
+    "metric": "messaging_contacts",
+    "raw": 578,
+    "rpc": 769,
+    "delta": 191,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=VN Promotions (WKDS / OOAK)",
+    "metric": "new_messaging_contacts",
+    "raw": 478,
+    "rpc": 635,
+    "delta": 157,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=VN Promotions (WKDS / OOAK)",
+    "metric": "primary_results",
+    "raw": 578,
+    "rpc": 769,
+    "delta": 191,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=VN Promotions (WKDS / OOAK)",
+    "metric": "ctr",
+    "raw": 4.01,
+    "rpc": 4.33,
+    "delta": 0.32,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=VN Promotions (WKDS / OOAK)",
+    "metric": "cpm",
+    "raw": 5.95,
+    "rpc": 6.4,
+    "delta": 0.45,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=VN Promotions (WKDS / OOAK)",
+    "metric": "cpl",
+    "raw": 808.15,
+    "rpc": 339.23,
+    "delta": -468.92,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=VN Promotions (WKDS / OOAK)",
+    "metric": "frequency",
+    "raw": 1.18,
+    "rpc": 1.2,
+    "delta": 0.02,
+    "tolerance": 0.01
+  },
+  {
+    "key": "campaign_umbrella=VN Promotions (WKDS / OOAK)",
+    "metric": "source_rows",
+    "raw": 632,
+    "rpc": 1171,
+    "delta": 539,
+    "tolerance": 0.01
+  }
+]

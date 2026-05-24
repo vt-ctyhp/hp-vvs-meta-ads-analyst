@@ -1,5 +1,5 @@
 import { CreativeAnalysisClient } from "@/components/creative-analysis-client";
-import { fetchCreativeAnalysisData } from "@/lib/creative-analysis";
+import { cachedFetchCreativeAnalysisData as fetchCreativeAnalysisData } from "@/lib/creative-analysis";
 import { requirePagePermission } from "@/lib/server-route-auth";
 
 export const runtime = "nodejs";
