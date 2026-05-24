@@ -1,8 +1,7 @@
-import { createAdsAnalystClient, withAdsAnalystEnvironment } from "./ads-analyst-db";
-import { getMetaApiVersion } from "./env";
-import { safeErrorMessage } from "./error-message";
-import { getManagedPage } from "./social-inbox";
-import { isLiveSendEnabled } from "./social-reply-send-flags";
+import { createAdsAnalystClient, withAdsAnalystEnvironment } from "./ads-analyst-db.ts";
+import { getMetaApiVersion } from "./env.ts";
+import { safeErrorMessage } from "./error-message.ts";
+import { isLiveSendEnabled } from "./social-reply-send-flags.ts";
 import {
   buildMetaInboxDeliveryFailureUpdate,
   buildMetaInboxDeliverySendingUpdate,
@@ -12,7 +11,7 @@ import {
   type MetaInboxDeliveryConversation,
   type MetaInboxDeliveryFailure,
   type MetaInboxDeliveryTarget,
-} from "./meta-inbox-delivery";
+} from "./meta-inbox-delivery.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -26,17 +25,31 @@ type DynamicSingleResult = {
   error: Error | null;
 };
 
+type DynamicMaybeSingleResult = {
+  data: JsonRecord | null;
+  error: Error | null;
+};
+
 type DynamicQueryOrder = {
   limit: (count: number) => Promise<DynamicQueryResult>;
 };
 
 type DynamicQuery = {
   eq: (column: string, value: string | boolean | number) => DynamicQuery;
+  in: (column: string, values: string[]) => DynamicQuery;
   order: (
     column: string,
     options?: { ascending?: boolean; nullsFirst?: boolean },
   ) => DynamicQueryOrder;
   limit: (count: number) => Promise<DynamicQueryResult>;
+};
+
+type DynamicUpdateQuery = {
+  eq: (column: string, value: string | boolean | number) => DynamicUpdateQuery;
+  select: (columns: string) => {
+    maybeSingle: () => Promise<DynamicMaybeSingleResult>;
+    single: () => Promise<DynamicSingleResult>;
+  };
 };
 
 type DynamicTable = {
@@ -45,15 +58,19 @@ type DynamicTable = {
       single: () => Promise<DynamicSingleResult>;
     };
   };
-  update: (row: JsonRecord) => {
-    eq: (column: string, value: string) => Promise<{ error: Error | null }>;
-  };
+  update: (row: JsonRecord) => DynamicUpdateQuery;
   select: (columns: string) => DynamicQuery;
 };
 
 type DynamicSupabaseClient = {
   from: (table: string) => DynamicTable;
 };
+
+type MetaInboxManagedPageResolver = (pageSelector: string) => Promise<{
+  pageId: string;
+  accessToken: string;
+  igUserId: string | null;
+} | null>;
 
 export type MetaInboxDeliveryBatchResult = {
   status: "disabled" | "success" | "partial" | "failed";
@@ -67,7 +84,12 @@ export type MetaInboxDeliveryBatchResult = {
 };
 
 export async function deliverQueuedMetaInboxSendAttempts(
-  options: { limit?: number; now?: string } = {},
+  options: {
+    limit?: number;
+    now?: string;
+    supabase?: DynamicSupabaseClient;
+    managedPageResolver?: MetaInboxManagedPageResolver;
+  } = {},
 ): Promise<MetaInboxDeliveryBatchResult> {
   const limit = positiveLimit(options.limit, 25);
   const now = options.now || new Date().toISOString();
@@ -84,16 +106,21 @@ export async function deliverQueuedMetaInboxSendAttempts(
     };
   }
 
-  const supabase = createAdsAnalystClient("worker") as unknown as DynamicSupabaseClient;
+  const supabase =
+    options.supabase || (createAdsAnalystClient("worker") as unknown as DynamicSupabaseClient);
+  const managedPageResolver = options.managedPageResolver || defaultManagedPageResolver;
   const queued = await supabase
     .from("meta_inbox_send_attempts")
     .select("*")
-    .eq("status", "queued")
+    .in("status", ["queued", "failed_retryable"])
     .order("created_at", { ascending: true, nullsFirst: false })
-    .limit(limit);
+    .limit(limit * 4);
   if (queued.error) throw queued.error;
 
-  const attempts = rows(queued.data).map(mapDeliveryAttempt);
+  const attempts = rows(queued.data)
+    .map(mapDeliveryAttempt)
+    .filter((attempt) => isSendAttemptDueForDelivery(attempt, now))
+    .slice(0, limit);
   const result: MetaInboxDeliveryBatchResult = {
     status: "success",
     live: true,
@@ -109,17 +136,18 @@ export async function deliverQueuedMetaInboxSendAttempts(
     result.attempted += 1;
     try {
       const conversation = await loadDeliveryConversation(supabase, attempt.conversation_id);
-      const sending = buildMetaInboxDeliverySendingUpdate(attempt, { now: new Date().toISOString() });
-      await updateSendAttempt(supabase, attempt.id, sending.update);
-      await insertSendAttemptEvent(supabase, conversation.id, sending.event, now);
+      const claimed = await claimSendAttemptForDelivery(supabase, attempt, {
+        now: new Date().toISOString(),
+      });
+      if (!claimed) continue;
+      const sendingAttempt = await hydrateDeliveryAttemptAttachments(
+        supabase,
+        mapDeliveryAttempt(claimed.row),
+      );
+      await insertSendAttemptEvent(supabase, conversation.id, claimed.event, now);
 
-      const sendingAttempt = {
-        ...attempt,
-        status: "sending" as const,
-        attempt_count: Number(sending.update.attempt_count || attempt.attempt_count),
-      };
       const target = buildMetaInboxDeliveryTarget(conversation, sendingAttempt);
-      const managed = await getManagedPage(target.pageSelector);
+      const managed = await managedPageResolver(target.pageSelector);
       if (!managed) {
         throw deliveryFailure(
           `Current Meta token does not manage page ${target.pageSelector}.`,
@@ -133,31 +161,37 @@ export async function deliverQueuedMetaInboxSendAttempts(
         metaSendId: send.metaSendId,
         sentAt,
       });
-      await updateSendAttempt(supabase, attempt.id, success.update);
-      const outboundError = await recordOutboundDeliveryRow(supabase, {
-        conversation,
-        attempt: sendingAttempt,
-        target,
-        metaSendId: send.metaSendId,
-        sentAt,
-        pageId: managed.pageId,
-        igUserId: managed.igUserId,
-      });
-      await insertSendAttemptEvent(supabase, conversation.id, {
-        ...success.event,
-        metadata: {
-          ...success.event.metadata,
-          ...(outboundError ? { outboundRecordError: outboundError } : {}),
-        },
-      }, sentAt);
+      try {
+        await updateSendAttempt(supabase, attempt.id, success.update);
+        const outboundError = await recordOutboundDeliveryRow(supabase, {
+          conversation,
+          attempt: sendingAttempt,
+          target,
+          metaSendId: send.metaSendId,
+          sentAt,
+          pageId: managed.pageId,
+          igUserId: managed.igUserId,
+        });
+        await insertSendAttemptEvent(supabase, conversation.id, {
+          ...success.event,
+          metadata: {
+            ...success.event.metadata,
+            ...(outboundError ? { outboundRecordError: outboundError } : {}),
+          },
+        }, sentAt);
+      } catch (error) {
+        result.errors.push(
+          `${attempt.id}: Meta accepted send but local persistence failed: ${safeErrorMessage(error)}`,
+        );
+      }
       result.delivered += 1;
     } catch (error) {
       const failure = normalizeDeliveryFailure(error);
       const failed = buildMetaInboxDeliveryFailureUpdate(attempt, failure, {
         now: new Date().toISOString(),
       });
-      await updateSendAttempt(supabase, attempt.id, failed.update).catch(() => undefined);
-      await insertSendAttemptEvent(supabase, attempt.conversation_id, failed.event, now).catch(() => undefined);
+      await updateSendAttempt(supabase, attempt.id, failed.update);
+      await insertSendAttemptEvent(supabase, attempt.conversation_id, failed.event, now);
       if (failed.update.status === "failed_retryable") result.failedRetryable += 1;
       else result.failedTerminal += 1;
       result.errors.push(`${attempt.id}: ${failure.message}`);
@@ -170,6 +204,11 @@ export async function deliverQueuedMetaInboxSendAttempts(
       : "failed";
   }
   return result;
+}
+
+async function defaultManagedPageResolver(pageSelector: string) {
+  const { getManagedPage } = await import("./social-inbox.ts");
+  return getManagedPage(pageSelector);
 }
 
 async function loadDeliveryConversation(
@@ -187,6 +226,27 @@ async function loadDeliveryConversation(
   return mapDeliveryConversation(row);
 }
 
+async function claimSendAttemptForDelivery(
+  supabase: DynamicSupabaseClient,
+  attempt: MetaInboxDeliveryAttempt,
+  context: { now: string },
+) {
+  const sending = buildMetaInboxDeliverySendingUpdate(attempt, context);
+  const result = await supabase
+    .from("meta_inbox_send_attempts")
+    .update(sending.update)
+    .eq("id", attempt.id)
+    .eq("status", attempt.status)
+    .select("*")
+    .maybeSingle();
+  if (result.error) throw result.error;
+  if (!result.data) return null;
+  return {
+    row: result.data,
+    event: sending.event,
+  };
+}
+
 async function updateSendAttempt(
   supabase: DynamicSupabaseClient,
   sendAttemptId: string,
@@ -195,8 +255,33 @@ async function updateSendAttempt(
   const result = await supabase
     .from("meta_inbox_send_attempts")
     .update(update)
-    .eq("id", sendAttemptId);
+    .eq("id", sendAttemptId)
+    .select("id")
+    .single();
   if (result.error) throw result.error;
+}
+
+async function hydrateDeliveryAttemptAttachments(
+  supabase: DynamicSupabaseClient,
+  attempt: MetaInboxDeliveryAttempt,
+): Promise<MetaInboxDeliveryAttempt> {
+  const attachmentIds = attempt.attachment_ids || [];
+  if (!attachmentIds.length) return attempt;
+
+  const result = await supabase
+    .from("meta_inbox_attachments")
+    .select("*")
+    .in("id", attachmentIds)
+    .eq("is_sendable", true)
+    .limit(10);
+  if (result.error) throw result.error;
+
+  return {
+    ...attempt,
+    attachments: rows(result.data)
+      .map(mapDeliveryAttachment)
+      .filter((attachment) => attachment.is_sendable),
+  };
 }
 
 async function insertSendAttemptEvent(
@@ -233,11 +318,13 @@ async function postMetaInboxReply(
   const url = new URL(
     `https://graph.facebook.com/${getMetaApiVersion()}/${target.graphPath.replace(/^\//, "")}`,
   );
-  url.searchParams.set("access_token", pageToken);
 
-  const response = await fetch(url.toString(), {
+  const response = await fetchMetaGraph(url.toString(), {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "Authorization": `Bearer ${pageToken}`,
+    },
     body: JSON.stringify(target.graphBody),
     cache: "no-store",
   });
@@ -277,6 +364,28 @@ async function postMetaInboxReply(
   }
 
   return { metaSendId };
+}
+
+async function fetchMetaGraph(url: string, init: RequestInit) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20_000);
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw deliveryFailure("Meta Graph API request timed out.", {
+        httpStatus: 408,
+        isTransient: true,
+      });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function recordOutboundDeliveryRow(
@@ -362,6 +471,30 @@ function mapDeliveryAttempt(row: JsonRecord): MetaInboxDeliveryAttempt {
         : null,
     tag: row.tag === "HUMAN_AGENT" ? "HUMAN_AGENT" : null,
     attempt_count: numberField(row.attempt_count) || 0,
+    next_retry_at: stringField(row.next_retry_at),
+    attachment_ids: arrayField(row.attachment_ids).filter(isString),
+    attachments: [],
+  };
+}
+
+function isSendAttemptDueForDelivery(attempt: MetaInboxDeliveryAttempt, now: string) {
+  if (attempt.status === "queued") return true;
+  if (attempt.status !== "failed_retryable") return false;
+  if (!attempt.next_retry_at) return true;
+
+  const retryAt = Date.parse(attempt.next_retry_at);
+  const base = Date.parse(now);
+  if (!Number.isFinite(retryAt) || !Number.isFinite(base)) return false;
+  return retryAt <= base;
+}
+
+function mapDeliveryAttachment(row: JsonRecord): MetaInboxDeliveryAttempt["attachments"][number] {
+  return {
+    id: String(row.id || ""),
+    attachment_type: deliveryAttachmentType(row.attachment_type),
+    meta_attachment_id: stringField(row.meta_attachment_id),
+    media_url: stringField(row.media_url),
+    is_sendable: row.is_sendable === true,
   };
 }
 
@@ -453,6 +586,21 @@ function numberField(value: unknown): number | null {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
+}
+
+function arrayField(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function deliveryAttachmentType(value: unknown): MetaInboxDeliveryAttempt["attachments"][number]["attachment_type"] {
+  if (value === "image" || value === "video" || value === "audio" || value === "file") {
+    return value;
+  }
+  return "file";
 }
 
 function positiveLimit(value: number | null | undefined, fallback: number) {

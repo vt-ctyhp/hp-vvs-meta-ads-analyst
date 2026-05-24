@@ -99,6 +99,8 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       "manage_users",
       "view_review",
       "view_outcomes",
+      "send_inbox_reply",
+      "manage_inbox_state",
     ],
   },
   {

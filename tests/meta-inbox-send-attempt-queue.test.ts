@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 
 import {
   buildMetaInboxQueueAttemptUpdate,
+  buildMetaInboxRetryAttemptUpdate,
   type MetaInboxReplyConversationInput,
   type MetaInboxSendAttemptRecord,
 } from "../src/lib/meta-inbox-reply-reliability.ts";
@@ -28,6 +29,7 @@ describe("Meta inbox approved send-attempt queue slice", () => {
     assert.equal(queued.update.meta_error_message, null);
     assert.equal(queued.update.updated_at, NOW);
     assert.equal(queued.update.attempt_count, undefined);
+    assert.equal(queued.expectedStatus, "approved");
     assert.equal(queued.event.eventType, "send_attempt");
     assert.equal(queued.event.newValue.action, "delivery_queued");
     assert.equal(queued.event.newValue.status, "queued");
@@ -72,6 +74,19 @@ describe("Meta inbox approved send-attempt queue slice", () => {
         ),
       /not attached/i,
     );
+  });
+
+  it("exposes expected statuses so service updates cannot revive stale send attempts", () => {
+    const retry = buildMetaInboxRetryAttemptUpdate(
+      sendAttemptFixture({ status: "failed_retryable", attempt_count: 2 }),
+      conversationFixture(),
+      { actorUserId: ACTOR_ID, now: NOW, humanAgentEnabled: true },
+    );
+    const socialInbox = readFileSync("src/lib/social-inbox.ts", "utf8");
+
+    assert.equal(retry.expectedStatus, "failed_retryable");
+    assert.match(socialInbox, /updateSendAttemptWithExpectedStatus/);
+    assert.match(socialInbox, /\.eq\("status", expectedStatus\)/);
   });
 
   it("exposes a send-attempt queue API route and UI action", () => {

@@ -5,8 +5,10 @@ import {
   Camera,
   CheckCircle2,
   Clock,
+  EyeOff,
   ExternalLink,
   Filter,
+  Heart,
   Inbox,
   Link2,
   Loader2,
@@ -25,9 +27,14 @@ import {
   Trash2,
   UserRound,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { SYNC, translateError } from "@/lib/glossary";
+import { buildMetaInboxManagerDashboard } from "@/lib/meta-inbox-manager-dashboard";
+import {
+  buildMetaInboxQueueItems,
+  type MetaInboxQueueDisplayItem,
+} from "@/lib/meta-inbox-queue-view";
 import {
   META_INBOX_CONVERSATION_STATUSES,
   META_INBOX_CUSTOMER_CONTACT_METHODS,
@@ -41,20 +48,30 @@ import {
   type MetaInboxQueueCategoryKey,
   type MetaInboxSourceChannelKey,
 } from "@/lib/meta-inbox-vocabulary";
-import { inferSocialBrand, type BrandLabel } from "@/lib/social-brand";
 import { StatusSentence, type StatusHighlight } from "./status-sentence";
 import type {
   SocialInboxComment,
+  SocialInboxCommentAction,
   SocialInboxConversation,
+  SocialInboxConversationEvent,
+  SocialInboxConversationNote,
   SocialInboxCustomerContactMethod,
-  SocialInboxCustomerProfile,
   SocialInboxData,
   SocialInboxConversationHistory,
-  SocialInboxFirstTouchSource,
   SocialInboxMessage,
+  SocialInboxPresence,
+  SocialInboxQaScorecard,
+  SocialInboxSavedReply,
   SocialInboxSendAttempt,
   MetaInboxContactMethodMutationInput,
+  MetaInboxCommentActionInput,
+  MetaInboxConversationNoteInput,
+  MetaInboxQaScorecardInput,
+  MetaInboxSavedReplyInput,
+  MetaInboxPresenceInput,
+  MetaInboxQueueCommentActionInput,
   MetaInboxQueueSendAttemptInput,
+  MetaInboxRetryCommentActionInput,
   MetaInboxRetrySendAttemptInput,
   MetaInboxSendAttemptInput,
   MetaInboxWorkflowPatchInput,
@@ -106,33 +123,24 @@ type QueueCategoryFilter = "all" | MetaInboxQueueCategoryKey;
 type QueueCategoryOption = (typeof META_INBOX_QUEUE_CATEGORIES)[number];
 type ItemTypeFilter = "all" | "messages" | "comments";
 type StatusFilter = "all" | "unread" | "needs-reply";
+type QaScoreKey =
+  | "toneScore"
+  | "completenessScore"
+  | "accuracyScore"
+  | "nextStepScore"
+  | "speedScore"
+  | "policyComplianceScore";
 
-type QueueDisplayItem = {
-  id: string;
-  sourceId: string;
-  channel: "Facebook" | "Instagram";
-  platform: "facebook" | "instagram";
-  brand: BrandLabel;
-  type: "message" | "comment";
-  sender: string;
-  preview: string;
-  status: "Synced" | "Unread" | "Needs reply";
-  time: string;
-  timestamp: string | null;
-  sourceChannel: MetaInboxSourceChannelKey;
-  queueCategoryKey: MetaInboxQueueCategoryKey;
-  conversationStatus: SocialInboxConversation["conversation_status"];
-  sendEligibility: SocialInboxConversation["send_eligibility"];
-  replyWindowExpiresAt: string | null;
-  humanAgentWindowExpiresAt: string | null;
-  routingExplanation: string | null;
-  routingConfidence: number | null;
-  inboxConversation: SocialInboxConversation | null;
-  profile: SocialInboxCustomerProfile | null;
-  contactMethods: SocialInboxCustomerContactMethod[];
-  firstTouch: SocialInboxFirstTouchSource | null;
-  sendAttempts: SocialInboxSendAttempt[];
-};
+const QA_SCORE_FIELDS: { key: QaScoreKey; label: string }[] = [
+  { key: "toneScore", label: "Tone" },
+  { key: "completenessScore", label: "Complete" },
+  { key: "accuracyScore", label: "Accurate" },
+  { key: "nextStepScore", label: "Next Step" },
+  { key: "speedScore", label: "Speed" },
+  { key: "policyComplianceScore", label: "Policy" },
+];
+
+type QueueDisplayItem = MetaInboxQueueDisplayItem;
 
 type SyncResponse = {
   status?: string;
@@ -172,6 +180,35 @@ type ReplyAttemptMutationLoadState = {
   message: string | null;
 };
 
+type CommentActionMutationLoadState = {
+  conversationId: string | null;
+  status: "idle" | "saving" | "saved" | "error";
+  message: string | null;
+};
+
+type SavedReplyMutationLoadState = {
+  status: "idle" | "saving" | "saved" | "error";
+  message: string | null;
+};
+
+type NoteMutationLoadState = {
+  conversationId: string | null;
+  status: "idle" | "saving" | "saved" | "error";
+  message: string | null;
+};
+
+type QaScorecardMutationLoadState = {
+  conversationId: string | null;
+  status: "idle" | "saving" | "saved" | "error";
+  message: string | null;
+};
+
+type PresenceLoadState = {
+  status: "idle" | "ready" | "error";
+  presences: SocialInboxPresence[];
+  error: string | null;
+};
+
 const IDLE_HISTORY_STATE: ConversationHistoryLoadState = {
   status: "idle",
   data: null,
@@ -198,18 +235,49 @@ const IDLE_REPLY_ATTEMPT_STATE: ReplyAttemptMutationLoadState = {
   message: null,
 };
 
+const IDLE_COMMENT_ACTION_STATE: CommentActionMutationLoadState = {
+  conversationId: null,
+  status: "idle",
+  message: null,
+};
+
+const IDLE_SAVED_REPLY_STATE: SavedReplyMutationLoadState = {
+  status: "idle",
+  message: null,
+};
+
+const IDLE_NOTE_STATE: NoteMutationLoadState = {
+  conversationId: null,
+  status: "idle",
+  message: null,
+};
+
+const IDLE_QA_SCORECARD_STATE: QaScorecardMutationLoadState = {
+  conversationId: null,
+  status: "idle",
+  message: null,
+};
+
+const IDLE_PRESENCE_STATE: PresenceLoadState = {
+  status: "idle",
+  presences: [],
+  error: null,
+};
+
 export function SocialInboxClient({
   status,
   initialData,
   dataError,
   canManageInboxState,
   canSendInboxReply,
+  canCreateManagerCoaching,
 }: {
   status: SocialInboxStatus;
   initialData: SocialInboxData;
   dataError: string | null;
   canManageInboxState: boolean;
   canSendInboxReply: boolean;
+  canCreateManagerCoaching: boolean;
 }) {
   const [brandFilter, setBrandFilter] = useState<BrandFilter>("all");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
@@ -217,6 +285,9 @@ export function SocialInboxClient({
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [queueCategoryFilter, setQueueCategoryFilter] = useState<QueueCategoryFilter>("all");
   const [sourceChannelFilter, setSourceChannelFilter] = useState<SourceChannelFilter>("all");
+  const [campaignUmbrellaFilter, setCampaignUmbrellaFilter] = useState("all");
+  const [adFilter, setAdFilter] = useState("all");
+  const [creativeFilter, setCreativeFilter] = useState("all");
   const [query, setQuery] = useState("");
   const [inboxData, setInboxData] = useState(initialData);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -234,8 +305,23 @@ export function SocialInboxClient({
     useState<ContactMethodMutationLoadState>(IDLE_CONTACT_METHOD_STATE);
   const [replyAttemptMutationState, setReplyAttemptMutationState] =
     useState<ReplyAttemptMutationLoadState>(IDLE_REPLY_ATTEMPT_STATE);
+  const [commentActionMutationState, setCommentActionMutationState] =
+    useState<CommentActionMutationLoadState>(IDLE_COMMENT_ACTION_STATE);
+  const [savedReplyMutationState, setSavedReplyMutationState] =
+    useState<SavedReplyMutationLoadState>(IDLE_SAVED_REPLY_STATE);
+  const [noteMutationState, setNoteMutationState] =
+    useState<NoteMutationLoadState>(IDLE_NOTE_STATE);
+  const [qaScorecardMutationState, setQaScorecardMutationState] =
+    useState<QaScorecardMutationLoadState>(IDLE_QA_SCORECARD_STATE);
+  const [presenceByConversationId, setPresenceByConversationId] = useState<
+    Record<string, PresenceLoadState>
+  >({});
 
   const queue = useMemo(() => buildQueue(inboxData), [inboxData]);
+  const managerDashboard = useMemo(
+    () => buildMetaInboxManagerDashboard(inboxData),
+    [inboxData],
+  );
   const queueCategories = useMemo(() => visibleQueueCategories(inboxData), [inboxData]);
   const visibleQueueKeys = useMemo(
     () => new Set(queueCategories.map((category) => category.key)),
@@ -248,6 +334,10 @@ export function SocialInboxClient({
   const queueCounts = useMemo(
     () => queueCategoryCounts(queue, queueCategories),
     [queue, queueCategories],
+  );
+  const attributionFilterOptions = useMemo(
+    () => buildAttributionFilterOptions(queue),
+    [queue],
   );
 
   const inboxHighlights = useMemo<StatusHighlight[]>(() => {
@@ -281,6 +371,14 @@ export function SocialInboxClient({
           effectiveQueueCategoryFilter !== "all" &&
           item.queueCategoryKey !== effectiveQueueCategoryFilter
         ) return false;
+        if (
+          campaignUmbrellaFilter !== "all" &&
+          item.firstTouch?.campaign_umbrella_id !== campaignUmbrellaFilter
+        ) return false;
+        if (adFilter !== "all" && item.firstTouch?.ad_id !== adFilter) return false;
+        if (creativeFilter !== "all" && item.firstTouch?.creative_id !== creativeFilter) {
+          return false;
+        }
         if (itemTypeFilter === "messages" && item.type !== "message") return false;
         if (itemTypeFilter === "comments" && item.type !== "comment") return false;
         if (statusFilter === "unread" && item.status !== "Unread") return false;
@@ -296,6 +394,12 @@ export function SocialInboxClient({
           item.sender,
           item.preview,
           item.routingExplanation,
+          item.firstTouch?.campaign_umbrella_id,
+          item.firstTouch?.campaign_id,
+          item.firstTouch?.adset_id,
+          item.firstTouch?.ad_id,
+          item.firstTouch?.creative_id,
+          item.firstTouch?.ref,
           metaInboxVocabularyLabel(META_INBOX_QUEUE_CATEGORIES, item.queueCategoryKey),
           metaInboxVocabularyLabel(META_INBOX_SOURCE_CHANNELS, item.sourceChannel),
         ]
@@ -305,6 +409,9 @@ export function SocialInboxClient({
       }),
     [
       brandFilter,
+      adFilter,
+      campaignUmbrellaFilter,
+      creativeFilter,
       itemTypeFilter,
       query,
       queue,
@@ -320,6 +427,9 @@ export function SocialInboxClient({
   const selectedHistoryState = selectedConversationId
     ? historyByConversationId[selectedConversationId] || IDLE_HISTORY_STATE
     : null;
+  const selectedPresenceState = selectedConversationId
+    ? presenceByConversationId[selectedConversationId] || IDLE_PRESENCE_STATE
+    : IDLE_PRESENCE_STATE;
   const selectedMessages = useMemo(
     () => {
       if (selectedHistoryState?.data) return selectedHistoryState.data.messages;
@@ -358,6 +468,18 @@ export function SocialInboxClient({
     replyAttemptMutationState.conversationId === selectedConversationId
       ? replyAttemptMutationState
       : IDLE_REPLY_ATTEMPT_STATE;
+  const selectedCommentActionMutationState =
+    commentActionMutationState.conversationId === selectedConversationId
+      ? commentActionMutationState
+      : IDLE_COMMENT_ACTION_STATE;
+  const selectedNoteMutationState =
+    noteMutationState.conversationId === selectedConversationId
+      ? noteMutationState
+      : IDLE_NOTE_STATE;
+  const selectedQaScorecardMutationState =
+    qaScorecardMutationState.conversationId === selectedConversationId
+      ? qaScorecardMutationState
+      : IDLE_QA_SCORECARD_STATE;
 
   const loadConversationHistory = useCallback(
     async (conversationId: string, cursor?: string | null) => {
@@ -411,6 +533,48 @@ export function SocialInboxClient({
     [],
   );
 
+  const sendPresenceHeartbeat = useCallback(
+    async (conversationId: string, input: MetaInboxPresenceInput) => {
+      try {
+        const response = await fetch(
+          `/api/social-inbox/conversations/${encodeURIComponent(conversationId)}/presence`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(input),
+          },
+        );
+        const payload = (await response.json()) as
+          | { presence: SocialInboxPresence | null; presences: SocialInboxPresence[] }
+          | { error: string };
+        if (!response.ok || isPresenceErrorPayload(payload)) {
+          throw new Error(
+            isPresenceErrorPayload(payload) ? payload.error : "Could not update presence.",
+          );
+        }
+
+        setPresenceByConversationId((current) => ({
+          ...current,
+          [conversationId]: {
+            status: "ready",
+            presences: payload.presences,
+            error: null,
+          },
+        }));
+      } catch (error) {
+        setPresenceByConversationId((current) => ({
+          ...current,
+          [conversationId]: {
+            status: "error",
+            presences: current[conversationId]?.presences || [],
+            error: translateError(error),
+          },
+        }));
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     if (!selectedConversationId) return;
     const state = historyByConversationId[selectedConversationId];
@@ -418,6 +582,27 @@ export function SocialInboxClient({
 
     void loadConversationHistory(selectedConversationId);
   }, [historyByConversationId, loadConversationHistory, selectedConversationId]);
+
+  useEffect(() => {
+    if (!selectedConversationId) return;
+    const activity = activeReplyDraft.trim() ? "replying" : "viewing";
+    let disposed = false;
+    let timeoutId: number | null = null;
+
+    const beat = () => {
+      if (disposed) return;
+      void sendPresenceHeartbeat(selectedConversationId, { activity });
+    };
+
+    timeoutId = window.setTimeout(beat, activity === "replying" ? 600 : 0);
+    const intervalId = window.setInterval(beat, activity === "replying" ? 10_000 : 25_000);
+
+    return () => {
+      disposed = true;
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+      window.clearInterval(intervalId);
+    };
+  }, [activeReplyDraft, selectedConversationId, sendPresenceHeartbeat]);
 
   const handleWorkflowUpdate = useCallback(
     async (conversationId: string, input: MetaInboxWorkflowPatchInput) => {
@@ -437,7 +622,7 @@ export function SocialInboxClient({
           },
         );
         const payload = (await response.json()) as
-          | { conversation: SocialInboxConversation; events: unknown[] }
+          | { conversation: SocialInboxConversation; events: SocialInboxConversationEvent[] }
           | { error: string };
         if (!response.ok || isWorkflowErrorPayload(payload)) {
           throw new Error(isWorkflowErrorPayload(payload) ? payload.error : "Could not update workflow.");
@@ -447,6 +632,10 @@ export function SocialInboxClient({
           ...current,
           inboxConversations: current.inboxConversations.map((conversation) =>
             conversation.id === payload.conversation.id ? payload.conversation : conversation,
+          ),
+          conversationEvents: mergeConversationEvents(
+            current.conversationEvents,
+            payload.events,
           ),
         }));
         setWorkflowMutationState({
@@ -488,7 +677,7 @@ export function SocialInboxClient({
           },
         );
         const payload = (await response.json()) as
-          | { contactMethod: SocialInboxCustomerContactMethod; events: unknown[] }
+          | { contactMethod: SocialInboxCustomerContactMethod; events: SocialInboxConversationEvent[] }
           | { error: string };
         if (!response.ok || isContactMethodErrorPayload(payload)) {
           throw new Error(
@@ -507,6 +696,10 @@ export function SocialInboxClient({
             customerContactMethods: payload.contactMethod.deleted_at
               ? withoutExisting
               : [...withoutExisting, payload.contactMethod],
+            conversationEvents: mergeConversationEvents(
+              current.conversationEvents,
+              payload.events,
+            ),
           };
         });
         setContactMethodMutationState({
@@ -548,7 +741,7 @@ export function SocialInboxClient({
           },
         );
         const payload = (await response.json()) as
-          | { sendAttempt: SocialInboxSendAttempt; events: unknown[] }
+          | { sendAttempt: SocialInboxSendAttempt; events: SocialInboxConversationEvent[] }
           | { error: string };
         if (!response.ok || isSendAttemptErrorPayload(payload)) {
           throw new Error(
@@ -558,7 +751,9 @@ export function SocialInboxClient({
           );
         }
 
-        setInboxData((current) => upsertSendAttempt(current, payload.sendAttempt));
+        setInboxData((current) =>
+          upsertConversationEvents(upsertSendAttempt(current, payload.sendAttempt), payload.events),
+        );
         setReplyAttemptMutationState({
           conversationId,
           sendAttemptId: payload.sendAttempt.id,
@@ -600,7 +795,7 @@ export function SocialInboxClient({
           },
         );
         const payload = (await response.json()) as
-          | { sendAttempt: SocialInboxSendAttempt; events: unknown[] }
+          | { sendAttempt: SocialInboxSendAttempt; events: SocialInboxConversationEvent[] }
           | { error: string };
         if (!response.ok || isSendAttemptErrorPayload(payload)) {
           throw new Error(
@@ -608,7 +803,9 @@ export function SocialInboxClient({
           );
         }
 
-        setInboxData((current) => upsertSendAttempt(current, payload.sendAttempt));
+        setInboxData((current) =>
+          upsertConversationEvents(upsertSendAttempt(current, payload.sendAttempt), payload.events),
+        );
         setReplyAttemptMutationState({
           conversationId,
           sendAttemptId: payload.sendAttempt.id,
@@ -648,7 +845,7 @@ export function SocialInboxClient({
           },
         );
         const payload = (await response.json()) as
-          | { sendAttempt: SocialInboxSendAttempt; events: unknown[] }
+          | { sendAttempt: SocialInboxSendAttempt; events: SocialInboxConversationEvent[] }
           | { error: string };
         if (!response.ok || isSendAttemptErrorPayload(payload)) {
           throw new Error(
@@ -658,7 +855,9 @@ export function SocialInboxClient({
           );
         }
 
-        setInboxData((current) => upsertSendAttempt(current, payload.sendAttempt));
+        setInboxData((current) =>
+          upsertConversationEvents(upsertSendAttempt(current, payload.sendAttempt), payload.events),
+        );
         setReplyAttemptMutationState({
           conversationId,
           sendAttemptId: payload.sendAttempt.id,
@@ -671,6 +870,302 @@ export function SocialInboxClient({
         setReplyAttemptMutationState({
           conversationId,
           sendAttemptId: input.sendAttemptId || null,
+          status: "error",
+          message: translateError(error),
+        });
+      }
+    },
+    [],
+  );
+
+  const handleCommentActionCreate = useCallback(
+    async (conversationId: string, input: MetaInboxCommentActionInput) => {
+      setCommentActionMutationState({
+        conversationId,
+        status: "saving",
+        message: "Recording comment action...",
+      });
+
+      try {
+        const response = await fetch(
+          `/api/social-inbox/conversations/${encodeURIComponent(conversationId)}/comment-actions`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(input),
+          },
+        );
+        const payload = (await response.json()) as
+          | { commentAction: SocialInboxCommentAction; events: SocialInboxConversationEvent[] }
+          | { error: string };
+        if (!response.ok || isCommentActionErrorPayload(payload)) {
+          throw new Error(
+            isCommentActionErrorPayload(payload)
+              ? payload.error
+              : "Could not record comment action.",
+          );
+        }
+
+        setInboxData((current) =>
+          upsertConversationEvents(
+            upsertCommentAction(current, payload.commentAction),
+            payload.events,
+          ),
+        );
+        setCommentActionMutationState({
+          conversationId,
+          status: "saved",
+          message: `${payload.events.length} comment audit event${
+            payload.events.length === 1 ? "" : "s"
+          } recorded.`,
+        });
+      } catch (error) {
+        setCommentActionMutationState({
+          conversationId,
+          status: "error",
+          message: translateError(error),
+        });
+      }
+    },
+    [],
+  );
+
+  const handleCommentActionQueue = useCallback(
+    async (conversationId: string, input: MetaInboxQueueCommentActionInput) => {
+      setCommentActionMutationState({
+        conversationId,
+        status: "saving",
+        message: "Queueing comment action...",
+      });
+
+      try {
+        const response = await fetch(
+          `/api/social-inbox/conversations/${encodeURIComponent(conversationId)}/comment-actions/queue`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(input),
+          },
+        );
+        const payload = (await response.json()) as
+          | { commentAction: SocialInboxCommentAction; events: SocialInboxConversationEvent[] }
+          | { error: string };
+        if (!response.ok || isCommentActionErrorPayload(payload)) {
+          throw new Error(
+            isCommentActionErrorPayload(payload)
+              ? payload.error
+              : "Could not queue comment action.",
+          );
+        }
+
+        setInboxData((current) =>
+          upsertConversationEvents(
+            upsertCommentAction(current, payload.commentAction),
+            payload.events,
+          ),
+        );
+        setCommentActionMutationState({
+          conversationId,
+          status: "saved",
+          message: `${payload.events.length} comment queue audit event${
+            payload.events.length === 1 ? "" : "s"
+          } recorded.`,
+        });
+      } catch (error) {
+        setCommentActionMutationState({
+          conversationId,
+          status: "error",
+          message: translateError(error),
+        });
+      }
+    },
+    [],
+  );
+
+  const handleCommentActionRetry = useCallback(
+    async (conversationId: string, input: MetaInboxRetryCommentActionInput) => {
+      setCommentActionMutationState({
+        conversationId,
+        status: "saving",
+        message: "Queueing comment action retry...",
+      });
+
+      try {
+        const response = await fetch(
+          `/api/social-inbox/conversations/${encodeURIComponent(conversationId)}/comment-actions/retry`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(input),
+          },
+        );
+        const payload = (await response.json()) as
+          | { commentAction: SocialInboxCommentAction; events: SocialInboxConversationEvent[] }
+          | { error: string };
+        if (!response.ok || isCommentActionErrorPayload(payload)) {
+          throw new Error(
+            isCommentActionErrorPayload(payload)
+              ? payload.error
+              : "Could not queue comment action retry.",
+          );
+        }
+
+        setInboxData((current) =>
+          upsertConversationEvents(
+            upsertCommentAction(current, payload.commentAction),
+            payload.events,
+          ),
+        );
+        setCommentActionMutationState({
+          conversationId,
+          status: "saved",
+          message: `${payload.events.length} comment retry audit event${
+            payload.events.length === 1 ? "" : "s"
+          } recorded.`,
+        });
+      } catch (error) {
+        setCommentActionMutationState({
+          conversationId,
+          status: "error",
+          message: translateError(error),
+        });
+      }
+    },
+    [],
+  );
+
+  const handleSavedReplyCreate = useCallback(
+    async (input: MetaInboxSavedReplyInput) => {
+      setSavedReplyMutationState({
+        status: "saving",
+        message: "Saving personal draft...",
+      });
+
+      try {
+        const response = await fetch("/api/social-inbox/saved-replies", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        });
+        const payload = (await response.json()) as
+          | { savedReply: SocialInboxSavedReply }
+          | { error: string };
+        if (!response.ok || isSavedReplyErrorPayload(payload)) {
+          throw new Error(
+            isSavedReplyErrorPayload(payload)
+              ? payload.error
+              : "Could not save reply template.",
+          );
+        }
+
+        setInboxData((current) => upsertSavedReply(current, payload.savedReply));
+        setSavedReplyMutationState({
+          status: "saved",
+          message: "Personal draft saved for matching conversations.",
+        });
+      } catch (error) {
+        setSavedReplyMutationState({
+          status: "error",
+          message: translateError(error),
+        });
+      }
+    },
+    [],
+  );
+
+  const handleNoteCreate = useCallback(
+    async (conversationId: string, input: MetaInboxConversationNoteInput) => {
+      setNoteMutationState({
+        conversationId,
+        status: "saving",
+        message: "Saving internal note...",
+      });
+
+      try {
+        const response = await fetch(
+          `/api/social-inbox/conversations/${encodeURIComponent(conversationId)}/notes`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(input),
+          },
+        );
+        const payload = (await response.json()) as
+          | { note: SocialInboxConversationNote; events: SocialInboxConversationEvent[] }
+          | { error: string };
+        if (!response.ok || isNoteErrorPayload(payload)) {
+          throw new Error(
+            isNoteErrorPayload(payload)
+              ? payload.error
+              : "Could not save internal note.",
+          );
+        }
+
+        setInboxData((current) =>
+          upsertConversationEvents(upsertConversationNote(current, payload.note), payload.events),
+        );
+        setNoteMutationState({
+          conversationId,
+          status: "saved",
+          message: `${payload.events.length} note audit event${
+            payload.events.length === 1 ? "" : "s"
+          } recorded.`,
+        });
+      } catch (error) {
+        setNoteMutationState({
+          conversationId,
+          status: "error",
+          message: translateError(error),
+        });
+      }
+    },
+    [],
+  );
+
+  const handleQaScorecardCreate = useCallback(
+    async (conversationId: string, input: MetaInboxQaScorecardInput) => {
+      setQaScorecardMutationState({
+        conversationId,
+        status: "saving",
+        message: "Saving QA scorecard...",
+      });
+
+      try {
+        const response = await fetch(
+          `/api/social-inbox/conversations/${encodeURIComponent(conversationId)}/qa-scorecards`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(input),
+          },
+        );
+        const payload = (await response.json()) as
+          | { qaScorecard: SocialInboxQaScorecard; events: SocialInboxConversationEvent[] }
+          | { error: string };
+        if (!response.ok || isQaScorecardErrorPayload(payload)) {
+          throw new Error(
+            isQaScorecardErrorPayload(payload)
+              ? payload.error
+              : "Could not save QA scorecard.",
+          );
+        }
+
+        setInboxData((current) =>
+          upsertConversationEvents(
+            upsertQaScorecard(current, payload.qaScorecard),
+            payload.events,
+          ),
+        );
+        setQaScorecardMutationState({
+          conversationId,
+          status: "saved",
+          message: `${payload.events.length} QA audit event${
+            payload.events.length === 1 ? "" : "s"
+          } recorded.`,
+        });
+      } catch (error) {
+        setQaScorecardMutationState({
+          conversationId,
           status: "error",
           message: translateError(error),
         });
@@ -801,6 +1296,35 @@ export function SocialInboxClient({
                   ]),
                 ]}
               />
+              <FilterSelect
+                label="Campaign Umbrella"
+                value={campaignUmbrellaFilter}
+                onChange={setCampaignUmbrellaFilter}
+                options={[
+                  ["all", "All Campaign Umbrellas"],
+                  ...attributionFilterOptions.campaignUmbrellas,
+                ]}
+              />
+              <div className="grid grid-cols-2 gap-3">
+                <FilterSelect
+                  label="Ad"
+                  value={adFilter}
+                  onChange={setAdFilter}
+                  options={[
+                    ["all", "All Ads"],
+                    ...attributionFilterOptions.ads,
+                  ]}
+                />
+                <FilterSelect
+                  label="Creative"
+                  value={creativeFilter}
+                  onChange={setCreativeFilter}
+                  options={[
+                    ["all", "All Creatives"],
+                    ...attributionFilterOptions.creatives,
+                  ]}
+                />
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <FilterSelect
                   label="Type"
@@ -831,6 +1355,9 @@ export function SocialInboxClient({
                     setSourceFilter("all");
                     setSourceChannelFilter("all");
                     setQueueCategoryFilter("all");
+                    setCampaignUmbrellaFilter("all");
+                    setAdFilter("all");
+                    setCreativeFilter("all");
                     setItemTypeFilter("all");
                     setStatusFilter("all");
                     setQuery("");
@@ -879,7 +1406,9 @@ export function SocialInboxClient({
                   {selectedItem ? selectedItem.sender : "Select a thread"}
                 </h2>
                 {syncStatus ? (
-                  <p className="mt-2 max-w-3xl text-sm leading-6 text-hp-muted">{syncStatus}</p>
+                  <p className="mt-2 max-w-3xl break-words text-sm leading-6 text-hp-muted">
+                    {syncStatus}
+                  </p>
                 ) : null}
               </div>
               <button
@@ -901,7 +1430,13 @@ export function SocialInboxClient({
                     item={selectedItem}
                     messages={selectedMessages}
                     comments={selectedComments}
+                    presences={selectedPresenceState.presences}
                     historyState={selectedHistoryState}
+                    canSendInboxReply={canSendInboxReply}
+                    commentActionState={selectedCommentActionMutationState}
+                    onCreateCommentAction={handleCommentActionCreate}
+                    onQueueCommentAction={handleCommentActionQueue}
+                    onRetryCommentAction={handleCommentActionRetry}
                     onLoadOlderHistory={
                       selectedConversationId && selectedHistoryNextCursor
                         ? () => loadConversationHistory(selectedConversationId, selectedHistoryNextCursor)
@@ -923,9 +1458,11 @@ export function SocialInboxClient({
                   }}
                   canSendInboxReply={canSendInboxReply}
                   mutationState={selectedReplyAttemptMutationState}
+                  savedReplyMutationState={savedReplyMutationState}
                   onCreateSendAttempt={handleSendAttemptCreate}
                   onQueueSendAttempt={handleSendAttemptQueue}
                   onRetrySendAttempt={handleSendAttemptRetry}
+                  onCreateSavedReply={handleSavedReplyCreate}
                 />
               </div>
             </div>
@@ -938,7 +1475,7 @@ export function SocialInboxClient({
                 onContactMethodMutation={handleContactMethodMutation}
               />
               <WorkflowStatePanel
-                key={selectedConversationId || "empty-workflow"}
+                key={workflowPanelKey(selectedItem)}
                 item={selectedItem}
                 canManageInboxState={canManageInboxState}
                 mutationState={selectedWorkflowMutationState}
@@ -949,8 +1486,27 @@ export function SocialInboxClient({
                   setReplyInstruction(value);
                 }}
               />
+              <AuditTrailPanel item={selectedItem} />
+
+              <NotesCoachingPanel
+                item={selectedItem}
+                canManageInboxState={canManageInboxState}
+                canCreateManagerCoaching={canCreateManagerCoaching}
+                mutationState={selectedNoteMutationState}
+                onCreateNote={handleNoteCreate}
+              />
+
+              <QaScorecardPanel
+                item={selectedItem}
+                canManageInboxState={canManageInboxState}
+                canCreateManagerCoaching={canCreateManagerCoaching}
+                mutationState={selectedQaScorecardMutationState}
+                onCreateScorecard={handleQaScorecardCreate}
+              />
 
               <SyncRunPanel data={inboxData} />
+
+              <ManagerSnapshotPanel dashboard={managerDashboard} />
 
               <div className="mt-5 border border-hp-rule p-4">
                 <div className="mb-3 flex items-center gap-2 text-hp-ink">
@@ -983,131 +1539,7 @@ export function SocialInboxClient({
 }
 
 function buildQueue(data: SocialInboxData): QueueDisplayItem[] {
-  const profileById = new Map(data.customerProfiles.map((profile) => [profile.id, profile]));
-  const contactMethodsByProfileId = new Map<string, SocialInboxCustomerContactMethod[]>();
-  for (const contactMethod of data.customerContactMethods || []) {
-    if (contactMethod.deleted_at) continue;
-    const existing = contactMethodsByProfileId.get(contactMethod.customer_profile_id) || [];
-    existing.push(contactMethod);
-    contactMethodsByProfileId.set(contactMethod.customer_profile_id, existing);
-  }
-  const firstTouchByConversationId = new Map(
-    data.firstTouchSources.map((source) => [source.conversation_id, source]),
-  );
-  const sendAttemptsByConversationId = new Map<string, SocialInboxSendAttempt[]>();
-  for (const sendAttempt of data.sendAttempts || []) {
-    const existing = sendAttemptsByConversationId.get(sendAttempt.conversation_id) || [];
-    existing.push(sendAttempt);
-    sendAttemptsByConversationId.set(sendAttempt.conversation_id, existing);
-  }
-  const conversationByThread = new Map(
-    data.inboxConversations
-      .filter((conversation) => conversation.platform_thread_id)
-      .map((conversation) => [
-        `${conversation.platform}:${conversation.platform_thread_id}`,
-        conversation,
-      ]),
-  );
-  const conversationByComment = new Map(
-    data.inboxConversations
-      .filter((conversation) => conversation.source_id)
-      .map((conversation) => [
-        `${conversation.platform}:${conversation.source_id}`,
-        conversation,
-      ]),
-  );
-
-  const threadItems = data.threads.map((thread) => {
-    const channel: "Instagram" | "Facebook" =
-      thread.platform === "instagram" ? "Instagram" : "Facebook";
-    const conversation = conversationByThread.get(`${thread.platform}:${thread.thread_id}`) || null;
-    const profile = conversation?.customer_profile_id
-      ? profileById.get(conversation.customer_profile_id) || null
-      : null;
-    const firstTouch = conversation ? firstTouchByConversationId.get(conversation.id) || null : null;
-    const sendAttempts = conversation ? sendAttemptsByConversationId.get(conversation.id) || [] : [];
-    return {
-      id: `thread:${thread.platform}:${thread.thread_id}`,
-      sourceId: thread.thread_id,
-      channel,
-      platform: thread.platform,
-      brand: inferSocialBrand(thread.page_id, thread.ig_user_id),
-      type: "message" as const,
-      sender: profile?.display_name || thread.participant_name || `${channel} Conversation`,
-      preview: thread.snippet || `${thread.message_count} synced message(s)`,
-      status: conversation?.needs_reply
-        ? "Needs reply" as const
-        : thread.unread_count > 0
-          ? "Unread" as const
-          : "Synced" as const,
-      time: formatDateLabel(conversation?.last_activity_at || thread.last_message_at || thread.last_synced_at),
-      timestamp: conversation?.last_activity_at || thread.last_message_at || thread.last_synced_at,
-      sourceChannel: conversation?.source_channel || fallbackSourceChannel(thread.platform, "message"),
-      queueCategoryKey: conversation?.queue_category_key || "uncategorized_needs_review",
-      conversationStatus: conversation?.conversation_status || "new_inquiry",
-      sendEligibility: conversation?.send_eligibility || "unknown",
-      replyWindowExpiresAt: conversation?.reply_window_expires_at || null,
-      humanAgentWindowExpiresAt: conversation?.human_agent_window_expires_at || null,
-      routingExplanation: conversation?.routing_explanation || null,
-      routingConfidence: conversation?.routing_confidence ?? null,
-      inboxConversation: conversation,
-      profile,
-      contactMethods: profile ? contactMethodsByProfileId.get(profile.id) || [] : [],
-      firstTouch,
-      sendAttempts,
-    };
-  });
-
-  const commentItems = data.comments.map((comment) => {
-    const channel: "Instagram" | "Facebook" =
-      comment.platform === "instagram" ? "Instagram" : "Facebook";
-    const conversation = conversationByComment.get(`${comment.platform}:${comment.comment_id}`) || null;
-    const profile = conversation?.customer_profile_id
-      ? profileById.get(conversation.customer_profile_id) || null
-      : null;
-    const firstTouch = conversation ? firstTouchByConversationId.get(conversation.id) || null : null;
-    const sendAttempts = conversation ? sendAttemptsByConversationId.get(conversation.id) || [] : [];
-    return {
-      id: `comment:${comment.platform}:${comment.comment_id}`,
-      sourceId: comment.comment_id,
-      channel,
-      platform: comment.platform,
-      brand: inferSocialBrand(comment.page_id, comment.ig_user_id),
-      type: "comment" as const,
-      sender: profile?.display_name || comment.author_name || `${channel} Comment`,
-      preview: comment.body || "Comment text unavailable",
-      status: "Needs reply" as const,
-      time: formatDateLabel(conversation?.last_activity_at || comment.created_time || comment.last_synced_at),
-      timestamp: conversation?.last_activity_at || comment.created_time || comment.last_synced_at,
-      sourceChannel: conversation?.source_channel || fallbackSourceChannel(comment.platform, "comment"),
-      queueCategoryKey: conversation?.queue_category_key || "uncategorized_needs_review",
-      conversationStatus: conversation?.conversation_status || "new_inquiry",
-      sendEligibility: conversation?.send_eligibility || "unknown",
-      replyWindowExpiresAt: conversation?.reply_window_expires_at || null,
-      humanAgentWindowExpiresAt: conversation?.human_agent_window_expires_at || null,
-      routingExplanation: conversation?.routing_explanation || null,
-      routingConfidence: conversation?.routing_confidence ?? null,
-      inboxConversation: conversation,
-      profile,
-      contactMethods: profile ? contactMethodsByProfileId.get(profile.id) || [] : [],
-      firstTouch,
-      sendAttempts,
-    };
-  });
-
-  return [...threadItems, ...commentItems].sort((a, b) =>
-    String(b.timestamp || "").localeCompare(String(a.timestamp || "")),
-  );
-}
-
-function fallbackSourceChannel(
-  platform: "facebook" | "instagram",
-  type: "message" | "comment",
-): MetaInboxSourceChannelKey {
-  if (type === "comment") {
-    return platform === "facebook" ? "facebook_public_comment" : "instagram_public_comment";
-  }
-  return platform === "facebook" ? "facebook_message" : "instagram_message";
+  return buildMetaInboxQueueItems(data);
 }
 
 function visibleQueueCategories(data: SocialInboxData): readonly QueueCategoryOption[] {
@@ -1131,17 +1563,70 @@ function queueCategoryCounts(
   return counts;
 }
 
+function buildAttributionFilterOptions(queue: QueueDisplayItem[]) {
+  return {
+    campaignUmbrellas: uniqueAttributionOptions(
+      queue,
+      (item) => item.firstTouch?.campaign_umbrella_id || null,
+      (item) => item.firstTouch?.campaign_umbrella_id || item.firstTouch?.ref || null,
+    ),
+    ads: uniqueAttributionOptions(
+      queue,
+      (item) => item.firstTouch?.ad_id || null,
+      (item) => attributionOptionLabel("Ad", item.firstTouch?.ad_id || null, item.firstTouch?.ref || null),
+    ),
+    creatives: uniqueAttributionOptions(
+      queue,
+      (item) => item.firstTouch?.creative_id || null,
+      (item) =>
+        attributionOptionLabel("Creative", item.firstTouch?.creative_id || null, item.firstTouch?.ref || null),
+    ),
+  };
+}
+
+function uniqueAttributionOptions(
+  queue: QueueDisplayItem[],
+  valueForItem: (item: QueueDisplayItem) => string | null,
+  labelForItem: (item: QueueDisplayItem) => string | null,
+): [string, string][] {
+  const options = new Map<string, string>();
+  for (const item of queue) {
+    const value = valueForItem(item);
+    if (!value || options.has(value)) continue;
+    options.set(value, labelForItem(item) || value);
+  }
+  return Array.from(options.entries()).sort((a, b) => a[1].localeCompare(b[1]));
+}
+
+function attributionOptionLabel(prefix: string, id: string | null, ref: string | null) {
+  if (!id) return null;
+  const short = id.length <= 18 ? id : `${id.slice(0, 6)}...${id.slice(-4)}`;
+  return ref ? `${ref} · ${short}` : `${prefix} ${short}`;
+}
+
 function SelectedItemDetail({
   item,
   messages,
   comments,
+  presences,
   historyState,
+  canSendInboxReply,
+  commentActionState,
+  onCreateCommentAction,
+  onQueueCommentAction,
+  onRetryCommentAction,
   onLoadOlderHistory,
 }: {
   item: QueueDisplayItem;
   messages: SocialInboxMessage[];
   comments: SocialInboxComment[];
+  presences: SocialInboxPresence[];
   historyState: ConversationHistoryLoadState | null;
+  canSendInboxReply: boolean;
+  commentActionState: CommentActionMutationLoadState;
+  onCreateCommentAction: (conversationId: string, input: MetaInboxCommentActionInput) => void;
+  onQueueCommentAction: (conversationId: string, input: MetaInboxQueueCommentActionInput) => void;
+  onRetryCommentAction: (conversationId: string, input: MetaInboxRetryCommentActionInput) => void;
   onLoadOlderHistory: (() => void) | null;
 }) {
   if (item.type === "comment") {
@@ -1153,6 +1638,7 @@ function SelectedItemDetail({
 
     return (
       <div className="max-h-[560px] min-h-[420px] overflow-y-auto border border-hp-rule p-5">
+        <PresenceCollisionBanner presences={presences} />
         <HistoryStatusStrip
           historyState={historyState}
           onLoadOlderHistory={onLoadOlderHistory}
@@ -1180,6 +1666,15 @@ function SelectedItemDetail({
             Open on Meta
           </a>
         ) : null}
+        <PublicCommentActionPanel
+          item={item}
+          rootComment={rootComment}
+          canSendInboxReply={canSendInboxReply}
+          mutationState={commentActionState}
+          onCreateCommentAction={onCreateCommentAction}
+          onQueueCommentAction={onQueueCommentAction}
+          onRetryCommentAction={onRetryCommentAction}
+        />
         {replyComments.length ? (
           <div className="mt-6 space-y-3 border-t border-hp-rule pt-4">
             <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
@@ -1203,6 +1698,7 @@ function SelectedItemDetail({
 
   return (
     <div className="max-h-[560px] min-h-[420px] overflow-y-auto border border-dashed border-hp-rule p-5">
+      <PresenceCollisionBanner presences={presences} />
       <HistoryStatusStrip
         historyState={historyState}
         onLoadOlderHistory={onLoadOlderHistory}
@@ -1302,11 +1798,259 @@ function MessageAttachmentList({
   );
 }
 
+function PublicCommentActionPanel({
+  item,
+  rootComment,
+  canSendInboxReply,
+  mutationState,
+  onCreateCommentAction,
+  onQueueCommentAction,
+  onRetryCommentAction,
+}: {
+  item: QueueDisplayItem;
+  rootComment: SocialInboxComment | null;
+  canSendInboxReply: boolean;
+  mutationState: CommentActionMutationLoadState;
+  onCreateCommentAction: (conversationId: string, input: MetaInboxCommentActionInput) => void;
+  onQueueCommentAction: (conversationId: string, input: MetaInboxQueueCommentActionInput) => void;
+  onRetryCommentAction: (conversationId: string, input: MetaInboxRetryCommentActionInput) => void;
+}) {
+  const conversationId = item.inboxConversation?.id || null;
+  const [messageDraft, setMessageDraft] = useState("");
+  const [reasonDraft, setReasonDraft] = useState("");
+  const canAct = Boolean(conversationId && rootComment && canSendInboxReply);
+  const isSaving = mutationState.status === "saving";
+  const statusTone =
+    mutationState.status === "error"
+      ? "text-signal-danger"
+      : mutationState.status === "saved"
+        ? "text-signal-positive"
+        : "text-hp-muted";
+  const recentActions = item.commentActions
+    .slice()
+    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))
+    .slice(0, 4);
+
+  function submitAction(actionType: NonNullable<MetaInboxCommentActionInput["actionType"]>) {
+    if (!conversationId) return;
+    const messageText =
+      actionType === "public_reply" || actionType === "private_reply" ? messageDraft : null;
+    const reasonNote = actionType === "hide" || actionType === "delete" ? reasonDraft : null;
+    onCreateCommentAction(conversationId, {
+      actionType,
+      messageText,
+      reasonNote,
+      idempotencyKey: newCommentActionIdempotencyKey(
+        conversationId,
+        actionType,
+        messageText,
+        reasonNote,
+      ),
+    });
+    if (actionType === "public_reply" || actionType === "private_reply") setMessageDraft("");
+    if (actionType === "hide" || actionType === "delete") setReasonDraft("");
+  }
+
+  function submitModerationAction(actionType: "hide" | "delete") {
+    if (!window.confirm(`Confirm ${actionType} for this public comment?`)) return;
+    submitAction(actionType);
+  }
+
+  return (
+    <div className="mt-5 border border-hp-rule bg-hp-inset p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-hp-ink">
+          <MessageCircle size={15} />
+          <span className="text-[10px] uppercase tracking-[0.14em]">
+            Public Comment Actions
+          </span>
+        </div>
+        <span className={`text-[10px] uppercase tracking-[0.14em] ${statusTone}`}>
+          {mutationState.message || (canAct ? "Ready" : "Read-only")}
+        </span>
+      </div>
+
+      <div className="grid gap-3">
+        <textarea
+          value={messageDraft}
+          onChange={(event) => setMessageDraft(event.target.value)}
+          disabled={!canAct || isSaving}
+          rows={3}
+          placeholder="Public or private reply text"
+          className="w-full resize-none border border-hp-rule bg-hp-foundation p-3 text-sm leading-6 text-hp-body outline-none placeholder:text-hp-muted focus:border-hp-ink disabled:opacity-70"
+        />
+        <div className="grid gap-2 sm:grid-cols-3">
+          <CommentActionButton
+            label="Public Reply"
+            icon={<MessageCircle size={13} />}
+            disabled={!canAct || isSaving || !messageDraft.trim()}
+            onClick={() => submitAction("public_reply")}
+          />
+          <CommentActionButton
+            label="Private DM"
+            icon={<Mail size={13} />}
+            disabled={!canAct || isSaving || !messageDraft.trim()}
+            onClick={() => submitAction("private_reply")}
+          />
+          <CommentActionButton
+            label="Like"
+            icon={<Heart size={13} />}
+            disabled={!canAct || isSaving}
+            onClick={() => submitAction("like")}
+          />
+        </div>
+
+        <input
+          value={reasonDraft}
+          onChange={(event) => setReasonDraft(event.target.value)}
+          disabled={!canAct || isSaving}
+          placeholder="Reason note required for hide/delete"
+          className="h-10 w-full border border-hp-rule bg-hp-foundation px-3 text-sm text-hp-ink outline-none placeholder:text-hp-muted focus:border-hp-ink disabled:opacity-70"
+        />
+        <div className="grid gap-2 sm:grid-cols-2">
+          <CommentActionButton
+            label="Hide"
+            icon={<EyeOff size={13} />}
+            disabled={!canAct || isSaving || !reasonDraft.trim()}
+            onClick={() => submitModerationAction("hide")}
+          />
+          <CommentActionButton
+            label="Delete"
+            icon={<Trash2 size={13} />}
+            danger
+            disabled={!canAct || isSaving || !reasonDraft.trim()}
+            onClick={() => submitModerationAction("delete")}
+          />
+        </div>
+      </div>
+
+      {recentActions.length ? (
+        <div className="mt-4 space-y-2 border-t border-hp-rule pt-3">
+          {recentActions.map((action) => (
+            <div
+              key={action.id}
+              className="flex flex-col gap-2 border border-hp-rule bg-hp-foundation p-3 text-xs leading-5 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div className="min-w-0">
+                <p className="break-words text-sm text-hp-ink">
+                  {commentActionLabel(action.action_type)} · {action.status.replaceAll("_", " ")}
+                </p>
+                <p className="text-hp-muted">{formatDateLabel(action.created_at)}</p>
+                {action.meta_error_message ? (
+                  <p className="mt-1 break-words text-signal-danger">{action.meta_error_message}</p>
+                ) : null}
+              </div>
+              {action.status === "approved" ? (
+                <CommentActionButton
+                  label="Queue Action"
+                  icon={<Send size={13} />}
+                  disabled={!conversationId || !canSendInboxReply || isSaving}
+                  onClick={() =>
+                    conversationId &&
+                    onQueueCommentAction(conversationId, { commentActionId: action.id })
+                  }
+                />
+              ) : null}
+              {action.status === "failed_retryable" ? (
+                <CommentActionButton
+                  label="Retry Action"
+                  icon={<RefreshCw size={13} />}
+                  disabled={!conversationId || !canSendInboxReply || isSaving}
+                  onClick={() =>
+                    conversationId &&
+                    onRetryCommentAction(conversationId, { commentActionId: action.id })
+                  }
+                />
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function CommentActionButton({
+  label,
+  icon,
+  danger = false,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  icon: ReactNode;
+  danger?: boolean;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "flex h-9 min-w-0 items-center justify-center gap-2 border px-3 text-xs font-medium transition disabled:opacity-50",
+        danger
+          ? "border-signal-danger text-signal-danger hover:bg-signal-danger hover:text-hp-foundation"
+          : "border-hp-rule text-hp-ink hover:border-hp-ink",
+      ].join(" ")}
+    >
+      {icon}
+      <span className="truncate">{label}</span>
+    </button>
+  );
+}
+
 function attachmentIcon(type: SocialInboxMessage["attachments"][number]["attachmentType"]) {
   if (type === "image" || type === "video") return <Camera size={15} />;
   if (type === "share" || type === "product") return <Link2 size={15} />;
   if (type === "unknown") return <AlertTriangle size={15} />;
   return <Paperclip size={15} />;
+}
+
+function PresenceCollisionBanner({ presences }: { presences: SocialInboxPresence[] }) {
+  if (!presences.length) return null;
+
+  const activeReplyPresence =
+    presences.find((presence) => presence.activity === "replying") ||
+    presences.find((presence) => presence.activity === "typing") ||
+    null;
+  const primary = activeReplyPresence || presences[0];
+  const isReplyConflict = primary.activity === "replying" || primary.activity === "typing";
+  const name = primary.display_name || "Another teammate";
+  const action =
+    primary.activity === "replying"
+      ? "is replying now"
+      : primary.activity === "typing"
+        ? "is typing"
+        : "is viewing this conversation";
+
+  return (
+    <div
+      className={[
+        "mb-4 border p-3 text-sm leading-6",
+        isReplyConflict
+          ? "border-signal-warning bg-hp-inset text-hp-ink"
+          : "border-hp-rule bg-hp-inset text-hp-muted",
+      ].join(" ")}
+    >
+      <div className="flex min-w-0 items-start gap-3">
+        <UserRound
+          size={16}
+          className={isReplyConflict ? "mt-1 shrink-0 text-signal-warning" : "mt-1 shrink-0 text-hp-muted"}
+        />
+        <div className="min-w-0">
+          <p className="font-medium text-hp-ink">
+            {name} {action}.
+          </p>
+          <p className="text-xs leading-5 text-hp-muted">
+            Advisory collision warning only. Assignment and manager override still control ownership.
+            {presences.length > 1 ? ` ${presences.length} teammates active.` : ""}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function formatBytes(value: number) {
@@ -1376,19 +2120,24 @@ function ReplyAttemptPanel({
   onDraftChange,
   canSendInboxReply,
   mutationState,
+  savedReplyMutationState,
   onCreateSendAttempt,
   onQueueSendAttempt,
   onRetrySendAttempt,
+  onCreateSavedReply,
 }: {
   item: QueueDisplayItem | null;
   draft: string;
   onDraftChange: (value: string) => void;
   canSendInboxReply: boolean;
   mutationState: ReplyAttemptMutationLoadState;
+  savedReplyMutationState: SavedReplyMutationLoadState;
   onCreateSendAttempt: (conversationId: string, input: MetaInboxSendAttemptInput) => void;
   onQueueSendAttempt: (conversationId: string, input: MetaInboxQueueSendAttemptInput) => void;
   onRetrySendAttempt: (conversationId: string, input: MetaInboxRetrySendAttemptInput) => void;
+  onCreateSavedReply: (input: MetaInboxSavedReplyInput) => void;
 }) {
+  const [savedReplyTitle, setSavedReplyTitle] = useState("");
   const conversationId = item?.inboxConversation?.id || null;
   const windowState = item ? replyWindowState(item) : null;
   const failedAttempts = (item?.sendAttempts || [])
@@ -1422,8 +2171,22 @@ function ReplyAttemptPanel({
     if (!conversationId) return;
     onCreateSendAttempt(conversationId, {
       replyText: draft,
-      idempotencyKey: newSendAttemptIdempotencyKey(conversationId),
+      idempotencyKey: newSendAttemptIdempotencyKey(conversationId, draft),
     });
+  }
+
+  function savePersonalDraft() {
+    if (!item || !draft.trim()) return;
+    onCreateSavedReply({
+      title: savedReplyTitle.trim() || defaultSavedReplyTitle(draft),
+      body: draft,
+      visibility: "personal",
+      queueCategoryKey: item.queueCategoryKey,
+      sourceChannel: item.sourceChannel,
+      language: "en",
+      leadQuality: item.inboxConversation?.lead_quality as MetaInboxSavedReplyInput["leadQuality"],
+    });
+    setSavedReplyTitle("");
   }
 
   return (
@@ -1439,6 +2202,94 @@ function ReplyAttemptPanel({
           </p>
         </div>
         <p className={`mt-3 border-t border-hp-rule pt-3 ${statusTone}`}>{statusMessage}</p>
+      </div>
+
+      <div className="border border-hp-rule bg-hp-card p-3">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-hp-ink">
+            <Tags size={15} />
+            <span className="text-[10px] uppercase tracking-[0.14em]">Saved Replies</span>
+          </div>
+          <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+            {item?.savedReplies.length || 0} match
+          </span>
+        </div>
+        {item?.savedReplies.length ? (
+          <div className="grid gap-2">
+            {item.savedReplies.slice(0, 4).map((savedReply) => (
+              <div
+                key={savedReply.id}
+                className="flex flex-col gap-2 border border-hp-rule bg-hp-inset p-3 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-hp-ink">{savedReply.title}</p>
+                  <p className="mt-1 line-clamp-2 text-xs leading-5 text-hp-muted">
+                    {savedReply.body}
+                  </p>
+                  <p className="mt-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                    {savedReply.visibility === "personal" ? "Personal Draft" : "Approved Shared"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onDraftChange(savedReply.body)}
+                  disabled={!canSendInboxReply}
+                  className="flex h-9 shrink-0 items-center justify-center gap-2 border border-hp-rule px-3 text-xs font-medium text-hp-ink transition hover:border-hp-ink disabled:opacity-50"
+                >
+                  <Pencil size={13} />
+                  Use
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm leading-6 text-hp-muted">
+            No saved replies match this queue, source channel, lead quality, and language yet.
+          </p>
+        )}
+        <div className="mt-3 grid gap-2 border-t border-hp-rule pt-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+          <input
+            value={savedReplyTitle}
+            onChange={(event) => setSavedReplyTitle(event.target.value)}
+            disabled={!item || !canSendInboxReply}
+            placeholder="Draft name"
+            className="h-10 min-w-0 border border-hp-rule bg-hp-inset px-3 text-sm outline-none placeholder:text-hp-muted focus:border-hp-ink disabled:opacity-70"
+          />
+          <button
+            type="button"
+            onClick={savePersonalDraft}
+            disabled={
+              !item ||
+              !canSendInboxReply ||
+              !draft.trim() ||
+              savedReplyMutationState.status === "saving"
+            }
+            className="flex min-h-10 shrink-0 items-center justify-center gap-2 border border-hp-ink px-3 text-xs font-medium text-hp-ink transition hover:bg-hp-ink hover:text-hp-foundation disabled:opacity-50"
+          >
+            {savedReplyMutationState.status === "saving" ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : (
+              <Plus size={13} />
+            )}
+            Save Personal Draft
+          </button>
+        </div>
+        <p className="mt-2 text-xs leading-5 text-hp-muted">
+          Shared templates require sales lead/admin approval before sales can use them.
+        </p>
+        {savedReplyMutationState.message ? (
+          <p
+            className={`mt-2 text-xs leading-5 ${
+              savedReplyMutationState.status === "error"
+                ? "text-signal-danger"
+                : savedReplyMutationState.status === "saved"
+                  ? "text-signal-positive"
+                  : "text-hp-muted"
+            }`}
+          >
+            {savedReplyMutationState.message}
+          </p>
+        ) : null}
       </div>
 
       <textarea
@@ -1910,6 +2761,23 @@ function ContactMethodsPanel({
   );
 }
 
+function workflowPanelKey(item: QueueDisplayItem | null) {
+  const conversation = item?.inboxConversation;
+  if (!conversation) return "empty-workflow";
+
+  return [
+    "workflow",
+    conversation.id,
+    item?.queueCategoryKey || "",
+    item?.conversationStatus || "",
+    conversation.lead_quality || "",
+    conversation.lead_quality_reason_tags.join(","),
+    conversation.inbox_outcome || "",
+    conversation.inbox_lost_reason || "",
+    conversation.follow_up_at || "",
+  ].join(":");
+}
+
 function WorkflowStatePanel({
   item,
   canManageInboxState,
@@ -1932,12 +2800,14 @@ function WorkflowStatePanel({
   const [statusDraft, setStatusDraft] = useState<SocialInboxConversation["conversation_status"]>(
     item?.conversationStatus || "new_inquiry",
   );
-  const [leadQualityDraft, setLeadQualityDraft] = useState("");
-  const [reasonTagDrafts, setReasonTagDrafts] = useState<string[]>([]);
-  const [outcomeDraft, setOutcomeDraft] = useState<SocialInboxConversation["inbox_outcome"]>(
-    "no_outcome_yet",
+  const [leadQualityDraft, setLeadQualityDraft] = useState(conversation?.lead_quality || "");
+  const [reasonTagDrafts, setReasonTagDrafts] = useState<string[]>(
+    conversation?.lead_quality_reason_tags || [],
   );
-  const [lostReasonDraft, setLostReasonDraft] = useState("");
+  const [outcomeDraft, setOutcomeDraft] = useState<SocialInboxConversation["inbox_outcome"]>(
+    conversation?.inbox_outcome || "no_outcome_yet",
+  );
+  const [lostReasonDraft, setLostReasonDraft] = useState(conversation?.inbox_lost_reason || "");
   const [followUpDraft, setFollowUpDraft] = useState(formatDateTimeLocal(conversation?.follow_up_at));
   const [changeReasonDraft, setChangeReasonDraft] = useState("");
 
@@ -2196,6 +3066,557 @@ function WorkflowStatePanel({
   );
 }
 
+function AuditTrailPanel({ item }: { item: QueueDisplayItem | null }) {
+  const events = (item?.conversationEvents || [])
+    .slice()
+    .sort((a, b) => String(b.event_at || "").localeCompare(String(a.event_at || "")))
+    .slice(0, 6);
+
+  return (
+    <div className="mt-5 border border-hp-rule bg-hp-card p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-hp-ink">
+          <ShieldCheck size={17} />
+          <span className="text-[11px] uppercase tracking-[0.14em]">Audit Trail</span>
+        </div>
+        <span className="shrink-0 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+          {events.length ? `${events.length} recent` : "None"}
+        </span>
+      </div>
+
+      {events.length ? (
+        <div className="space-y-2">
+          {events.map((event) => (
+            <div key={event.id} className="border border-hp-rule bg-hp-inset p-3">
+              <div className="flex min-w-0 items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-hp-ink">{auditEventLabel(event)}</p>
+                  <p className="mt-1 break-words text-xs leading-5 text-hp-muted">
+                    {auditEventSummary(event)}
+                  </p>
+                </div>
+                <span className="shrink-0 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                  {formatDateLabel(event.event_at)}
+                </span>
+              </div>
+              <p className="mt-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                {event.actor_user_id ? `Actor ${shortIdentifier(event.actor_user_id)}` : "System"}
+              </p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm leading-6 text-hp-muted">
+          No audit events recorded for this conversation yet.
+        </p>
+      )}
+      <p className="mt-3 border-t border-hp-rule pt-3 text-xs leading-5 text-hp-muted">
+        Sales can see accessible conversation audit history. Raw Meta payload stays hidden from UI.
+      </p>
+    </div>
+  );
+}
+
+function NotesCoachingPanel({
+  item,
+  canManageInboxState,
+  canCreateManagerCoaching,
+  mutationState,
+  onCreateNote,
+}: {
+  item: QueueDisplayItem | null;
+  canManageInboxState: boolean;
+  canCreateManagerCoaching: boolean;
+  mutationState: NoteMutationLoadState;
+  onCreateNote: (conversationId: string, input: MetaInboxConversationNoteInput) => Promise<void>;
+}) {
+  const [body, setBody] = useState("");
+  const [noteType, setNoteType] =
+    useState<SocialInboxConversationNote["note_type"]>("internal_note");
+  const conversationId = item?.inboxConversation?.id || null;
+  const notes = (item?.notes || [])
+    .slice()
+    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))
+    .slice(0, 5);
+  const canSubmit = Boolean(conversationId && canManageInboxState && body.trim());
+
+  async function submitNote() {
+    if (!conversationId || !canSubmit) return;
+    await onCreateNote(conversationId, {
+      noteType,
+      body,
+      mentionUserIds: [],
+    });
+    setBody("");
+    setNoteType("internal_note");
+  }
+
+  return (
+    <div className="mt-5 border border-hp-rule bg-hp-card p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-hp-ink">
+          <Pencil size={17} />
+          <span className="text-[11px] uppercase tracking-[0.14em]">Notes & Coaching</span>
+        </div>
+        <span className="shrink-0 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+          {notes.length ? `${notes.length} recent` : "None"}
+        </span>
+      </div>
+
+      {notes.length ? (
+        <div className="space-y-2">
+          {notes.map((note) => (
+            <div key={note.id} className="border border-hp-rule bg-hp-inset p-3">
+              <div className="flex min-w-0 items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-hp-ink">
+                    {noteTypeLabel(note.note_type)}
+                  </p>
+                  <p className="mt-1 break-words text-xs leading-5 text-hp-muted">
+                    {note.body}
+                  </p>
+                </div>
+                <span className="shrink-0 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                  {formatDateLabel(note.created_at)}
+                </span>
+              </div>
+              <p className="mt-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                {note.created_by ? `By ${shortIdentifier(note.created_by)}` : "By system"}
+                {note.mention_user_ids.length
+                  ? ` · ${note.mention_user_ids.length} mention${
+                    note.mention_user_ids.length === 1 ? "" : "s"
+                  }`
+                  : ""}
+              </p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm leading-6 text-hp-muted">
+          No notes or coaching comments recorded for this conversation yet.
+        </p>
+      )}
+
+      <div className="mt-4 border-t border-hp-rule pt-4">
+        {canManageInboxState ? (
+          <div className="space-y-3">
+            <label className="block text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+              Note type
+              <select
+                value={noteType}
+                onChange={(event) =>
+                  setNoteType(event.target.value as SocialInboxConversationNote["note_type"])
+                }
+                className="mt-1 w-full border border-hp-rule bg-white px-3 py-2 text-sm normal-case tracking-normal text-hp-ink"
+              >
+                <option value="internal_note">Internal Note</option>
+                {canCreateManagerCoaching ? (
+                  <option value="manager_coaching">Manager Coaching</option>
+                ) : null}
+              </select>
+            </label>
+            <label className="block text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+              Add note
+              <textarea
+                value={body}
+                onChange={(event) => setBody(event.target.value)}
+                rows={3}
+                maxLength={4000}
+                placeholder="Add internal context, @mention follow-up, or coaching..."
+                className="mt-1 w-full resize-none border border-hp-rule bg-white px-3 py-2 text-sm normal-case leading-5 tracking-normal text-hp-ink placeholder:text-hp-muted/70"
+              />
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void submitNote()}
+                disabled={!canSubmit || mutationState.status === "saving"}
+                className="inline-flex min-h-9 items-center gap-2 border border-hp-ink bg-hp-ink px-3 py-2 text-xs uppercase tracking-[0.12em] text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {mutationState.status === "saving" ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <Plus size={13} />
+                )}
+                <span className="whitespace-nowrap">Add Note</span>
+              </button>
+              {mutationState.message ? (
+                <span
+                  className={`min-w-0 break-words text-xs leading-5 ${
+                    mutationState.status === "error" ? "text-red-600" : "text-hp-muted"
+                  }`}
+                >
+                  {mutationState.message}
+                </span>
+              ) : null}
+            </div>
+            <p className="text-xs leading-5 text-hp-muted">
+              Internal notes and coaching comments are never sent to the customer. Use @name
+              for manager follow-up; mention alerts can be added later.
+            </p>
+          </div>
+        ) : (
+          <p className="text-xs leading-5 text-hp-muted">
+            Notes are read-only for this role. Internal notes and coaching comments are never
+            sent to the customer.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function QaScorecardPanel({
+  item,
+  canManageInboxState,
+  canCreateManagerCoaching,
+  mutationState,
+  onCreateScorecard,
+}: {
+  item: QueueDisplayItem | null;
+  canManageInboxState: boolean;
+  canCreateManagerCoaching: boolean;
+  mutationState: QaScorecardMutationLoadState;
+  onCreateScorecard: (conversationId: string, input: MetaInboxQaScorecardInput) => Promise<void>;
+}) {
+  const [sendAttemptId, setSendAttemptId] = useState("");
+  const [scores, setScores] = useState<Record<QaScoreKey, number>>({
+    toneScore: 4,
+    completenessScore: 4,
+    accuracyScore: 4,
+    nextStepScore: 4,
+    speedScore: 4,
+    policyComplianceScore: 4,
+  });
+  const [coachingNote, setCoachingNote] = useState("");
+  const conversationId = item?.inboxConversation?.id || null;
+  const scorecards = (item?.qaScorecards || [])
+    .slice()
+    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))
+    .slice(0, 4);
+  const canCreate = Boolean(conversationId && canManageInboxState && canCreateManagerCoaching);
+
+  async function submitScorecard() {
+    if (!conversationId || !canCreate) return;
+    await onCreateScorecard(conversationId, {
+      sendAttemptId: sendAttemptId || null,
+      ...scores,
+      coachingNote,
+    });
+    setSendAttemptId("");
+    setCoachingNote("");
+  }
+
+  return (
+    <div className="mt-5 border border-hp-rule bg-hp-card p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-hp-ink">
+          <ShieldCheck size={17} />
+          <span className="text-[11px] uppercase tracking-[0.14em]">QA Scorecards</span>
+        </div>
+        <span className="shrink-0 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+          {scorecards.length ? `${scorecards.length} recent` : "None"}
+        </span>
+      </div>
+
+      {scorecards.length ? (
+        <div className="space-y-2">
+          {scorecards.map((scorecard) => (
+            <div key={scorecard.id} className="border border-hp-rule bg-hp-inset p-3">
+              <div className="flex min-w-0 items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-hp-ink">
+                    Overall {scorecard.overall_score.toFixed(1)} / 5
+                  </p>
+                  <p className="mt-1 break-words text-xs leading-5 text-hp-muted">
+                    {scorecard.coaching_note || "No coaching note."}
+                  </p>
+                </div>
+                <span className="shrink-0 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                  {formatDateLabel(scorecard.created_at)}
+                </span>
+              </div>
+              <p className="mt-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                By {shortIdentifier(scorecard.reviewed_by)}
+                {scorecard.reviewed_user_id
+                  ? ` · For ${shortIdentifier(scorecard.reviewed_user_id)}`
+                  : ""}
+              </p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm leading-6 text-hp-muted">
+          No QA scorecards recorded for this conversation yet.
+        </p>
+      )}
+
+      <div className="mt-4 border-t border-hp-rule pt-4">
+        {canCreate ? (
+          <div className="space-y-3">
+            <label className="block text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+              Review target
+              <select
+                value={sendAttemptId}
+                onChange={(event) => setSendAttemptId(event.target.value)}
+                className="mt-1 w-full border border-hp-rule bg-white px-3 py-2 text-sm normal-case tracking-normal text-hp-ink"
+              >
+                <option value="">Conversation overall</option>
+                {(item?.sendAttempts || []).map((attempt) => (
+                  <option key={attempt.id} value={attempt.id}>
+                    {formatDateLabel(attempt.created_at)} · {attempt.status}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              {QA_SCORE_FIELDS.map((field) => (
+                <label
+                  key={field.key}
+                  className="block text-[10px] uppercase tracking-[0.14em] text-hp-muted"
+                >
+                  {field.label}
+                  <select
+                    value={scores[field.key]}
+                    onChange={(event) =>
+                      setScores((current) => ({
+                        ...current,
+                        [field.key]: Number(event.target.value),
+                      }))
+                    }
+                    className="mt-1 w-full border border-hp-rule bg-white px-2 py-2 text-sm normal-case tracking-normal text-hp-ink"
+                  >
+                    {[5, 4, 3, 2, 1].map((score) => (
+                      <option key={score} value={score}>
+                        {score}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            </div>
+            <label className="block text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+              Coaching note
+              <textarea
+                value={coachingNote}
+                onChange={(event) => setCoachingNote(event.target.value)}
+                rows={3}
+                maxLength={4000}
+                placeholder="Optional coaching note for the sales reply..."
+                className="mt-1 w-full resize-none border border-hp-rule bg-white px-3 py-2 text-sm normal-case leading-5 tracking-normal text-hp-ink placeholder:text-hp-muted/70"
+              />
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void submitScorecard()}
+                disabled={mutationState.status === "saving"}
+                className="inline-flex min-h-9 items-center gap-2 border border-hp-ink bg-hp-ink px-3 py-2 text-xs uppercase tracking-[0.12em] text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {mutationState.status === "saving" ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <Plus size={13} />
+                )}
+                <span className="whitespace-nowrap">Add Scorecard</span>
+              </button>
+              {mutationState.message ? (
+                <span
+                  className={`min-w-0 break-words text-xs leading-5 ${
+                    mutationState.status === "error" ? "text-red-600" : "text-hp-muted"
+                  }`}
+                >
+                  {mutationState.message}
+                </span>
+              ) : null}
+            </div>
+            <p className="text-xs leading-5 text-hp-muted">
+              QA scorecards are manager coaching only and never customer-visible.
+            </p>
+          </div>
+        ) : (
+          <p className="text-xs leading-5 text-hp-muted">
+            QA scorecards are manager coaching only. Sales can view accessible QA context,
+            but only sales lead/admin can create scorecards.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function auditEventLabel(event: SocialInboxConversationEvent) {
+  const labels: Record<string, string> = {
+    conversation_created: "Conversation Created",
+    assignment_changed: "Assignment Changed",
+    status_changed: "Status Changed",
+    lead_quality_changed: "Lead Quality Changed",
+    inbox_outcome_changed: "Inbox Outcome Changed",
+    routing_changed: "Routing Changed",
+    follow_up_changed: "Follow-Up Changed",
+    contact_method_changed: "Contact Method Changed",
+    comment_action: "Comment Action",
+    send_attempt: "Send Attempt",
+    note_added: "Internal Note",
+    qa_scorecard_added: "QA Scorecard",
+  };
+  return labels[event.event_type] || titleCase(event.event_type);
+}
+
+function auditEventSummary(event: SocialInboxConversationEvent) {
+  const next = event.new_value || {};
+  const metadata = event.metadata || {};
+  const reason = auditString(metadata.changeReason) || auditString(metadata.reasonNote);
+
+  if (event.event_type === "routing_changed") {
+    return joinAuditParts([
+      `Queue ${auditQueueLabel(next.queueCategoryKey)}`,
+      reason,
+    ]);
+  }
+  if (event.event_type === "status_changed") {
+    return joinAuditParts([
+      `Status ${auditStatusLabel(next.conversationStatus)}`,
+      reason,
+    ]);
+  }
+  if (event.event_type === "assignment_changed") {
+    return joinAuditParts([
+      auditString(next.assignedUserId)
+        ? `Assigned to ${shortIdentifier(auditString(next.assignedUserId)!)}`
+        : "Returned to team queue",
+      reason,
+    ]);
+  }
+  if (event.event_type === "lead_quality_changed") {
+    return joinAuditParts([
+      `Quality ${auditValue(next.leadQuality)}`,
+      auditArray(next.reasonTags || next.leadQualityReasonTags),
+      reason,
+    ]);
+  }
+  if (event.event_type === "inbox_outcome_changed") {
+    return joinAuditParts([
+      `Outcome ${auditOutcomeLabel(next.inboxOutcome)}`,
+      auditValue(next.inboxLostReason),
+      reason,
+    ]);
+  }
+  if (event.event_type === "follow_up_changed") {
+    return joinAuditParts([`Follow-up ${auditValue(next.followUpAt)}`, reason]);
+  }
+  if (event.event_type === "contact_method_changed") {
+    return joinAuditParts([
+      titleCase(auditString(next.action) || "contact updated"),
+      auditValue(next.type || next.contactMethodType),
+      reason,
+    ]);
+  }
+  if (event.event_type === "send_attempt") {
+    return joinAuditParts([
+      titleCase(auditString(next.status) || "send attempt recorded"),
+      auditValue(next.messagingType || next.messaging_type),
+      reason,
+    ]);
+  }
+  if (event.event_type === "note_added") {
+    const mentionCount = auditNumber(next.mentionCount) || 0;
+    const noteId = auditString(next.noteId);
+    return joinAuditParts([
+      noteTypeLabel(
+        auditString(next.noteType) === "manager_coaching" ? "manager_coaching" : "internal_note",
+      ),
+      noteId ? `Note ${shortIdentifier(noteId)}` : null,
+      mentionCount ? `${mentionCount} mention${mentionCount === 1 ? "" : "s"}` : null,
+      reason,
+    ]);
+  }
+  if (event.event_type === "qa_scorecard_added") {
+    return joinAuditParts([
+      `QA ${auditValue(next.overallScore) || "Recorded"}`,
+      auditString(next.qaScorecardId)
+        ? `Scorecard ${shortIdentifier(auditString(next.qaScorecardId)!)}`
+        : null,
+      auditString(next.reviewedUserId)
+        ? `For ${shortIdentifier(auditString(next.reviewedUserId)!)}`
+        : null,
+      reason,
+    ]);
+  }
+  if (event.event_type === "comment_action") {
+    return joinAuditParts([
+      titleCase(auditString(next.actionType) || "comment action"),
+      titleCase(auditString(next.status) || ""),
+      reason,
+    ]);
+  }
+  return joinAuditParts([
+    auditValue(next.conversationStatus || next.queueCategoryKey || next.status),
+    reason,
+  ]);
+}
+
+function noteTypeLabel(value: SocialInboxConversationNote["note_type"]) {
+  return value === "manager_coaching" ? "Manager Coaching" : "Internal Note";
+}
+
+function auditQueueLabel(value: unknown) {
+  return metaInboxVocabularyLabel(
+    META_INBOX_QUEUE_CATEGORIES,
+    auditString(value) as MetaInboxQueueCategoryKey,
+    auditValue(value) || "Unknown",
+  );
+}
+
+function auditStatusLabel(value: unknown) {
+  return metaInboxVocabularyLabel(
+    META_INBOX_CONVERSATION_STATUSES,
+    auditString(value) as SocialInboxConversation["conversation_status"],
+    auditValue(value) || "Unknown",
+  );
+}
+
+function auditOutcomeLabel(value: unknown) {
+  return metaInboxVocabularyLabel(META_INBOX_OUTCOMES, auditString(value), auditValue(value) || "Unknown");
+}
+
+function joinAuditParts(parts: Array<string | null | undefined>) {
+  return parts.filter((part): part is string => Boolean(part && part.trim())).join(" · ") || "Updated";
+}
+
+function auditString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function auditArray(value: unknown) {
+  return Array.isArray(value) && value.length ? value.map(auditValue).join(", ") : null;
+}
+
+function auditValue(value: unknown) {
+  if (typeof value === "string" && value.trim()) return titleCase(value);
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return null;
+}
+
+function auditNumber(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) {
+    return Number(value);
+  }
+  return null;
+}
+
+function titleCase(value: string | null) {
+  if (!value) return "";
+  return value
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function shortIdentifier(value: string) {
+  return value.length <= 12 ? value : `${value.slice(0, 8)}...`;
+}
+
 function InfoLine({
   label,
   value,
@@ -2327,12 +3748,119 @@ function upsertSendAttempt(data: SocialInboxData, sendAttempt: SocialInboxSendAt
   };
 }
 
-function newSendAttemptIdempotencyKey(conversationId: string) {
-  const suffix =
-    typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  return `${conversationId}:${suffix}`;
+function upsertCommentAction(
+  data: SocialInboxData,
+  commentAction: SocialInboxCommentAction,
+): SocialInboxData {
+  const withoutExisting = (data.commentActions || []).filter((action) => action.id !== commentAction.id);
+  return {
+    ...data,
+    commentActions: [commentAction, ...withoutExisting],
+  };
+}
+
+function upsertSavedReply(
+  data: SocialInboxData,
+  savedReply: SocialInboxSavedReply,
+): SocialInboxData {
+  const withoutExisting = (data.savedReplies || []).filter((reply) => reply.id !== savedReply.id);
+  return {
+    ...data,
+    savedReplies: [savedReply, ...withoutExisting],
+  };
+}
+
+function upsertConversationNote(
+  data: SocialInboxData,
+  note: SocialInboxConversationNote,
+): SocialInboxData {
+  const withoutExisting = (data.notes || []).filter((existing) => existing.id !== note.id);
+  return {
+    ...data,
+    notes: [note, ...withoutExisting],
+  };
+}
+
+function upsertQaScorecard(
+  data: SocialInboxData,
+  qaScorecard: SocialInboxQaScorecard,
+): SocialInboxData {
+  const withoutExisting = (data.qaScorecards || []).filter(
+    (existing) => existing.id !== qaScorecard.id,
+  );
+  return {
+    ...data,
+    qaScorecards: [qaScorecard, ...withoutExisting],
+  };
+}
+
+function upsertConversationEvents(
+  data: SocialInboxData,
+  events: SocialInboxConversationEvent[],
+): SocialInboxData {
+  if (!events.length) return data;
+  return {
+    ...data,
+    conversationEvents: mergeConversationEvents(data.conversationEvents || [], events),
+  };
+}
+
+function mergeConversationEvents(
+  current: SocialInboxConversationEvent[],
+  events: SocialInboxConversationEvent[],
+) {
+  if (!events.length) return current;
+  const byId = new Map<string, SocialInboxConversationEvent>();
+  for (const event of [...events, ...current]) {
+    byId.set(event.id, event);
+  }
+  return Array.from(byId.values()).sort((a, b) =>
+    String(b.event_at || "").localeCompare(String(a.event_at || "")),
+  );
+}
+
+function newSendAttemptIdempotencyKey(conversationId: string, draft: string) {
+  return stableIdempotencyKey("send", conversationId, [draft]);
+}
+
+function defaultSavedReplyTitle(draft: string) {
+  const normalized = draft.trim().replace(/\s+/g, " ");
+  return normalized.length > 48 ? `${normalized.slice(0, 45)}...` : normalized;
+}
+
+function newCommentActionIdempotencyKey(
+  conversationId: string,
+  actionType: NonNullable<MetaInboxCommentActionInput["actionType"]>,
+  messageText: string | null,
+  reasonNote: string | null,
+) {
+  return stableIdempotencyKey("comment", conversationId, [
+    actionType,
+    messageText || "",
+    reasonNote || "",
+  ]);
+}
+
+function stableIdempotencyKey(scope: string, conversationId: string, parts: string[]) {
+  const payload = parts.map((part) => part.trim().replace(/\s+/g, " ")).join("\u001f");
+  return `${conversationId}:${scope}:${stableStringHash(payload)}`;
+}
+
+function stableStringHash(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${value.length.toString(36)}-${(hash >>> 0).toString(36)}`;
+}
+
+function commentActionLabel(actionType: SocialInboxCommentAction["action_type"]) {
+  if (actionType === "public_reply") return "Public reply";
+  if (actionType === "private_reply") return "Private DM";
+  if (actionType === "like") return "Like";
+  if (actionType === "hide") return "Hide";
+  return "Delete";
 }
 
 function SyncRunPanel({ data }: { data: SocialInboxData }) {
@@ -2362,6 +3890,167 @@ function SyncRunPanel({ data }: { data: SocialInboxData }) {
       )}
     </div>
   );
+}
+
+function ManagerSnapshotPanel({
+  dashboard,
+}: {
+  dashboard: ReturnType<typeof buildMetaInboxManagerDashboard>;
+}) {
+  const metrics = dashboard.metrics;
+  const topQueues = dashboard.byQueue.slice(0, 3);
+  const responseBuckets = dashboard.responseAgeBuckets.filter((bucket) => bucket.count > 0);
+  const workloadRows = dashboard.byAssignee.slice(0, 3);
+  const sourceRows = dashboard.bySourceChannel.slice(0, 3);
+  const attributionRows = dashboard.byCampaignUmbrella.slice(0, 3);
+
+  return (
+    <div className="mt-5 border border-hp-rule p-4">
+      <div className="mb-3 flex items-center justify-between gap-3 text-hp-ink">
+        <div className="flex items-center gap-2">
+          <Clock size={17} />
+          <span className="text-[11px] uppercase tracking-[0.14em]">Manager Snapshot</span>
+        </div>
+        <span className="shrink-0 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+          {dashboard.range.label}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <ManagerMetric label="Needs Reply" value={metrics.needsReply} />
+        <ManagerMetric label="Missed Follow-Up" value={metrics.missedFollowUps} />
+        <ManagerMetric label="Failed Sends" value={metrics.failedSends} />
+        <ManagerMetric label="Retry Backlog" value={metrics.retryBacklog} />
+        <ManagerMetric label="Unassigned" value={metrics.unassigned} />
+        <ManagerMetric label="Label Gaps" value={metrics.missingLeadQuality} />
+        <ManagerMetric label="Stale" value={metrics.staleConversations} />
+        <ManagerMetric label="QA Reviews" value={metrics.qaScorecardsReviewed} />
+        <ManagerMetric
+          label="Label Complete"
+          value={formatPercentMetric(metrics.labelCompletenessPercent)}
+        />
+        <ManagerMetric label="Avg QA" value={formatQaMetric(metrics.averageQaScore)} />
+      </div>
+      <div className="mt-3 border-t border-hp-rule pt-3 text-sm leading-6 text-hp-muted">
+        <p>
+          Avg first response:{" "}
+          <span className="text-hp-ink">
+            {formatMinutesMetric(metrics.averageFirstResponseMinutes)}
+          </span>
+        </p>
+        <p>
+          Closeout incomplete:{" "}
+          <span className="text-hp-ink">{metrics.closeoutIncomplete}</span>
+        </p>
+      </div>
+      <ManagerRows
+        title="Response Age"
+        emptyText="No open replies"
+        rows={(responseBuckets.length ? responseBuckets : dashboard.responseAgeBuckets.slice(0, 1)).map(
+          (bucket) => ({
+            key: bucket.key,
+            label: bucket.label,
+            value: String(bucket.count),
+          }),
+        )}
+      />
+      <ManagerRows
+        title="Workload"
+        emptyText="No workload"
+        rows={workloadRows.map((row) => ({
+          key: row.assigneeUserId || "unassigned",
+          label: row.label,
+          value: `${row.needsReply} reply · ${row.failedSends} failed`,
+        }))}
+      />
+      <ManagerRows
+        title="Source Health"
+        emptyText="No sources"
+        rows={sourceRows.map((row) => ({
+          key: row.sourceChannelKey,
+          label: row.label,
+          value: `${row.needsReply} reply · ${row.failedSends} failed`,
+        }))}
+      />
+      <ManagerRows
+        title="Attribution"
+        emptyText="No attribution"
+        rows={attributionRows.map((row) => ({
+          key: row.key,
+          label: row.label,
+          value: `${row.needsReply} reply · ${row.totalConversations} total`,
+        }))}
+      />
+      {topQueues.length ? (
+        <div className="mt-3 space-y-2 border-t border-hp-rule pt-3">
+          {topQueues.map((queue) => (
+            <div
+              key={queue.queueCategoryKey}
+              className="flex min-w-0 items-center justify-between gap-3 text-xs leading-5"
+            >
+              <span className="min-w-0 truncate text-hp-ink">{queue.label}</span>
+              <span className="shrink-0 text-hp-muted">
+                {queue.needsReply} reply · {queue.missedFollowUps} follow-up
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ManagerMetric({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div className="border border-hp-rule bg-hp-inset p-3">
+      <p className="text-[9px] uppercase tracking-[0.14em] text-hp-muted">{label}</p>
+      <p className="mt-1 font-title text-2xl leading-none text-hp-ink">{value}</p>
+    </div>
+  );
+}
+
+function ManagerRows({
+  title,
+  rows,
+  emptyText,
+}: {
+  title: string;
+  rows: { key: string; label: string; value: string }[];
+  emptyText: string;
+}) {
+  return (
+    <div className="mt-3 space-y-2 border-t border-hp-rule pt-3">
+      <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{title}</p>
+      {rows.length ? (
+        rows.map((row) => (
+          <div
+            key={row.key}
+            className="flex min-w-0 items-center justify-between gap-3 text-xs leading-5"
+          >
+            <span className="min-w-0 truncate text-hp-ink">{row.label}</span>
+            <span className="shrink-0 text-hp-muted">{row.value}</span>
+          </div>
+        ))
+      ) : (
+        <p className="text-xs leading-5 text-hp-muted">{emptyText}</p>
+      )}
+    </div>
+  );
+}
+
+function formatMinutesMetric(value: number | null) {
+  if (value === null) return "Not enough data";
+  if (value < 60) return `${value}m`;
+  const hours = Math.floor(value / 60);
+  const minutes = value % 60;
+  return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
+}
+
+function formatPercentMetric(value: number | null) {
+  return value === null ? "N/A" : `${value}%`;
+}
+
+function formatQaMetric(value: number | null) {
+  return value === null ? "N/A" : value.toFixed(1);
 }
 
 function InboxReadinessBanner({ status }: { status: SocialInboxStatus }) {
@@ -2682,6 +4371,42 @@ function isContactMethodErrorPayload(
 
 function isSendAttemptErrorPayload(
   value: { sendAttempt: SocialInboxSendAttempt; events: unknown[] } | { error: string },
+): value is { error: string } {
+  return "error" in value;
+}
+
+function isCommentActionErrorPayload(
+  value: { commentAction: SocialInboxCommentAction; events: unknown[] } | { error: string },
+): value is { error: string } {
+  return "error" in value;
+}
+
+function isSavedReplyErrorPayload(
+  value: { savedReply: SocialInboxSavedReply } | { error: string },
+): value is { error: string } {
+  return "error" in value;
+}
+
+function isNoteErrorPayload(
+  value:
+    | { note: SocialInboxConversationNote; events: unknown[] }
+    | { error: string },
+): value is { error: string } {
+  return "error" in value;
+}
+
+function isQaScorecardErrorPayload(
+  value:
+    | { qaScorecard: SocialInboxQaScorecard; events: unknown[] }
+    | { error: string },
+): value is { error: string } {
+  return "error" in value;
+}
+
+function isPresenceErrorPayload(
+  value:
+    | { presence: SocialInboxPresence | null; presences: SocialInboxPresence[] }
+    | { error: string },
 ): value is { error: string } {
   return "error" in value;
 }

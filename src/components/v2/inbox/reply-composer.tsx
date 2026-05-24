@@ -10,19 +10,15 @@ import { useState } from "react";
  *   2. Send button enabled only when text non-empty and user has
  *      send_inbox_reply permission.
  *   3. First click on Send → shows a confirmation chip "Send as {brand}?".
- *   4. Second click on Send (or Confirm in chip) → POSTs to a real send
- *      endpoint (wired in a follow-up). For now, the second click is
- *      blocked behind a "Send wiring lands in verification phase" notice
- *      because the actual Meta page send + audit row is the subject of PRD §11.
+ *   4. Second click on Send (or Confirm in chip) records a normalized
+ *      send attempt. Delivery/retry workers decide what can safely go to Meta.
  *
  * The component is deliberately small — every guardrail step is visible
  * inside this file so reviewers can audit the path.
  */
 
 type Props = {
-  platform: "facebook" | "instagram";
-  sourceType: "message" | "comment";
-  sourceId: string;
+  conversationId: string;
   brand: "HP" | "VVS" | "Unassigned";
   /** Roles include send_inbox_reply? */
   canSend: boolean;
@@ -32,14 +28,12 @@ type DraftState = {
   text: string;
   draftId: string | null;
   confirming: boolean;
-  status: "idle" | "sending" | "sent" | "error";
+  status: "idle" | "sending" | "recorded" | "error";
   message: string | null;
 };
 
 export function ReplyComposer({
-  platform,
-  sourceType,
-  sourceId,
+  conversationId,
   brand,
   canSend,
 }: Props) {
@@ -64,32 +58,31 @@ export function ReplyComposer({
     if (!canSend || !state.text.trim()) return;
     setState((s) => ({ ...s, status: "sending", message: null }));
     try {
-      const response = await fetch("/api/social-inbox/send-reply", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          platform,
-          sourceType,
-          sourceId,
-          brand,
-          text: state.text,
-          draftId: state.draftId,
-        }),
-      });
+      const response = await fetch(
+        `/api/social-inbox/conversations/${encodeURIComponent(conversationId)}/send-attempts`,
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            replyText: state.text,
+          }),
+        },
+      );
       const body = (await response.json().catch(() => ({}))) as {
         ok?: boolean;
         error?: string;
         notice?: string;
+        sendAttempt?: { status?: string };
       };
       if (!response.ok) {
         throw new Error(body.error || `Send failed (${response.status})`);
       }
       setState((s) => ({
         ...s,
-        status: "sent",
+        status: "recorded",
         confirming: false,
-        message: body.notice ?? "Recorded.",
+        message: body.notice ?? "Send attempt recorded.",
       }));
     } catch (e) {
       setState((s) => ({
@@ -164,7 +157,7 @@ export function ReplyComposer({
                 disabled={!state.text.trim() || state.status === "sending" || !canSend}
                 className="h-9 border border-hp-ink bg-hp-ink px-4 text-[10px] uppercase tracking-[0.14em] text-hp-foundation hover:border-hp-pink hover:bg-hp-pink disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {state.status === "sent" ? "Sent" : "Send →"}
+                {state.status === "recorded" ? "Recorded" : "Send →"}
               </button>
             </>
           )}
@@ -175,7 +168,7 @@ export function ReplyComposer({
             className={
               state.status === "error"
                 ? "border-t border-hp-rule-soft px-4 py-3 text-xs text-signal-danger"
-                : state.status === "sent"
+                : state.status === "recorded"
                   ? "border-t border-hp-rule-soft px-4 py-3 text-xs text-signal-positive"
                   : "border-t border-hp-rule-soft px-4 py-3 text-xs text-hp-body"
             }

@@ -58,11 +58,13 @@ export type MetaInboxSendAttemptDraft = {
 };
 
 export type MetaInboxRetryAttemptUpdate = {
+  expectedStatus: "failed_retryable";
   update: JsonRecord;
   event: MetaInboxSendAttemptEventDraft;
 };
 
 export type MetaInboxQueueAttemptUpdate = {
+  expectedStatus: "approved";
   update: JsonRecord;
   event: MetaInboxSendAttemptEventDraft;
 };
@@ -153,6 +155,7 @@ export function buildMetaInboxSendAttemptDraft(
     conversationId,
     actorUserId,
     replyText,
+    attachmentIds,
     now: context.now,
   });
 
@@ -206,6 +209,7 @@ export function buildMetaInboxRetryAttemptUpdate(
   }
 
   return {
+    expectedStatus: "failed_retryable",
     update: {
       status: "queued",
       messaging_type: windowState.messagingType,
@@ -266,6 +270,7 @@ export function buildMetaInboxQueueAttemptUpdate(
   }
 
   return {
+    expectedStatus: "approved",
     update: {
       status: "queued",
       messaging_type: windowState.messagingType,
@@ -315,17 +320,35 @@ function normalizeReplyText(value: string, attachmentBacked = false) {
 
 function normalizeIdempotencyKey(
   value: string | null | undefined,
-  fallback: { conversationId: string; actorUserId: string; replyText: string; now: string },
+  fallback: {
+    conversationId: string;
+    actorUserId: string;
+    replyText: string;
+    attachmentIds: string[];
+    now: string;
+  },
 ) {
   const trimmed = typeof value === "string" ? value.trim() : "";
   if (trimmed) return trimmed.slice(0, 200);
 
+  const attachmentIdentity = fallback.attachmentIds.join("|");
   return [
+    "send",
     fallback.conversationId,
     fallback.actorUserId,
-    fallback.now,
-    String(fallback.replyText.length),
+    stableIdempotencyHash(fallback.replyText),
+    stableIdempotencyHash(attachmentIdentity),
   ].join(":");
+}
+
+function stableIdempotencyHash(value: string) {
+  const normalized = value.trim().replace(/\s+/g, " ");
+  let hash = 2166136261;
+  for (let index = 0; index < normalized.length; index += 1) {
+    hash ^= normalized.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${normalized.length.toString(36)}-${(hash >>> 0).toString(36)}`;
 }
 
 function isFuture(value: string | null | undefined, now: string) {

@@ -3,7 +3,7 @@
 import Link from "next/link";
 
 import { ReplyComposer } from "@/components/v2/inbox/reply-composer";
-import type { SocialInboxMessage } from "@/lib/social-inbox";
+import type { SocialInboxComment, SocialInboxMessage } from "@/lib/social-inbox";
 
 /**
  * Conversation detail surface — shared between desktop Convert room
@@ -14,13 +14,14 @@ import type { SocialInboxMessage } from "@/lib/social-inbox";
  */
 
 type Props = {
+  conversationId: string;
   kind: "thread" | "comment";
   platform: "facebook" | "instagram";
-  sourceId: string;
   brand: "HP" | "VVS" | "Unassigned";
   participantName: string | null;
   participantEmail?: string | null;
   messages: SocialInboxMessage[];
+  comments?: SocialInboxComment[];
   /** For comments, render the comment body as the single message. */
   commentBody?: string | null;
   commentAt?: string | null;
@@ -36,13 +37,14 @@ const MSG_FMT = new Intl.DateTimeFormat("en-US", {
 });
 
 export function ConversationDetail({
+  conversationId,
   kind,
   platform,
-  sourceId,
   brand,
   participantName,
   participantEmail,
   messages,
+  comments = [],
   commentBody,
   commentAt,
   canSend,
@@ -74,12 +76,24 @@ export function ConversationDetail({
         className="space-y-3 border border-hp-rule bg-hp-card p-4"
       >
         {kind === "comment" ? (
-          <Bubble
-            direction="inbound"
-            text={commentBody ?? ""}
-            sentAt={commentAt ?? null}
-            senderName={participantName}
-          />
+          comments.length > 0 ? (
+            comments.map((comment) => (
+              <Bubble
+                key={comment.id}
+                direction="inbound"
+                text={comment.body ?? ""}
+                sentAt={comment.created_time}
+                senderName={comment.author_name ?? participantName}
+              />
+            ))
+          ) : (
+            <Bubble
+              direction="inbound"
+              text={commentBody ?? ""}
+              sentAt={commentAt ?? null}
+              senderName={participantName}
+            />
+          )
         ) : messages.length === 0 ? (
           <p className="px-2 py-6 text-center text-sm text-hp-muted">
             No messages yet for this thread. Trigger an inbox sync to fetch
@@ -99,9 +113,7 @@ export function ConversationDetail({
       </section>
 
       <ReplyComposer
-        platform={platform}
-        sourceType={kind === "thread" ? "message" : "comment"}
-        sourceId={sourceId}
+        conversationId={conversationId}
         brand={brand}
         canSend={canSend}
       />

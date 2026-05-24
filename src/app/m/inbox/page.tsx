@@ -1,6 +1,7 @@
 import { ConversationListMobile } from "@/components/v2/inbox/conversation-list-mobile";
 import { hasPermission } from "@/lib/access-control";
 import { ConfigurationError } from "@/lib/env";
+import { buildMetaInboxMobileConversationItems } from "@/lib/meta-inbox-queue-view";
 import { getServerAccessProfile } from "@/lib/server-route-auth";
 import { emptySocialInboxData, getSocialInboxData } from "@/lib/social-inbox";
 
@@ -22,16 +23,17 @@ export default async function MobileInboxIndex() {
     }
     return emptySocialInboxData();
   });
+  const conversations = buildMetaInboxMobileConversationItems(inbox);
 
-  const waiting = inbox.threads.filter((t) => (t.unread_count || 0) > 0).length;
-  const oldestUnread = inbox.threads
-    .filter((t) => (t.unread_count || 0) > 0 && t.last_message_at)
-    .map((t) => Date.parse(t.last_message_at as string))
+  const waiting = conversations.filter((item) => item.status === "Needs reply").length;
+  const oldestUnread = conversations
+    .filter((item) => item.status === "Needs reply" && item.timestamp)
+    .map((item) => Date.parse(item.timestamp as string))
     .sort((a, b) => a - b)[0];
   const oldestRel = oldestUnread ? relTime(new Date(oldestUnread).toISOString()) : "—";
 
   const sentence: StatusSentence =
-    inbox.threads.length === 0 && inbox.comments.length === 0
+    conversations.length === 0
       ? {
           lead: null,
           rest: "No conversations in this environment yet.",
@@ -45,7 +47,7 @@ export default async function MobileInboxIndex() {
           }
         : {
             lead: "0",
-            rest: `waiting. ${inbox.threads.length} thread${inbox.threads.length === 1 ? "" : "s"} synced.`,
+            rest: `waiting. ${conversations.length} conversation${conversations.length === 1 ? "" : "s"} synced.`,
             tone: "positive",
           };
 
@@ -70,8 +72,7 @@ export default async function MobileInboxIndex() {
       </header>
 
       <ConversationListMobile
-        threads={inbox.threads}
-        comments={inbox.comments}
+        items={conversations}
       />
     </div>
   );

@@ -10,8 +10,7 @@ import {
 describe("access control", () => {
   it("gives admin all non-operational management access", () => {
     for (const permission of Object.keys(APP_PERMISSIONS) as Array<keyof typeof APP_PERMISSIONS>) {
-      const expected = permission !== "send_inbox_reply" && permission !== "manage_inbox_state";
-      assert.equal(hasPermission(["admin"], permission), expected, permission);
+      assert.equal(hasPermission(["admin"], permission), true, permission);
     }
   });
 

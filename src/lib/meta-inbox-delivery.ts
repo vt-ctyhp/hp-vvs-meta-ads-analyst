@@ -1,5 +1,13 @@
 type JsonRecord = Record<string, unknown>;
 
+export type MetaInboxDeliveryAttachment = {
+  id: string;
+  attachment_type: "image" | "video" | "audio" | "file";
+  meta_attachment_id: string | null;
+  media_url: string | null;
+  is_sendable: boolean;
+};
+
 export type MetaInboxDeliveryAttempt = {
   id: string;
   conversation_id: string;
@@ -8,6 +16,9 @@ export type MetaInboxDeliveryAttempt = {
   messaging_type: "RESPONSE" | "MESSAGE_TAG" | null;
   tag: "HUMAN_AGENT" | null;
   attempt_count: number;
+  next_retry_at: string | null;
+  attachment_ids?: string[];
+  attachments: MetaInboxDeliveryAttachment[];
 };
 
 export type MetaInboxDeliveryConversation = {
@@ -59,6 +70,7 @@ export type MetaInboxDeliveryUpdate = {
 
 const RETRYABLE_HTTP_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const RETRYABLE_META_CODES = new Set([1, 2, 4, 17, 32, 613]);
+const MAX_DELIVERY_ATTEMPTS = 5;
 
 export function buildMetaInboxDeliveryTarget(
   conversation: MetaInboxDeliveryConversation,
@@ -85,7 +97,7 @@ export function buildMetaInboxDeliveryTarget(
 
     const graphBody: JsonRecord = {
       recipient: { id: conversation.participant_id },
-      message: { text: attempt.reply_text },
+      message: messagePayloadForAttempt(attempt),
     };
     if (conversation.platform === "facebook") {
       graphBody.messaging_type = attempt.messaging_type || "RESPONSE";
@@ -114,12 +126,39 @@ export function buildMetaInboxDeliveryTarget(
       participantId: null,
       graphPath: `${sourceId}/comments`,
       graphBody: {
-        message: attempt.reply_text,
+        message: requireReplyText(attempt.reply_text),
       },
     };
   }
 
   throw new Error(`Unsupported conversation source type: ${conversation.source_type}.`);
+}
+
+function messagePayloadForAttempt(attempt: MetaInboxDeliveryAttempt): JsonRecord {
+  const attachment = attempt.attachments.find((item) => item.is_sendable);
+  if (!attachment) return { text: requireReplyText(attempt.reply_text) };
+
+  const payload = attachment.meta_attachment_id
+    ? { attachment_id: attachment.meta_attachment_id }
+    : attachment.media_url
+      ? { url: attachment.media_url, is_reusable: true }
+      : null;
+  if (!payload) {
+    throw new Error("Send attempt attachment is missing Meta attachment id or media URL.");
+  }
+
+  return {
+    attachment: {
+      type: attachment.attachment_type,
+      payload,
+    },
+  };
+}
+
+function requireReplyText(value: string) {
+  const text = String(value || "").trim();
+  if (!text) throw new Error("Reply text is required for this delivery target.");
+  return text;
 }
 
 export function buildMetaInboxDeliverySendingUpdate(
@@ -199,9 +238,11 @@ export function buildMetaInboxDeliveryFailureUpdate(
   context: { now: string },
 ): MetaInboxDeliveryUpdate {
   const retryable = isRetryableMetaInboxDeliveryFailure(failure);
-  const status = retryable ? "failed_retryable" : "failed_terminal";
   const attemptCount = Math.max(1, Math.trunc(Number(attempt.attempt_count) || 0));
-  const nextRetryAt = retryable ? nextRetryAtForAttempt(context.now, attemptCount) : null;
+  const maxAttemptsReached = retryable && attemptCount >= MAX_DELIVERY_ATTEMPTS;
+  const status = retryable && !maxAttemptsReached ? "failed_retryable" : "failed_terminal";
+  const nextRetryAt =
+    retryable && !maxAttemptsReached ? nextRetryAtForAttempt(context.now, attemptCount) : null;
 
   return {
     update: {
@@ -233,6 +274,7 @@ export function buildMetaInboxDeliveryFailureUpdate(
         metaErrorCode: failure.code,
         metaErrorSubcode: failure.subcode,
         metaTraceId: failure.traceId,
+        maxAttemptsReached,
       },
     },
   };

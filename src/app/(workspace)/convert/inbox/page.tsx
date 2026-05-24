@@ -24,6 +24,9 @@ export default async function InboxPage() {
       dataError={inboxData.error}
       canManageInboxState={profile.permissions.includes("manage_inbox_state")}
       canSendInboxReply={profile.permissions.includes("send_inbox_reply")}
+      canCreateManagerCoaching={
+        profile.roles.includes("admin") || profile.roles.includes("sales_lead")
+      }
     />
   );
 }

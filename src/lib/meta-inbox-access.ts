@@ -4,6 +4,7 @@ import type { MetaInboxQueueCategoryKey } from "./meta-inbox-vocabulary.ts";
 export type MetaInboxAccessProfile = {
   appUserId: string | null;
   roles: readonly string[];
+  permissions?: readonly string[];
 };
 
 export type MetaInboxQueueAccessDecision =
@@ -25,6 +26,18 @@ export type MetaInboxQueueAccessDecision =
 
 const FULL_QUEUE_ACCESS_ROLES = new Set(["admin", "marketing", "executive", "read_only"]);
 const TEAM_QUEUE_ACCESS_ROLES = new Set(["sales", "sales_lead"]);
+const OPERATIONAL_WRITE_ROLES = new Set(["admin", "sales", "sales_lead"]);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+class MetaInboxAuthorizationError extends Error {
+  status: number;
+
+  constructor(message: string, status = 403) {
+    super(message);
+    this.name = "AuthorizationError";
+    this.status = status;
+  }
+}
 
 export function metaInboxQueueAccessScopeForProfile(
   profile: MetaInboxAccessProfile | null | undefined,
@@ -86,6 +99,11 @@ export function filterSocialInboxDataForQueueAccess(
       customerContactMethods: [],
       firstTouchSources: [],
       sendAttempts: [],
+      commentActions: [],
+      conversationEvents: [],
+      savedReplies: [],
+      notes: [],
+      qaScorecards: [],
     };
   }
 
@@ -98,14 +116,14 @@ export function filterSocialInboxDataForQueueAccess(
       .map((conversation) => conversation.customer_profile_id)
       .filter(Boolean) as string[],
   );
-  const threadIds = new Set(
+  const threadKeys = new Set(
     inboxConversations
-      .map((conversation) => conversation.platform_thread_id)
+      .map((conversation) => historyKey(conversation.platform, conversation.platform_thread_id))
       .filter(Boolean) as string[],
   );
-  const sourceIds = new Set(
+  const sourceKeys = new Set(
     inboxConversations
-      .map((conversation) => conversation.source_id)
+      .map((conversation) => historyKey(conversation.platform, conversation.source_id))
       .filter(Boolean) as string[],
   );
 
@@ -122,12 +140,30 @@ export function filterSocialInboxDataForQueueAccess(
     sendAttempts: (data.sendAttempts || []).filter((attempt) =>
       conversationIds.has(attempt.conversation_id),
     ),
-    threads: data.threads.filter((thread) => threadIds.has(thread.thread_id)),
-    messages: data.messages.filter((message) => threadIds.has(message.thread_id)),
+    commentActions: (data.commentActions || []).filter((action) =>
+      conversationIds.has(action.conversation_id),
+    ),
+    conversationEvents: (data.conversationEvents || []).filter((event) =>
+      conversationIds.has(event.conversation_id),
+    ),
+    savedReplies: (data.savedReplies || []).filter(
+      (savedReply) =>
+        !savedReply.queue_category_key || allowedQueues.has(savedReply.queue_category_key),
+    ),
+    notes: (data.notes || []).filter((note) => conversationIds.has(note.conversation_id)),
+    qaScorecards: (data.qaScorecards || []).filter((scorecard) =>
+      conversationIds.has(scorecard.conversation_id),
+    ),
+    threads: data.threads.filter((thread) =>
+      hasHistoryKey(threadKeys, thread.platform, thread.thread_id),
+    ),
+    messages: data.messages.filter((message) =>
+      hasHistoryKey(threadKeys, message.platform, message.thread_id),
+    ),
     comments: data.comments.filter(
       (comment) =>
-        sourceIds.has(comment.comment_id) ||
-        Boolean(comment.parent_comment_id && sourceIds.has(comment.parent_comment_id)),
+        hasHistoryKey(sourceKeys, comment.platform, comment.comment_id) ||
+        hasHistoryKey(sourceKeys, comment.platform, comment.parent_comment_id),
     ),
   };
 }
@@ -140,4 +176,59 @@ export function canReadMetaInboxConversationForQueueAccess(
   if (access.mode === "none") return false;
 
   return access.allowedQueueCategoryKeys.includes(conversation.queue_category_key);
+}
+
+export function assertMetaInboxOperationalWriteAccess(
+  profile: MetaInboxAccessProfile | null | undefined,
+): asserts profile is MetaInboxAccessProfile {
+  const roles = profile?.roles || [];
+  if (!roles.some((role) => OPERATIONAL_WRITE_ROLES.has(role))) {
+    throw new MetaInboxAuthorizationError(
+      "Inbox operational writes require a sales, sales lead, or admin role.",
+      403,
+    );
+  }
+
+  if (!profile?.appUserId || !UUID_RE.test(profile.appUserId)) {
+    throw new MetaInboxAuthorizationError(
+      "A linked app user is required for inbox operational writes.",
+      403,
+    );
+  }
+}
+
+export function assertMetaInboxConversationMutationAccess(
+  conversation: Pick<SocialInboxData["inboxConversations"][number], "queue_category_key">,
+  access: MetaInboxQueueAccessDecision,
+  options: { targetQueueCategoryKey?: MetaInboxQueueCategoryKey | null } = {},
+) {
+  if (!canReadMetaInboxConversationForQueueAccess(conversation, access)) {
+    throw new MetaInboxAuthorizationError("You do not have access to this inbox queue.", 403);
+  }
+
+  if (
+    access.mode === "team" &&
+    options.targetQueueCategoryKey &&
+    !access.allowedQueueCategoryKeys.includes(options.targetQueueCategoryKey)
+  ) {
+    throw new MetaInboxAuthorizationError(
+      "You do not have access to the target inbox queue.",
+      403,
+    );
+  }
+}
+
+function historyKey(platform: string | null | undefined, id: string | null | undefined) {
+  const normalizedId = typeof id === "string" ? id.trim() : "";
+  if (!normalizedId) return null;
+  return `${platform || "unknown"}:${normalizedId}`;
+}
+
+function hasHistoryKey(
+  keys: Set<string>,
+  platform: string | null | undefined,
+  id: string | null | undefined,
+) {
+  const key = historyKey(platform, id);
+  return Boolean(key && keys.has(key));
 }

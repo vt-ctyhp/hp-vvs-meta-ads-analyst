@@ -24,6 +24,7 @@ const migration = readFileSync(MIGRATION, "utf8");
 const NOW = "2026-05-24T12:00:00.000Z";
 const ACTOR_ID = "11111111-1111-4111-8111-111111111111";
 const ATTACHMENT_ID = "22222222-2222-4222-8222-222222222222";
+const OTHER_ATTACHMENT_ID = "55555555-5555-4555-8555-555555555555";
 
 describe("Meta inbox attachment foundation", () => {
   it("creates normalized attachment storage with capability and lookup fields", () => {
@@ -127,6 +128,36 @@ describe("Meta inbox attachment foundation", () => {
         ),
       /valid UUID/i,
     );
+  });
+
+  it("includes attachment identity in send-attempt idempotency fallback keys", () => {
+    const first = buildMetaInboxSendAttemptDraft(
+      conversationFixture(),
+      {
+        replyText: "Here is the photo.",
+        attachmentIds: [ATTACHMENT_ID],
+      },
+      { actorUserId: ACTOR_ID, now: NOW, humanAgentEnabled: true },
+    );
+    const samePayload = buildMetaInboxSendAttemptDraft(
+      conversationFixture(),
+      {
+        replyText: "Here is the photo.",
+        attachmentIds: [ATTACHMENT_ID],
+      },
+      { actorUserId: ACTOR_ID, now: "2026-05-24T12:05:00.000Z", humanAgentEnabled: true },
+    );
+    const changedAttachment = buildMetaInboxSendAttemptDraft(
+      conversationFixture(),
+      {
+        replyText: "Here is the photo.",
+        attachmentIds: [OTHER_ATTACHMENT_ID],
+      },
+      { actorUserId: ACTOR_ID, now: NOW, humanAgentEnabled: true },
+    );
+
+    assert.equal(first.row.idempotency_key, samePayload.row.idempotency_key);
+    assert.notEqual(first.row.idempotency_key, changedAttachment.row.idempotency_key);
   });
 
   it("capability-gates outbound attachment sends by conversation surface", () => {

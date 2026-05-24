@@ -120,6 +120,27 @@ describe("Meta inbox reply reliability foundation", () => {
     assert.equal(draft.event.newValue.status, "approved");
   });
 
+  it("uses a stable send idempotency fallback for duplicate draft submits", () => {
+    const first = buildMetaInboxSendAttemptDraft(
+      conversationFixture(),
+      { replyText: "Thanks, we can help with that." },
+      { actorUserId: ACTOR_ID, now: NOW, humanAgentEnabled: true },
+    );
+    const retry = buildMetaInboxSendAttemptDraft(
+      conversationFixture(),
+      { replyText: "Thanks, we can help with that." },
+      { actorUserId: ACTOR_ID, now: "2026-05-24T12:02:00.000Z", humanAgentEnabled: true },
+    );
+    const changed = buildMetaInboxSendAttemptDraft(
+      conversationFixture(),
+      { replyText: "Thanks, we can help with an appointment." },
+      { actorUserId: ACTOR_ID, now: NOW, humanAgentEnabled: true },
+    );
+
+    assert.equal(first.row.idempotency_key, retry.row.idempotency_key);
+    assert.notEqual(first.row.idempotency_key, changed.row.idempotency_key);
+  });
+
   it("blocks send-attempt drafts when the reply window is expired", () => {
     assert.throws(
       () =>

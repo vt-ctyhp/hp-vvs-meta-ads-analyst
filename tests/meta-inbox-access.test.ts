@@ -77,6 +77,26 @@ describe("Meta inbox team queue access", () => {
       filtered.sendAttempts.map((attempt) => attempt.conversation_id),
       ["conv-cash", "conv-book"],
     );
+    assert.deepEqual(
+      filtered.commentActions.map((action) => action.conversation_id),
+      ["conv-book"],
+    );
+    assert.deepEqual(
+      filtered.conversationEvents.map((event) => event.conversation_id),
+      ["conv-cash", "conv-book"],
+    );
+    assert.deepEqual(
+      filtered.savedReplies.map((reply) => reply.id),
+      ["reply-cash", "reply-book", "reply-all"],
+    );
+    assert.deepEqual(
+      filtered.notes.map((note) => note.conversation_id),
+      ["conv-cash", "conv-book"],
+    );
+    assert.deepEqual(
+      filtered.qaScorecards.map((scorecard) => scorecard.conversation_id),
+      ["conv-cash", "conv-book"],
+    );
     assert.deepEqual(filtered.syncRuns, data.syncRuns);
   });
 
@@ -94,6 +114,11 @@ describe("Meta inbox team queue access", () => {
     assert.equal(filtered.customerProfiles.length, 0);
     assert.equal(filtered.firstTouchSources.length, 0);
     assert.equal(filtered.sendAttempts.length, 0);
+    assert.equal(filtered.commentActions.length, 0);
+    assert.equal(filtered.conversationEvents.length, 0);
+    assert.equal(filtered.savedReplies.length, 0);
+    assert.equal(filtered.notes.length, 0);
+    assert.equal(filtered.qaScorecards.length, 0);
     assert.equal(filtered.syncRuns.length, 1);
   });
 
@@ -247,6 +272,31 @@ function socialInboxFixture(): SocialInboxData {
       sendAttempt("attempt-book", "conv-book"),
       sendAttempt("attempt-vn", "conv-vn"),
     ],
+    commentActions: [
+      commentAction("action-book", "conv-book"),
+      commentAction("action-vn", "conv-vn"),
+    ],
+    conversationEvents: [
+      conversationEvent("event-cash", "conv-cash"),
+      conversationEvent("event-book", "conv-book"),
+      conversationEvent("event-vn", "conv-vn"),
+    ],
+    savedReplies: [
+      savedReply("reply-cash", "cash_for_gold"),
+      savedReply("reply-book", "book_appointment"),
+      savedReply("reply-vn", "vn_product"),
+      savedReply("reply-all", null),
+    ],
+    notes: [
+      conversationNote("note-cash", "conv-cash"),
+      conversationNote("note-book", "conv-book"),
+      conversationNote("note-vn", "conv-vn"),
+    ],
+    qaScorecards: [
+      qaScorecard("qa-cash", "conv-cash"),
+      qaScorecard("qa-book", "conv-book"),
+      qaScorecard("qa-vn", "conv-vn"),
+    ],
     threads: [
       thread("thread-cash", "facebook"),
       thread("thread-vn", "instagram"),
@@ -273,6 +323,109 @@ function socialInboxFixture(): SocialInboxData {
         errors: [],
       },
     ],
+  };
+}
+
+function savedReply(id: string, queueCategoryKey: SocialInboxData["savedReplies"][number]["queue_category_key"]) {
+  return {
+    id,
+    title: id,
+    body: "Thanks for reaching out.",
+    visibility: "shared" as const,
+    approval_status: "approved" as const,
+    owner_user_id: null,
+    created_by: "11111111-1111-4111-8111-111111111111",
+    approved_by: "11111111-1111-4111-8111-111111111111",
+    approved_at: "2026-05-23T10:00:00.000Z",
+    queue_category_key: queueCategoryKey,
+    source_channel: null,
+    language: "en",
+    lead_quality: null,
+    active: true,
+    usage_count: 0,
+    last_used_at: null,
+    metadata: {},
+    created_at: "2026-05-23T10:00:00.000Z",
+    updated_at: "2026-05-23T10:00:00.000Z",
+  };
+}
+
+function qaScorecard(id: string, conversationId: string) {
+  return {
+    id,
+    conversation_id: conversationId,
+    send_attempt_id: null,
+    reviewed_user_id: null,
+    reviewed_by: "22222222-2222-4222-8222-222222222222",
+    tone_score: 4,
+    completeness_score: 4,
+    accuracy_score: 4,
+    next_step_score: 4,
+    speed_score: 4,
+    policy_compliance_score: 4,
+    overall_score: 4,
+    coaching_note: null,
+    metadata: {},
+    deleted_by: null,
+    deleted_at: null,
+    created_at: "2026-05-23T10:20:00.000Z",
+    updated_at: "2026-05-23T10:20:00.000Z",
+  };
+}
+
+function conversationNote(id: string, conversationId: string) {
+  return {
+    id,
+    conversation_id: conversationId,
+    note_type: "internal_note" as const,
+    body: "Follow up after quote.",
+    created_by: "11111111-1111-4111-8111-111111111111",
+    mention_user_ids: [],
+    metadata: {},
+    deleted_by: null,
+    deleted_at: null,
+    created_at: "2026-05-23T10:15:00.000Z",
+    updated_at: "2026-05-23T10:15:00.000Z",
+  };
+}
+
+function conversationEvent(id: string, conversationId: string) {
+  return {
+    id,
+    conversation_id: conversationId,
+    event_type: "status_changed",
+    actor_user_id: null,
+    event_at: "2026-05-23T10:10:00.000Z",
+    previous_value: null,
+    new_value: { conversationStatus: "needs_reply" },
+    metadata: {},
+    created_at: "2026-05-23T10:10:00.000Z",
+  };
+}
+
+function commentAction(id: string, conversationId: string) {
+  return {
+    id,
+    conversation_id: conversationId,
+    comment_id: "comment-book",
+    action_type: "like" as const,
+    message_text: null,
+    reason_note: null,
+    requested_by: null,
+    requested_at: "2026-05-23T11:05:00.000Z",
+    status: "approved" as const,
+    meta_action_id: null,
+    meta_error_message: null,
+    meta_error_code: null,
+    meta_error_subcode: null,
+    meta_trace_id: null,
+    attempt_count: 0,
+    next_retry_at: null,
+    last_attempted_at: null,
+    completed_at: null,
+    idempotency_key: id,
+    created_at: "2026-05-23T11:05:00.000Z",
+    updated_at: "2026-05-23T11:05:00.000Z",
   };
 }
 
