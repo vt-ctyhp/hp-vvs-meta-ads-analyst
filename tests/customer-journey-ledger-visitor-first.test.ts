@@ -287,6 +287,62 @@ test(
 );
 
 test(
+  "every website_events fetch projects event_id (regression: uniqueEvents dedupes by event_id; missing it collapses helper rows to one Map entry, surfaced via bug where 211 unanchored visitors with booking PageViews showed as only 1)",
+  async () => {
+    const appointment = makeAppointment({ external_booking_id: "anchor-dedup" });
+    const apptVisitor = makeVisitor({ visitor_id: "v-anchor-dedup" });
+    const browse = makeVisitor({ visitor_id: "v-browse-x" });
+    const pv = makeEvent({
+      visitor_id: "v-browse-x",
+      event_name: "PageView",
+      page_url: "https://www.hungphatusa.com/pages/book-an-appointment",
+      occurred_at: "2026-05-20T12:30:00.000Z",
+    });
+
+    // Wrap makeMockClient and capture every column list passed to .select()
+    // on website_events. Each query must include event_id; otherwise the
+    // returned rows collide in uniqueEvents (Map keyed by event_id).
+    const selectColsOnWebsiteEvents: string[] = [];
+    const inner = makeMockClient({
+      appointment_events: [appointment],
+      website_visitors: [apptVisitor, browse],
+      website_events: [pv],
+      website_conversions: [],
+      website_sessions: [],
+    });
+    const spyClient = {
+      from(table: string) {
+        const innerFrom = inner.from(table as any);
+        if (table !== "website_events") return innerFrom;
+        return {
+          select(cols: string) {
+            selectColsOnWebsiteEvents.push(cols);
+            return innerFrom.select(cols);
+          },
+        };
+      },
+    };
+
+    await fetchCustomerJourneyLedgerData(
+      { startDate: "2026-04-24", endDate: "2026-05-23" },
+      spyClient as any,
+    );
+
+    assert.ok(
+      selectColsOnWebsiteEvents.length > 0,
+      "expected at least one website_events SELECT",
+    );
+    for (const cols of selectColsOnWebsiteEvents) {
+      const colSet = new Set(cols.split(",").map((c) => c.trim()));
+      assert.ok(
+        colSet.has("event_id"),
+        `website_events SELECT must include event_id (uniqueEvents dedupes by it); got: ${cols}`,
+      );
+    }
+  },
+);
+
+test(
   "visitor-only row gets booking_form_started stage from a BookingFormStarted event",
   async () => {
     const appointment = makeAppointment({ external_booking_id: "anchor" });

@@ -817,7 +817,10 @@ async function fetchBookingStageEventsForVisitors(
   if (!visitorIds.length) return [];
 
   const env = websiteAttributionEnvironment();
-  const cols = "visitor_id,session_id,event_name,page_url,occurred_at";
+  // event_id is required: uniqueEvents() dedupes by event_id, and any row
+  // without it collapses with every other such row to a single Map entry,
+  // so the loader effectively sees one helper-fetched event total.
+  const cols = "event_id,visitor_id,session_id,event_name,page_url,occurred_at";
   const rows: CustomerJourneyLedgerEventRow[] = [];
 
   for (const batch of chunks(visitorIds, VISITOR_ID_QUERY_BATCH_SIZE)) {
