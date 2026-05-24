@@ -711,19 +711,26 @@ async function fetchCustomerJourneyLedgerDataUncached(
   const anchoredVisitorIdList = visitors
     .filter((v) => anchoredVisitorIds.has(v.visitor_id))
     .map((v) => v.visitor_id);
+  const unanchoredVisitorIdList = visitors
+    .filter((v) => !anchoredVisitorIds.has(v.visitor_id))
+    .map((v) => v.visitor_id);
 
   if (!anchoredVisitorIdList.length) {
+    const unanchoredBookingEvents = await fetchBookingStageEventsForVisitors(
+      client,
+      unanchoredVisitorIdList,
+    );
     return buildCustomerJourneyLedgerData({
       appointments,
       conversions: rangeConversions,
-      events: appointmentEvents,
+      events: uniqueEvents([...appointmentEvents, ...unanchoredBookingEvents]),
       range,
       sessions: [],
       visitors,
     });
   }
 
-  const [sessions, visitorEvents, visitorConversions] = await Promise.all([
+  const [sessions, visitorEvents, visitorConversions, unanchoredBookingEvents] = await Promise.all([
     fetchRowsByVisitorIds<CustomerJourneyLedgerSessionRow>(
       anchoredVisitorIdList,
       (batch) =>
@@ -757,6 +764,7 @@ async function fetchCustomerJourneyLedgerDataUncached(
           .limit(MAX_RELATED_ROWS),
       "occurred_at",
     ),
+    fetchBookingStageEventsForVisitors(client, unanchoredVisitorIdList),
   ]);
 
   return buildCustomerJourneyLedgerData({
@@ -768,6 +776,7 @@ async function fetchCustomerJourneyLedgerDataUncached(
     events: uniqueEvents([
       ...appointmentEvents,
       ...visitorEvents,
+      ...unanchoredBookingEvents,
     ]),
     range,
     sessions,

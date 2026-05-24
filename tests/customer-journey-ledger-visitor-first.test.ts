@@ -18,6 +18,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { fetchCustomerJourneyLedgerData } from "../src/lib/customer-journey-ledger.ts";
 import { createAdsAnalystClient } from "../src/lib/ads-analyst-db.ts";
+import { websiteAttributionEnvironment } from "../src/lib/website-analytics.ts";
 
 const hasEnv = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL)
   && (Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY) || Boolean(process.env.SUPABASE_ADS_ANALYST_WEB_KEY));
@@ -134,6 +135,7 @@ function makeEvent(overrides: Record<string, unknown> = {}) {
     event_id: `event-${Math.random().toString(36).slice(2)}`,
     session_id: null,
     visitor_id: "v-default",
+    environment: websiteAttributionEnvironment(),
     brand: null,
     source: null,
     event_name: "PageView",
