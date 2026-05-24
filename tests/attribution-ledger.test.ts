@@ -135,7 +135,13 @@ describe("attribution ledger row merging", () => {
     assert.equal(rows[0].lastPaidSource, "direct");
   });
 
-  it("omits visitors without conversions from the booking-grain ledger", () => {
+  // v3 Phase 2: previously this test asserted rows.length === 0 because
+  // the ledger was strictly booking-grain (visitors without conversions
+  // were dropped). Track 4a of the spike showed this surfaced as 95%+
+  // em-dash rows in /convert and hid browse-but-no-book visitors entirely.
+  // The new behavior emits a visitor-only row for each unanchored
+  // in-window visitor.
+  it("emits a visitor-only row for visitors with no appointment and no conversion", () => {
     const rows = buildAttributionLedgerRows({
       conversions: [],
       sessions: [
@@ -157,7 +163,12 @@ describe("attribution ledger row merging", () => {
       ],
     });
 
-    assert.equal(rows.length, 0);
+    assert.equal(rows.length, 1, "the unanchored visitor should produce a visitor-only row");
+    assert.equal(rows[0].hasConversion, false);
+    assert.equal(rows[0].acuityAppointmentId, null);
+    assert.equal(rows[0].conversionEventId, null);
+    assert.ok(rows[0].visitorId, "visitor-only row must carry visitorId for identification");
+    assert.deepEqual(rows[0].stageKeys.includes("visitor_only"), true);
   });
 
   it("batches related visitor lookups so Supabase request URLs stay bounded", async () => {
@@ -348,7 +359,10 @@ describe("attribution ledger row merging", () => {
       ],
     });
 
-    assert.equal(data.rows.length, 2);
+    // v3 Phase 2: rows.length is 3 (was 2). visitor-3 has no conversion
+    // and no appointment, so it now produces a visitor-only row alongside
+    // the two conversion-anchored rows.
+    assert.equal(data.rows.length, 3);
     assert.equal(data.summary.visitorsShown, 3);
     assert.equal(data.summary.visitorsWithConversions, 2);
     assert.equal(data.summary.visitorsWithPaidTouch, 1);

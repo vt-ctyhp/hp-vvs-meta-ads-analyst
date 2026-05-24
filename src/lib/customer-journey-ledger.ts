@@ -497,27 +497,92 @@ export async function fetchCustomerJourneyLedgerData(
   const startIso = `${range.start}T00:00:00.000Z`;
   const endIso = `${range.end}T23:59:59.999Z`;
 
-  const appointmentsResult = await client
-    .from("appointment_events")
-    .select(APPOINTMENT_COLUMNS)
-    .gte("visit_date_time", startIso)
-    .lte("visit_date_time", endIso)
-    .order("visit_date_time", { ascending: false })
-    .limit(MAX_RELATED_ROWS);
+  const [appointmentsResult, windowVisitorsResult] = await Promise.all([
+    client
+      .from("appointment_events")
+      .select(APPOINTMENT_COLUMNS)
+      .gte("visit_date_time", startIso)
+      .lte("visit_date_time", endIso)
+      .order("visit_date_time", { ascending: false })
+      .limit(MAX_RELATED_ROWS),
+    // Phase 2 (v3 plan): fetch visitors active in the window directly so the
+    // ledger surfaces browse-but-no-book visitors. Pre-Phase-2 the loader was
+    // strictly appointment-keyed; visitors with neither appointment nor
+    // conversion never became rows. See tests/customer-journey-ledger-visitor-first.test.ts.
+    client
+      .from("website_visitors")
+      .select(VISITOR_COLUMNS)
+      .gte("last_seen_at", startIso)
+      .lte("last_seen_at", endIso)
+      .order("last_seen_at", { ascending: false })
+      .limit(MAX_LEDGER_VISITORS),
+  ]);
 
   if (appointmentsResult.error) throw appointmentsResult.error;
+  if (windowVisitorsResult.error) throw windowVisitorsResult.error;
 
   const appointments = uniqueValidAcuityAppointments(appointmentsResult.data || []);
   const appointmentIds = appointments.map((appointment) => appointmentAcuityId(appointment));
+  const windowVisitors = uniqueVisitors(windowVisitorsResult.data || []);
 
   if (!appointmentIds.length) {
+    // No appointments in window, but window visitors may still exist —
+    // pass them through so visitor-only rows can be emitted.
+    if (!windowVisitors.length) {
+      return buildCustomerJourneyLedgerData({
+        appointments,
+        conversions: [],
+        events: [],
+        range,
+        sessions: [],
+        visitors: [],
+      });
+    }
+
+    const visitorIds = windowVisitors.map((v) => v.visitor_id);
+    const [sessions, visitorEvents, visitorConversions] = await Promise.all([
+      fetchRowsByVisitorIds<CustomerJourneyLedgerSessionRow>(
+        visitorIds,
+        (batch) =>
+          client
+            .from("website_sessions")
+            .select(SESSION_COLUMNS)
+            .in("visitor_id", batch)
+            .order("last_seen_at", { ascending: false })
+            .limit(MAX_RELATED_ROWS),
+        "last_seen_at",
+      ),
+      fetchRowsByVisitorIds<CustomerJourneyLedgerEventRow>(
+        visitorIds,
+        (batch) =>
+          client
+            .from("website_events")
+            .select(EVENT_COLUMNS)
+            .in("visitor_id", batch)
+            .order("occurred_at", { ascending: false })
+            .limit(MAX_RELATED_ROWS),
+        "occurred_at",
+      ),
+      fetchRowsByVisitorIds<CustomerJourneyLedgerConversionRow>(
+        visitorIds,
+        (batch) =>
+          client
+            .from("website_conversions")
+            .select(CONVERSION_COLUMNS)
+            .in("visitor_id", batch)
+            .order("occurred_at", { ascending: false })
+            .limit(MAX_RELATED_ROWS),
+        "occurred_at",
+      ),
+    ]);
+
     return buildCustomerJourneyLedgerData({
       appointments,
-      conversions: [],
-      events: [],
+      conversions: visitorConversions,
+      events: visitorEvents,
       range,
-      sessions: [],
-      visitors: [],
+      sessions,
+      visitors: windowVisitors,
     });
   }
 
@@ -555,7 +620,7 @@ export async function fetchCustomerJourneyLedgerData(
       .filter((visitorId): visitorId is string => Boolean(visitorId)),
   ]);
 
-  const visitors = visitorIdsFromAppointments.length
+  const appointmentDerivedVisitors = visitorIdsFromAppointments.length
     ? uniqueVisitors(
         await fetchRowsByVisitorIds<CustomerJourneyLedgerVisitorRow>(
           visitorIdsFromAppointments,
@@ -569,6 +634,10 @@ export async function fetchCustomerJourneyLedgerData(
         ),
       )
     : [];
+  // Merge appointment-derived visitors with window-active visitors, deduping
+  // by visitor_id. Phase 2 (v3 plan): the merged set drives row emission so
+  // browse-but-no-book visitors surface alongside appointment-anchored rows.
+  const visitors = uniqueVisitors([...appointmentDerivedVisitors, ...windowVisitors]);
   const visitorIds = visitors.map((visitor) => visitor.visitor_id);
 
   if (!visitorIds.length) {
@@ -1165,8 +1234,10 @@ export function buildCustomerJourneyLedgerRows(input: {
   const appointments = uniqueValidAcuityAppointments(input.appointments || []);
   const conversionsByAcuityId = latestConversionByAcuityAppointmentId(input.conversions);
 
+  const anchoredRows: CustomerJourneyLedgerRow[] = [];
+
   if (appointments.length) {
-    const appointmentRows = appointments.map((appointment) => {
+    for (const appointment of appointments) {
       const acuityAppointmentId = appointmentAcuityId(appointment);
       const conversion = conversionsByAcuityId.get(acuityAppointmentId) || null;
       const appointmentEvents = eventsByAcuityId.get(acuityAppointmentId) || [];
@@ -1180,10 +1251,11 @@ export function buildCustomerJourneyLedgerRows(input: {
 
       if (conversion) {
         if (!visitor) {
-          return withAppointmentFields(
+          anchoredRows.push(withAppointmentFields(
             conversionOnlyLedgerRow(conversion, events, input.conversions),
             appointment,
-          );
+          ));
+          continue;
         }
 
         const session = selectSessionForConversion({
@@ -1191,43 +1263,133 @@ export function buildCustomerJourneyLedgerRows(input: {
           latestSession: sessionsByVisitor.get(visitor.visitor_id) || null,
           sessionsById: sessionsByVisitorAndId.get(visitor.visitor_id),
         });
-        return withAppointmentFields(
+        anchoredRows.push(withAppointmentFields(
           conversionLedgerRow({ allConversions: input.conversions, conversion, events, session, visitor }),
           appointment,
-        );
+        ));
+        continue;
       }
 
       const latestSession = visitor ? sessionsByVisitor.get(visitor.visitor_id) || null : null;
-      return appointmentLedgerRow({ appointment, events, session: latestSession, visitor });
-    });
+      anchoredRows.push(appointmentLedgerRow({ appointment, events, session: latestSession, visitor }));
+    }
+  } else {
+    for (const conversion of input.conversions) {
+      const visitor = conversion.visitor_id ? visitorsById.get(conversion.visitor_id) || null : null;
+      if (!visitor) {
+        anchoredRows.push(conversionOnlyLedgerRow(
+          conversion,
+          conversion.visitor_id ? eventsByVisitor.get(conversion.visitor_id) || [] : [],
+          input.conversions,
+        ));
+        continue;
+      }
 
-    return appointmentRows.sort(
-      (a, b) => timestampValue(b.appointmentVisitDateTime || b.lastSeen) - timestampValue(a.appointmentVisitDateTime || a.lastSeen),
-    );
+      const session = selectSessionForConversion({
+        conversion,
+        latestSession: sessionsByVisitor.get(visitor.visitor_id) || null,
+        sessionsById: sessionsByVisitorAndId.get(visitor.visitor_id),
+      });
+      const visitorEvents = eventsByVisitor.get(visitor.visitor_id) || [];
+      anchoredRows.push(conversionLedgerRow({ allConversions: input.conversions, conversion, events: visitorEvents, session, visitor }));
+    }
   }
 
-  const conversionRows = input.conversions.map((conversion) => {
-    const visitor = conversion.visitor_id ? visitorsById.get(conversion.visitor_id) || null : null;
-    if (!visitor) {
-      return conversionOnlyLedgerRow(
-        conversion,
-        conversion.visitor_id ? eventsByVisitor.get(conversion.visitor_id) || [] : [],
-        input.conversions,
-      );
-    }
+  // Phase 2 (v3 plan): emit visitor-only rows for any visitor that wasn't
+  // anchored by an appointment- or conversion-keyed row above. This is the
+  // browse-but-no-book population the appointment-keyed flow used to drop.
+  const anchoredVisitorIds = new Set(anchoredRows.map((row) => row.visitorId).filter(Boolean) as string[]);
+  const visitorOnlyRows: CustomerJourneyLedgerRow[] = [];
+  for (const visitor of input.visitors) {
+    if (anchoredVisitorIds.has(visitor.visitor_id)) continue;
+    const session = sessionsByVisitor.get(visitor.visitor_id) || null;
+    const events = eventsByVisitor.get(visitor.visitor_id) || [];
+    visitorOnlyRows.push(visitorOnlyLedgerRow({ events, session, visitor }));
+  }
 
-    const session = selectSessionForConversion({
-      conversion,
-      latestSession: sessionsByVisitor.get(visitor.visitor_id) || null,
-      sessionsById: sessionsByVisitorAndId.get(visitor.visitor_id),
-    });
-    const visitorEvents = eventsByVisitor.get(visitor.visitor_id) || [];
-    return conversionLedgerRow({ allConversions: input.conversions, conversion, events: visitorEvents, session, visitor });
-  });
+  const allRows = [...anchoredRows, ...visitorOnlyRows];
 
-  return conversionRows.sort(
-    (a, b) => timestampValue(b.lastSeen) - timestampValue(a.lastSeen),
+  return allRows.sort(
+    (a, b) => timestampValue(b.appointmentVisitDateTime || b.lastSeen) - timestampValue(a.appointmentVisitDateTime || a.lastSeen),
   );
+}
+
+function visitorOnlyLedgerRow(input: {
+  events: CustomerJourneyLedgerEventRow[];
+  session: CustomerJourneyLedgerSessionRow | null;
+  visitor: CustomerJourneyLedgerVisitorRow;
+}): CustomerJourneyLedgerRow {
+  const { events, session, visitor } = input;
+  const eventTouches = events.flatMap(eventAttributionTouches);
+  const paidTouch = selectOriginalPaidTouch([
+    attributionTouch(visitor.last_paid_touch),
+    attributionTouch(session?.last_paid_touch),
+    ...eventTouches,
+  ]);
+  const campaignId = paidTouch?.utm?.campaignId || null;
+  const adsetId = paidTouch?.utm?.adsetId || null;
+  const adId = paidTouch?.utm?.adId || null;
+  const placement = paidTouch?.utm?.placement || null;
+  const source = paidTouch?.utm?.source || paidTouch?.sourceType || paidTouch?.source || null;
+  const deviceCategory = visitor.device_category || session?.device_category || paidTouch?.deviceCategory || null;
+  const browserName = visitor.browser_name || session?.browser_name || paidTouch?.browserName || null;
+  const osName = visitor.os_name || session?.os_name || paidTouch?.osName || null;
+  const geo = geoFromRecords(visitor, session, ...events);
+
+  return {
+    adId,
+    adsetId,
+    acuityAppointmentId: null,
+    appointmentSourceId: null,
+    appointmentStatus: null,
+    appointmentType: null,
+    appointmentVisitDateTime: null,
+    bookingTime: null,
+    brand: null,
+    browserName,
+    campaignId,
+    capiStatus: null,
+    conversionEventId: null,
+    customerEmail: visitor.customer_email || session?.customer_email || null,
+    customerName: visitor.customer_name || session?.customer_name || null,
+    customerPhone: visitor.customer_phone || session?.customer_phone || null,
+    deviceBrowser: formatDeviceBrowser(deviceCategory, browserName, osName),
+    deviceCategory,
+    fbc: visitor.fbc || session?.fbc || paidTouch?.fbc || null,
+    fbp: visitor.fbp || session?.fbp || paidTouch?.fbp || null,
+    firstPage: visitor.first_page_url || session?.first_page_url || events.find((event) => event.page_url)?.page_url || null,
+    geoCity: geo.geoCity,
+    geoCountry: geo.geoCountry,
+    geoRegion: geo.geoRegion,
+    geoTimezone: geo.geoTimezone,
+    hasConversion: false,
+    hasPaidTouch: Boolean(paidTouch),
+    lastPaidSource: source,
+    lastPaidSourceType: paidTouch?.sourceType || null,
+    lastSeen: visitor.last_seen_at,
+    metaEventId: null,
+    osName,
+    placement,
+    sessionId: session?.session_id || events.find((event) => event.session_id)?.session_id || null,
+    stageKeys: stageKeysForVisitorOnly({ events, paidTouch }),
+    visitorId: visitor.visitor_id,
+  };
+}
+
+function stageKeysForVisitorOnly(input: {
+  events: CustomerJourneyLedgerEventRow[];
+  paidTouch: AttributionTouch | null;
+}) {
+  const keys = new Set<string>(["visitor_only"]);
+  if (input.paidTouch) keys.add("paid_meta_visit");
+  if (input.events.some((event) => event.event_name === "PageView" && pageGroupFromUrl(event.page_url) === "booking")) {
+    keys.add("booking_page_view");
+  }
+  if (input.events.some(isBookingFormStartedLedgerEvent)) keys.add("booking_form_started");
+  if (input.events.some((event) => event.event_name === "BookingVisitSelected")) keys.add("visit_selected");
+  if (input.events.some((event) => event.event_name === "BookingDateSelected")) keys.add("date_selected");
+  if (input.events.some((event) => event.event_name === "BookingTimeSelected")) keys.add("time_selected");
+  return Array.from(keys);
 }
 
 function conversionLedgerRow(input: {
