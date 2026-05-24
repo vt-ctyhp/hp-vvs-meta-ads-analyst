@@ -22,6 +22,7 @@ export default async function InboxPage() {
       initialData={inboxData.data}
       dataError={inboxData.error}
       canManageInboxState={profile.permissions.includes("manage_inbox_state")}
+      canSendInboxReply={profile.permissions.includes("send_inbox_reply")}
     />
   );
 }

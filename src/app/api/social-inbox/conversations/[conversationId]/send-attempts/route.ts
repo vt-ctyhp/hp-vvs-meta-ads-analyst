@@ -1,0 +1,33 @@
+import { requirePermissionFromRequest } from "@/lib/app-auth";
+import { jsonError } from "@/lib/http";
+import {
+  createSocialInboxSendAttempt,
+  type MetaInboxSendAttemptInput,
+} from "@/lib/social-inbox";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+type Params = {
+  conversationId: string;
+};
+
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<Params> },
+) {
+  try {
+    const profile = await requirePermissionFromRequest(request, "send_inbox_reply");
+    const { conversationId } = await params;
+    const input = (await request.json()) as MetaInboxSendAttemptInput;
+    const result = await createSocialInboxSendAttempt(
+      decodeURIComponent(conversationId),
+      profile,
+      input,
+    );
+
+    return Response.json(result);
+  } catch (error) {
+    return jsonError(error);
+  }
+}

@@ -85,6 +85,7 @@ export function filterSocialInboxDataForQueueAccess(
       customerProfiles: [],
       customerContactMethods: [],
       firstTouchSources: [],
+      sendAttempts: [],
     };
   }
 
@@ -117,6 +118,9 @@ export function filterSocialInboxDataForQueueAccess(
     ),
     firstTouchSources: data.firstTouchSources.filter((source) =>
       conversationIds.has(source.conversation_id),
+    ),
+    sendAttempts: (data.sendAttempts || []).filter((attempt) =>
+      conversationIds.has(attempt.conversation_id),
     ),
     threads: data.threads.filter((thread) => threadIds.has(thread.thread_id)),
     messages: data.messages.filter((message) => threadIds.has(message.thread_id)),

@@ -45,4 +45,13 @@ describe("social inbox UI contract", () => {
     assert.match(DESKTOP_INBOX, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/contact-methods/);
     assert.match(DESKTOP_INBOX, /future verified matching/);
   });
+
+  it("surfaces reply-window countdown and failed-send retry shell", () => {
+    assert.match(DESKTOP_INBOX, /Reply Window/);
+    assert.match(DESKTOP_INBOX, /Failed Send Inbox/);
+    assert.match(DESKTOP_INBOX, /Record Send Attempt/);
+    assert.match(DESKTOP_INBOX, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/send-attempts/);
+    assert.match(DESKTOP_INBOX, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/send-attempts\/retry/);
+    assert.match(DESKTOP_INBOX, /live Meta delivery remains disabled/);
+  });
 });

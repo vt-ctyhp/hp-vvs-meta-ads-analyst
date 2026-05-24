@@ -34,6 +34,12 @@ import {
   type MetaInboxContactMethodMutationInput,
   type MetaInboxContactMethodRecord,
 } from "./meta-inbox-contact-methods.ts";
+import {
+  buildMetaInboxRetryAttemptUpdate,
+  buildMetaInboxSendAttemptDraft,
+  type MetaInboxSendAttemptRecord,
+  type MetaInboxSendAttemptStatus,
+} from "./meta-inbox-reply-reliability.ts";
 import { metaInboxAllowedQueueCategoriesForTeams } from "./meta-inbox-foundation.ts";
 import type {
   MetaInboxConversationStatusKey,
@@ -261,6 +267,30 @@ export type SocialInboxFirstTouchSource = {
   attribution_confidence: number | null;
 };
 
+export type SocialInboxSendAttempt = {
+  id: string;
+  conversation_id: string;
+  reply_text: string;
+  approved_by: string | null;
+  approved_at: string | null;
+  status: MetaInboxSendAttemptStatus;
+  messaging_type: "RESPONSE" | "MESSAGE_TAG" | null;
+  tag: "HUMAN_AGENT" | null;
+  attachment_ids: string[];
+  meta_send_id: string | null;
+  meta_error_message: string | null;
+  meta_error_code: number | null;
+  meta_error_subcode: number | null;
+  meta_trace_id: string | null;
+  attempt_count: number;
+  next_retry_at: string | null;
+  last_attempted_at: string | null;
+  sent_at: string | null;
+  idempotency_key: string;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
 export type SocialInboxSyncRun = {
   id: string;
   trigger: string;
@@ -280,6 +310,7 @@ export type SocialInboxData = {
   customerProfiles: SocialInboxCustomerProfile[];
   customerContactMethods: SocialInboxCustomerContactMethod[];
   firstTouchSources: SocialInboxFirstTouchSource[];
+  sendAttempts: SocialInboxSendAttempt[];
   syncRuns: SocialInboxSyncRun[];
 };
 
@@ -298,6 +329,15 @@ export type MetaWebhookIngestResult = {
 export type { SocialInboxConversationHistory };
 export type { MetaInboxWorkflowPatchInput };
 export type { MetaInboxContactMethodMutationInput };
+
+export type MetaInboxSendAttemptInput = {
+  replyText?: string | null;
+  idempotencyKey?: string | null;
+};
+
+export type MetaInboxRetrySendAttemptInput = {
+  sendAttemptId?: string | null;
+};
 
 class MetaSocialGraphError extends Error {
   details?: unknown;
@@ -399,6 +439,7 @@ export async function getSocialInboxData(
     customerProfiles,
     customerContactMethods,
     firstTouchSources,
+    sendAttempts,
     syncRuns,
   ] = await Promise.all([
     supabase
@@ -432,6 +473,7 @@ export async function getSocialInboxData(
       .select("*")
       .order("updated_at", { ascending: false, nullsFirst: false })
       .limit(250),
+    selectSendAttemptsForQueueAccess(supabase, queueAccess),
     supabase
       .from("meta_social_sync_runs")
       .select("*")
@@ -447,6 +489,7 @@ export async function getSocialInboxData(
     customerProfiles,
     customerContactMethods,
     firstTouchSources,
+    sendAttempts,
     syncRuns,
   ]) {
     if (result.error) throw result.error;
@@ -461,6 +504,7 @@ export async function getSocialInboxData(
     customerProfiles: rows<JsonRecord>(customerProfiles.data).map(mapCustomerProfile),
     customerContactMethods: rows<JsonRecord>(customerContactMethods.data).map(mapContactMethod),
     firstTouchSources: rows<JsonRecord>(firstTouchSources.data).map(mapFirstTouchSource),
+    sendAttempts: rows<JsonRecord>(sendAttempts.data).map(mapSendAttempt),
     syncRuns: rows<JsonRecord>(syncRuns.data).map(mapSyncRun),
   }, queueAccess);
 }
@@ -670,6 +714,89 @@ export async function updateSocialInboxConversationContactMethod(
   };
 }
 
+export async function createSocialInboxSendAttempt(
+  conversationId: string,
+  profile: MetaInboxAccessProfile,
+  input: MetaInboxSendAttemptInput,
+): Promise<{ sendAttempt: SocialInboxSendAttempt; events: JsonRecord[] }> {
+  const supabase = dynamicSupabase("web");
+  const queueAccess = await resolveSocialInboxQueueAccess(supabase, profile);
+  const conversation = await requireAccessibleConversation(supabase, conversationId, queueAccess);
+  const now = new Date().toISOString();
+  const actorUserId = profile.appUserId && isUuid(profile.appUserId) ? profile.appUserId : null;
+  const mutation = buildMetaInboxSendAttemptDraft(
+    conversation,
+    {
+      replyText: input.replyText || "",
+      idempotencyKey: input.idempotencyKey,
+    },
+    {
+      actorUserId,
+      now,
+      humanAgentEnabled: true,
+    },
+  );
+
+  const insert = await supabase
+    .from("meta_inbox_send_attempts")
+    .insert(withAdsAnalystEnvironment(mutation.row))
+    .select("*")
+    .single();
+  if (insert.error) throw insert.error;
+  if (!insert.data) throw new Error("Send attempt did not return after insert.");
+
+  const event = await insertConversationEvent(supabase, conversation.id, actorUserId, now, {
+    ...mutation.event,
+    newValue: {
+      ...mutation.event.newValue,
+      sendAttemptId: String(insert.data.id),
+    },
+  });
+
+  return {
+    sendAttempt: mapSendAttempt(insert.data),
+    events: [event],
+  };
+}
+
+export async function retrySocialInboxSendAttempt(
+  conversationId: string,
+  profile: MetaInboxAccessProfile,
+  input: MetaInboxRetrySendAttemptInput,
+): Promise<{ sendAttempt: SocialInboxSendAttempt; events: JsonRecord[] }> {
+  const supabase = dynamicSupabase("web");
+  const queueAccess = await resolveSocialInboxQueueAccess(supabase, profile);
+  const conversation = await requireAccessibleConversation(supabase, conversationId, queueAccess);
+  const attempt = await requireSendAttemptForConversation(supabase, conversation, input.sendAttemptId);
+  const now = new Date().toISOString();
+  const actorUserId = profile.appUserId && isUuid(profile.appUserId) ? profile.appUserId : null;
+  const mutation = buildMetaInboxRetryAttemptUpdate(attempt, conversation, {
+    actorUserId,
+    now,
+    humanAgentEnabled: true,
+  });
+
+  const update = await supabase
+    .from("meta_inbox_send_attempts")
+    .update(mutation.update)
+    .eq("id", attempt.id);
+  if (update.error) throw update.error;
+
+  const event = await insertConversationEvent(supabase, conversation.id, actorUserId, now, mutation.event);
+  const refreshed = await supabase
+    .from("meta_inbox_send_attempts")
+    .select("*")
+    .eq("id", attempt.id)
+    .limit(1);
+  if (refreshed.error) throw refreshed.error;
+
+  const row = rows<JsonRecord>(refreshed.data)[0];
+  return {
+    sendAttempt: row ? mapSendAttempt(row) : mapSendAttempt({ ...attempt, ...mutation.update }),
+    events: [event],
+  };
+}
+
 async function resolveSocialInboxQueueAccess(
   supabase: DynamicSupabaseClient,
   profile: MetaInboxAccessProfile | null | undefined,
@@ -754,6 +881,38 @@ function selectInboxConversationsForQueueAccess(
     .limit(250);
 }
 
+async function selectSendAttemptsForQueueAccess(
+  supabase: DynamicSupabaseClient,
+  access: MetaInboxQueueAccessDecision,
+): Promise<DynamicQueryResult> {
+  if (access.mode === "none") return emptyQueryResult();
+  if (access.mode === "team" && !access.allowedQueueCategoryKeys.length) {
+    return emptyQueryResult();
+  }
+
+  if (access.mode === "all") {
+    return supabase
+      .from("meta_inbox_send_attempts")
+      .select("*")
+      .order("created_at", { ascending: false, nullsFirst: false })
+      .limit(250);
+  }
+
+  const conversations = await selectInboxConversationsForQueueAccess(supabase, access);
+  if (conversations.error) throw conversations.error;
+  const conversationIds = uniqueStrings(
+    rows<JsonRecord>(conversations.data).map((conversation) => stringField(conversation.id)),
+  );
+  if (!conversationIds.length) return emptyQueryResult();
+
+  return supabase
+    .from("meta_inbox_send_attempts")
+    .select("*")
+    .in("conversation_id", conversationIds)
+    .order("created_at", { ascending: false, nullsFirst: false })
+    .limit(250);
+}
+
 function emptyQueryResult(): Promise<DynamicQueryResult> {
   return Promise.resolve({ data: [], error: null });
 }
@@ -808,6 +967,61 @@ async function requireContactMethodForConversation(
   }
 
   return mapContactMethodRecord(row);
+}
+
+async function requireSendAttemptForConversation(
+  supabase: DynamicSupabaseClient,
+  conversation: SocialInboxConversation,
+  sendAttemptId: string | null | undefined,
+): Promise<MetaInboxSendAttemptRecord> {
+  if (!sendAttemptId || !isUuid(sendAttemptId)) {
+    throw new Error("Send attempt id is required.");
+  }
+
+  const result = await supabase
+    .from("meta_inbox_send_attempts")
+    .select("*")
+    .eq("id", sendAttemptId)
+    .limit(1);
+  if (result.error) throw result.error;
+
+  const row = rows<JsonRecord>(result.data)[0];
+  if (!row) throw new AuthorizationError("Send attempt not found.", 404);
+  if (stringField(row.conversation_id) !== conversation.id) {
+    throw new AuthorizationError("Send attempt is not attached to this conversation.", 403);
+  }
+
+  return mapSendAttemptRecord(row);
+}
+
+async function insertConversationEvent(
+  supabase: DynamicSupabaseClient,
+  conversationId: string,
+  actorUserId: string | null,
+  now: string,
+  event: {
+    eventType: "contact_method_changed" | "send_attempt";
+    previousValue: JsonRecord | null;
+    newValue: JsonRecord;
+    metadata: JsonRecord;
+  },
+) {
+  const insert = await supabase
+    .from("meta_inbox_conversation_events")
+    .insert(withAdsAnalystEnvironment({
+      conversation_id: conversationId,
+      event_type: event.eventType,
+      actor_user_id: actorUserId,
+      event_at: now,
+      previous_value: event.previousValue,
+      new_value: event.newValue,
+      metadata: event.metadata,
+    }))
+    .select("id,conversation_id,event_type,actor_user_id,event_at,previous_value,new_value,metadata")
+    .single();
+  if (insert.error) throw insert.error;
+  if (!insert.data) throw new Error("Conversation audit event did not return after insert.");
+  return insert.data;
 }
 
 async function insertContactMethodEvent(
@@ -934,6 +1148,7 @@ export function emptySocialInboxData(): SocialInboxData {
     customerProfiles: [],
     customerContactMethods: [],
     firstTouchSources: [],
+    sendAttempts: [],
     syncRuns: [],
   };
 }
@@ -1965,6 +2180,50 @@ function mapFirstTouchSource(row: JsonRecord): SocialInboxFirstTouchSource {
   };
 }
 
+function mapSendAttempt(row: JsonRecord): SocialInboxSendAttempt {
+  return {
+    id: String(row.id),
+    conversation_id: String(row.conversation_id || ""),
+    reply_text: String(row.reply_text || ""),
+    approved_by: stringField(row.approved_by),
+    approved_at: stringField(row.approved_at),
+    status: sendAttemptStatusField(row.status),
+    messaging_type:
+      row.messaging_type === "RESPONSE" || row.messaging_type === "MESSAGE_TAG"
+        ? row.messaging_type
+        : null,
+    tag: row.tag === "HUMAN_AGENT" ? "HUMAN_AGENT" : null,
+    attachment_ids: arrayField(row.attachment_ids).map(String),
+    meta_send_id: stringField(row.meta_send_id),
+    meta_error_message: stringField(row.meta_error_message),
+    meta_error_code: numberField(row.meta_error_code),
+    meta_error_subcode: numberField(row.meta_error_subcode),
+    meta_trace_id: stringField(row.meta_trace_id),
+    attempt_count: numberField(row.attempt_count) || 0,
+    next_retry_at: stringField(row.next_retry_at),
+    last_attempted_at: stringField(row.last_attempted_at),
+    sent_at: stringField(row.sent_at),
+    idempotency_key: String(row.idempotency_key || ""),
+    created_at: stringField(row.created_at),
+    updated_at: stringField(row.updated_at),
+  };
+}
+
+function mapSendAttemptRecord(row: JsonRecord): MetaInboxSendAttemptRecord {
+  const mapped = mapSendAttempt(row);
+  return {
+    id: mapped.id,
+    conversation_id: mapped.conversation_id,
+    reply_text: mapped.reply_text,
+    status: mapped.status,
+    messaging_type: mapped.messaging_type,
+    tag: mapped.tag,
+    attempt_count: mapped.attempt_count,
+    next_retry_at: mapped.next_retry_at,
+    meta_error_message: mapped.meta_error_message,
+  };
+}
+
 function mapSyncRun(row: JsonRecord): SocialInboxSyncRun {
   return {
     id: String(row.id),
@@ -2067,6 +2326,21 @@ function sendEligibilityField(value: unknown): SocialInboxConversation["send_eli
       return value;
     default:
       return "unknown";
+  }
+}
+
+function sendAttemptStatusField(value: unknown): MetaInboxSendAttemptStatus {
+  switch (value) {
+    case "approved":
+    case "queued":
+    case "sending":
+    case "sent":
+    case "failed_retryable":
+    case "failed_terminal":
+    case "canceled":
+      return value;
+    default:
+      return "approved";
   }
 }
 

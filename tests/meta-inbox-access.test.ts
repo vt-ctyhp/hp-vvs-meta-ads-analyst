@@ -73,6 +73,10 @@ describe("Meta inbox team queue access", () => {
       filtered.firstTouchSources.map((source) => source.conversation_id),
       ["conv-cash", "conv-book"],
     );
+    assert.deepEqual(
+      filtered.sendAttempts.map((attempt) => attempt.conversation_id),
+      ["conv-cash", "conv-book"],
+    );
     assert.deepEqual(filtered.syncRuns, data.syncRuns);
   });
 
@@ -89,6 +93,7 @@ describe("Meta inbox team queue access", () => {
     assert.equal(filtered.comments.length, 0);
     assert.equal(filtered.customerProfiles.length, 0);
     assert.equal(filtered.firstTouchSources.length, 0);
+    assert.equal(filtered.sendAttempts.length, 0);
     assert.equal(filtered.syncRuns.length, 1);
   });
 
@@ -237,6 +242,11 @@ function socialInboxFixture(): SocialInboxData {
       firstTouchSource("source-book", "conv-book"),
       firstTouchSource("source-vn", "conv-vn"),
     ],
+    sendAttempts: [
+      sendAttempt("attempt-cash", "conv-cash"),
+      sendAttempt("attempt-book", "conv-book"),
+      sendAttempt("attempt-vn", "conv-vn"),
+    ],
     threads: [
       thread("thread-cash", "facebook"),
       thread("thread-vn", "instagram"),
@@ -263,6 +273,32 @@ function socialInboxFixture(): SocialInboxData {
         errors: [],
       },
     ],
+  };
+}
+
+function sendAttempt(id: string, conversationId: string) {
+  return {
+    id,
+    conversation_id: conversationId,
+    reply_text: "Thanks for reaching out.",
+    approved_by: null,
+    approved_at: null,
+    status: "approved" as const,
+    messaging_type: "RESPONSE" as const,
+    tag: null,
+    attachment_ids: [],
+    meta_send_id: null,
+    meta_error_message: null,
+    meta_error_code: null,
+    meta_error_subcode: null,
+    meta_trace_id: null,
+    attempt_count: 0,
+    next_retry_at: null,
+    last_attempted_at: null,
+    sent_at: null,
+    idempotency_key: id,
+    created_at: "2026-05-23T10:05:00.000Z",
+    updated_at: "2026-05-23T10:05:00.000Z",
   };
 }
 
