@@ -1,5 +1,6 @@
 import { AuthorizationError } from "./app-auth.ts";
 import { ConfigurationError, getMetaApiVersion } from "./env";
+import { safeErrorMessage } from "./error-message";
 import { getMetaPermissionHealth } from "./meta";
 import {
   adsAnalystOnConflict,
@@ -35,6 +36,7 @@ import {
   type MetaInboxContactMethodRecord,
 } from "./meta-inbox-contact-methods.ts";
 import {
+  buildMetaInboxQueueAttemptUpdate,
   buildMetaInboxRetryAttemptUpdate,
   buildMetaInboxSendAttemptDraft,
   type MetaInboxSendAttemptRecord,
@@ -336,6 +338,10 @@ export type MetaInboxSendAttemptInput = {
 };
 
 export type MetaInboxRetrySendAttemptInput = {
+  sendAttemptId?: string | null;
+};
+
+export type MetaInboxQueueSendAttemptInput = {
   sendAttemptId?: string | null;
 };
 
@@ -771,6 +777,44 @@ export async function retrySocialInboxSendAttempt(
   const now = new Date().toISOString();
   const actorUserId = profile.appUserId && isUuid(profile.appUserId) ? profile.appUserId : null;
   const mutation = buildMetaInboxRetryAttemptUpdate(attempt, conversation, {
+    actorUserId,
+    now,
+    humanAgentEnabled: true,
+  });
+
+  const update = await supabase
+    .from("meta_inbox_send_attempts")
+    .update(mutation.update)
+    .eq("id", attempt.id);
+  if (update.error) throw update.error;
+
+  const event = await insertConversationEvent(supabase, conversation.id, actorUserId, now, mutation.event);
+  const refreshed = await supabase
+    .from("meta_inbox_send_attempts")
+    .select("*")
+    .eq("id", attempt.id)
+    .limit(1);
+  if (refreshed.error) throw refreshed.error;
+
+  const row = rows<JsonRecord>(refreshed.data)[0];
+  return {
+    sendAttempt: row ? mapSendAttempt(row) : mapSendAttempt({ ...attempt, ...mutation.update }),
+    events: [event],
+  };
+}
+
+export async function queueSocialInboxSendAttempt(
+  conversationId: string,
+  profile: MetaInboxAccessProfile,
+  input: MetaInboxQueueSendAttemptInput,
+): Promise<{ sendAttempt: SocialInboxSendAttempt; events: JsonRecord[] }> {
+  const supabase = dynamicSupabase("web");
+  const queueAccess = await resolveSocialInboxQueueAccess(supabase, profile);
+  const conversation = await requireAccessibleConversation(supabase, conversationId, queueAccess);
+  const attempt = await requireSendAttemptForConversation(supabase, conversation, input.sendAttemptId);
+  const now = new Date().toISOString();
+  const actorUserId = profile.appUserId && isUuid(profile.appUserId) ? profile.appUserId : null;
+  const mutation = buildMetaInboxQueueAttemptUpdate(attempt, conversation, {
     actorUserId,
     now,
     humanAgentEnabled: true,
@@ -2432,8 +2476,7 @@ function isRecord(value: unknown): value is JsonRecord {
 }
 
 function errorToMessage(error: unknown) {
-  if (error instanceof Error) return error.message;
-  return String(error);
+  return safeErrorMessage(error);
 }
 
 function conversationSyncErrorMessage(platform: "facebook" | "instagram", error: unknown) {

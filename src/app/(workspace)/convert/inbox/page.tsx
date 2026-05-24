@@ -1,5 +1,6 @@
 import { SocialInboxClient, type SocialInboxStatus } from "@/components/social-inbox-client";
 import { getMissingRequiredEnv } from "@/lib/env";
+import { safeErrorMessage } from "@/lib/error-message";
 import { getMetaPermissionHealth, validateConfiguredMetaAccounts } from "@/lib/meta";
 import { requirePagePermission } from "@/lib/server-route-auth";
 import {
@@ -35,7 +36,7 @@ async function getSafeSocialInboxData(
   } catch (error) {
     return {
       data: emptySocialInboxData(),
-      error: error instanceof Error ? error.message : String(error),
+      error: safeErrorMessage(error),
     };
   }
 }
@@ -93,7 +94,7 @@ async function getSocialInboxStatus(): Promise<SocialInboxStatus> {
         socialInbox: false,
         socialReply: false,
       },
-      error: error instanceof Error ? error.message : String(error),
+      error: safeErrorMessage(error),
     };
   }
 }

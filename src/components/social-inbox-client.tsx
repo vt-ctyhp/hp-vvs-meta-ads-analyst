@@ -53,6 +53,7 @@ import type {
   SocialInboxMessage,
   SocialInboxSendAttempt,
   MetaInboxContactMethodMutationInput,
+  MetaInboxQueueSendAttemptInput,
   MetaInboxRetrySendAttemptInput,
   MetaInboxSendAttemptInput,
   MetaInboxWorkflowPatchInput,
@@ -627,6 +628,56 @@ export function SocialInboxClient({
     [],
   );
 
+  const handleSendAttemptQueue = useCallback(
+    async (conversationId: string, input: MetaInboxQueueSendAttemptInput) => {
+      setReplyAttemptMutationState({
+        conversationId,
+        sendAttemptId: input.sendAttemptId || null,
+        status: "saving",
+        message: "Queueing approved send attempt...",
+      });
+
+      try {
+        const response = await fetch(
+          `/api/social-inbox/conversations/${encodeURIComponent(conversationId)}/send-attempts/queue`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(input),
+          },
+        );
+        const payload = (await response.json()) as
+          | { sendAttempt: SocialInboxSendAttempt; events: unknown[] }
+          | { error: string };
+        if (!response.ok || isSendAttemptErrorPayload(payload)) {
+          throw new Error(
+            isSendAttemptErrorPayload(payload)
+              ? payload.error
+              : "Could not queue approved send attempt.",
+          );
+        }
+
+        setInboxData((current) => upsertSendAttempt(current, payload.sendAttempt));
+        setReplyAttemptMutationState({
+          conversationId,
+          sendAttemptId: payload.sendAttempt.id,
+          status: "saved",
+          message: `${payload.events.length} queue audit event${
+            payload.events.length === 1 ? "" : "s"
+          } recorded. Delivery worker will handle send processing when live delivery is enabled.`,
+        });
+      } catch (error) {
+        setReplyAttemptMutationState({
+          conversationId,
+          sendAttemptId: input.sendAttemptId || null,
+          status: "error",
+          message: translateError(error),
+        });
+      }
+    },
+    [],
+  );
+
   async function handleSync() {
     setIsSyncing(true);
     setSyncStatus("Syncing recent Meta inbox data...");
@@ -872,6 +923,7 @@ export function SocialInboxClient({
                   canSendInboxReply={canSendInboxReply}
                   mutationState={selectedReplyAttemptMutationState}
                   onCreateSendAttempt={handleSendAttemptCreate}
+                  onQueueSendAttempt={handleSendAttemptQueue}
                   onRetrySendAttempt={handleSendAttemptRetry}
                 />
               </div>
@@ -1256,6 +1308,7 @@ function ReplyAttemptPanel({
   canSendInboxReply,
   mutationState,
   onCreateSendAttempt,
+  onQueueSendAttempt,
   onRetrySendAttempt,
 }: {
   item: QueueDisplayItem | null;
@@ -1264,6 +1317,7 @@ function ReplyAttemptPanel({
   canSendInboxReply: boolean;
   mutationState: ReplyAttemptMutationLoadState;
   onCreateSendAttempt: (conversationId: string, input: MetaInboxSendAttemptInput) => void;
+  onQueueSendAttempt: (conversationId: string, input: MetaInboxQueueSendAttemptInput) => void;
   onRetrySendAttempt: (conversationId: string, input: MetaInboxRetrySendAttemptInput) => void;
 }) {
   const conversationId = item?.inboxConversation?.id || null;
@@ -1405,12 +1459,52 @@ function ReplyAttemptPanel({
         )}
 
         {recentAttempts.length ? (
-          <div className="mt-3 border-t border-hp-rule pt-3 text-xs leading-5 text-hp-muted">
-            {recentAttempts.map((attempt) => (
-              <p key={attempt.id}>
-                {attempt.status.replaceAll("_", " ")} · {formatDateLabel(attempt.created_at)}
-              </p>
-            ))}
+          <div className="mt-3 space-y-2 border-t border-hp-rule pt-3 text-xs leading-5 text-hp-muted">
+            {recentAttempts.map((attempt) => {
+              const canQueue =
+                Boolean(conversationId) &&
+                canSendInboxReply &&
+                attempt.status === "approved" &&
+                Boolean(windowState?.canAttemptSend) &&
+                mutationState.status !== "saving";
+
+              return (
+                <div
+                  key={attempt.id}
+                  className="flex flex-col gap-2 border border-hp-rule bg-hp-inset p-3 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium leading-5 text-hp-ink">
+                      {attempt.status.replaceAll("_", " ")}
+                    </p>
+                    <p className="mt-1 break-words text-xs leading-5 text-hp-muted">
+                      {formatDateLabel(attempt.created_at)}
+                      {attempt.messaging_type ? ` · ${attempt.messaging_type}` : ""}
+                      {attempt.tag ? ` · ${attempt.tag}` : ""}
+                    </p>
+                  </div>
+                  {attempt.status === "approved" ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        conversationId &&
+                        onQueueSendAttempt(conversationId, { sendAttemptId: attempt.id })
+                      }
+                      disabled={!canQueue}
+                      className="flex h-9 shrink-0 items-center justify-center gap-2 border border-hp-rule px-3 text-xs font-medium text-hp-ink transition hover:border-hp-ink disabled:opacity-50"
+                    >
+                      {mutationState.status === "saving" &&
+                      mutationState.sendAttemptId === attempt.id ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <Send size={13} />
+                      )}
+                      Queue Delivery
+                    </button>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         ) : null}
       </div>

@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 const DESKTOP_INBOX = readFileSync("src/components/social-inbox-client.tsx", "utf8");
+const DESKTOP_INBOX_PAGE = readFileSync("src/app/(workspace)/convert/inbox/page.tsx", "utf8");
 const MOBILE_COMPOSER = readFileSync("src/components/v2/inbox/reply-composer.tsx", "utf8");
+const SOCIAL_INBOX_LIB = readFileSync("src/lib/social-inbox.ts", "utf8");
 
 describe("social inbox UI contract", () => {
   it("surfaces normalized queue, source, and workflow panels in the desktop inbox", () => {
@@ -53,5 +55,11 @@ describe("social inbox UI contract", () => {
     assert.match(DESKTOP_INBOX, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/send-attempts/);
     assert.match(DESKTOP_INBOX, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/send-attempts\/retry/);
     assert.match(DESKTOP_INBOX, /live Meta delivery remains disabled/);
+  });
+
+  it("keeps inbox error copy human-readable instead of rendering object strings", () => {
+    assert.match(DESKTOP_INBOX_PAGE, /safeErrorMessage\(error\)/);
+    assert.match(SOCIAL_INBOX_LIB, /return safeErrorMessage\(error\)/);
+    assert.doesNotMatch(DESKTOP_INBOX_PAGE, /String\(error\)/);
   });
 });

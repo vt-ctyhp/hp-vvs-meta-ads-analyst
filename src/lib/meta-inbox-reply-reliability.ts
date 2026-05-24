@@ -60,6 +60,11 @@ export type MetaInboxRetryAttemptUpdate = {
   event: MetaInboxSendAttemptEventDraft;
 };
 
+export type MetaInboxQueueAttemptUpdate = {
+  update: JsonRecord;
+  event: MetaInboxSendAttemptEventDraft;
+};
+
 type ReplyContext = {
   actorUserId: string | null;
   now: string;
@@ -229,6 +234,62 @@ export function buildMetaInboxRetryAttemptUpdate(
       },
       metadata: {
         source: "inbox_send_attempt_retry",
+        actorUserId,
+        replyWindowEligibility: windowState.eligibility,
+        liveMetaDelivery: false,
+      },
+    },
+  };
+}
+
+export function buildMetaInboxQueueAttemptUpdate(
+  attempt: MetaInboxSendAttemptRecord,
+  conversation: MetaInboxReplyConversationInput,
+  context: ReplyContext,
+): MetaInboxQueueAttemptUpdate {
+  const actorUserId = requireUuid(context.actorUserId, "A valid sales user");
+  const conversationId = requireUuid(conversation.id, "Conversation");
+  if (attempt.conversation_id !== conversationId) {
+    throw new Error("Send attempt is not attached to this conversation.");
+  }
+  if (attempt.status !== "approved") {
+    throw new Error("Only approved send attempts can be queued for delivery.");
+  }
+
+  const windowState = resolveMetaInboxReplyWindow(conversation, context);
+  if (!windowState.canAttemptSend) {
+    throw new Error(`${windowState.reason} Cannot queue send attempt.`);
+  }
+
+  return {
+    update: {
+      status: "queued",
+      messaging_type: windowState.messagingType,
+      tag: windowState.tag,
+      next_retry_at: null,
+      meta_error_message: null,
+      meta_error_code: null,
+      meta_error_subcode: null,
+      meta_trace_id: null,
+      updated_at: context.now,
+    },
+    event: {
+      eventType: "send_attempt",
+      previousValue: {
+        sendAttemptId: attempt.id,
+        status: attempt.status,
+        attemptCount: attempt.attempt_count,
+      },
+      newValue: {
+        action: "delivery_queued",
+        sendAttemptId: attempt.id,
+        status: "queued",
+        attemptCount: attempt.attempt_count,
+        messagingType: windowState.messagingType,
+        tag: windowState.tag,
+      },
+      metadata: {
+        source: "inbox_send_attempt_queue",
         actorUserId,
         replyWindowEligibility: windowState.eligibility,
         liveMetaDelivery: false,
