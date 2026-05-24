@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Remove ~9.5–10.5K LOC of dead application code from `src/` + `app/` + `tests/` across 7 small, independently revertable PRs. No SQL changes. No refactoring. No regeneration of generated files.
+**Goal:** Remove ~9.5–10.5K LOC of dead application code from `src/` + `tests/` (the Next.js app router lives at `src/app/`) across 7 small, independently revertable PRs. No SQL changes. No refactoring. No regeneration of generated files.
 
 **Architecture:** Verify-then-delete in batches. Each batch is its own branch, its own PR, its own merge. Order is intentional (Batches 5 → 4 → 3 inverted) to avoid transient "lib gone but consumer not yet deleted" build failures.
 
@@ -15,7 +15,7 @@
 
 **Hard rules:**
 1. No commits or merges without explicit user approval (per project AGENTS.md). Each batch ends with a "ready to commit?" gate AND a "ready to merge?" gate at the PR.
-2. Verify-before-delete. For every file: `grep -rln <basename-or-export-name> src/ app/ tests/` MUST show zero callers outside the batch. If it shows live callers, defer that file and report.
+2. Verify-before-delete. For every file: `grep -rln <basename-or-export-name> src/ tests/` MUST show zero callers outside the batch. If it shows live callers, defer that file and report.
 3. `npm run build` + `npm test` must pass after every batch's deletions. If they fail, the "dead" assumption was wrong — revert and investigate.
 4. No file edits beyond `rm`. If a deletion produces a dangling import, do NOT edit the importer to "fix" it — that means the file wasn't actually dead. Defer.
 5. Branch per batch under `claude/phase-6-batch-N-<slug>`. Each PR title `chore(cleanup): batch N — <description>`.
@@ -143,7 +143,7 @@ gh pr create --title "chore(cleanup): batch 1 — remove redirect-stub and place
 - [ ] **Step 2: Verify dead**
 
 ```bash
-grep -rln --exclude-dir=node_modules --exclude-dir=.next "pivot-children\\|/api/optimize/pivot-children" src/ tests/ app/
+grep -rln --exclude-dir=node_modules --exclude-dir=.next "pivot-children\\|/api/optimize/pivot-children" src/ tests/
 ```
 
 Expected matches: only inside `src/app/api/optimize/pivot-children/route.ts` itself and orphan `v2/optimize/tree-table.tsx` (Batch 5). Any other match → defer.
@@ -335,7 +335,7 @@ If only `filter-bar.tsx` was deletable, ship that alone and mark `status-sentenc
 - [ ] **Step 2: Find every import and call site**
 
 ```bash
-grep -rn --exclude-dir=node_modules --exclude-dir=.next "TopNavigation\\|top-navigation" src/ app/
+grep -rn --exclude-dir=node_modules --exclude-dir=.next "TopNavigation\\|top-navigation" src/
 ```
 
 Expected: imports in `app/layout.tsx` (or workspace layouts), conditional renders gated by `isV2Path`. List every importer.

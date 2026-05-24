@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-24
 **Owner:** v3 plan Phase 6, scope per [v3-scope.md](../plans/2026-05-23-v3-scope.md). Evidence: [track-4c-dead-code.md](../spike/2026-05-23/track-4c-dead-code.md).
-**Scope:** Application code only (`src/`, `tests/`, `app/`). Inventory items from Track 4c, organized into 7 small, independent batches. **Out of scope:** SQL surface, CRM table drops, RPC drops, `database.types.ts` regeneration (all deferred to Phase 7), file-size refactors, duplicated-UX consolidations.
+**Scope:** Application code only (`src/`, `tests/`). The Next.js app router lives at `src/app/`. Inventory items from Track 4c, organized into 7 small, independent batches. **Out of scope:** SQL surface, CRM table drops, RPC drops, `database.types.ts` regeneration (all deferred to Phase 7), file-size refactors, duplicated-UX consolidations.
 
 ## Summary
 
@@ -32,13 +32,13 @@ Ordered safest-first. Each batch is a single PR.
 
 | File | LOC | Why dead |
 |---|---|---|
-| `app/optimize/page.tsx` | 40 | Redirects to `/analyst` / `/analysis` / `/analyst/creative-analysis` |
-| `app/creative-analysis/page.tsx` | 25 | Redirects to `/analyst/creative-analysis` |
-| `app/inbox/page.tsx` | 29 | Redirects to `/convert/inbox` or `/m/inbox` |
-| `app/users/page.tsx` | 5 | Redirects to `/operate/users` |
-| `app/broadsheet/page.tsx` | 5 | Redirects to `/analyst` |
-| `app/review/page.tsx` | 63 | Static "Coming in v1.5" placeholder |
-| `app/outcomes/page.tsx` | 60 | Static "Coming in v2" placeholder |
+| `src/app/optimize/page.tsx` | 40 | Redirects to `/analyst` / `/analysis` / `/analyst/creative-analysis` |
+| `src/app/creative-analysis/page.tsx` | 25 | Redirects to `/analyst/creative-analysis` |
+| `src/app/inbox/page.tsx` | 29 | Redirects to `/convert/inbox` or `/m/inbox` |
+| `src/app/users/page.tsx` | 5 | Redirects to `/operate/users` |
+| `src/app/broadsheet/page.tsx` | 5 | Redirects to `/analyst` |
+| `src/app/review/page.tsx` | 63 | Static "Coming in v1.5" placeholder |
+| `src/app/outcomes/page.tsx` | 60 | Static "Coming in v2" placeholder |
 
 **Verification:** `grep -rln "/optimize\b\|/creative-analysis\b\|/inbox\b\|/users\b\|/broadsheet\b\|/review\b\|/outcomes\b" src/` — only matches should be inside the files we're deleting (cross-reference comments) or `APP_NAV_ROUTES` (which we update if any of these were referenced).
 
@@ -48,7 +48,7 @@ Ordered safest-first. Each batch is a single PR.
 
 | File | LOC | Why dead |
 |---|---|---|
-| `app/api/optimize/pivot-children/route.ts` | 71 | Only caller is orphan `v2/optimize/tree-table.tsx` (deleted in Batch 5) |
+| `src/app/api/optimize/pivot-children/route.ts` | 71 | Only caller is orphan `v2/optimize/tree-table.tsx` (deleted in Batch 5) |
 
 **Verification:** `grep -rln "pivot-children\|/api/optimize/pivot-children" src/ tests/` — should match only inside Batch-5 orphan files.
 
