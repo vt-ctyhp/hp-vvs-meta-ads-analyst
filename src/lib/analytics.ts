@@ -603,10 +603,10 @@ export async function fetchDashboardData(
         priorCampaignAggregateRows,
         priorDailyTrendAggregateRows,
       ],
-    ] = await runLimitedTasks([
-      async () => runLimitedTasks(aggregateTasks, DASHBOARD_QUERY_CONCURRENCY),
-      async () => runLimitedTasks(priorAggregateTasks, DASHBOARD_QUERY_CONCURRENCY),
-    ], 1);
+    ] = await Promise.all([
+      runLimitedTasks(aggregateTasks, DASHBOARD_QUERY_CONCURRENCY),
+      runLimitedTasks(priorAggregateTasks, DASHBOARD_QUERY_CONCURRENCY),
+    ]);
 
     const firstError = [
       brandsRes,
@@ -623,12 +623,33 @@ export async function fetchDashboardData(
       throw firstError;
     }
 
-    const targetedMetadata = await fetchTargetedDashboardMetadata({
-      supabase,
-      campaignAggregateRows,
-      adSetAggregateRows,
-      creativeAggregateRows,
-    });
+    const [targetedMetadata, periodBreakdown] = await Promise.all([
+      fetchTargetedDashboardMetadata({
+        supabase,
+        campaignAggregateRows,
+        adSetAggregateRows,
+        creativeAggregateRows,
+      }),
+      fetchAnalystPeriodBreakdown(
+        analystPeriodWindows,
+        filters,
+        {
+          current: {
+            range: dateRange,
+            byUmbrellaRows,
+            campaignRows: campaignAggregateRows,
+            adSetRows: adSetAggregateRows,
+            creativeRows: creativeAggregateRows,
+          },
+          prior: {
+            range: priorRange,
+            byUmbrellaRows: priorByUmbrellaRows,
+            campaignRows: priorCampaignAggregateRows,
+          },
+        },
+        { includeLowerLevels },
+      ),
+    ]);
     const targetedMetadataError = [
       targetedMetadata.adsRes,
       targetedMetadata.adSetsRes,
@@ -639,26 +660,6 @@ export async function fetchDashboardData(
     if (targetedMetadataError) {
       throw targetedMetadataError;
     }
-
-    const periodBreakdown = await fetchAnalystPeriodBreakdown(
-      analystPeriodWindows,
-      filters,
-      {
-        current: {
-          range: dateRange,
-          byUmbrellaRows,
-          campaignRows: campaignAggregateRows,
-          adSetRows: adSetAggregateRows,
-          creativeRows: creativeAggregateRows,
-        },
-        prior: {
-          range: priorRange,
-          byUmbrellaRows: priorByUmbrellaRows,
-          campaignRows: priorCampaignAggregateRows,
-        },
-      },
-      { includeLowerLevels },
-    );
 
     const brands = rows<BrandRow>(brandsRes.data);
     const accounts = rows<AccountRow>(accountsRes.data);
