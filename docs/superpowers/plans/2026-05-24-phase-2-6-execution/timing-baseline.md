@@ -30,21 +30,24 @@ The first version of this doc reported cold TTFB 1192ms / warm TTFB 647ms. Those
 
 ### Browser verification of the actual fix
 
-Confirmed by running the production loader (`fetchCustomerJourneyLedgerData({ days: 30 })`) against real data and inspecting `stageKeys` for unanchored rows:
+Initial browser/Playwright verification surfaced a **secondary bug** in the P2.6 helper: `fetchBookingStageEventsForVisitors`'s SELECT projection omitted `event_id`, which `uniqueEvents()` uses as its dedup key. With `event_id` missing on every helper-returned row, the Map collapsed all helper rows into a single entry under `undefined`, so the loader effectively saw one helper-fetched event total across the whole window.
 
-| Row segment (last 30d) | Count |
+Caught by re-running the loader directly against real data and comparing to a direct query of the same visitor IDs: 211 unanchored visitors had a booking-page PageView in the database, yet only 1 made it into the loader's `stageKeys`. The fix adds `event_id` to the helper's SELECT; a spy-based regression test now asserts every `website_events` SELECT includes `event_id`.
+
+Verified end-to-end via Playwright against the rebased dev server, last-30d window:
+
+| Stage filter | Rows shown in customer ledger |
 |---|---|
-| Total ledger rows | 531 |
-| Unanchored visitor-only rows | 499 |
-| Unanchored with `booking_page_view` in stageKeys | **1** |
-| Unanchored with `booking_form_started` in stageKeys | 0 |
-| Unanchored with stageKeys `["visitor_only"]` only | 319 |
-| Unanchored with stageKeys `["visitor_only","paid_meta_visit"]` | 179 |
+| (no filter) | 531 |
+| `booking_page_view` (Viewed booking page) | 212 |
+| `booking_form_started` (Started booking form) | 43 |
+| `visit_selected` (Selected visit type) | 43 |
+| `date_selected` (Selected date) | 27 |
+| `time_selected` (Selected time) | 22 |
+| `confirmed_website_bookings` | 32 |
 
-Sample matched row: `visitor=hp_vid-d4c7d2b8-548e-45e2-ad4e-49df872e1cc6`, `stageKeys=["visitor_only","paid_meta_visit","booking_page_view"]`. Pre-fix this row would have had `["visitor_only","paid_meta_visit"]` and been filtered OUT of the "Viewed booking page" funnel-step chip; post-fix it is correctly included.
+That dropoff (212 → 43 → 27 → 22 → 32) matches the funnel-chart shape, and the unanchored browse-only visitors that the spec called out as the target of Phase 2.6 are now properly surfaced.
 
-In the actual /convert UI, the "Viewed booking page" chip filter shows 2 rows: 1 anchored conversion (Jasmeen Kaur — booked + viewed page) plus the 1 unanchored visitor surfaced by P2.6.
-
-The absolute number being small is not a bug in P2.6 — it's a separate, pre-existing visitor-attribution gap: of 32 confirmed bookings in the window, **31 have `visitor_id = null`** (Acuity appointment that never linked to a website session). Without a visitor_id, the loader can't attach any funnel-stage events to those rows, so they all show stages = `["confirmed_website_bookings"]` only. That's why the funnel chart's "Paid Meta confirmed bookings: 5" doesn't match the ledger's 1 — the funnel uses `meta_daily_insights` aggregates (no visitor link required), while the customer ledger is visitor-keyed. P2.6 does not address this attribution gap; it is out of scope (and documented separately on this branch in the audit doc).
+Note on remaining "confirmed bookings = 32" with only the basic stage: 31 of those 32 rows have `visitor_id = null` (Acuity webhook produced an appointment row but no `website_conversions` link), so the loader has no events to attach upstream funnel stages. That is a separate pre-existing attribution-gap issue documented in [paid-meta-booking-diagnosis.md](../2026-05-23-phase-2-execution/paid-meta-booking-diagnosis.md) and out of P2.6 scope.
 
 Conclusion: fix works end-to-end. No measurable perf regression.
