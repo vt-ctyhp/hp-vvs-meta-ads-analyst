@@ -1,6 +1,12 @@
 # Track 1 — Rotten data-layer artifacts (ranked by impact)
 
-_Updated: 2026-05-23 (Task 1.3 head start)_
+> **⚠️ INVALIDATION — 2026-05-23 21:30 PDT.** Finding #1 below (`aggregate_meta_daily_insights` RPC historical-windows broken) is **invalidated**. The Phase 1 diagnostic ([../../plans/2026-05-23-phase-1-execution/01-diagnostic.md](../../plans/2026-05-23-phase-1-execution/01-diagnostic.md)) proved the apparent discrepancies were a pagination bug in the audit tool itself (`reconcile-meta-ads-data.mjs` paginated without ORDER BY → unstable row order across paged queries → some rows double-counted, others gapped). Audit tool fixed in `5988ccc`. After the fix, all previously-failing windows PASS deterministically.
+>
+> **The RPC is correct. The data is correct. No data-layer rebuild is needed.**
+>
+> The remaining "Pending entries" at the bottom (per-dashboard bespoke checks) are also de-prioritized — the systemic correctness concern that motivated them was a false positive.
+
+_Updated: 2026-05-23 (Task 1.3 head start). Invalidation banner added 2026-05-23 21:30._
 
 Impact = (number of red metric-mismatches caused) × (severity of those mismatches) × (reach across dashboards).
 

@@ -1,5 +1,7 @@
 # Track 4b — Ask AI dashboard quality investigation
 
+> **⚠️ PARTIAL INVALIDATION — 2026-05-23 21:30 PDT.** Layer 1 of the 5-layer breakage ("Data: inherits the broken `aggregate_meta_daily_insights` RPC") is **invalidated** by the Phase 1 diagnostic. The RPC is correct. Layers 2-5 (spec planner hallucinated filter values + silent date override, router duplication, render dumping markdown into one `<p>`, persistence dropping diagnostics) all remain valid and worth fixing. See [../../plans/2026-05-23-phase-1-execution/01-diagnostic.md](../../plans/2026-05-23-phase-1-execution/01-diagnostic.md) for the diagnostic, [recommendation.md](recommendation.md) v3 for revised scope.
+
 _Investigated: 2026-05-23_
 
 ## User's complaint

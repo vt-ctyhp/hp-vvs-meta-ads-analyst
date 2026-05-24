@@ -1,5 +1,7 @@
 # Rebuild-decision spike — 2026-05-23
 
+> **⚠️ Update 2026-05-23 21:30 PDT:** Phase 1 diagnostic invalidated Track 1's primary finding. The `aggregate_meta_daily_insights` RPC is correct; the spike's reported "429 mismatches across historical windows" was a false positive caused by a pagination bug in the audit tool (`reconcile-meta-ads-data.mjs` paginated without ORDER BY). Audit tool fixed in commit `5988ccc`; all previously-failing windows now PASS. See [`recommendation.md`](recommendation.md) for the v3 recommendation reflecting the corrected scope, and [`../../plans/2026-05-23-phase-1-execution/01-diagnostic.md`](../../plans/2026-05-23-phase-1-execution/01-diagnostic.md) for the full diagnostic.
+
 Spec: [../../specs/2026-05-23-rebuild-decision-spike-design.md](../../specs/2026-05-23-rebuild-decision-spike-design.md)
 Plan: [../../plans/2026-05-23-rebuild-decision-spike.md](../../plans/2026-05-23-rebuild-decision-spike.md)
 
@@ -8,28 +10,30 @@ Plan: [../../plans/2026-05-23-rebuild-decision-spike.md](../../plans/2026-05-23-
 | Track | Status | Owner | Output |
 |---|---|---|---|
 | 0 — Setup | complete | Claude | this README + stubs |
-| 1 — Data correctness | **complete** — major finding on /analyst, integrity bugs on /convert | Claude (+ user follow-up optional) | track-1-reconciliation.md, track-1-rotten-rpcs.md |
+| 1 — Data correctness | **complete (PRIMARY FINDING INVALIDATED)** — RPC + dashboard historical numbers are correct; the apparent mismatches were a bug in the audit tool itself. Integrity bugs on /convert + ingestion NULLs remain valid. | Claude | track-1-reconciliation.md, track-1-rotten-rpcs.md |
 | 2 — Performance | **complete (query-side)** — browser timings deferred | Claude | track-2-perf-audit.md |
 | 3 — Stack risk | **complete** — stack exonerated | Claude | track-3-stack-risk.md |
 | 4 — UX + AI + dead code (v2) | **complete** — three parallel subagent investigations | Claude | track-4a, track-4b, track-4c |
 | Synthesis v2 | **complete — pending user review** | Claude + user | [recommendation.md](recommendation.md) |
 
-## 🎯 Recommendation (v2)
+## 🎯 Recommendation (v3 — superseded v1 and v2 after Phase 1 diagnostic)
 
-**C — targeted data-layer + UI fixes + Ask AI fixes + dead-code cleanup. ~5-8 weeks. NOT a full rebuild.**
+**Tightest D-scope / loose C-scope: ~2-4 weeks of targeted fixes. NOT a full rebuild. NOT even a full data-layer rebuild.**
 
-After user pushback, deepened the investigation across UX (/convert visitor bug), Ask AI quality, and code hygiene. All three confirm: every problem has a concrete, bounded fix. The dead code is genuinely separable (the `lib/data-boundaries.ts` partition is a real type-checked firewall). Scope expanded from ~3-5 to ~5-8 weeks, but rebuild option still strongly contraindicated.
+The Phase 1 diagnostic invalidated the spike's primary finding (broken RPC). The remaining real issues are concrete and small in aggregate: add a few indexes to fix the historical-window timeout, invert /convert's loader, fix 4 layers of Ask AI breakage, fix ingestion NULLs, and (optionally) clean up dead code + reconstruct schema-as-code.
 
-See [recommendation.md](recommendation.md) for the full v2 reasoning.
+See [recommendation.md](recommendation.md) for the full v3 reasoning.
 
-## Headlines (v2)
+## Headlines (v3 — after Phase 1 diagnostic)
 
-- **/analyst data layer is internally consistent for the last ~30 days but systematically wrong for any historical window (Q1 2026, 2025, 2024 all FAIL reconciliation).** Mismatches go in BOTH directions, 3-50%+ depending on entity. Hypothesis: env-scope predicates added in May 2026 silently drop/multiply historical rows whose joined metadata lacks consistent `environment` values. See [track-1-rotten-rpcs.md](track-1-rotten-rpcs.md) finding #1. **Fixable in place — does NOT require a full rebuild.**
-- **Stack stability tax = 0%.** Of 39 recent fix commits, ZERO trace to Next 16 / React 19 / Tailwind v4. Firefighting is 79% APP-LOGIC (attribution/funnel domain), 13% SUPABASE (mostly the env-scope issue above), 8% EXTERNAL-API (Meta CDN thumbnail expiry). **The bleeding-edge stack is exonerated — a rewrite that swaps frameworks would carry the same fire forward.** See [track-3-stack-risk.md](track-3-stack-risk.md).
-- **Schema-as-code is 30% broken.** 28 of 92 migrations are empty placeholder stubs because schema changes were made directly against the Supabase project and never round-tripped. Any rebuild scope larger than D would need to first reconstruct the live schema from prod.
-- **/convert is structurally broken, not cosmetic.** Loader is appointment-keyed; a visitor who browsed without booking is unreachable. 584 visitors / 112 active in 30d → only ~2 surface in the UI; the rest are em-dash appointment shells. Fix is 1-2 days (loader inversion). See [track-4a](track-4a-convert-visitor-bug.md).
-- **Ask AI is broken at 5 independent layers** — data inheritance (the same RPC), spec planner (hallucinated filter values + silent date override), router (two parallel duplicate backends), render (4k tokens into one `<p>` tag), persistence (diagnostic data dropped). ~1 week of fixes + shared RPC. See [track-4b](track-4b-ask-ai-quality.md).
-- **~10K dead LOC (~20% of 51K hand-written) is cleanly separable.** `lib/data-boundaries.ts` is a real type-checked firewall. CRM tables aren't queried from `src/`. Cleanup is delete-by-grep with confidence, 1-2 sprints. **This was the strongest pro-rebuild argument and it didn't hold up.** See [track-4c](track-4c-dead-code.md).
+- 🟢 ~~**/analyst data layer is internally consistent for the last ~30 days but systematically wrong for any historical window**~~ **INVALIDATED.** The /analyst RPC is correct for every window tested (recent through 2024). The apparent discrepancies were a pagination bug in the audit tool (`reconcile-meta-ads-data.mjs` lacked ORDER BY → unstable row order across paged queries → some rows double-counted, others gapped). Fixed in `5988ccc`. After the fix, all previously-FAILing windows PASS deterministically. See [track-1-reconciliation.md](track-1-reconciliation.md) §Invalidation banner.
+- 🟢 **Stack stability tax = 0%.** Of 39 recent fix commits, ZERO trace to Next 16 / React 19 / Tailwind v4. Firefighting is 79% APP-LOGIC, 13% SUPABASE (mostly correctness-related fixes that turn out to have been correct already), 8% EXTERNAL-API. **The bleeding-edge stack is exonerated.** See [track-3-stack-risk.md](track-3-stack-risk.md).
+- 🟡 **Schema-as-code is 30% broken.** 28 of 92 migrations are empty placeholder stubs. Worth fixing but not urgent.
+- 🔴 **/convert is structurally broken (loader inverted).** Real bug. Visitor without appointment unreachable. ~1-2 days. See [track-4a](track-4a-convert-visitor-bug.md).
+- 🔴 **Ask AI is broken at 4 layers** (down from 5 — layer 1 "inherits broken RPC" is now invalidated). Planner, router, render, persistence bugs remain. ~4-5 days. See [track-4b](track-4b-ask-ai-quality.md).
+- 🔴 **50% of `website_conversions` rows have NULL `visitor_id`; 5.6% of `appointment_events` have NULL `visit_date_time`.** Ingestion bugs. ~3-5 days each.
+- 🟡 **Full-year /analyst queries hit RPC statement timeout** (~10s vs 5s default). Real perf issue, fixable with `meta_daily_insights` indexes. ~1-2 days.
+- 🟡 **~10K dead LOC (~20% of 51K hand-written) is cleanly separable.** `lib/data-boundaries.ts` is a real type-checked firewall. Optional cleanup, 1-2 sprints.
 
 ## Hard rules
 

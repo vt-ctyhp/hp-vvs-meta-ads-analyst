@@ -1,5 +1,17 @@
 # Track 1 — Data correctness reconciliation
 
+> **⚠️ INVALIDATION — 2026-05-23 21:30 PDT.** The Phase 1 diagnostic (see [../../plans/2026-05-23-phase-1-execution/01-diagnostic.md](../../plans/2026-05-23-phase-1-execution/01-diagnostic.md)) proved that the historical-window mismatches reported in the `/analyst — internal-consistency reconciliation (Task 1.3 head start)` section below were **false positives** caused by a pagination bug in the audit script (`reconcile-meta-ads-data.mjs` paginated with `.range()` but no `.order()` — PostgreSQL doesn't guarantee row order across separate queries without ORDER BY → multi-page pulls returned overlapping pages and gaps).
+>
+> The script has been fixed (commit `5988ccc`: added `.order("date_start").order("id")` for `meta_daily_insights` and `.order("id")` for metadata tables). After the fix:
+> - 2026 Q1 by campaign: was FAIL (178 mismatches) → now PASS
+> - 2025 by campaign: was FAIL → now PASS
+> - 2024 by umbrella: was FAIL (75 mismatches) → now PASS
+> - Two consecutive runs return identical results (deterministic)
+>
+> Verification artifacts in [`../../plans/2026-05-23-phase-1-execution/post-fix-verification/`](../../plans/2026-05-23-phase-1-execution/post-fix-verification/).
+>
+> **The `aggregate_meta_daily_insights` RPC and the /analyst dashboard's historical numbers are correct.** Track 1 sections below are preserved for history but should be read as "the audit produced these numbers, which were wrong." The `/convert and /website-funnel — data-integrity sanity scan` section at the bottom (NULL `visitor_id` and NULL `visit_date_time` findings) is unaffected by this invalidation and remains valid.
+
 _Status: Task 1.1 complete (data sources mapped). Task 1.2 pending user input. Task 1.3 head start in progress (internal consistency check)._
 
 ## Data sources (from Task 1.1)
