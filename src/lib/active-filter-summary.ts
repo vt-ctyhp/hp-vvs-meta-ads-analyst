@@ -12,6 +12,7 @@
  * § "State B · Scrolled past" for the visual spec.
  */
 
+import { TERMS } from "./glossary.ts";
 import { periodMetricLabel, type PeriodMetric } from "./period-pivot-data.ts";
 
 export type FilterSegment = {
@@ -65,7 +66,7 @@ export function buildActiveFilterSummary(
       isActive: false,
     },
     {
-      key: "vs Prev",
+      key: "Comparing",
       value: input.compareEnabled
         ? `× ${input.periodCount} periods`
         : "off",
@@ -77,13 +78,13 @@ export function buildActiveFilterSummary(
       isActive: input.periodMetric !== "spend",
     },
     {
-      key: "Umbrella",
+      key: TERMS.umbrellaShort,
       value: input.umbrella === "all" ? "All" : input.umbrella,
       isActive: input.umbrella !== "all",
     },
     {
       key: "Query",
-      value: input.query.trim() ? `"${input.query.trim()}"` : "—",
+      value: input.query.trim() ? `"${input.query.trim()}"` : "None",
       isActive: input.query.trim().length > 0,
     },
   ];
@@ -92,7 +93,7 @@ export function buildActiveFilterSummary(
 function deliveryLabel(value: ActiveFilterInput["delivery"]): string {
   switch (value) {
     case "active":
-      return "Active";
+      return "Live";
     case "paused":
       return "Paused";
     default:
@@ -104,9 +105,9 @@ function formatShortRange(start: string, end: string): string {
   const startDate = parseIsoDate(start);
   const endDate = parseIsoDate(end);
   if (!startDate || !endDate) {
-    return `${start || "—"} — ${end || "—"}`;
+    return `${start || "None"} to ${end || "None"}`;
   }
-  return `${RANGE_FMT.format(startDate)} — ${RANGE_FMT.format(endDate)}`;
+  return `${RANGE_FMT.format(startDate)} to ${RANGE_FMT.format(endDate)}`;
 }
 
 function parseIsoDate(value: string): Date | null {
@@ -159,7 +160,7 @@ export function buildCreativeAnalysisFilterSummary(
       isActive: false,
     },
     {
-      key: "Umbrella",
+      key: TERMS.umbrellaShort,
       value: input.umbrella === "all" ? "All" : input.umbrella,
       isActive: input.umbrella !== "all",
     },
@@ -180,7 +181,7 @@ export function buildCreativeAnalysisFilterSummary(
     },
     {
       key: "Query",
-      value: trimmedQuery ? `"${trimmedQuery}"` : "—",
+      value: trimmedQuery ? `"${trimmedQuery}"` : "None",
       isActive: trimmedQuery.length > 0,
     },
   ];
@@ -218,7 +219,7 @@ export function buildAskAiFilterSummary(
       isActive: input.delivery !== null,
     },
     {
-      key: "Umbrella",
+      key: TERMS.umbrellaShort,
       value: input.umbrella ?? "All",
       isActive: input.umbrella !== null,
     },
