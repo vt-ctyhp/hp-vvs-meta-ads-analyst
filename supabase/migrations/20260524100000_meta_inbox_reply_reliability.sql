@@ -54,6 +54,14 @@ create index if not exists meta_inbox_send_attempts_failed_retry_idx
   )
   where status in ('failed_retryable', 'failed_terminal');
 
+create index if not exists meta_inbox_send_attempts_delivery_queue_idx
+  on public.meta_inbox_send_attempts (
+    environment,
+    status,
+    created_at
+  )
+  where status = 'queued';
+
 drop trigger if exists meta_inbox_send_attempts_set_updated_at
   on public.meta_inbox_send_attempts;
 create trigger meta_inbox_send_attempts_set_updated_at

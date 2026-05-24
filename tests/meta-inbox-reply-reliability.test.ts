@@ -47,6 +47,7 @@ describe("Meta inbox reply reliability foundation", () => {
     assert.match(migration, /failed_retryable/);
     assert.match(migration, /failed_terminal/);
     assert.match(migration, /meta_inbox_send_attempts_idempotency_idx/);
+    assert.match(migration, /meta_inbox_send_attempts_delivery_queue_idx/);
     assert.match(migration, /event_type = 'send_attempt'/);
   });
 
