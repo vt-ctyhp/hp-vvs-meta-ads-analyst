@@ -4,6 +4,22 @@
 **Owner:** v3 plan Phase 6, scope per [v3-scope.md](../plans/2026-05-23-v3-scope.md). Evidence: [track-4c-dead-code.md](../spike/2026-05-23/track-4c-dead-code.md).
 **Scope:** Application code only (`src/`, `tests/`). The Next.js app router lives at `src/app/`. Inventory items from Track 4c, organized into 7 small, independent batches. **Out of scope:** SQL surface, CRM table drops, RPC drops, `database.types.ts` regeneration (all deferred to Phase 7), file-size refactors, duplicated-UX consolidations.
 
+## Phase 6 outcome (closed 2026-05-24)
+
+**Shipped: −6,306 LOC across 5 PRs** (vs. spec target of −9.5–10.5K). 60–66% of target delivered. The remaining ~3K LOC is locked behind live consumers Track 4c's static analysis missed. See [§Deferrals — Phase 6.5 follow-up](#deferrals--phase-65-follow-up) at the bottom.
+
+| Batch | Outcome | LOC | PR |
+|---|---|---|---|
+| 1 — redirects + placeholders | shipped (aggressive: +edits beyond rm) | −242 | [#25](https://github.com/vt-ctyhp/hp-vvs-meta-ads-analyst/pull/25) |
+| 2 — dead `/api/optimize/pivot-children` | shipped clean | −71 | [#26](https://github.com/vt-ctyhp/hp-vvs-meta-ads-analyst/pull/26) |
+| 5 — orphan v2 components | shipped 9 of 11 (2 deferred) | −3,122 | [#27](https://github.com/vt-ctyhp/hp-vvs-meta-ads-analyst/pull/27) |
+| 4 — executive-snapshot | shipped clean | −1,218 | [#28](https://github.com/vt-ctyhp/hp-vvs-meta-ads-analyst/pull/28) |
+| 3 — orphan libs | shipped 4 of 6 (2 deferred) | −1,653 | [#30](https://github.com/vt-ctyhp/hp-vvs-meta-ads-analyst/pull/30) |
+| 6 — legacy primitives | **skipped** — both files LIVE | 0 | — |
+| 7 — `top-navigation.tsx` | **skipped** — LIVE on `/website-funnel`, `/attribution-ledger`, `/admin/backfill` | 0 | — |
+
+**Key lesson:** Track 4c's static analysis missed live consumers in 3 of the 7 batches. Re-verification at the start of each batch (the spec's own discipline) caught all 7 deferrals before any breakage shipped — no rollbacks, all PRs green on Vercel.
+
 ## Summary
 
 Track 4c found roughly **9.5–10.5K LOC of dead application code** plus ~800 LOC of dead tests in this codebase: orphan v2 components from the abandoned `/optimize` UX, a whole `executive-snapshot/` directory that no live route uses, the `top-navigation.tsx` that's hidden by `isV2Path` on every workspace route, 7 redirect-stub / placeholder pages, 6 orphan libs (with their cascading tests), and one dead API route.
@@ -145,3 +161,19 @@ Ordered safest-first. Each batch is a single PR.
 - Vercel preview deploys green for every PR.
 - No regressions on the live workspace routes (`/analyst`, `/convert`, `/operate/*`, `/website-funnel`, `/m/*`).
 - No SQL changes, no `database.types.ts` change, no refactoring of unrelated code.
+
+**Actual outcome:** 5 of 7 PRs shipped (−6,306 LOC). `npm test` + `npm run build` + Vercel preview all green for every PR. Live route smoke (HTTP + Playwright headless) green. Two PRs (#27, #30) deferred 2 files each; Batches 6 and 7 fully deferred because Track 4c misclassified live components as orphan. See deferrals section below.
+
+## Deferrals — Phase 6.5 follow-up
+
+7 files Track 4c flagged as dead were caught by re-verification with live consumers. Each needs a small refactor before the deletion is safe.
+
+| Deferred file | Live consumer chain (the unblocker) |
+|---|---|
+| `src/components/v2/optimize/metric-format.ts` | `src/components/dashboard-client.tsx` imports `formatMetric` (35 call sites) and `formatDelta` (1 call site) under aliased names `formatPeriodMetric` / `formatPeriodDelta`. Unblock: inline the 36 call sites or move the exports into a live module. |
+| `src/components/v2/convert/customer-journey-drawer.tsx` | Rendered as `<CustomerJourneyDrawer />` from `src/components/v2/convert/customer-ledger.tsx`, which is reached from `src/app/(workspace)/convert/page.tsx`. Unblock: migrate `customer-ledger.tsx` off the drawer (or move the drawer into the live convert surface). |
+| `src/lib/period-pivot-data.ts` | 6 live importers as a type/util provider: `dashboard-client.tsx`, `v2/optimize/period-controls.tsx`, `lib/analyst-period-breakdown.ts`, `lib/active-filter-summary.ts`, `tests/snapshot-by-entity.test.ts`, plus the deferred `metric-format.ts`. Unblock: extract the type-only exports (`PeriodMetric`, `PERIOD_METRIC_LABELS`, `periodMetricLabel`) into a separate file; live importers only need types. |
+| `src/lib/pivot-by-period.ts` | Only consumer is `period-pivot-data.ts` (deferred). Cascades after the previous unblock. |
+| `src/components/filter-bar.tsx` (legacy) | `src/components/creative-analysis-client.tsx` imports `FilterBar` (rendered at line 407). Unblock: migrate `creative-analysis-client.tsx` to `convert-filter-bar` or `UniversalFilterBar`. |
+| `src/components/status-sentence.tsx` (legacy) | 4 live components import it: `dashboard-client.tsx`, `website-funnel-client.tsx`, `social-inbox-client.tsx`, `creative-analysis-client.tsx`. Unblock: migrate all 4 to `src/components/v2/status-sentence.tsx`. |
+| `src/components/top-navigation.tsx` | The component returns null on every v2 workspace route and on `/login` / `/no-access`, but **renders for authenticated users on `/website-funnel`, `/attribution-ledger`, and `/admin/backfill`** — those rooms haven't been migrated to the v2 shell. Unblock: either migrate those 3 routes to a v2 shell, ship a v2 nav for the non-workspace pages, or accept the UX change. |
