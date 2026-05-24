@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
  *
  * Routes every authenticated user to the room their roles open by default:
  *   - Admin / Marketing / read-only      → /analyst
- *   - Sales-frontline / client_advisor / joc → /m/inbox
+ *   - Sales-frontline                    → /m/inbox
  *   - View-inbox-only roles              → /m/inbox
  *   - No roles                           → /no-access
  *

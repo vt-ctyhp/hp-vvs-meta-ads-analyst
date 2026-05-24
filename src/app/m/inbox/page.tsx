@@ -14,7 +14,7 @@ type StatusSentence = {
 
 export default async function MobileInboxIndex() {
   // Layout already enforced authentication + view_inbox. We re-derive the
-  // profile here just for the status sentence (oldest waiting, snoozed count).
+  // profile here just for the status sentence and reply permission copy.
   const profile = await getServerAccessProfile();
   const inbox = await getSocialInboxData().catch((e) => {
     if (!(e instanceof ConfigurationError)) {

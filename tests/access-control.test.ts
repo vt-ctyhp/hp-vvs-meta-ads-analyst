@@ -8,13 +8,14 @@ import {
 } from "../src/lib/access-control.ts";
 
 describe("access control", () => {
-  it("gives admin full management access", () => {
+  it("gives admin all non-operational management access", () => {
     for (const permission of Object.keys(APP_PERMISSIONS) as Array<keyof typeof APP_PERMISSIONS>) {
-      assert.equal(hasPermission(["admin"], permission), true);
+      const expected = permission !== "send_inbox_reply" && permission !== "manage_inbox_state";
+      assert.equal(hasPermission(["admin"], permission), expected, permission);
     }
   });
 
-  it("gives marketing dashboard, analysis, inbox, and read-only backfill access", () => {
+  it("gives marketing read-only inbox/reporting access", () => {
     const permissions = permissionsForRoles(["marketing"]);
 
     assert.equal(permissions.includes("view_dashboard"), true);
@@ -24,6 +25,8 @@ describe("access control", () => {
     assert.equal(permissions.includes("view_backfill"), true);
     assert.equal(permissions.includes("manage_backfill"), false);
     assert.equal(permissions.includes("manage_users"), false);
+    assert.equal(permissions.includes("send_inbox_reply"), false);
+    assert.equal(permissions.includes("manage_inbox_state"), false);
   });
 
   it("maps sales to inbox-only access with reply + state actions", () => {
@@ -42,5 +45,26 @@ describe("access control", () => {
     assert.equal(hasPermission(["sales"], "view_backfill"), false);
     assert.equal(hasPermission(["sales"], "send_inbox_reply"), true);
     assert.equal(hasPermission(["sales"], "manage_inbox_state"), true);
+  });
+
+  it("gives sales lead inbox write access for managed queues", () => {
+    assert.equal(hasPermission(["sales_lead"], "view_inbox"), true);
+    assert.equal(hasPermission(["sales_lead"], "send_inbox_reply"), true);
+    assert.equal(hasPermission(["sales_lead"], "manage_inbox_state"), true);
+  });
+
+  it("does not grant inbox operator access to legacy Sales app owner roles", () => {
+    for (const role of ["client_advisor", "joc"] as const) {
+      assert.equal(hasPermission([role], "view_inbox"), false, role);
+      assert.equal(hasPermission([role], "send_inbox_reply"), false, role);
+      assert.equal(hasPermission([role], "manage_inbox_state"), false, role);
+    }
+  });
+
+  it("keeps the inbox state permission free of Snooze workflow copy", () => {
+    const copy = APP_PERMISSIONS.manage_inbox_state.description.toLowerCase();
+
+    assert.equal(copy.includes("snooze"), false);
+    assert.equal(copy.includes("snoozed"), false);
   });
 });

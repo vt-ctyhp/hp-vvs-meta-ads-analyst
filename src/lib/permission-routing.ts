@@ -6,8 +6,7 @@
  *
  *   - Admin / Marketing / Read-only / Executive → /analyst (then /convert,
  *     /operate as needed).
- *   - Sales / Client Advisor / JOC → /m/inbox (mobile-equal inbox shell, no
- *     room navigation).
+ *   - Sales → /m/inbox (mobile-equal inbox shell, no room navigation).
  *   - Sales leadership variants (sales_lead, sales_appointment_reviewer,
  *     sales_creative_reviewer) → /analyst so they can see context.
  *   - Diamond / wax / 3D / manufacturing roles without any of the above keep
@@ -38,8 +37,6 @@ export const ROOM_PERMISSIONS: Record<Room, AppPermission> = {
 
 const SALES_LIKE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
   "sales",
-  "client_advisor",
-  "joc",
 ]);
 
 export function resolveLandingPath(roles: UserRole[]): string {

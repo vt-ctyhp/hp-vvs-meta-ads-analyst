@@ -8,8 +8,8 @@ import type { SocialInboxComment, SocialInboxThread } from "@/lib/social-inbox";
 /**
  * Mobile conversation list — full-screen card list with search.
  *
- * Each row links to /m/inbox/<id> for the detail view. Snoozed
- * conversations show a snooze chip; unread DMs show the count.
+ * Each row links to /m/inbox/<id> for the detail view. Unread DMs
+ * show the count.
  *
  * Search is client-side over name + body. Server-side full-text search
  * is a Phase 11 polish.
