@@ -8,6 +8,8 @@ import {
   attachmentCapabilityForConversation,
   normalizeMetaInboxAttachment,
   normalizeMetaInboxAttachments,
+  validateMetaInboxSendAttachments,
+  type MetaInboxSendAttachmentRow,
 } from "../src/lib/meta-inbox-attachments.ts";
 import {
   buildMetaInboxSendAttemptDraft,
@@ -20,6 +22,7 @@ const MIGRATION = join(
   "supabase/migrations/20260524110000_meta_inbox_attachments.sql",
 );
 const migration = readFileSync(MIGRATION, "utf8");
+const SOCIAL_INBOX = readFileSync(join(REPO_ROOT, "src/lib/social-inbox.ts"), "utf8");
 
 const NOW = "2026-05-24T12:00:00.000Z";
 const ACTOR_ID = "11111111-1111-4111-8111-111111111111";
@@ -130,11 +133,26 @@ describe("Meta inbox attachment foundation", () => {
     );
   });
 
+  it("rejects mixed text-plus-attachment drafts as separate send attempts", () => {
+    assert.throws(
+      () =>
+        buildMetaInboxSendAttemptDraft(
+          conversationFixture(),
+          {
+            replyText: "Here is the photo.",
+            attachmentIds: [ATTACHMENT_ID],
+          },
+          { actorUserId: ACTOR_ID, now: NOW, humanAgentEnabled: true },
+        ),
+      /separate send attempts/i,
+    );
+  });
+
   it("includes attachment identity in send-attempt idempotency fallback keys", () => {
     const first = buildMetaInboxSendAttemptDraft(
       conversationFixture(),
       {
-        replyText: "Here is the photo.",
+        replyText: "",
         attachmentIds: [ATTACHMENT_ID],
       },
       { actorUserId: ACTOR_ID, now: NOW, humanAgentEnabled: true },
@@ -142,7 +160,7 @@ describe("Meta inbox attachment foundation", () => {
     const samePayload = buildMetaInboxSendAttemptDraft(
       conversationFixture(),
       {
-        replyText: "Here is the photo.",
+        replyText: "",
         attachmentIds: [ATTACHMENT_ID],
       },
       { actorUserId: ACTOR_ID, now: "2026-05-24T12:05:00.000Z", humanAgentEnabled: true },
@@ -150,7 +168,7 @@ describe("Meta inbox attachment foundation", () => {
     const changedAttachment = buildMetaInboxSendAttemptDraft(
       conversationFixture(),
       {
-        replyText: "Here is the photo.",
+        replyText: "",
         attachmentIds: [OTHER_ATTACHMENT_ID],
       },
       { actorUserId: ACTOR_ID, now: NOW, humanAgentEnabled: true },
@@ -180,6 +198,120 @@ describe("Meta inbox attachment foundation", () => {
     const sticker = attachmentCapabilityForConversation("instagram", "message_thread", "sticker");
     assert.equal(sticker.canSend, false);
   });
+
+  it("validates requested send attachments before approval", () => {
+    const valid = validateMetaInboxSendAttachments(
+      attachmentConversationFixture(),
+      [ATTACHMENT_ID],
+      [
+        attachmentRowFixture({
+          id: ATTACHMENT_ID,
+          conversation_id: "33333333-3333-4333-8333-333333333333",
+          attachment_type: "image",
+          is_sendable: true,
+          media_url: "https://cdn.example/ring.jpg",
+        }),
+      ],
+    );
+
+    assert.deepEqual(valid.map((attachment) => attachment.id), [ATTACHMENT_ID]);
+
+    assert.throws(
+      () =>
+        validateMetaInboxSendAttachments(
+          attachmentConversationFixture(),
+          [OTHER_ATTACHMENT_ID],
+          [],
+        ),
+      /not found/i,
+    );
+
+    assert.throws(
+      () =>
+        validateMetaInboxSendAttachments(
+          attachmentConversationFixture(),
+          [OTHER_ATTACHMENT_ID],
+          [
+            attachmentRowFixture({
+              id: OTHER_ATTACHMENT_ID,
+              conversation_id: "44444444-4444-4444-8444-444444444444",
+              is_sendable: true,
+            }),
+          ],
+        ),
+      /not attached to this conversation/i,
+    );
+
+    assert.throws(
+      () =>
+        validateMetaInboxSendAttachments(
+          attachmentConversationFixture(),
+          [OTHER_ATTACHMENT_ID],
+          [
+            attachmentRowFixture({
+              id: OTHER_ATTACHMENT_ID,
+              conversation_id: "33333333-3333-4333-8333-333333333333",
+              is_sendable: true,
+              deleted_at: "2026-05-24T12:00:00.000Z",
+            }),
+          ],
+        ),
+      /deleted/i,
+    );
+
+    assert.throws(
+      () =>
+        validateMetaInboxSendAttachments(
+          attachmentConversationFixture(),
+          [OTHER_ATTACHMENT_ID],
+          [
+            attachmentRowFixture({
+              id: OTHER_ATTACHMENT_ID,
+              conversation_id: "33333333-3333-4333-8333-333333333333",
+              attachment_type: "sticker",
+              is_sendable: true,
+            }),
+          ],
+        ),
+      /not supported/i,
+    );
+
+    assert.throws(
+      () =>
+        validateMetaInboxSendAttachments(
+          attachmentConversationFixture(),
+          [OTHER_ATTACHMENT_ID],
+          [
+            attachmentRowFixture({
+              id: OTHER_ATTACHMENT_ID,
+              conversation_id: "33333333-3333-4333-8333-333333333333",
+              attachment_type: "image",
+              is_sendable: false,
+            }),
+          ],
+        ),
+      /not sendable/i,
+    );
+
+    assert.throws(
+      () =>
+        validateMetaInboxSendAttachments(
+          attachmentConversationFixture(),
+          [ATTACHMENT_ID],
+          [
+            attachmentRowFixture({ id: ATTACHMENT_ID }),
+            attachmentRowFixture({ id: OTHER_ATTACHMENT_ID }),
+          ],
+        ),
+      /count/i,
+    );
+  });
+
+  it("wires send-attempt approval through attachment validation", () => {
+    assert.match(SOCIAL_INBOX, /validateSendAttemptAttachmentsForApproval/);
+    assert.match(SOCIAL_INBOX, /validateMetaInboxSendAttachments/);
+    assert.match(SOCIAL_INBOX, /from\("meta_inbox_attachments"\)/);
+  });
 });
 
 function conversationFixture(
@@ -192,4 +324,27 @@ function conversationFixture(
     human_agent_window_expires_at: "2026-05-30T12:00:00.000Z",
     ...overrides,
   };
+}
+
+function attachmentConversationFixture() {
+  return {
+    id: "33333333-3333-4333-8333-333333333333",
+    platform: "facebook" as const,
+    source_type: "message_thread" as const,
+  };
+}
+
+function attachmentRowFixture(
+  overrides: Partial<MetaInboxSendAttachmentRow> = {},
+): MetaInboxSendAttachmentRow {
+  const base: MetaInboxSendAttachmentRow = {
+    id: ATTACHMENT_ID,
+    conversation_id: "33333333-3333-4333-8333-333333333333",
+    attachment_type: "image",
+    meta_attachment_id: null,
+    media_url: "https://cdn.example/default.jpg",
+    is_sendable: true,
+    deleted_at: null,
+  };
+  return { ...base, ...overrides };
 }

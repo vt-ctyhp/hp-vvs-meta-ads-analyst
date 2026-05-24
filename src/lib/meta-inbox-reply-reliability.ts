@@ -146,6 +146,9 @@ export function buildMetaInboxSendAttemptDraft(
   const conversationId = requireUuid(conversation.id, "Conversation");
   const attachmentIds = normalizeAttachmentIds(input.attachmentIds);
   const replyText = normalizeReplyText(input.replyText, attachmentIds.length > 0);
+  if (replyText && attachmentIds.length > 0) {
+    throw new Error("Text and attachments must be sent as separate send attempts.");
+  }
   const windowState = resolveMetaInboxReplyWindow(conversation, context);
   if (!windowState.canAttemptSend) {
     throw new Error(`${windowState.reason} Cannot record a send attempt.`);

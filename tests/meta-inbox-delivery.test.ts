@@ -15,6 +15,7 @@ import {
 import { deliverQueuedMetaInboxSendAttempts } from "../src/lib/meta-inbox-delivery-worker.ts";
 
 const NOW = "2026-05-24T12:00:00.000Z";
+const ATTACHMENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
 describe("Meta inbox delivery worker foundation", () => {
   it("builds a Facebook message send target with response messaging type", () => {
@@ -277,6 +278,65 @@ describe("Meta inbox delivery worker foundation", () => {
       else process.env.ALLOW_LIVE_META_SEND = previousFlag;
     }
   });
+
+  it("revalidates attachment ownership before live delivery", async () => {
+    const previousFlag = process.env.ALLOW_LIVE_META_SEND;
+    const originalFetch = globalThis.fetch;
+    process.env.ALLOW_LIVE_META_SEND = "true";
+    let fetchCalls = 0;
+    globalThis.fetch = async () => {
+      fetchCalls += 1;
+      return new Response(JSON.stringify({ message_id: "mid.should-not-send" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    try {
+      const supabase = fakeDeliveryLifecycleSupabase(
+        [
+          attemptFixture({
+            id: "foreign-attachment-send",
+            reply_text: "Text must not bypass a foreign attachment.",
+            status: "queued",
+            attachment_ids: [ATTACHMENT_ID],
+          }),
+        ],
+        [
+          {
+            id: ATTACHMENT_ID,
+            conversation_id: "99999999-9999-4999-8999-999999999999",
+            attachment_type: "image",
+            media_url: "https://cdn.example/foreign.jpg",
+            meta_attachment_id: null,
+            is_sendable: true,
+          },
+        ],
+      );
+
+      const result = await deliverQueuedMetaInboxSendAttempts({
+        limit: 1,
+        now: NOW,
+        supabase,
+        managedPageResolver: async () => ({
+          pageId: "page-1",
+          accessToken: "page-token",
+          igUserId: null,
+        }),
+      } as never);
+
+      assert.equal(fetchCalls, 0);
+      assert.equal(result.failedTerminal, 1);
+      assert.match(result.errors.join("\n"), /not attached to this conversation/i);
+      assert.deepEqual(supabase.finalStatuses(), {
+        "foreign-attachment-send": "failed_terminal",
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousFlag === undefined) delete process.env.ALLOW_LIVE_META_SEND;
+      else process.env.ALLOW_LIVE_META_SEND = previousFlag;
+    }
+  });
 });
 
 function conversationFixture(
@@ -363,7 +423,10 @@ function fakeDeliverySupabase(options: { failSecondEventInsert?: boolean } = {})
   };
 }
 
-function fakeDeliveryLifecycleSupabase(attempts: MetaInboxDeliveryAttempt[]) {
+function fakeDeliveryLifecycleSupabase(
+  attempts: MetaInboxDeliveryAttempt[],
+  attachments: Record<string, unknown>[] = [],
+) {
   const rowsById = new Map(
     attempts.map((attempt) => [
       attempt.id,
@@ -403,6 +466,14 @@ function fakeDeliveryLifecycleSupabase(attempts: MetaInboxDeliveryAttempt[]) {
 
       if (table === "meta_social_messages") {
         return insertChain({ id: "outbound-row-1" });
+      }
+
+      if (table === "meta_inbox_attachments") {
+        return {
+          select() {
+            return lifecycleQueryChain(attachments);
+          },
+        };
       }
 
       if (table === "meta_inbox_conversation_events") {

@@ -33,6 +33,30 @@ export type MetaInboxAttachmentCapability = {
   reason: string;
 };
 
+export type MetaInboxSendAttachmentConversation = {
+  id: string;
+  platform: "facebook" | "instagram";
+  source_type: MetaInboxAttachmentCapability["sourceType"];
+};
+
+export type MetaInboxSendAttachmentRow = {
+  id: string;
+  conversation_id: string | null;
+  attachment_type: MetaInboxAttachmentType;
+  meta_attachment_id: string | null;
+  media_url: string | null;
+  is_sendable: boolean;
+  deleted_at?: string | null;
+};
+
+export type MetaInboxValidatedSendAttachment = Omit<
+  MetaInboxSendAttachmentRow,
+  "attachment_type" | "is_sendable"
+> & {
+  attachment_type: "image" | "video" | "audio" | "file";
+  is_sendable: true;
+};
+
 const SENDABLE_MESSAGE_ATTACHMENT_TYPES = new Set<MetaInboxAttachmentType>([
   "image",
   "video",
@@ -172,6 +196,66 @@ export function normalizeAttachmentIds(value: unknown): string[] {
   return ids;
 }
 
+export function validateMetaInboxSendAttachments(
+  conversation: MetaInboxSendAttachmentConversation,
+  requestedAttachmentIds: unknown,
+  rows: MetaInboxSendAttachmentRow[],
+): MetaInboxValidatedSendAttachment[] {
+  const requestedIds = normalizeAttachmentIds(requestedAttachmentIds);
+  if (!requestedIds.length) return [];
+
+  const rowsById = new Map(rows.map((row) => [row.id, row]));
+  for (const attachmentId of requestedIds) {
+    if (!rowsById.has(attachmentId)) {
+      throw new Error(`Attachment ${attachmentId} was not found for this conversation.`);
+    }
+  }
+  if (rows.length !== requestedIds.length) {
+    throw new Error("Requested attachment count does not match validated attachment count.");
+  }
+
+  const validated: MetaInboxValidatedSendAttachment[] = [];
+  for (const attachmentId of requestedIds) {
+    const row = rowsById.get(attachmentId)!;
+    if (row.conversation_id !== conversation.id) {
+      throw new Error(`Attachment ${attachmentId} is not attached to this conversation.`);
+    }
+    if (row.deleted_at) {
+      throw new Error(`Attachment ${attachmentId} was deleted and cannot be sent.`);
+    }
+    if (!row.is_sendable) {
+      throw new Error(`Attachment ${attachmentId} is not sendable.`);
+    }
+
+    const capability = attachmentCapabilityForConversation(
+      conversation.platform,
+      conversation.source_type,
+      row.attachment_type,
+    );
+    if (!capability.canSend) {
+      throw new Error(`Attachment ${attachmentId} type is not supported for this conversation.`);
+    }
+    if (!isDeliveryAttachmentType(row.attachment_type)) {
+      throw new Error(`Attachment ${attachmentId} type is not supported for delivery.`);
+    }
+    if (!row.meta_attachment_id && !row.media_url) {
+      throw new Error(`Attachment ${attachmentId} is missing Meta attachment id or media URL.`);
+    }
+
+    validated.push({
+      ...row,
+      attachment_type: row.attachment_type,
+      is_sendable: true,
+    });
+  }
+
+  if (validated.length !== requestedIds.length) {
+    throw new Error("Requested attachment count does not match validated attachment count.");
+  }
+
+  return validated;
+}
+
 function attachmentTypeFrom(input: {
   explicitType: string | null;
   mimeType: string | null;
@@ -215,6 +299,12 @@ function labelForAttachmentType(type: MetaInboxAttachmentType) {
   if (type === "product") return "Product attachment";
   if (type === "share") return "Shared link";
   return "Unsupported attachment";
+}
+
+function isDeliveryAttachmentType(
+  value: MetaInboxAttachmentType,
+): value is MetaInboxValidatedSendAttachment["attachment_type"] {
+  return value === "image" || value === "video" || value === "audio" || value === "file";
 }
 
 function hasAnyValue(record: JsonRecord) {

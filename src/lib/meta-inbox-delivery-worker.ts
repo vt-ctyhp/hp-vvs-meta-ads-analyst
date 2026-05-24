@@ -12,6 +12,11 @@ import {
   type MetaInboxDeliveryFailure,
   type MetaInboxDeliveryTarget,
 } from "./meta-inbox-delivery.ts";
+import {
+  validateMetaInboxSendAttachments,
+  type MetaInboxAttachmentType,
+  type MetaInboxSendAttachmentRow,
+} from "./meta-inbox-attachments.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -142,6 +147,7 @@ export async function deliverQueuedMetaInboxSendAttempts(
       if (!claimed) continue;
       const sendingAttempt = await hydrateDeliveryAttemptAttachments(
         supabase,
+        conversation,
         mapDeliveryAttempt(claimed.row),
       );
       await insertSendAttemptEvent(supabase, conversation.id, claimed.event, now);
@@ -263,6 +269,7 @@ async function updateSendAttempt(
 
 async function hydrateDeliveryAttemptAttachments(
   supabase: DynamicSupabaseClient,
+  conversation: MetaInboxDeliveryConversation,
   attempt: MetaInboxDeliveryAttempt,
 ): Promise<MetaInboxDeliveryAttempt> {
   const attachmentIds = attempt.attachment_ids || [];
@@ -272,15 +279,28 @@ async function hydrateDeliveryAttemptAttachments(
     .from("meta_inbox_attachments")
     .select("*")
     .in("id", attachmentIds)
-    .eq("is_sendable", true)
-    .limit(10);
+    .limit(attachmentIds.length);
   if (result.error) throw result.error;
+
+  const attachments = validateMetaInboxSendAttachments(
+    {
+      id: conversation.id,
+      platform: conversation.platform,
+      source_type: conversation.source_type,
+    },
+    attachmentIds,
+    rows(result.data).map(mapSendAttachmentRow),
+  );
 
   return {
     ...attempt,
-    attachments: rows(result.data)
-      .map(mapDeliveryAttachment)
-      .filter((attachment) => attachment.is_sendable),
+    attachments: attachments.map((attachment) => ({
+      id: attachment.id,
+      attachment_type: attachment.attachment_type,
+      meta_attachment_id: attachment.meta_attachment_id,
+      media_url: attachment.media_url,
+      is_sendable: true,
+    })),
   };
 }
 
@@ -488,13 +508,15 @@ function isSendAttemptDueForDelivery(attempt: MetaInboxDeliveryAttempt, now: str
   return retryAt <= base;
 }
 
-function mapDeliveryAttachment(row: JsonRecord): MetaInboxDeliveryAttempt["attachments"][number] {
+function mapSendAttachmentRow(row: JsonRecord): MetaInboxSendAttachmentRow {
   return {
     id: String(row.id || ""),
-    attachment_type: deliveryAttachmentType(row.attachment_type),
+    conversation_id: stringField(row.conversation_id),
+    attachment_type: attachmentTypeField(row.attachment_type),
     meta_attachment_id: stringField(row.meta_attachment_id),
     media_url: stringField(row.media_url),
     is_sendable: row.is_sendable === true,
+    deleted_at: stringField(row.deleted_at),
   };
 }
 
@@ -596,11 +618,20 @@ function isString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-function deliveryAttachmentType(value: unknown): MetaInboxDeliveryAttempt["attachments"][number]["attachment_type"] {
-  if (value === "image" || value === "video" || value === "audio" || value === "file") {
+function attachmentTypeField(value: unknown): MetaInboxAttachmentType {
+  if (
+    value === "image" ||
+    value === "video" ||
+    value === "audio" ||
+    value === "file" ||
+    value === "sticker" ||
+    value === "product" ||
+    value === "share" ||
+    value === "unknown"
+  ) {
     return value;
   }
-  return "file";
+  return "unknown";
 }
 
 function positiveLimit(value: number | null | undefined, fallback: number) {

@@ -43,7 +43,10 @@ import {
 } from "./meta-inbox-contact-methods.ts";
 import {
   normalizeMetaInboxAttachments,
+  validateMetaInboxSendAttachments,
+  type MetaInboxAttachmentType,
   type MetaInboxNormalizedAttachment,
+  type MetaInboxSendAttachmentRow,
 } from "./meta-inbox-attachments.ts";
 import { normalizeMetaInboxSchemaError } from "./meta-inbox-schema.ts";
 import {
@@ -984,6 +987,11 @@ export async function createSocialInboxSendAttempt(
       humanAgentEnabled: true,
     },
   );
+  await validateSendAttemptAttachmentsForApproval(
+    supabase,
+    conversation,
+    mutation.row.attachment_ids,
+  );
 
   const existing = await selectExistingSendAttemptForIdempotency(
     supabase,
@@ -1018,6 +1026,32 @@ export async function createSocialInboxSendAttempt(
     sendAttempt: mapSendAttempt(insert.data),
     events: [event],
   };
+}
+
+async function validateSendAttemptAttachmentsForApproval(
+  supabase: DynamicSupabaseClient,
+  conversation: SocialInboxConversation,
+  attachmentIds: unknown,
+) {
+  const requestedIds = arrayField(attachmentIds).map(String).filter(Boolean);
+  if (!requestedIds.length) return [];
+
+  const result = await supabase
+    .from("meta_inbox_attachments")
+    .select("*")
+    .in("id", requestedIds)
+    .limit(requestedIds.length);
+  if (result.error) throw normalizeMetaInboxSchemaError(result.error);
+
+  return validateMetaInboxSendAttachments(
+    {
+      id: conversation.id,
+      platform: conversation.platform,
+      source_type: conversation.source_type,
+    },
+    requestedIds,
+    rows<JsonRecord>(result.data).map(mapSendAttachmentRow),
+  );
 }
 
 export async function retrySocialInboxSendAttempt(
@@ -3150,6 +3184,18 @@ function mapFirstTouchSource(row: JsonRecord): SocialInboxFirstTouchSource {
   };
 }
 
+function mapSendAttachmentRow(row: JsonRecord): MetaInboxSendAttachmentRow {
+  return {
+    id: String(row.id || ""),
+    conversation_id: stringField(row.conversation_id),
+    attachment_type: attachmentTypeField(row.attachment_type),
+    meta_attachment_id: stringField(row.meta_attachment_id),
+    media_url: stringField(row.media_url),
+    is_sendable: row.is_sendable === true,
+    deleted_at: stringField(row.deleted_at),
+  };
+}
+
 function mapSendAttempt(row: JsonRecord): SocialInboxSendAttempt {
   return {
     id: String(row.id),
@@ -3432,6 +3478,22 @@ function commentActionTypeField(value: unknown): MetaInboxCommentActionType {
       return value;
     default:
       return "public_reply";
+  }
+}
+
+function attachmentTypeField(value: unknown): MetaInboxAttachmentType {
+  switch (value) {
+    case "image":
+    case "video":
+    case "audio":
+    case "file":
+    case "sticker":
+    case "product":
+    case "share":
+    case "unknown":
+      return value;
+    default:
+      return "unknown";
   }
 }
 
