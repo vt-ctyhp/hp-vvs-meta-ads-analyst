@@ -30,7 +30,7 @@ Ask: "Batch 1 deletes redirect stubs at `/optimize`, `/creative-analysis`, `/inb
 
 Record the answer in this plan (replace the placeholder list below) before starting Batch 1:
 
-> **Routes to keep alive (per user, pre-flight):** _(none / list URLs)_
+> **Routes to keep alive (per user, pre-flight 2026-05-24):** none — user confirmed no external bookmarks for any of `/optimize`, `/creative-analysis`, `/inbox`, `/users`, `/broadsheet`, `/review`, or `/outcomes`. Batch 1 deletes all 7.
 
 - [ ] **Step 2: Confirm worktree state**
 
