@@ -30,7 +30,10 @@ export default async function WorkspaceLayout({
   const profile = await getServerAccessProfile();
 
   if (!profile?.authenticated) {
-    redirect("/login?next=/analyst");
+    // Defer to the page's own requirePagePermission so the /login?next=…
+    // redirect carries the actual originating path. Layouts don't receive
+    // the pathname, so we'd otherwise have to hardcode one here.
+    return <>{children}</>;
   }
 
   if (!profile.active || profile.missingAppProfile) {
