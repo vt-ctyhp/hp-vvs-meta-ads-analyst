@@ -973,10 +973,12 @@ async function fetchWebsiteFunnelDataUncached(
       MAX_META_INSIGHT_ROWS,
     ),
   ]);
-  // appointmentRowsRaw is a union of two array types (boundary view vs core
-  // table). Both element types satisfy WebsiteAcuityAppointmentRow, but TS
-  // can't auto-unify `A[] | B[]` into `(A|B)[]`. Widen explicitly so the
-  // generic in uniqueValidAcuityAppointments resolves cleanly.
+  // The two appointment-source branches above return arrays of different row
+  // shapes (AppointmentEventConversionRow[] vs SalesAppointmentConversionViewRow[]).
+  // TypeScript widens that to a union-of-arrays, which can't unify with
+  // uniqueValidAcuityAppointments' Row generic. The function already accepts
+  // WebsiteAcuityAppointmentRow (the union of the two), so widen the array
+  // element type to that union — type-level only, no runtime change.
   const appointmentRows = uniqueValidAcuityAppointments(
     appointmentRowsRaw as WebsiteAcuityAppointmentRow[],
   );
