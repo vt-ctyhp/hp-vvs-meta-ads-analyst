@@ -129,7 +129,8 @@ Following every modified function to every UI surface that consumes it.
 | Rows with `sourceType = "paid_meta"` | small | 170 | ⚠️ **INCREASED** for same reason |
 | `summary.visitorsShown` | 31 | 500 | ⚠️ **INCREASED** (reflects visitor input count, not row count) |
 | `summary.visitorsWithConversions` | 2 | 2 | identical |
-| `summary.capiStatuses` | unchanged | unchanged | identical (visitor-only rows have null capiStatus) |
+| `summary.capiStatuses` | unchanged | unchanged | identical (visitor-only rows have null capiStatus AND `summary.capiStatuses` only aggregates rows where `capiStatus` is set — see `customer-journey-ledger.ts:1145-1147`) |
+| /convert "CAPI gaps" counter (top StatusSentence tile) | unchanged | unchanged | identical — `countCustomerLedgerCapiGaps` gates on `hasConversion === true` (`convert-customer-ledger.ts:222`); visitor-only rows excluded |
 | StatusSentence top-of-page | unchanged | unchanged | (uses funnel.overview, not ledger row count) |
 | Convert filter chips counts | smaller | larger | ⚠️ filter chips that count by source/stage see more rows |
 | Customer journey drawer (per-row detail) | unchanged | unchanged | (detail uses untouched `fetchCustomerJourneyLedgerDetail`) |
@@ -219,7 +220,8 @@ While auditing, I found that the `trend.paidMetaScheduleConversions` daily sum d
 
 1. **/convert filter chip COUNTS may have changed.** The "Paid Meta" filter chip and the "Direct" chip filter rows by `sourceType` OR `stageKeys`. Since the ledger now includes visitor-only rows, the chip counts are larger. The PER-ROW filter behavior is correct; only the **total counts** changed. (This is the intended Phase 2 behavior — user originally asked for browse-but-no-book visitors to surface.)
 2. **`/m/inbox` or other mobile surfaces** — I didn't import any of my changed functions there. Unaffected.
-3. **CAPI gap count** (in /convert StatusSentence) — computed from `ledger.filter(r => !r.capiStatus...)`. Visitor-only rows have `capiStatus=null`, so they'd count as "CAPI gap." This may inflate the CAPI gap count. **Worth verifying** if you have a specific number for "CAPI gaps before/after."
+3. ~~**CAPI gap count** (in /convert StatusSentence) — computed from `ledger.filter(r => !r.capiStatus...)`. Visitor-only rows have `capiStatus=null`, so they'd count as "CAPI gap." This may inflate the CAPI gap count. **Worth verifying** if you have a specific number for "CAPI gaps before/after."~~
+   **CORRECTION (2026-05-24, after re-reading the source):** the CAPI gap counter is booking-grain, not row-grain. `countCustomerLedgerCapiGaps` at `src/lib/convert-customer-ledger.ts:220-226` opens with `if (!row.hasConversion) return false;` before checking `capiStatus`. Visitor-only rows have `hasConversion: false` and are explicitly excluded. **No inflation. Counter is unaffected by Phase 2.**
 
 ## What I'm NOT going to claim
 
