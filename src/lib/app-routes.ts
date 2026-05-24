@@ -41,8 +41,7 @@ export const OPTIMIZE_LANDING_PATH = ANALYST_LANDING_PATH;
  *   admin       (admin / data ops)
  *
  * Labels are deliberately short and unambiguous. Final visible IA has three
- * primary rooms: Analyst, Convert, and Operate. Legacy URLs stay in the access
- * map below so old links can redirect cleanly without remaining visible nav.
+ * primary rooms: Analyst, Convert, and Operate.
  */
 export const APP_NAV_ROUTES = [
   { href: "/analyst", label: "Analyst", permission: "view_dashboard", group: "performance" },
@@ -70,16 +69,9 @@ export const APP_ROUTE_GROUP_ORDER: AppRouteGroup[] = [
 type AppAccessRoute = Pick<AppRoute, "href" | "permission">;
 
 const APP_ACCESS_ROUTES = [
-  { href: "/optimize", permission: "view_dashboard" },
-  { href: "/creative-analysis", permission: "view_creative_analysis" },
-  { href: "/inbox", permission: "view_inbox" },
-  { href: "/users", permission: "view_users" },
   { href: "/admin/backfill", permission: "view_backfill" },
-  { href: "/broadsheet", permission: "view_dashboard" },
   { href: "/website-funnel", permission: "view_dashboard" },
   { href: "/attribution-ledger", permission: "view_dashboard" },
-  { href: "/review", permission: "view_review" },
-  { href: "/outcomes", permission: "view_outcomes" },
   { href: "/operate", permission: "view_backfill" },
   { href: "/m/inbox", permission: "view_inbox" },
   ...APP_NAV_ROUTES,

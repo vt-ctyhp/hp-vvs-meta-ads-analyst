@@ -43,7 +43,7 @@ test("post-login next path is honored only when permitted", () => {
     permissions: ["view_inbox"],
   } as const;
 
-  assert.equal(getPostLoginDestination(profile, "/inbox?source=next"), "/inbox?source=next");
+  assert.equal(getPostLoginDestination(profile, "/m/inbox?source=next"), "/m/inbox?source=next");
   assert.equal(getPostLoginDestination(profile, "/analysis"), "/m/inbox");
 });
 
@@ -61,8 +61,8 @@ test("legacy root next falls through to the default dashboard landing", () => {
 
 test("unsafe or non-app next paths are ignored", () => {
   assert.equal(
-    normalizeAppNextPath("/optimize?days=7&periods=1"),
-    "/optimize?days=7&periods=1",
+    normalizeAppNextPath("/analyst?days=7&periods=1"),
+    "/analyst?days=7&periods=1",
   );
   assert.equal(normalizeAppNextPath("/attribution-ledger"), "/attribution-ledger");
   assert.equal(normalizeAppNextPath("https://example.com/inbox"), null);
@@ -93,12 +93,10 @@ test("inactive or missing-profile users do not have internal app access", () => 
 });
 
 test("page permission checks follow the route permission map", () => {
-  assert.equal(canAccessAppPath(["view_inbox"], "/inbox/thread/1"), true);
+  assert.equal(canAccessAppPath(["view_inbox"], "/m/inbox/thread/1"), true);
   assert.equal(canAccessAppPath(["view_inbox"], "/convert/inbox"), true);
   assert.equal(canAccessAppPath(["view_users"], "/operate/users"), true);
   assert.equal(canAccessAppPath(["view_backfill"], "/operate/pipelines"), true);
-  assert.equal(canAccessAppPath(["view_dashboard"], "/optimize"), true);
-  assert.equal(canAccessAppPath(["view_inbox"], "/optimize"), false);
   assert.equal(canAccessAppPath(["view_users"], "/operate/pipelines"), false);
   assert.equal(canAccessAppPath(["view_inbox"], "/"), false);
   assert.equal(canAccessAppPath(["view_dashboard"], "/website-funnel"), true);
