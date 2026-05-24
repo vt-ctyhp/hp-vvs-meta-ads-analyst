@@ -3,9 +3,28 @@ import { getMetaPermissionHealth } from "./meta";
 import {
   adsAnalystOnConflict,
   createAdsAnalystClient,
+  getAdsAnalystEnvironment,
   withAdsAnalystEnvironment,
   withAdsAnalystEnvironmentRows,
 } from "./ads-analyst-db";
+import {
+  buildMetaInboxNormalizationBatch,
+  type MetaInboxNormalizationInput,
+} from "./meta-inbox-normalization.ts";
+import {
+  filterSocialInboxDataForQueueAccess,
+  metaInboxQueueAccessScopeForProfile,
+  type MetaInboxAccessProfile,
+  type MetaInboxQueueAccessDecision,
+} from "./meta-inbox-access.ts";
+import { metaInboxAllowedQueueCategoriesForTeams } from "./meta-inbox-foundation.ts";
+import type {
+  MetaInboxConversationStatusKey,
+  MetaInboxLostReasonKey,
+  MetaInboxOutcomeKey,
+  MetaInboxQueueCategoryKey,
+  MetaInboxSourceChannelKey,
+} from "./meta-inbox-vocabulary.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -34,15 +53,18 @@ type DynamicSingleResult = {
   error: Error | null;
 };
 
-type DynamicSelectOrder = {
+type DynamicQueryOrder = {
   limit: (count: number) => Promise<DynamicQueryResult>;
 };
 
-type DynamicSelect = {
+type DynamicQuery = {
+  eq: (column: string, value: string | boolean | number) => DynamicQuery;
+  in: (column: string, values: string[]) => DynamicQuery;
   order: (
     column: string,
     options?: { ascending?: boolean; nullsFirst?: boolean },
-  ) => DynamicSelectOrder;
+  ) => DynamicQueryOrder;
+  limit: (count: number) => Promise<DynamicQueryResult>;
 };
 
 type DynamicTable = {
@@ -56,11 +78,11 @@ type DynamicTable = {
   };
   upsert: (
     rows: JsonRecord[],
-    options: { onConflict: string },
+    options: { onConflict: string; ignoreDuplicates?: boolean },
   ) => {
     select: (columns: string) => Promise<DynamicQueryResult>;
   };
-  select: (columns: string) => DynamicSelect;
+  select: (columns: string) => DynamicQuery;
 };
 
 type DynamicSupabaseClient = {
@@ -137,6 +159,75 @@ export type SocialInboxComment = {
   last_synced_at: string | null;
 };
 
+export type SocialInboxCustomerProfile = {
+  id: string;
+  platform: "facebook" | "instagram";
+  page_id: string | null;
+  ig_user_id: string | null;
+  participant_id: string;
+  display_name: string | null;
+  username: string | null;
+  profile_picture_url: string | null;
+  profile_url: string | null;
+  profile_reference: string | null;
+  last_profile_synced_at: string | null;
+};
+
+export type SocialInboxConversation = {
+  id: string;
+  canonical_conversation_key: string;
+  source_channel: MetaInboxSourceChannelKey;
+  source_type: "message_thread" | "public_comment" | "private_reply" | "ad_referral" | "other";
+  platform: "facebook" | "instagram";
+  customer_profile_id: string | null;
+  page_id: string | null;
+  ig_user_id: string | null;
+  participant_id: string | null;
+  platform_thread_id: string | null;
+  parent_content_id: string | null;
+  source_id: string | null;
+  first_inbound_at: string | null;
+  latest_inbound_at: string | null;
+  latest_outbound_at: string | null;
+  last_activity_at: string | null;
+  needs_reply: boolean;
+  reply_window_expires_at: string | null;
+  human_agent_window_expires_at: string | null;
+  send_eligibility: "standard_reply_allowed" | "human_agent_allowed" | "expired" | "unknown";
+  conversation_status: MetaInboxConversationStatusKey;
+  assigned_team_id: string | null;
+  assigned_user_id: string | null;
+  follow_up_at: string | null;
+  lead_quality: string | null;
+  lead_quality_reason_tags: string[];
+  inbox_outcome: MetaInboxOutcomeKey;
+  inbox_lost_reason: MetaInboxLostReasonKey | null;
+  queue_category_key: MetaInboxQueueCategoryKey;
+  routing_source: string | null;
+  routing_confidence: number | null;
+  routing_explanation: string | null;
+};
+
+export type SocialInboxFirstTouchSource = {
+  id: string;
+  conversation_id: string;
+  first_message_id: string | null;
+  first_message_at: string | null;
+  ad_id: string | null;
+  ref: string | null;
+  source_post_id: string | null;
+  source_media_id: string | null;
+  source_comment_id: string | null;
+  source_product_id: string | null;
+  source_permalink: string | null;
+  campaign_umbrella_id: string | null;
+  campaign_id: string | null;
+  adset_id: string | null;
+  creative_id: string | null;
+  attribution_method: string | null;
+  attribution_confidence: number | null;
+};
+
 export type SocialInboxSyncRun = {
   id: string;
   trigger: string;
@@ -148,9 +239,13 @@ export type SocialInboxSyncRun = {
 };
 
 export type SocialInboxData = {
+  queueAccess: MetaInboxQueueAccessDecision;
   threads: SocialInboxThread[];
   messages: SocialInboxMessage[];
   comments: SocialInboxComment[];
+  inboxConversations: SocialInboxConversation[];
+  customerProfiles: SocialInboxCustomerProfile[];
+  firstTouchSources: SocialInboxFirstTouchSource[];
   syncRuns: SocialInboxSyncRun[];
 };
 
@@ -253,9 +348,20 @@ export async function syncSocialInbox(
   }
 }
 
-export async function getSocialInboxData(): Promise<SocialInboxData> {
+export async function getSocialInboxData(
+  profile?: MetaInboxAccessProfile | null,
+): Promise<SocialInboxData> {
   const supabase = dynamicSupabase("web");
-  const [threads, messages, comments, syncRuns] = await Promise.all([
+  const queueAccess = await resolveSocialInboxQueueAccess(supabase, profile);
+  const [
+    threads,
+    messages,
+    comments,
+    inboxConversations,
+    customerProfiles,
+    firstTouchSources,
+    syncRuns,
+  ] = await Promise.all([
     supabase
       .from("meta_social_threads")
       .select("*")
@@ -271,6 +377,17 @@ export async function getSocialInboxData(): Promise<SocialInboxData> {
       .select("*")
       .order("created_time", { ascending: false, nullsFirst: false })
       .limit(150),
+    selectInboxConversationsForQueueAccess(supabase, queueAccess),
+    supabase
+      .from("meta_inbox_customer_profiles")
+      .select("*")
+      .order("updated_at", { ascending: false, nullsFirst: false })
+      .limit(250),
+    supabase
+      .from("meta_inbox_first_touch_sources")
+      .select("*")
+      .order("updated_at", { ascending: false, nullsFirst: false })
+      .limit(250),
     supabase
       .from("meta_social_sync_runs")
       .select("*")
@@ -282,11 +399,120 @@ export async function getSocialInboxData(): Promise<SocialInboxData> {
     if (result.error) throw result.error;
   }
 
-  return {
+  return filterSocialInboxDataForQueueAccess({
+    queueAccess,
     threads: rows<JsonRecord>(threads.data).map(mapThread),
     messages: rows<JsonRecord>(messages.data).map(mapMessage),
     comments: rows<JsonRecord>(comments.data).map(mapComment),
+    inboxConversations: rows<JsonRecord>(inboxConversations.data).map(mapInboxConversation),
+    customerProfiles: rows<JsonRecord>(customerProfiles.data).map(mapCustomerProfile),
+    firstTouchSources: rows<JsonRecord>(firstTouchSources.data).map(mapFirstTouchSource),
     syncRuns: rows<JsonRecord>(syncRuns.data).map(mapSyncRun),
+  }, queueAccess);
+}
+
+async function resolveSocialInboxQueueAccess(
+  supabase: DynamicSupabaseClient,
+  profile: MetaInboxAccessProfile | null | undefined,
+): Promise<MetaInboxQueueAccessDecision> {
+  const scope = metaInboxQueueAccessScopeForProfile(profile);
+  if (scope.mode !== "team") return scope;
+
+  const appUserId = profile?.appUserId;
+  if (!appUserId || !isUuid(appUserId)) {
+    return {
+      mode: "none",
+      allowedQueueCategoryKeys: [],
+      reason: "missing_app_user",
+    };
+  }
+
+  const members = await supabase
+    .from("meta_inbox_team_members")
+    .select("team_id")
+    .eq("app_user_id", appUserId)
+    .limit(100);
+  if (members.error) throw members.error;
+
+  const teamIds = uniqueStrings(rows<JsonRecord>(members.data).map((row) => stringField(row.team_id)));
+  if (!teamIds.length) {
+    return {
+      ...scope,
+      allowedQueueCategoryKeys: [],
+    };
+  }
+
+  const teams = await supabase
+    .from("meta_inbox_teams")
+    .select("id")
+    .in("id", teamIds)
+    .eq("active", true)
+    .limit(100);
+  if (teams.error) throw teams.error;
+
+  const activeTeamIds = uniqueStrings(rows<JsonRecord>(teams.data).map((row) => stringField(row.id)));
+  if (!activeTeamIds.length) {
+    return {
+      ...scope,
+      allowedQueueCategoryKeys: [],
+    };
+  }
+
+  const accessRows = await supabase
+    .from("meta_inbox_team_queue_access")
+    .select("queue_category_key")
+    .in("team_id", activeTeamIds)
+    .limit(500);
+  if (accessRows.error) throw accessRows.error;
+
+  return {
+    ...scope,
+    allowedQueueCategoryKeys: metaInboxAllowedQueueCategoriesForTeams(
+      rows<JsonRecord>(accessRows.data).map((row) => ({
+        queueCategoryKey: stringField(row.queue_category_key),
+      })),
+    ),
+  };
+}
+
+function selectInboxConversationsForQueueAccess(
+  supabase: DynamicSupabaseClient,
+  access: MetaInboxQueueAccessDecision,
+): Promise<DynamicQueryResult> {
+  if (access.mode === "none") return emptyQueryResult();
+  if (access.mode === "team" && !access.allowedQueueCategoryKeys.length) {
+    return emptyQueryResult();
+  }
+
+  const query = supabase.from("meta_inbox_conversations").select("*");
+  const scoped =
+    access.mode === "team"
+      ? query.in("queue_category_key", access.allowedQueueCategoryKeys)
+      : query;
+
+  return scoped
+    .order("last_activity_at", { ascending: false, nullsFirst: false })
+    .limit(250);
+}
+
+function emptyQueryResult(): Promise<DynamicQueryResult> {
+  return Promise.resolve({ data: [], error: null });
+}
+
+export function emptySocialInboxData(): SocialInboxData {
+  return {
+    queueAccess: {
+      mode: "all",
+      allowedQueueCategoryKeys: null,
+      reason: "unscoped_internal_read",
+    },
+    threads: [],
+    messages: [],
+    comments: [],
+    inboxConversations: [],
+    customerProfiles: [],
+    firstTouchSources: [],
+    syncRuns: [],
   };
 }
 
@@ -306,13 +532,19 @@ export async function ingestMetaWebhookPayload(payload: JsonRecord): Promise<Met
     for (const event of messagingEvents) {
       const row = webhookMessageRow(object, entry, event);
       if (!row) continue;
-      await upsertMany("meta_social_threads", [row.thread], "platform,thread_id", "ingest");
+      const threads = await upsertMany(
+        "meta_social_threads",
+        [row.thread],
+        "platform,thread_id",
+        "ingest",
+      );
       const messages = await upsertMany(
         "meta_social_messages",
         [row.message],
         "platform,message_id",
         "ingest",
       );
+      await normalizeMetaInboxRows({ threads, messages }, "ingest");
       result.messages += messages.length;
     }
 
@@ -326,6 +558,7 @@ export async function ingestMetaWebhookPayload(payload: JsonRecord): Promise<Met
         "platform,comment_id",
         "ingest",
       );
+      await normalizeMetaInboxRows({ comments }, "ingest");
       result.comments += comments.length;
     }
   }
@@ -550,6 +783,10 @@ async function syncConversations({ page, platform, params = {} }: ConversationSy
       });
       messageCount += messageRows.length;
       await refreshThreadFromMessages(platform, threadId, messages);
+      await normalizeMetaInboxRows({
+        threads: threadById.get(threadId) ? [threadById.get(threadId) as JsonRecord] : [],
+        messages: messageRows,
+      });
     } catch (error) {
       errors.push(`${platform} thread ${threadId}: ${errorToMessage(error)}`);
     }
@@ -733,6 +970,7 @@ async function safeSyncInstagramComments(page: ManagedPage) {
     );
     const comments = flattenInstagramComments(media, page);
     const rows = await upsertMany(comments.table, comments.rows, "platform,comment_id");
+    await normalizeMetaInboxRows({ comments: rows });
     return { comments: rows.length, errors: [] as string[] };
   } catch (error) {
     return { comments: 0, errors: [`instagram comments: ${errorToMessage(error)}`] };
@@ -752,6 +990,7 @@ async function safeSyncFacebookComments(page: ManagedPage) {
     );
     const comments = flattenFacebookComments(posts, page);
     const rows = await upsertMany(comments.table, comments.rows, "platform,comment_id");
+    await normalizeMetaInboxRows({ comments: rows });
     return { comments: rows.length, errors: [] as string[] };
   } catch (error) {
     return { comments: 0, errors: [`facebook comments: ${errorToMessage(error)}`] };
@@ -954,6 +1193,178 @@ async function upsertMany(
   return results;
 }
 
+async function normalizeMetaInboxRows(
+  input: MetaInboxNormalizationInput,
+  role: "worker" | "ingest" = "worker",
+) {
+  const batch = buildMetaInboxNormalizationBatch(input);
+  if (
+    !batch.customerProfiles.length &&
+    !batch.conversations.length &&
+    !batch.firstTouchSources.length
+  ) {
+    return;
+  }
+
+  const profileRows = await upsertMetaInboxMany(
+    "meta_inbox_customer_profiles",
+    batch.customerProfiles.map((profile) => ({
+      platform: profile.platform,
+      page_id: profile.pageId,
+      ig_user_id: profile.igUserId,
+      participant_id: profile.participantId,
+      profile_key: profile.profileKey,
+      display_name: profile.displayName,
+      username: profile.username,
+      profile_picture_url: profile.profilePictureUrl,
+      profile_url: profile.profileUrl,
+      profile_reference: profile.profileReference,
+      raw_profile_json: profile.rawProfileJson,
+      last_profile_synced_at: new Date().toISOString(),
+    })),
+    "profile_key",
+    role,
+  );
+  const profileIdByKey = new Map(
+    profileRows.map((profile) => [String(profile.profile_key), String(profile.id)]),
+  );
+
+  const conversationRows = await upsertMetaInboxMany(
+    "meta_inbox_conversations",
+    batch.conversations.map((conversation) => ({
+      canonical_conversation_key: conversation.canonicalConversationKey,
+      source_channel: conversation.sourceChannel,
+      source_type: conversation.sourceType,
+      platform: conversation.platform,
+      raw_thread_id: conversation.rawThreadId,
+      raw_comment_id: conversation.rawCommentId,
+      customer_profile_id: conversation.customerProfileKey
+        ? profileIdByKey.get(conversation.customerProfileKey) || null
+        : null,
+      page_id: conversation.pageId,
+      ig_user_id: conversation.igUserId,
+      participant_id: conversation.participantId,
+      platform_thread_id: conversation.platformThreadId,
+      parent_content_id: conversation.parentContentId,
+      source_id: conversation.sourceId,
+      first_inbound_at: conversation.firstInboundAt,
+      latest_inbound_at: conversation.latestInboundAt,
+      latest_outbound_at: conversation.latestOutboundAt,
+      last_activity_at: conversation.lastActivityAt,
+      needs_reply: conversation.needsReply,
+      reply_window_expires_at: conversation.replyWindowExpiresAt,
+      human_agent_window_expires_at: conversation.humanAgentWindowExpiresAt,
+      send_eligibility: conversation.sendEligibility,
+      conversation_status: conversation.conversationStatus,
+      queue_category_key: conversation.queueCategoryKey,
+      routing_source: conversation.routingSource,
+      routing_confidence: conversation.routingConfidence,
+      routing_explanation: conversation.routingExplanation,
+    })),
+    "canonical_conversation_key",
+    role,
+  );
+  const conversationIdByKey = new Map(
+    conversationRows.map((conversation) => [
+      String(conversation.canonical_conversation_key),
+      String(conversation.id),
+    ]),
+  );
+
+  await upsertMetaInboxMany(
+    "meta_inbox_first_touch_sources",
+    batch.firstTouchSources
+      .map((source) => {
+        const conversationId = conversationIdByKey.get(source.canonicalConversationKey);
+        if (!conversationId) return null;
+        return {
+          conversation_id: conversationId,
+          first_message_id: source.firstMessageId,
+          first_message_at: source.firstMessageAt,
+          referral_json: source.referralJson,
+          ad_id: source.adId,
+          ads_context_data_json: source.adsContextDataJson,
+          ref: source.ref,
+          source_post_id: source.sourcePostId,
+          source_media_id: source.sourceMediaId,
+          source_comment_id: source.sourceCommentId,
+          source_product_id: source.sourceProductId,
+          source_permalink: source.sourcePermalink,
+          campaign_umbrella_id: source.campaignUmbrellaId,
+          campaign_id: source.campaignId,
+          adset_id: source.adsetId,
+          creative_id: source.creativeId,
+          attribution_method: source.attributionMethod,
+          attribution_confidence: source.attributionConfidence,
+          raw_payload_json: source.rawPayloadJson,
+        };
+      })
+      .filter(Boolean) as JsonRecord[],
+    "conversation_id",
+    role,
+    { ignoreDuplicates: true },
+  );
+
+  await upsertMetaInboxMany(
+    "meta_inbox_conversation_events",
+    conversationRows.map((conversation) => ({
+      conversation_id: String(conversation.id),
+      event_type: "conversation_created",
+      dedupe_key: `conversation_created:${String(conversation.canonical_conversation_key)}`,
+      event_at: String(conversation.created_at || new Date().toISOString()),
+      new_value: {
+        canonicalConversationKey: String(conversation.canonical_conversation_key),
+        sourceChannel: String(conversation.source_channel),
+        queueCategoryKey: String(conversation.queue_category_key),
+      },
+      metadata: {
+        normalizedFromRawMeta: true,
+      },
+    })),
+    "dedupe_key",
+    role,
+    { ignoreDuplicates: true },
+  );
+}
+
+async function upsertMetaInboxMany(
+  table: string,
+  rows: JsonRecord[],
+  onConflict: string,
+  role: "worker" | "ingest",
+  options: { ignoreDuplicates?: boolean } = {},
+) {
+  if (!rows.length) return [];
+  const supabase = dynamicSupabase(role);
+  const environment = getAdsAnalystEnvironment();
+  const conflict = onConflict
+    .split(",")
+    .map((column) => column.trim())
+    .filter(Boolean)
+    .includes("environment")
+    ? onConflict
+    : `environment,${onConflict}`;
+  const results: JsonRecord[] = [];
+
+  for (const chunk of chunks(rows, 500)) {
+    const { data, error } = await supabase
+      .from(table)
+      .upsert(
+        chunk.map((row) => ({ ...row, environment })),
+        {
+          onConflict: conflict,
+          ignoreDuplicates: options.ignoreDuplicates,
+        },
+      )
+      .select("*");
+
+    if (error) throw error;
+    results.push(...rowsFrom(data));
+  }
+
+  return results;
+}
+
 function dynamicSupabase(role: "web" | "worker" | "ingest") {
   return createAdsAnalystClient(role) as unknown as DynamicSupabaseClient;
 }
@@ -1013,6 +1424,91 @@ function mapComment(row: JsonRecord): SocialInboxComment {
   };
 }
 
+function mapCustomerProfile(row: JsonRecord): SocialInboxCustomerProfile {
+  return {
+    id: String(row.id),
+    platform: row.platform === "facebook" ? "facebook" : "instagram",
+    page_id: stringField(row.page_id),
+    ig_user_id: stringField(row.ig_user_id),
+    participant_id: String(row.participant_id || ""),
+    display_name: stringField(row.display_name),
+    username: stringField(row.username),
+    profile_picture_url: stringField(row.profile_picture_url),
+    profile_url: stringField(row.profile_url),
+    profile_reference: stringField(row.profile_reference),
+    last_profile_synced_at: stringField(row.last_profile_synced_at),
+  };
+}
+
+function mapInboxConversation(row: JsonRecord): SocialInboxConversation {
+  const sourceChannel = sourceChannelField(row.source_channel);
+  const conversationStatus = conversationStatusField(row.conversation_status);
+  const queueCategoryKey = queueCategoryField(row.queue_category_key);
+  const inboxOutcome = outcomeField(row.inbox_outcome);
+  return {
+    id: String(row.id),
+    canonical_conversation_key: String(row.canonical_conversation_key || ""),
+    source_channel: sourceChannel,
+    source_type:
+      row.source_type === "public_comment" ||
+      row.source_type === "private_reply" ||
+      row.source_type === "ad_referral" ||
+      row.source_type === "other"
+        ? row.source_type
+        : "message_thread",
+    platform: row.platform === "facebook" ? "facebook" : "instagram",
+    customer_profile_id: stringField(row.customer_profile_id),
+    page_id: stringField(row.page_id),
+    ig_user_id: stringField(row.ig_user_id),
+    participant_id: stringField(row.participant_id),
+    platform_thread_id: stringField(row.platform_thread_id),
+    parent_content_id: stringField(row.parent_content_id),
+    source_id: stringField(row.source_id),
+    first_inbound_at: stringField(row.first_inbound_at),
+    latest_inbound_at: stringField(row.latest_inbound_at),
+    latest_outbound_at: stringField(row.latest_outbound_at),
+    last_activity_at: stringField(row.last_activity_at),
+    needs_reply: row.needs_reply === true,
+    reply_window_expires_at: stringField(row.reply_window_expires_at),
+    human_agent_window_expires_at: stringField(row.human_agent_window_expires_at),
+    send_eligibility: sendEligibilityField(row.send_eligibility),
+    conversation_status: conversationStatus,
+    assigned_team_id: stringField(row.assigned_team_id),
+    assigned_user_id: stringField(row.assigned_user_id),
+    follow_up_at: stringField(row.follow_up_at),
+    lead_quality: stringField(row.lead_quality),
+    lead_quality_reason_tags: arrayField(row.lead_quality_reason_tags).map(String),
+    inbox_outcome: inboxOutcome,
+    inbox_lost_reason: lostReasonField(row.inbox_lost_reason),
+    queue_category_key: queueCategoryKey,
+    routing_source: stringField(row.routing_source),
+    routing_confidence: numberField(row.routing_confidence),
+    routing_explanation: stringField(row.routing_explanation),
+  };
+}
+
+function mapFirstTouchSource(row: JsonRecord): SocialInboxFirstTouchSource {
+  return {
+    id: String(row.id),
+    conversation_id: String(row.conversation_id || ""),
+    first_message_id: stringField(row.first_message_id),
+    first_message_at: stringField(row.first_message_at),
+    ad_id: stringField(row.ad_id),
+    ref: stringField(row.ref),
+    source_post_id: stringField(row.source_post_id),
+    source_media_id: stringField(row.source_media_id),
+    source_comment_id: stringField(row.source_comment_id),
+    source_product_id: stringField(row.source_product_id),
+    source_permalink: stringField(row.source_permalink),
+    campaign_umbrella_id: stringField(row.campaign_umbrella_id),
+    campaign_id: stringField(row.campaign_id),
+    adset_id: stringField(row.adset_id),
+    creative_id: stringField(row.creative_id),
+    attribution_method: stringField(row.attribution_method),
+    attribution_confidence: numberField(row.attribution_confidence),
+  };
+}
+
 function mapSyncRun(row: JsonRecord): SocialInboxSyncRun {
   return {
     id: String(row.id),
@@ -1026,6 +1522,96 @@ function mapSyncRun(row: JsonRecord): SocialInboxSyncRun {
     metrics: recordField(row.metrics),
     errors: arrayField(row.errors),
   };
+}
+
+function sourceChannelField(value: unknown): MetaInboxSourceChannelKey {
+  switch (value) {
+    case "facebook_message":
+    case "instagram_message":
+    case "facebook_public_comment":
+    case "instagram_public_comment":
+    case "private_reply_from_comment":
+    case "ad_referral":
+    case "other_unknown":
+      return value;
+    default:
+      return "other_unknown";
+  }
+}
+
+function conversationStatusField(value: unknown): MetaInboxConversationStatusKey {
+  switch (value) {
+    case "new_inquiry":
+    case "needs_reply":
+    case "waiting_on_customer":
+    case "follow_up_needed":
+    case "appointment_scheduled":
+    case "closed":
+    case "lost_lead":
+      return value;
+    default:
+      return "new_inquiry";
+  }
+}
+
+function queueCategoryField(value: unknown): MetaInboxQueueCategoryKey {
+  switch (value) {
+    case "cash_for_gold":
+    case "book_appointment":
+    case "us_product":
+    case "vn_product":
+    case "custom_jewelry":
+    case "repair_service":
+    case "general_inquiry":
+    case "uncategorized_needs_review":
+      return value;
+    default:
+      return "uncategorized_needs_review";
+  }
+}
+
+function outcomeField(value: unknown): MetaInboxOutcomeKey {
+  switch (value) {
+    case "booked":
+    case "showed_up":
+    case "no_show":
+    case "browsed":
+    case "sold":
+    case "lost":
+      return value;
+    default:
+      return "no_outcome_yet";
+  }
+}
+
+function lostReasonField(value: unknown): MetaInboxLostReasonKey | null {
+  switch (value) {
+    case "no_response":
+    case "price_concerns":
+    case "bought_elsewhere":
+    case "timeline_issue":
+    case "budget_not_aligned":
+    case "design_not_preferred":
+    case "cancelled_by_client":
+    case "duplicate_lead":
+    case "lost_after_no_show":
+    case "other":
+      return value;
+    default:
+      return null;
+  }
+}
+
+function sendEligibilityField(value: unknown): SocialInboxConversation["send_eligibility"] {
+  switch (value) {
+    case "standard_reply_allowed":
+    case "human_agent_allowed":
+    case "expired":
+    case "unknown":
+      return value;
+    default:
+      return "unknown";
+  }
 }
 
 function messageDirection(
@@ -1072,6 +1658,14 @@ function numberField(value: unknown): number | null {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
+}
+
+function uniqueStrings(values: Array<string | null>) {
+  return Array.from(new Set(values.filter(Boolean) as string[]));
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 function timestampToIso(value: unknown) {

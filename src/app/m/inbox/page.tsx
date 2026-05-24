@@ -2,7 +2,7 @@ import { ConversationListMobile } from "@/components/v2/inbox/conversation-list-
 import { hasPermission } from "@/lib/access-control";
 import { ConfigurationError } from "@/lib/env";
 import { getServerAccessProfile } from "@/lib/server-route-auth";
-import { getSocialInboxData } from "@/lib/social-inbox";
+import { emptySocialInboxData, getSocialInboxData } from "@/lib/social-inbox";
 
 export const dynamic = "force-dynamic";
 
@@ -16,11 +16,11 @@ export default async function MobileInboxIndex() {
   // Layout already enforced authentication + view_inbox. We re-derive the
   // profile here just for the status sentence and reply permission copy.
   const profile = await getServerAccessProfile();
-  const inbox = await getSocialInboxData().catch((e) => {
+  const inbox = await getSocialInboxData(profile).catch((e) => {
     if (!(e instanceof ConfigurationError)) {
       console.error("[m/inbox] getSocialInboxData failed:", e);
     }
-    return { threads: [], messages: [], comments: [], syncRuns: [] };
+    return emptySocialInboxData();
   });
 
   const waiting = inbox.threads.filter((t) => (t.unread_count || 0) > 0).length;

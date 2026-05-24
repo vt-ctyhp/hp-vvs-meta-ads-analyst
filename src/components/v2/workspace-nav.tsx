@@ -63,7 +63,7 @@ export function WorkspaceNav({ rooms, permissions }: Props) {
   return (
     <nav
       aria-label="Workspace rooms"
-      className="flex items-center gap-1 text-sm font-medium"
+      className="order-last flex w-full min-w-0 items-center gap-1 overflow-x-auto text-sm font-medium md:order-none md:w-auto md:overflow-visible"
     >
       {rooms.map((room) => {
         const visibleItems = ROOM_ITEMS[room].filter((item) =>
@@ -95,7 +95,7 @@ export function WorkspaceNav({ rooms, permissions }: Props) {
               <ChevronDown size={14} aria-hidden />
             </Link>
             {visibleItems.length ? (
-              <div className="invisible absolute left-0 top-full z-50 pt-2 opacity-0 transition group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
+              <div className="absolute left-0 top-full z-50 hidden pt-2 group-hover:block group-focus-within:block">
                 <div className="w-56 border border-hp-rule bg-hp-card p-1 shadow-lg">
                   {visibleItems.map((item) => {
                     const itemActive = activeItemHref === item.href;

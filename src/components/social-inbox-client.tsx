@@ -5,23 +5,40 @@ import {
   Camera,
   CheckCircle2,
   Clock,
+  ExternalLink,
   Filter,
   Inbox,
+  Link2,
   MessageCircle,
   RefreshCw,
   Search,
   Send,
+  Settings2,
   ShieldCheck,
-  Sparkles,
+  Tags,
+  UserRound,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { SYNC, translateError } from "@/lib/glossary";
+import {
+  META_INBOX_CONVERSATION_STATUSES,
+  META_INBOX_LEAD_QUALITY_LABELS,
+  META_INBOX_OUTCOMES,
+  META_INBOX_QUEUE_CATEGORIES,
+  META_INBOX_SOURCE_CHANNELS,
+  metaInboxVocabularyLabel,
+  type MetaInboxQueueCategoryKey,
+  type MetaInboxSourceChannelKey,
+} from "@/lib/meta-inbox-vocabulary";
 import { inferSocialBrand, type BrandLabel } from "@/lib/social-brand";
 import { StatusSentence, type StatusHighlight } from "./status-sentence";
 import type {
   SocialInboxComment,
+  SocialInboxConversation,
+  SocialInboxCustomerProfile,
   SocialInboxData,
+  SocialInboxFirstTouchSource,
   SocialInboxMessage,
 } from "@/lib/social-inbox";
 
@@ -65,9 +82,11 @@ export type SocialInboxStatus = {
 
 type BrandFilter = "all" | "HP" | "VVS";
 type SourceFilter = "all" | "facebook" | "instagram";
+type SourceChannelFilter = "all" | MetaInboxSourceChannelKey;
+type QueueCategoryFilter = "all" | MetaInboxQueueCategoryKey;
+type QueueCategoryOption = (typeof META_INBOX_QUEUE_CATEGORIES)[number];
 type ItemTypeFilter = "all" | "messages" | "comments";
 type StatusFilter = "all" | "unread" | "needs-reply";
-type ReplyLanguage = "auto" | "en" | "vi";
 
 type QueueDisplayItem = {
   id: string;
@@ -81,6 +100,17 @@ type QueueDisplayItem = {
   status: "Synced" | "Unread" | "Needs reply";
   time: string;
   timestamp: string | null;
+  sourceChannel: MetaInboxSourceChannelKey;
+  queueCategoryKey: MetaInboxQueueCategoryKey;
+  conversationStatus: SocialInboxConversation["conversation_status"];
+  sendEligibility: SocialInboxConversation["send_eligibility"];
+  replyWindowExpiresAt: string | null;
+  humanAgentWindowExpiresAt: string | null;
+  routingExplanation: string | null;
+  routingConfidence: number | null;
+  inboxConversation: SocialInboxConversation | null;
+  profile: SocialInboxCustomerProfile | null;
+  firstTouch: SocialInboxFirstTouchSource | null;
 };
 
 type SyncResponse = {
@@ -92,27 +122,6 @@ type SyncResponse = {
     comments?: number;
   };
   errors?: string[];
-  error?: string;
-};
-
-type SuggestReplyResponse = {
-  suggestionId?: string;
-  draft?: string;
-  language?: "en" | "vi";
-  model?: string;
-  toneNotes?: string[];
-  contextUsed?: {
-    brand: BrandLabel;
-    sourceType: "message" | "comment";
-    platform: "facebook" | "instagram";
-    messageCount: number;
-    includedMessages: number;
-    omittedMessages: number;
-    usedThreadSummary: boolean;
-    playbookEntries: number;
-    brandVoiceVersion: number | null;
-    customerName: string | null;
-  };
   error?: string;
 };
 
@@ -129,20 +138,31 @@ export function SocialInboxClient({
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [itemTypeFilter, setItemTypeFilter] = useState<ItemTypeFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [queueCategoryFilter, setQueueCategoryFilter] = useState<QueueCategoryFilter>("all");
+  const [sourceChannelFilter, setSourceChannelFilter] = useState<SourceChannelFilter>("all");
   const [query, setQuery] = useState("");
   const [inboxData, setInboxData] = useState(initialData);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(dataError);
-  const [replyLanguage, setReplyLanguage] = useState<ReplyLanguage>("auto");
   const [replyContextId, setReplyContextId] = useState<string | null>(null);
   const [replyInstruction, setReplyInstruction] = useState("");
   const [replyDraft, setReplyDraft] = useState("");
-  const [isSuggesting, setIsSuggesting] = useState(false);
-  const [suggestionStatus, setSuggestionStatus] = useState<string | null>(null);
-  const [suggestionMeta, setSuggestionMeta] = useState<SuggestReplyResponse | null>(null);
 
   const queue = useMemo(() => buildQueue(inboxData), [inboxData]);
+  const queueCategories = useMemo(() => visibleQueueCategories(inboxData), [inboxData]);
+  const visibleQueueKeys = useMemo(
+    () => new Set(queueCategories.map((category) => category.key)),
+    [queueCategories],
+  );
+  const effectiveQueueCategoryFilter =
+    queueCategoryFilter !== "all" && !visibleQueueKeys.has(queueCategoryFilter)
+      ? "all"
+      : queueCategoryFilter;
+  const queueCounts = useMemo(
+    () => queueCategoryCounts(queue, queueCategories),
+    [queue, queueCategories],
+  );
 
   const inboxHighlights = useMemo<StatusHighlight[]>(() => {
     if (queue.length === 0) {
@@ -170,6 +190,11 @@ export function SocialInboxClient({
       queue.filter((item) => {
         if (brandFilter !== "all" && item.brand !== brandFilter) return false;
         if (sourceFilter !== "all" && item.platform !== sourceFilter) return false;
+        if (sourceChannelFilter !== "all" && item.sourceChannel !== sourceChannelFilter) return false;
+        if (
+          effectiveQueueCategoryFilter !== "all" &&
+          item.queueCategoryKey !== effectiveQueueCategoryFilter
+        ) return false;
         if (itemTypeFilter === "messages" && item.type !== "message") return false;
         if (itemTypeFilter === "comments" && item.type !== "comment") return false;
         if (statusFilter === "unread" && item.status !== "Unread") return false;
@@ -177,12 +202,31 @@ export function SocialInboxClient({
 
         const normalizedQuery = query.trim().toLowerCase();
         if (!normalizedQuery) return true;
-        return [item.brand, item.channel, item.type, item.status, item.sender, item.preview]
+        return [
+          item.brand,
+          item.channel,
+          item.type,
+          item.status,
+          item.sender,
+          item.preview,
+          item.routingExplanation,
+          metaInboxVocabularyLabel(META_INBOX_QUEUE_CATEGORIES, item.queueCategoryKey),
+          metaInboxVocabularyLabel(META_INBOX_SOURCE_CHANNELS, item.sourceChannel),
+        ]
           .join(" ")
           .toLowerCase()
           .includes(normalizedQuery);
       }),
-    [brandFilter, itemTypeFilter, query, queue, sourceFilter, statusFilter],
+    [
+      brandFilter,
+      itemTypeFilter,
+      query,
+      queue,
+      effectiveQueueCategoryFilter,
+      sourceChannelFilter,
+      sourceFilter,
+      statusFilter,
+    ],
   );
   const selectedItem =
     filteredQueue.find((item) => item.id === selectedId) || filteredQueue[0] || null;
@@ -207,8 +251,6 @@ export function SocialInboxClient({
   const isReplyContextActive = replyContextId === selectedContextId;
   const activeReplyDraft = isReplyContextActive ? replyDraft : "";
   const activeReplyInstruction = isReplyContextActive ? replyInstruction : "";
-  const activeSuggestionStatus = isReplyContextActive ? suggestionStatus : null;
-  const activeSuggestionMeta = isReplyContextActive ? suggestionMeta : null;
 
   async function handleSync() {
     setIsSyncing(true);
@@ -244,44 +286,6 @@ export function SocialInboxClient({
     }
   }
 
-  async function handleSuggestReply() {
-    if (!selectedItem) return;
-    const instruction = isReplyContextActive ? replyInstruction : "";
-    setReplyContextId(selectedItem.id);
-    setIsSuggesting(true);
-    setSuggestionStatus("Drafting a human-approved reply...");
-    setSuggestionMeta(null);
-
-    try {
-      const response = await fetch("/api/social-inbox/suggest-reply", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          platform: selectedItem.platform,
-          sourceType: selectedItem.type,
-          sourceId: selectedItem.sourceId,
-          brand: selectedItem.brand,
-          language: replyLanguage,
-          instruction,
-        }),
-      });
-      const payload = (await response.json()) as SuggestReplyResponse;
-      if (!response.ok) {
-        throw new Error(payload.error || "Could not generate a reply draft.");
-      }
-
-      setReplyDraft(payload.draft || "");
-      setSuggestionMeta(payload);
-      setSuggestionStatus(
-        `Draft ready in ${payload.language === "vi" ? "Vietnamese" : "English"}. Review before sending.`,
-      );
-    } catch (error) {
-      setSuggestionStatus(translateError(error, "Couldn't generate a reply draft."));
-    } finally {
-      setIsSuggesting(false);
-    }
-  }
-
   return (
     <main className="min-h-screen bg-hp-foundation px-4 py-6 text-hp-body md:px-8">
       <header className="mx-auto flex max-w-7xl flex-col gap-5 border-b border-hp-rule pb-6 md:flex-row md:items-end md:justify-between">
@@ -298,6 +302,13 @@ export function SocialInboxClient({
           />
         </div>
         <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.14em]">
+          <a
+            href="/convert/inbox/settings"
+            className="inline-flex h-9 items-center gap-2 border border-hp-rule px-3 text-hp-ink transition hover:border-hp-pink hover:text-hp-pink"
+          >
+            <Settings2 size={14} />
+            Settings
+          </a>
           <StatusPill ready={status.readiness.socialInbox} label="Inbox Read" />
           <StatusPill ready={status.readiness.socialReply} label="Replies" />
         </div>
@@ -312,6 +323,13 @@ export function SocialInboxClient({
               <Inbox size={18} />
               <span className="text-[11px] uppercase tracking-[0.14em]">Unified Queue</span>
             </div>
+
+            <QueueTabs
+              value={effectiveQueueCategoryFilter}
+              counts={queueCounts}
+              categories={queueCategories}
+              onChange={setQueueCategoryFilter}
+            />
 
             <label className="flex items-center gap-2 border-b border-hp-rule px-1 py-2 focus-within:border-hp-pink">
               <Search size={15} className="text-hp-muted" />
@@ -335,13 +353,25 @@ export function SocialInboxClient({
                 ]}
               />
               <FilterSelect
-                label="Source"
+                label="Platform"
                 value={sourceFilter}
                 onChange={(value) => setSourceFilter(value as SourceFilter)}
                 options={[
                   ["all", "Facebook + Instagram"],
                   ["facebook", "Facebook"],
                   ["instagram", "Instagram"],
+                ]}
+              />
+              <FilterSelect
+                label="Source Channel"
+                value={sourceChannelFilter}
+                onChange={(value) => setSourceChannelFilter(value as SourceChannelFilter)}
+                options={[
+                  ["all", "All Channels"],
+                  ...META_INBOX_SOURCE_CHANNELS.map((channel) => [channel.key, channel.label] as [
+                    string,
+                    string,
+                  ]),
                 ]}
               />
               <div className="grid grid-cols-2 gap-3">
@@ -372,6 +402,8 @@ export function SocialInboxClient({
                   onClick={() => {
                     setBrandFilter("all");
                     setSourceFilter("all");
+                    setSourceChannelFilter("all");
+                    setQueueCategoryFilter("all");
                     setItemTypeFilter("all");
                     setStatusFilter("all");
                     setQuery("");
@@ -459,15 +491,15 @@ export function SocialInboxClient({
                   rows={4}
                   placeholder={
                     selectedItem
-                      ? "Generate an AI draft, then edit it here before sending is enabled."
+                      ? "Write a human-approved reply draft here before send is enabled."
                       : "Select a message or comment to draft a reply."
                   }
                   className="w-full resize-none border border-hp-rule bg-hp-inset p-3 text-sm leading-6 outline-none placeholder:text-hp-muted focus:border-hp-ink disabled:opacity-70"
                 />
                 <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-xs leading-5 text-hp-muted">
-                    AI drafts are editable only. A human must review and click send when send APIs
-                    are enabled.
+                    Reply send remains disabled until eligibility, send attempt, and retry
+                    workflow are wired into the foundation path.
                   </p>
                   <button
                     disabled
@@ -481,66 +513,15 @@ export function SocialInboxClient({
             </div>
 
             <aside className="min-w-0 p-5">
-              <div className="border border-hp-rule bg-hp-inset p-4">
-                <div className="mb-3 flex items-center gap-2 text-hp-ink">
-                  <Sparkles size={17} />
-                  <span className="text-[11px] uppercase tracking-[0.14em]">AI Suggestion</span>
-                </div>
-                <div className="grid gap-3">
-                  <FilterSelect
-                    label="Draft Language"
-                    value={replyLanguage}
-                    onChange={(value) => setReplyLanguage(value as ReplyLanguage)}
-                    options={[
-                      ["auto", "Auto Detect"],
-                      ["en", "English"],
-                      ["vi", "Vietnamese"],
-                    ]}
-                  />
-                  <label className="block">
-                    <span className="mb-1.5 block text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-                      Staff Guidance
-                    </span>
-                    <textarea
-                      value={activeReplyInstruction}
-                      onChange={(event) => {
-                        setReplyContextId(selectedContextId);
-                        setReplyInstruction(event.target.value);
-                      }}
-                      rows={3}
-                      placeholder="Optional: add price, appointment, sizing, or tone guidance."
-                      className="w-full resize-none border border-hp-rule bg-hp-foundation p-3 text-sm leading-5 text-hp-body outline-none placeholder:text-hp-muted focus:border-hp-ink"
-                    />
-                  </label>
-                </div>
-                <button
-                  disabled={!selectedItem || isSuggesting}
-                  onClick={handleSuggestReply}
-                  className="mt-4 flex h-10 w-full items-center justify-center gap-2 border border-hp-ink text-[11px] uppercase tracking-[0.14em] text-hp-ink transition-colors hover:bg-hp-ink hover:text-hp-foundation disabled:border-hp-rule disabled:text-hp-muted disabled:hover:bg-transparent disabled:hover:text-hp-muted"
-                >
-                  <Sparkles size={14} className={isSuggesting ? "animate-pulse" : ""} />
-                  {isSuggesting ? "Drafting" : "Suggest Reply"}
-                </button>
-                {activeSuggestionStatus ? (
-                  <p className="mt-3 text-sm leading-6 text-hp-muted">{activeSuggestionStatus}</p>
-                ) : null}
-                {activeSuggestionMeta?.contextUsed ? (
-                  <div className="mt-4 border-t border-hp-rule pt-3 text-xs leading-5 text-hp-muted">
-                    <p className="text-[10px] uppercase tracking-[0.14em] text-hp-ink">
-                      Context Used
-                    </p>
-                    <p>
-                      {activeSuggestionMeta.contextUsed.includedMessages} of{" "}
-                      {activeSuggestionMeta.contextUsed.messageCount} messages ·{" "}
-                      {activeSuggestionMeta.contextUsed.playbookEntries} playbook notes · Voice v
-                      {activeSuggestionMeta.contextUsed.brandVoiceVersion || "fallback"}
-                    </p>
-                    {activeSuggestionMeta.toneNotes?.length ? (
-                      <p className="mt-2">{activeSuggestionMeta.toneNotes.slice(0, 2).join(" ")}</p>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
+              <ConversationSourcePanel item={selectedItem} />
+              <WorkflowStatePanel
+                item={selectedItem}
+                instruction={activeReplyInstruction}
+                onInstructionChange={(value) => {
+                  setReplyContextId(selectedContextId);
+                  setReplyInstruction(value);
+                }}
+              />
 
               <SyncRunPanel data={inboxData} />
 
@@ -550,8 +531,9 @@ export function SocialInboxClient({
                   <span className="text-[11px] uppercase tracking-[0.14em]">Safety Rules</span>
                 </div>
                 <ul className="space-y-2 text-sm leading-6 text-hp-muted">
-                  <li>No AI auto-send.</li>
                   <li>Human click required for every reply.</li>
+                  <li>Raw Meta payload stays hidden from product UI.</li>
+                  <li>Queue routing is visible and auditable before reply.</li>
                   <li>Campaign/ad mutation remains disabled.</li>
                   <li>
                     {status.readiness.socialReply ? (
@@ -574,9 +556,35 @@ export function SocialInboxClient({
 }
 
 function buildQueue(data: SocialInboxData): QueueDisplayItem[] {
+  const profileById = new Map(data.customerProfiles.map((profile) => [profile.id, profile]));
+  const firstTouchByConversationId = new Map(
+    data.firstTouchSources.map((source) => [source.conversation_id, source]),
+  );
+  const conversationByThread = new Map(
+    data.inboxConversations
+      .filter((conversation) => conversation.platform_thread_id)
+      .map((conversation) => [
+        `${conversation.platform}:${conversation.platform_thread_id}`,
+        conversation,
+      ]),
+  );
+  const conversationByComment = new Map(
+    data.inboxConversations
+      .filter((conversation) => conversation.source_id)
+      .map((conversation) => [
+        `${conversation.platform}:${conversation.source_id}`,
+        conversation,
+      ]),
+  );
+
   const threadItems = data.threads.map((thread) => {
     const channel: "Instagram" | "Facebook" =
       thread.platform === "instagram" ? "Instagram" : "Facebook";
+    const conversation = conversationByThread.get(`${thread.platform}:${thread.thread_id}`) || null;
+    const profile = conversation?.customer_profile_id
+      ? profileById.get(conversation.customer_profile_id) || null
+      : null;
+    const firstTouch = conversation ? firstTouchByConversationId.get(conversation.id) || null : null;
     return {
       id: `thread:${thread.platform}:${thread.thread_id}`,
       sourceId: thread.thread_id,
@@ -584,17 +592,37 @@ function buildQueue(data: SocialInboxData): QueueDisplayItem[] {
       platform: thread.platform,
       brand: inferSocialBrand(thread.page_id, thread.ig_user_id),
       type: "message" as const,
-      sender: thread.participant_name || `${channel} Conversation`,
+      sender: profile?.display_name || thread.participant_name || `${channel} Conversation`,
       preview: thread.snippet || `${thread.message_count} synced message(s)`,
-      status: thread.unread_count > 0 ? "Unread" as const : "Synced" as const,
-      time: formatDateLabel(thread.last_message_at || thread.last_synced_at),
-      timestamp: thread.last_message_at || thread.last_synced_at,
+      status: conversation?.needs_reply
+        ? "Needs reply" as const
+        : thread.unread_count > 0
+          ? "Unread" as const
+          : "Synced" as const,
+      time: formatDateLabel(conversation?.last_activity_at || thread.last_message_at || thread.last_synced_at),
+      timestamp: conversation?.last_activity_at || thread.last_message_at || thread.last_synced_at,
+      sourceChannel: conversation?.source_channel || fallbackSourceChannel(thread.platform, "message"),
+      queueCategoryKey: conversation?.queue_category_key || "uncategorized_needs_review",
+      conversationStatus: conversation?.conversation_status || "new_inquiry",
+      sendEligibility: conversation?.send_eligibility || "unknown",
+      replyWindowExpiresAt: conversation?.reply_window_expires_at || null,
+      humanAgentWindowExpiresAt: conversation?.human_agent_window_expires_at || null,
+      routingExplanation: conversation?.routing_explanation || null,
+      routingConfidence: conversation?.routing_confidence ?? null,
+      inboxConversation: conversation,
+      profile,
+      firstTouch,
     };
   });
 
   const commentItems = data.comments.map((comment) => {
     const channel: "Instagram" | "Facebook" =
       comment.platform === "instagram" ? "Instagram" : "Facebook";
+    const conversation = conversationByComment.get(`${comment.platform}:${comment.comment_id}`) || null;
+    const profile = conversation?.customer_profile_id
+      ? profileById.get(conversation.customer_profile_id) || null
+      : null;
+    const firstTouch = conversation ? firstTouchByConversationId.get(conversation.id) || null : null;
     return {
       id: `comment:${comment.platform}:${comment.comment_id}`,
       sourceId: comment.comment_id,
@@ -602,17 +630,59 @@ function buildQueue(data: SocialInboxData): QueueDisplayItem[] {
       platform: comment.platform,
       brand: inferSocialBrand(comment.page_id, comment.ig_user_id),
       type: "comment" as const,
-      sender: comment.author_name || `${channel} Comment`,
+      sender: profile?.display_name || comment.author_name || `${channel} Comment`,
       preview: comment.body || "Comment text unavailable",
       status: "Needs reply" as const,
-      time: formatDateLabel(comment.created_time || comment.last_synced_at),
-      timestamp: comment.created_time || comment.last_synced_at,
+      time: formatDateLabel(conversation?.last_activity_at || comment.created_time || comment.last_synced_at),
+      timestamp: conversation?.last_activity_at || comment.created_time || comment.last_synced_at,
+      sourceChannel: conversation?.source_channel || fallbackSourceChannel(comment.platform, "comment"),
+      queueCategoryKey: conversation?.queue_category_key || "uncategorized_needs_review",
+      conversationStatus: conversation?.conversation_status || "new_inquiry",
+      sendEligibility: conversation?.send_eligibility || "unknown",
+      replyWindowExpiresAt: conversation?.reply_window_expires_at || null,
+      humanAgentWindowExpiresAt: conversation?.human_agent_window_expires_at || null,
+      routingExplanation: conversation?.routing_explanation || null,
+      routingConfidence: conversation?.routing_confidence ?? null,
+      inboxConversation: conversation,
+      profile,
+      firstTouch,
     };
   });
 
   return [...threadItems, ...commentItems].sort((a, b) =>
     String(b.timestamp || "").localeCompare(String(a.timestamp || "")),
   );
+}
+
+function fallbackSourceChannel(
+  platform: "facebook" | "instagram",
+  type: "message" | "comment",
+): MetaInboxSourceChannelKey {
+  if (type === "comment") {
+    return platform === "facebook" ? "facebook_public_comment" : "instagram_public_comment";
+  }
+  return platform === "facebook" ? "facebook_message" : "instagram_message";
+}
+
+function visibleQueueCategories(data: SocialInboxData): readonly QueueCategoryOption[] {
+  if (data.queueAccess.mode !== "team") return META_INBOX_QUEUE_CATEGORIES;
+
+  const allowed = new Set(data.queueAccess.allowedQueueCategoryKeys);
+  return META_INBOX_QUEUE_CATEGORIES.filter((category) => allowed.has(category.key));
+}
+
+function queueCategoryCounts(
+  queue: QueueDisplayItem[],
+  categories: readonly QueueCategoryOption[],
+) {
+  const counts = new Map<QueueCategoryFilter, number>([["all", queue.length]]);
+  for (const category of categories) {
+    counts.set(category.key, 0);
+  }
+  for (const item of queue) {
+    counts.set(item.queueCategoryKey, (counts.get(item.queueCategoryKey) || 0) + 1);
+  }
+  return counts;
 }
 
 function SelectedItemDetail({
@@ -692,6 +762,276 @@ function SelectedItemDetail({
       )}
     </div>
   );
+}
+
+function QueueTabs({
+  value,
+  counts,
+  categories,
+  onChange,
+}: {
+  value: QueueCategoryFilter;
+  counts: Map<QueueCategoryFilter, number>;
+  categories: readonly QueueCategoryOption[];
+  onChange: (value: QueueCategoryFilter) => void;
+}) {
+  return (
+    <div className="-mx-1 mb-4 flex gap-2 overflow-x-auto px-1 pb-1">
+      <QueueTab
+        label="All"
+        value="all"
+        active={value === "all"}
+        count={counts.get("all") || 0}
+        onChange={onChange}
+      />
+      {categories.map((category) => (
+        <QueueTab
+          key={category.key}
+          label={category.label}
+          value={category.key}
+          active={value === category.key}
+          count={counts.get(category.key) || 0}
+          onChange={onChange}
+        />
+      ))}
+    </div>
+  );
+}
+
+function QueueTab({
+  label,
+  value,
+  active,
+  count,
+  onChange,
+}: {
+  label: string;
+  value: QueueCategoryFilter;
+  active: boolean;
+  count: number;
+  onChange: (value: QueueCategoryFilter) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(value)}
+      className={[
+        "shrink-0 border px-3 py-2 text-[10px] uppercase tracking-[0.14em] transition-colors",
+        active
+          ? "border-hp-ink bg-hp-ink text-hp-foundation"
+          : "border-hp-rule text-hp-body hover:border-hp-ink hover:text-hp-ink",
+      ].join(" ")}
+    >
+      <span>{label}</span>
+      <span className={active ? "ml-2 text-hp-foundation/70" : "ml-2 text-hp-muted"}>
+        {count}
+      </span>
+    </button>
+  );
+}
+
+function ConversationSourcePanel({ item }: { item: QueueDisplayItem | null }) {
+  const firstTouch = item?.firstTouch || null;
+  const profile = item?.profile || null;
+  return (
+    <div className="border border-hp-rule bg-hp-inset p-4">
+      <div className="mb-3 flex items-center gap-2 text-hp-ink">
+        <UserRound size={17} />
+        <span className="text-[11px] uppercase tracking-[0.14em]">Customer Source</span>
+      </div>
+      {item ? (
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <InfoLine label="Customer" value={profile?.display_name || item.sender} />
+            <InfoLine label="Handle" value={profile?.username ? `@${profile.username}` : null} />
+            <InfoLine
+              label="Profile"
+              value={profile?.profile_url || profile?.profile_reference || item.sourceId}
+              href={profile?.profile_url || null}
+            />
+            <InfoLine label="Participant ID" value={item.inboxConversation?.participant_id || null} />
+          </div>
+
+          <div className="border-t border-hp-rule pt-4">
+            <p className="mb-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+              First Touch
+            </p>
+            <InfoLine
+              label="Source"
+              value={metaInboxVocabularyLabel(META_INBOX_SOURCE_CHANNELS, item.sourceChannel)}
+            />
+            <InfoLine label="Ad ID" value={firstTouch?.ad_id || null} />
+            <InfoLine label="Referral" value={firstTouch?.ref || null} />
+            <InfoLine label="Campaign" value={firstTouch?.campaign_id || null} />
+            <InfoLine label="Group of Ads" value={firstTouch?.adset_id || null} />
+            <InfoLine label="Creative" value={firstTouch?.creative_id || null} />
+            <InfoLine
+              label="Source Link"
+              value={firstTouch?.source_permalink || null}
+              href={firstTouch?.source_permalink || null}
+            />
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm leading-6 text-hp-muted">
+          Select a conversation to see customer profile reference, source channel, and first-touch
+          attribution.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function WorkflowStatePanel({
+  item,
+  instruction,
+  onInstructionChange,
+}: {
+  item: QueueDisplayItem | null;
+  instruction: string;
+  onInstructionChange: (value: string) => void;
+}) {
+  const queueLabel = item
+    ? metaInboxVocabularyLabel(META_INBOX_QUEUE_CATEGORIES, item.queueCategoryKey)
+    : "No conversation";
+  const statusLabel = item
+    ? metaInboxVocabularyLabel(META_INBOX_CONVERSATION_STATUSES, item.conversationStatus)
+    : "No status";
+  const outcomeLabel = metaInboxVocabularyLabel(META_INBOX_OUTCOMES, "no_outcome_yet");
+  const leadQualityLabel = metaInboxVocabularyLabel(
+    META_INBOX_LEAD_QUALITY_LABELS,
+    item?.inboxConversation?.lead_quality,
+    "Not labeled",
+  );
+
+  return (
+    <div className="mt-5 border border-hp-rule bg-hp-card p-4">
+      <div className="mb-3 flex items-center gap-2 text-hp-ink">
+        <Tags size={17} />
+        <span className="text-[11px] uppercase tracking-[0.14em]">Workflow State</span>
+      </div>
+      <div className="grid gap-3 text-sm">
+        <StateTile label="Queue" value={queueLabel} />
+        <StateTile label="Status" value={statusLabel} />
+        <StateTile label="Lead Quality" value={leadQualityLabel} />
+        <StateTile label="Inbox Outcome" value={outcomeLabel} />
+        <StateTile
+          label="Reply Window"
+          value={item ? sendEligibilityLabel(item) : "No conversation"}
+          detail={item ? replyWindowDetail(item) : null}
+        />
+      </div>
+
+      <div className="mt-4 border-t border-hp-rule pt-4">
+        <div className="mb-2 flex items-center gap-2 text-hp-ink">
+          <Link2 size={15} />
+          <span className="text-[10px] uppercase tracking-[0.14em]">Routing Explanation</span>
+        </div>
+        <p className="text-sm leading-6 text-hp-muted">
+          {item?.routingExplanation || "No normalized routing explanation has been captured yet."}
+        </p>
+        {typeof item?.routingConfidence === "number" ? (
+          <p className="mt-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+            Confidence {Math.round(item.routingConfidence * 100)}%
+          </p>
+        ) : null}
+      </div>
+
+      <label className="mt-4 block">
+        <span className="mb-1.5 block text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+          Staff Guidance
+        </span>
+        <textarea
+          value={instruction}
+          onChange={(event) => onInstructionChange(event.target.value)}
+          disabled={!item}
+          rows={3}
+          placeholder="Add price, appointment, sizing, or tone notes for the human reply."
+          className="w-full resize-none border border-hp-rule bg-hp-foundation p-3 text-sm leading-5 text-hp-body outline-none placeholder:text-hp-muted focus:border-hp-ink disabled:opacity-70"
+        />
+      </label>
+    </div>
+  );
+}
+
+function InfoLine({
+  label,
+  value,
+  href,
+}: {
+  label: string;
+  value: string | null | undefined;
+  href?: string | null;
+}) {
+  return (
+    <div className="grid grid-cols-[96px_minmax(0,1fr)] gap-3 text-sm leading-5">
+      <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{label}</span>
+      {value ? (
+        href ? (
+          <a
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex min-w-0 items-center gap-1 break-all text-hp-ink underline-offset-4 hover:underline"
+          >
+            <span className="min-w-0 break-all">{value}</span>
+            <ExternalLink size={12} className="shrink-0" />
+          </a>
+        ) : (
+          <span className="min-w-0 break-words text-hp-ink">{value}</span>
+        )
+      ) : (
+        <span className="text-hp-muted">Not captured</span>
+      )}
+    </div>
+  );
+}
+
+function StateTile({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail?: string | null;
+}) {
+  return (
+    <div className="border border-hp-rule bg-hp-inset p-3">
+      <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{label}</p>
+      <p className="mt-1 text-sm font-medium text-hp-ink">{value}</p>
+      {detail ? <p className="mt-1 text-xs leading-5 text-hp-muted">{detail}</p> : null}
+    </div>
+  );
+}
+
+function sendEligibilityLabel(item: QueueDisplayItem) {
+  if (item.sendEligibility === "standard_reply_allowed") return "Standard Reply";
+  if (item.sendEligibility === "human_agent_allowed") return "Human Agent Window";
+  if (item.sendEligibility === "expired") return "Expired";
+  return "Unknown";
+}
+
+function replyWindowDetail(item: QueueDisplayItem) {
+  const target =
+    item.sendEligibility === "standard_reply_allowed"
+      ? item.replyWindowExpiresAt
+      : item.sendEligibility === "human_agent_allowed"
+        ? item.humanAgentWindowExpiresAt
+        : null;
+  if (!target) return null;
+  return `${timeUntilLabel(target)} remaining`;
+}
+
+function timeUntilLabel(iso: string) {
+  const diffMs = Date.parse(iso) - Date.now();
+  if (!Number.isFinite(diffMs)) return "Unknown";
+  if (diffMs <= 0) return "Expired";
+  const minutes = Math.ceil(diffMs / 60_000);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.ceil(minutes / 60);
+  if (hours < 24) return `${hours} hr`;
+  return `${Math.ceil(hours / 24)} day`;
 }
 
 function SyncRunPanel({ data }: { data: SocialInboxData }) {
@@ -973,7 +1313,8 @@ function QueueItem({
       <p className="mt-2 line-clamp-2 text-sm leading-6 text-hp-body">{item.preview}</p>
       <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
         <Clock size={13} />
-        {item.brand} · {item.channel} · {item.type} · {item.status}
+        {item.brand} · {metaInboxVocabularyLabel(META_INBOX_QUEUE_CATEGORIES, item.queueCategoryKey)} ·{" "}
+        {metaInboxVocabularyLabel(META_INBOX_SOURCE_CHANNELS, item.sourceChannel)} · {item.status}
       </div>
     </button>
   );

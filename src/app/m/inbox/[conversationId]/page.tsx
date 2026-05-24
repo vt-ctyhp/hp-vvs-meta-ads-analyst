@@ -5,10 +5,8 @@ import { hasPermission } from "@/lib/access-control";
 import { getServerAccessProfile } from "@/lib/server-route-auth";
 import { inferSocialBrand } from "@/lib/social-brand";
 import {
+  emptySocialInboxData,
   getSocialInboxData,
-  type SocialInboxComment,
-  type SocialInboxMessage,
-  type SocialInboxThread,
 } from "@/lib/social-inbox";
 
 export const dynamic = "force-dynamic";
@@ -36,12 +34,7 @@ export default async function ConversationDetailPage({
     notFound();
   }
 
-  const inbox = await getSocialInboxData().catch(() => ({
-    threads: [] as SocialInboxThread[],
-    messages: [] as SocialInboxMessage[],
-    comments: [] as SocialInboxComment[],
-    syncRuns: [],
-  }));
+  const inbox = await getSocialInboxData(profile).catch(() => emptySocialInboxData());
 
   const canSend = hasPermission(profile.roles, "send_inbox_reply");
 

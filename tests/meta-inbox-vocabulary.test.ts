@@ -10,6 +10,7 @@ import {
   META_INBOX_OUTCOMES,
   META_INBOX_QUEUE_CATEGORIES,
   META_INBOX_SOURCE_CHANNELS,
+  metaInboxVocabularyLabel,
   metaInboxVocabularyKeys,
 } from "../src/lib/meta-inbox-vocabulary.ts";
 
@@ -131,5 +132,17 @@ describe("Meta inbox vocabulary", () => {
       const keys = metaInboxVocabularyKeys(set);
       assert.deepEqual(new Set(keys).size, keys.length);
     }
+  });
+
+  it("resolves vocabulary labels for UI display without exposing raw keys", () => {
+    assert.equal(
+      metaInboxVocabularyLabel(META_INBOX_QUEUE_CATEGORIES, "cash_for_gold"),
+      "Cash for Gold",
+    );
+    assert.equal(
+      metaInboxVocabularyLabel(META_INBOX_SOURCE_CHANNELS, "instagram_public_comment"),
+      "Instagram Public Comment",
+    );
+    assert.equal(metaInboxVocabularyLabel(META_INBOX_OUTCOMES, "missing", "Not labeled"), "Not labeled");
   });
 });

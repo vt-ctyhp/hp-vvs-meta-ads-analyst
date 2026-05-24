@@ -1,6 +1,7 @@
 import type { User } from "@supabase/supabase-js";
 
 import {
+  isUserRole,
   permissionsForRoles,
   type AppPermission,
   type UserRole,
@@ -332,17 +333,7 @@ function uniqueRoles(roles: UserRole[]) {
 }
 
 function isKnownRole(value: unknown): value is UserRole {
-  return (
-    value === "admin" ||
-    value === "marketing" ||
-    value === "sales" ||
-    value === "client_advisor" ||
-    value === "joc" ||
-    value === "diamond_order_admin" ||
-    value === "diamond_order_assistant" ||
-    value === "wax_request_admin" ||
-    value === "read_only"
-  );
+  return isUserRole(value);
 }
 
 function stringFromMetadata(value: unknown) {

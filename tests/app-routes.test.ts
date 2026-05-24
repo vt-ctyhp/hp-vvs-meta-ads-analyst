@@ -95,6 +95,7 @@ test("inactive or missing-profile users do not have internal app access", () => 
 test("page permission checks follow the route permission map", () => {
   assert.equal(canAccessAppPath(["view_inbox"], "/inbox/thread/1"), true);
   assert.equal(canAccessAppPath(["view_inbox"], "/convert/inbox"), true);
+  assert.equal(canAccessAppPath(["view_inbox"], "/convert/inbox/settings"), true);
   assert.equal(canAccessAppPath(["view_users"], "/operate/users"), true);
   assert.equal(canAccessAppPath(["view_backfill"], "/operate/pipelines"), true);
   assert.equal(canAccessAppPath(["view_dashboard"], "/optimize"), true);

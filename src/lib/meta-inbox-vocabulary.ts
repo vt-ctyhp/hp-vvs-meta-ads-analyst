@@ -223,3 +223,15 @@ export function metaInboxVocabularyKeys<const TOption extends readonly { key: st
 ) {
   return options.map((option) => option.key) as Array<TOption[number]["key"]>;
 }
+
+export function metaInboxVocabularyOption<
+  const TOption extends readonly MetaInboxVocabularyOption[],
+>(options: TOption, key: string | null | undefined) {
+  return options.find((option) => option.key === key) || null;
+}
+
+export function metaInboxVocabularyLabel<
+  const TOption extends readonly MetaInboxVocabularyOption[],
+>(options: TOption, key: string | null | undefined, fallback = "Unknown") {
+  return metaInboxVocabularyOption(options, key)?.label || fallback;
+}

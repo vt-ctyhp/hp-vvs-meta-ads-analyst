@@ -2,34 +2,34 @@ import { SocialInboxClient, type SocialInboxStatus } from "@/components/social-i
 import { getMissingRequiredEnv } from "@/lib/env";
 import { getMetaPermissionHealth, validateConfiguredMetaAccounts } from "@/lib/meta";
 import { requirePagePermission } from "@/lib/server-route-auth";
-import { getSocialInboxData, type SocialInboxData } from "@/lib/social-inbox";
+import {
+  emptySocialInboxData,
+  getSocialInboxData,
+  type SocialInboxData,
+} from "@/lib/social-inbox";
 
 export const dynamic = "force-dynamic";
 
 export default async function InboxPage() {
-  await requirePagePermission("view_inbox", "/convert/inbox");
-  const [status, inboxData] = await Promise.all([getSocialInboxStatus(), getSafeSocialInboxData()]);
+  const profile = await requirePagePermission("view_inbox", "/convert/inbox");
+  const [status, inboxData] = await Promise.all([
+    getSocialInboxStatus(),
+    getSafeSocialInboxData(profile),
+  ]);
   return <SocialInboxClient status={status} initialData={inboxData.data} dataError={inboxData.error} />;
 }
 
-async function getSafeSocialInboxData(): Promise<{ data: SocialInboxData; error: string | null }> {
+async function getSafeSocialInboxData(
+  profile: Awaited<ReturnType<typeof requirePagePermission>>,
+): Promise<{ data: SocialInboxData; error: string | null }> {
   try {
-    return { data: await getSocialInboxData(), error: null };
+    return { data: await getSocialInboxData(profile), error: null };
   } catch (error) {
     return {
       data: emptySocialInboxData(),
       error: error instanceof Error ? error.message : String(error),
     };
   }
-}
-
-function emptySocialInboxData(): SocialInboxData {
-  return {
-    threads: [],
-    messages: [],
-    comments: [],
-    syncRuns: [],
-  };
 }
 
 async function getSocialInboxStatus(): Promise<SocialInboxStatus> {
