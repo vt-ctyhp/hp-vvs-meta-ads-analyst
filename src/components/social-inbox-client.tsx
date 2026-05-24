@@ -1288,6 +1288,12 @@ function ReplyAttemptPanel({
       : mutationState.status === "saved"
         ? "text-signal-positive"
         : "text-hp-muted";
+  const statusMessage = mutationState.message || "Live Meta delivery disabled.";
+  const buttonLabel = !item
+    ? "Select conversation first"
+    : mutationState.status === "saving"
+      ? "Recording..."
+      : "Record send attempt";
 
   function recordSendAttempt() {
     if (!conversationId) return;
@@ -1299,7 +1305,7 @@ function ReplyAttemptPanel({
 
   return (
     <div className="grid gap-3">
-      <div className="flex flex-col gap-3 border border-hp-rule bg-hp-inset p-3 text-xs leading-5 text-hp-muted sm:flex-row sm:items-start sm:justify-between">
+      <div className="border border-hp-rule bg-hp-inset p-3 text-xs leading-5 text-hp-muted">
         <div>
           <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Reply Window</p>
           <p className="mt-1 text-sm font-medium text-hp-ink">
@@ -1309,9 +1315,7 @@ function ReplyAttemptPanel({
             {windowState?.detail || "Select a conversation before recording a send attempt."}
           </p>
         </div>
-        <span className={`text-[10px] uppercase tracking-[0.14em] ${statusTone}`}>
-          {mutationState.message || "live Meta delivery remains disabled"}
-        </span>
+        <p className={`mt-3 border-t border-hp-rule pt-3 ${statusTone}`}>{statusMessage}</p>
       </div>
 
       <textarea
@@ -1335,14 +1339,14 @@ function ReplyAttemptPanel({
           type="button"
           onClick={recordSendAttempt}
           disabled={!canRecord}
-          className="flex h-10 w-full shrink-0 items-center justify-center gap-2 whitespace-nowrap bg-hp-ink px-4 text-[11px] uppercase tracking-[0.14em] text-hp-foundation transition hover:opacity-90 disabled:opacity-50"
+          className="flex h-10 w-full shrink-0 items-center justify-center gap-2 whitespace-nowrap bg-hp-ink px-4 text-sm font-medium text-hp-foundation transition hover:opacity-90 disabled:opacity-50"
         >
           {mutationState.status === "saving" ? (
             <Loader2 size={14} className="animate-spin" />
           ) : (
             <Send size={14} />
           )}
-          Record Send Attempt
+          {buttonLabel}
         </button>
       </div>
 
