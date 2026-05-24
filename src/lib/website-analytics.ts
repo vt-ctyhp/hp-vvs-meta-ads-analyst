@@ -1060,7 +1060,7 @@ async function fetchWebsiteFunnelDataUncached(
     }),
     pages: buildPages(events),
     locations: buildWebsiteLocationBreakdown(events),
-    trend: buildTrend(events, appointmentRows, scheduleConversions, metaRows, range.start, range.end),
+    trend: buildTrend(events, appointmentRows, allScheduleConversionsInWindow, metaRows, range.start, range.end),
     recentEvents: events.slice(0, 50).map((event) => ({
       adId: event.utm_ad_id,
       adsetId: event.utm_adset_id,
