@@ -25,6 +25,8 @@ import { SYNC, translateError } from "@/lib/glossary";
 import {
   META_INBOX_CONVERSATION_STATUSES,
   META_INBOX_LEAD_QUALITY_LABELS,
+  META_INBOX_LEAD_QUALITY_REASON_TAGS,
+  META_INBOX_LOST_REASONS,
   META_INBOX_OUTCOMES,
   META_INBOX_QUEUE_CATEGORIES,
   META_INBOX_SOURCE_CHANNELS,
@@ -42,6 +44,7 @@ import type {
   SocialInboxConversationHistory,
   SocialInboxFirstTouchSource,
   SocialInboxMessage,
+  MetaInboxWorkflowPatchInput,
 } from "@/lib/social-inbox";
 import { mergeSocialInboxConversationHistory } from "@/lib/meta-inbox-history";
 
@@ -134,20 +137,34 @@ type ConversationHistoryLoadState = {
   error: string | null;
 };
 
+type WorkflowMutationLoadState = {
+  conversationId: string | null;
+  status: "idle" | "saving" | "saved" | "error";
+  message: string | null;
+};
+
 const IDLE_HISTORY_STATE: ConversationHistoryLoadState = {
   status: "idle",
   data: null,
   error: null,
 };
 
+const IDLE_WORKFLOW_STATE: WorkflowMutationLoadState = {
+  conversationId: null,
+  status: "idle",
+  message: null,
+};
+
 export function SocialInboxClient({
   status,
   initialData,
   dataError,
+  canManageInboxState,
 }: {
   status: SocialInboxStatus;
   initialData: SocialInboxData;
   dataError: string | null;
+  canManageInboxState: boolean;
 }) {
   const [brandFilter, setBrandFilter] = useState<BrandFilter>("all");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
@@ -166,6 +183,8 @@ export function SocialInboxClient({
   const [historyByConversationId, setHistoryByConversationId] = useState<
     Record<string, ConversationHistoryLoadState>
   >({});
+  const [workflowMutationState, setWorkflowMutationState] =
+    useState<WorkflowMutationLoadState>(IDLE_WORKFLOW_STATE);
 
   const queue = useMemo(() => buildQueue(inboxData), [inboxData]);
   const queueCategories = useMemo(() => visibleQueueCategories(inboxData), [inboxData]);
@@ -278,6 +297,10 @@ export function SocialInboxClient({
   const activeReplyDraft = isReplyContextActive ? replyDraft : "";
   const activeReplyInstruction = isReplyContextActive ? replyInstruction : "";
   const selectedHistoryNextCursor = selectedHistoryState?.data?.pageInfo.nextCursor || null;
+  const selectedWorkflowMutationState =
+    workflowMutationState.conversationId === selectedConversationId
+      ? workflowMutationState
+      : IDLE_WORKFLOW_STATE;
 
   const loadConversationHistory = useCallback(
     async (conversationId: string, cursor?: string | null) => {
@@ -338,6 +361,52 @@ export function SocialInboxClient({
 
     void loadConversationHistory(selectedConversationId);
   }, [historyByConversationId, loadConversationHistory, selectedConversationId]);
+
+  const handleWorkflowUpdate = useCallback(
+    async (conversationId: string, input: MetaInboxWorkflowPatchInput) => {
+      setWorkflowMutationState({
+        conversationId,
+        status: "saving",
+        message: "Saving workflow changes...",
+      });
+
+      try {
+        const response = await fetch(
+          `/api/social-inbox/conversations/${encodeURIComponent(conversationId)}/workflow`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(input),
+          },
+        );
+        const payload = (await response.json()) as
+          | { conversation: SocialInboxConversation; events: unknown[] }
+          | { error: string };
+        if (!response.ok || isWorkflowErrorPayload(payload)) {
+          throw new Error(isWorkflowErrorPayload(payload) ? payload.error : "Could not update workflow.");
+        }
+
+        setInboxData((current) => ({
+          ...current,
+          inboxConversations: current.inboxConversations.map((conversation) =>
+            conversation.id === payload.conversation.id ? payload.conversation : conversation,
+          ),
+        }));
+        setWorkflowMutationState({
+          conversationId,
+          status: "saved",
+          message: `${payload.events.length} audit event${payload.events.length === 1 ? "" : "s"} recorded.`,
+        });
+      } catch (error) {
+        setWorkflowMutationState({
+          conversationId,
+          status: "error",
+          message: translateError(error),
+        });
+      }
+    },
+    [],
+  );
 
   async function handleSync() {
     setIsSyncing(true);
@@ -608,7 +677,11 @@ export function SocialInboxClient({
             <aside className="min-w-0 p-5">
               <ConversationSourcePanel item={selectedItem} />
               <WorkflowStatePanel
+                key={selectedConversationId || "empty-workflow"}
                 item={selectedItem}
+                canManageInboxState={canManageInboxState}
+                mutationState={selectedWorkflowMutationState}
+                onWorkflowUpdate={handleWorkflowUpdate}
                 instruction={activeReplyInstruction}
                 onInstructionChange={(value) => {
                   setReplyContextId(selectedContextId);
@@ -1069,25 +1142,94 @@ function ConversationSourcePanel({ item }: { item: QueueDisplayItem | null }) {
 
 function WorkflowStatePanel({
   item,
+  canManageInboxState,
+  mutationState,
+  onWorkflowUpdate,
   instruction,
   onInstructionChange,
 }: {
   item: QueueDisplayItem | null;
+  canManageInboxState: boolean;
+  mutationState: WorkflowMutationLoadState;
+  onWorkflowUpdate: (conversationId: string, input: MetaInboxWorkflowPatchInput) => void;
   instruction: string;
   onInstructionChange: (value: string) => void;
 }) {
+  const conversation = item?.inboxConversation || null;
+  const [queueDraft, setQueueDraft] = useState<MetaInboxQueueCategoryKey>(
+    item?.queueCategoryKey || "uncategorized_needs_review",
+  );
+  const [statusDraft, setStatusDraft] = useState<SocialInboxConversation["conversation_status"]>(
+    item?.conversationStatus || "new_inquiry",
+  );
+  const [leadQualityDraft, setLeadQualityDraft] = useState("");
+  const [reasonTagDrafts, setReasonTagDrafts] = useState<string[]>([]);
+  const [outcomeDraft, setOutcomeDraft] = useState<SocialInboxConversation["inbox_outcome"]>(
+    "no_outcome_yet",
+  );
+  const [lostReasonDraft, setLostReasonDraft] = useState("");
+  const [followUpDraft, setFollowUpDraft] = useState(formatDateTimeLocal(conversation?.follow_up_at));
+  const [changeReasonDraft, setChangeReasonDraft] = useState("");
+
   const queueLabel = item
     ? metaInboxVocabularyLabel(META_INBOX_QUEUE_CATEGORIES, item.queueCategoryKey)
     : "No conversation";
   const statusLabel = item
     ? metaInboxVocabularyLabel(META_INBOX_CONVERSATION_STATUSES, item.conversationStatus)
     : "No status";
-  const outcomeLabel = metaInboxVocabularyLabel(META_INBOX_OUTCOMES, "no_outcome_yet");
+  const outcomeLabel = metaInboxVocabularyLabel(
+    META_INBOX_OUTCOMES,
+    item?.inboxConversation?.inbox_outcome || "no_outcome_yet",
+  );
   const leadQualityLabel = metaInboxVocabularyLabel(
     META_INBOX_LEAD_QUALITY_LABELS,
     item?.inboxConversation?.lead_quality,
     "Not labeled",
   );
+  const canEditWorkflow = Boolean(item && conversation && canManageInboxState);
+  const isSaving = mutationState.status === "saving";
+  const workflowStatusTone =
+    mutationState.status === "error"
+      ? "text-signal-danger"
+      : mutationState.status === "saved"
+        ? "text-signal-positive"
+        : "text-hp-muted";
+
+  function saveWorkflow() {
+    if (!conversation) return;
+    onWorkflowUpdate(conversation.id, {
+      queueCategoryKey: queueDraft,
+      conversationStatus: statusDraft,
+      followUpAt: followUpDraft || null,
+      leadQuality: leadQualityDraft
+        ? (leadQualityDraft as NonNullable<MetaInboxWorkflowPatchInput["leadQuality"]>)
+        : null,
+      leadQualityReasonTags: reasonTagDrafts as NonNullable<
+        MetaInboxWorkflowPatchInput["leadQualityReasonTags"]
+      >,
+      inboxOutcome: outcomeDraft,
+      inboxLostReason: lostReasonDraft
+        ? (lostReasonDraft as NonNullable<MetaInboxWorkflowPatchInput["inboxLostReason"]>)
+        : null,
+      changeReason: changeReasonDraft,
+    });
+  }
+
+  function claimSelf() {
+    if (!conversation) return;
+    onWorkflowUpdate(conversation.id, {
+      assignmentMode: "claim_self",
+      changeReason: changeReasonDraft || "Claimed from inbox workflow panel.",
+    });
+  }
+
+  function returnToTeamQueue() {
+    if (!conversation) return;
+    onWorkflowUpdate(conversation.id, {
+      assignmentMode: "team_queue",
+      changeReason: changeReasonDraft || "Returned to team queue.",
+    });
+  }
 
   return (
     <div className="mt-5 border border-hp-rule bg-hp-card p-4">
@@ -1120,6 +1262,151 @@ function WorkflowStatePanel({
             Confidence {Math.round(item.routingConfidence * 100)}%
           </p>
         ) : null}
+      </div>
+
+      <div className="mt-4 border-t border-hp-rule pt-4">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <span className="text-[10px] uppercase tracking-[0.14em] text-hp-ink">
+            Sales Workflow Controls
+          </span>
+          <span className={`text-[10px] uppercase tracking-[0.14em] ${workflowStatusTone}`}>
+            {mutationState.message || (canEditWorkflow ? "Ready" : "Read-only")}
+          </span>
+        </div>
+        {canEditWorkflow ? (
+          <div className="grid gap-3">
+            <FilterSelect
+              label="Queue"
+              value={queueDraft}
+              onChange={(value) => setQueueDraft(value as MetaInboxQueueCategoryKey)}
+              options={META_INBOX_QUEUE_CATEGORIES.map((category) => [
+                category.key,
+                category.label,
+              ])}
+            />
+            <FilterSelect
+              label="Conversation Status"
+              value={statusDraft}
+              onChange={(value) =>
+                setStatusDraft(value as SocialInboxConversation["conversation_status"])
+              }
+              options={META_INBOX_CONVERSATION_STATUSES.map((statusOption) => [
+                statusOption.key,
+                statusOption.label,
+              ])}
+            />
+            <FilterSelect
+              label="Lead Quality"
+              value={leadQualityDraft}
+              onChange={setLeadQualityDraft}
+              options={[
+                ["", "Not Labeled"],
+                ...META_INBOX_LEAD_QUALITY_LABELS.map((quality) => [
+                  quality.key,
+                  quality.label,
+                ] as [string, string]),
+              ]}
+            />
+            <label className="block min-w-0">
+              <span className="mb-1.5 block text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                Reason Tags
+              </span>
+              <select
+                multiple
+                value={reasonTagDrafts}
+                onChange={(event) =>
+                  setReasonTagDrafts(
+                    Array.from(event.currentTarget.selectedOptions).map((option) => option.value),
+                  )
+                }
+                className="h-28 w-full border border-hp-rule bg-hp-foundation px-3 py-2 text-sm text-hp-ink outline-none transition-colors focus:border-hp-ink"
+              >
+                {META_INBOX_LEAD_QUALITY_REASON_TAGS.map((tag) => (
+                  <option key={tag.key} value={tag.key}>
+                    {tag.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <FilterSelect
+              label="Inbox Outcome"
+              value={outcomeDraft}
+              onChange={(value) =>
+                setOutcomeDraft(value as SocialInboxConversation["inbox_outcome"])
+              }
+              options={META_INBOX_OUTCOMES.map((outcome) => [outcome.key, outcome.label])}
+            />
+            <FilterSelect
+              label="Lost Reason"
+              value={lostReasonDraft}
+              onChange={setLostReasonDraft}
+              options={[
+                ["", "Not Lost"],
+                ...META_INBOX_LOST_REASONS.map((reason) => [
+                  reason.key,
+                  reason.label,
+                ] as [string, string]),
+              ]}
+            />
+            <label className="block">
+              <span className="mb-1.5 block text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                Follow-Up
+              </span>
+              <input
+                type="datetime-local"
+                value={followUpDraft}
+                onChange={(event) => setFollowUpDraft(event.target.value)}
+                className="h-10 w-full border border-hp-rule bg-hp-foundation px-3 text-sm text-hp-ink outline-none transition-colors focus:border-hp-ink"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1.5 block text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                Change Note
+              </span>
+              <input
+                value={changeReasonDraft}
+                onChange={(event) => setChangeReasonDraft(event.target.value)}
+                placeholder="Optional note for audit trail"
+                className="h-10 w-full border border-hp-rule bg-hp-foundation px-3 text-sm text-hp-ink outline-none placeholder:text-hp-muted focus:border-hp-ink"
+              />
+            </label>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <button
+                type="button"
+                onClick={claimSelf}
+                disabled={isSaving}
+                className="border border-hp-rule px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-hp-ink transition hover:border-hp-ink disabled:opacity-50"
+              >
+                Claim Self
+              </button>
+              <button
+                type="button"
+                onClick={returnToTeamQueue}
+                disabled={isSaving}
+                className="border border-hp-rule px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-hp-ink transition hover:border-hp-ink disabled:opacity-50"
+              >
+                Team Queue
+              </button>
+              <button
+                type="button"
+                onClick={saveWorkflow}
+                disabled={isSaving}
+                className="bg-hp-ink px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-hp-foundation transition hover:opacity-90 disabled:opacity-50"
+              >
+                Save State
+              </button>
+            </div>
+            <p className="text-xs leading-5 text-hp-muted">
+              Close and lost updates require Lead Quality, at least one reason tag, Inbox
+              Outcome, and Lost Reason when lost. Every saved change writes an audit event.
+            </p>
+          </div>
+        ) : (
+          <p className="text-sm leading-6 text-hp-muted">
+            Sales and sales lead users can claim, route, label, close, and mark lost
+            conversations they can access. Marketing remains read-only for inbox operations.
+          </p>
+        )}
       </div>
 
       <label className="mt-4 block">
@@ -1522,6 +1809,14 @@ function EmptyThreadState() {
   );
 }
 
+function formatDateTimeLocal(value: string | null | undefined) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const offsetMs = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+}
+
 function formatDateLabel(value: string | null | undefined) {
   if (!value) return "No date";
   const date = new Date(value);
@@ -1540,6 +1835,12 @@ function isErrorPayload(value: SocialInboxData | { error: string }): value is { 
 
 function isHistoryErrorPayload(
   value: SocialInboxConversationHistory | { error: string },
+): value is { error: string } {
+  return "error" in value;
+}
+
+function isWorkflowErrorPayload(
+  value: { conversation: SocialInboxConversation; events: unknown[] } | { error: string },
 ): value is { error: string } {
   return "error" in value;
 }

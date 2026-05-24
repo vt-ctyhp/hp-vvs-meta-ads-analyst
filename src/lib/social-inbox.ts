@@ -23,6 +23,10 @@ import {
   buildSocialInboxConversationHistoryPage,
   type SocialInboxConversationHistory,
 } from "./meta-inbox-history.ts";
+import {
+  buildMetaInboxWorkflowMutation,
+  type MetaInboxWorkflowPatchInput,
+} from "./meta-inbox-workflow.ts";
 import { metaInboxAllowedQueueCategoriesForTeams } from "./meta-inbox-foundation.ts";
 import type {
   MetaInboxConversationStatusKey,
@@ -268,6 +272,7 @@ export type MetaWebhookIngestResult = {
 };
 
 export type { SocialInboxConversationHistory };
+export type { MetaInboxWorkflowPatchInput };
 
 class MetaSocialGraphError extends Error {
   details?: unknown;
@@ -459,6 +464,79 @@ export async function getSocialInboxConversationHistory(
   );
 }
 
+export async function updateSocialInboxConversationWorkflow(
+  conversationId: string,
+  profile: MetaInboxAccessProfile,
+  input: MetaInboxWorkflowPatchInput,
+): Promise<{ conversation: SocialInboxConversation; events: JsonRecord[] }> {
+  const supabase = dynamicSupabase("web");
+  const queueAccess = await resolveSocialInboxQueueAccess(supabase, profile);
+  const conversationResult = await supabase
+    .from("meta_inbox_conversations")
+    .select("*")
+    .eq("id", conversationId)
+    .limit(1);
+  if (conversationResult.error) throw conversationResult.error;
+
+  const conversationRow = rows<JsonRecord>(conversationResult.data)[0];
+  if (!conversationRow) return missingConversation();
+
+  const conversation = mapInboxConversation(conversationRow);
+  if (!canReadMetaInboxConversationForQueueAccess(conversation, queueAccess)) {
+    throw new AuthorizationError("You do not have access to this inbox queue.", 403);
+  }
+
+  const now = new Date().toISOString();
+  const actorUserId = profile.appUserId && isUuid(profile.appUserId) ? profile.appUserId : null;
+  const mutation = buildMetaInboxWorkflowMutation(conversation, input, {
+    actorUserId,
+    now,
+  });
+
+  if (Object.keys(mutation.update).length) {
+    const updateResult = await supabase
+      .from("meta_inbox_conversations")
+      .update({
+        ...mutation.update,
+        updated_at: now,
+      })
+      .eq("id", conversation.id);
+    if (updateResult.error) throw updateResult.error;
+  }
+
+  const insertedEvents: JsonRecord[] = [];
+  for (const event of mutation.events) {
+    const insert = await supabase
+      .from("meta_inbox_conversation_events")
+      .insert(withAdsAnalystEnvironment({
+        conversation_id: conversation.id,
+        event_type: event.eventType,
+        actor_user_id: actorUserId,
+        event_at: now,
+        previous_value: event.previousValue,
+        new_value: event.newValue,
+        metadata: event.metadata,
+      }))
+      .select("id,conversation_id,event_type,actor_user_id,event_at,previous_value,new_value,metadata")
+      .single();
+    if (insert.error) throw insert.error;
+    if (insert.data) insertedEvents.push(insert.data);
+  }
+
+  const updatedResult = await supabase
+    .from("meta_inbox_conversations")
+    .select("*")
+    .eq("id", conversation.id)
+    .limit(1);
+  if (updatedResult.error) throw updatedResult.error;
+
+  const updatedRow = rows<JsonRecord>(updatedResult.data)[0];
+  return {
+    conversation: updatedRow ? mapInboxConversation(updatedRow) : mutation.nextConversation,
+    events: insertedEvents,
+  };
+}
+
 async function resolveSocialInboxQueueAccess(
   supabase: DynamicSupabaseClient,
   profile: MetaInboxAccessProfile | null | undefined,
@@ -545,6 +623,10 @@ function selectInboxConversationsForQueueAccess(
 
 function emptyQueryResult(): Promise<DynamicQueryResult> {
   return Promise.resolve({ data: [], error: null });
+}
+
+function missingConversation(): never {
+  throw new AuthorizationError("Conversation not found.", 404);
 }
 
 async function selectKnownMessagesForConversation(

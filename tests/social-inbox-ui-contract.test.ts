@@ -29,4 +29,12 @@ describe("social inbox UI contract", () => {
     assert.match(DESKTOP_INBOX, /HistoryStatusStrip/);
     assert.match(DESKTOP_INBOX, /Load Older History/);
   });
+
+  it("surfaces audited sales workflow mutation controls without snooze", () => {
+    assert.match(DESKTOP_INBOX, /Sales Workflow Controls/);
+    assert.match(DESKTOP_INBOX, /Claim Self/);
+    assert.match(DESKTOP_INBOX, /Save State/);
+    assert.match(DESKTOP_INBOX, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/workflow/);
+    assert.equal(/snooze/i.test(DESKTOP_INBOX), false);
+  });
 });

@@ -16,7 +16,14 @@ export default async function InboxPage() {
     getSocialInboxStatus(),
     getSafeSocialInboxData(profile),
   ]);
-  return <SocialInboxClient status={status} initialData={inboxData.data} dataError={inboxData.error} />;
+  return (
+    <SocialInboxClient
+      status={status}
+      initialData={inboxData.data}
+      dataError={inboxData.error}
+      canManageInboxState={profile.permissions.includes("manage_inbox_state")}
+    />
+  );
 }
 
 async function getSafeSocialInboxData(
