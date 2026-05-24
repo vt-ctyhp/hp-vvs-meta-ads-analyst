@@ -37,4 +37,12 @@ describe("social inbox UI contract", () => {
     assert.match(DESKTOP_INBOX, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/workflow/);
     assert.equal(/snooze/i.test(DESKTOP_INBOX), false);
   });
+
+  it("surfaces audited customer contact method controls in the source panel", () => {
+    assert.match(DESKTOP_INBOX, /Contact Methods/);
+    assert.match(DESKTOP_INBOX, /Add Contact/);
+    assert.match(DESKTOP_INBOX, /Delete Contact/);
+    assert.match(DESKTOP_INBOX, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/contact-methods/);
+    assert.match(DESKTOP_INBOX, /future verified matching/);
+  });
 });

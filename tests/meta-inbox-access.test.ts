@@ -231,6 +231,7 @@ function socialInboxFixture(): SocialInboxData {
       customerProfile("profile-book", "facebook", "customer-book"),
       customerProfile("profile-vn", "instagram", "customer-vn"),
     ],
+    customerContactMethods: [],
     firstTouchSources: [
       firstTouchSource("source-cash", "conv-cash"),
       firstTouchSource("source-book", "conv-book"),

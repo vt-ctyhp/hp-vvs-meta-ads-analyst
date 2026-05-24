@@ -10,13 +10,18 @@ import {
   Inbox,
   Link2,
   Loader2,
+  Mail,
   MessageCircle,
+  Pencil,
+  Phone,
+  Plus,
   RefreshCw,
   Search,
   Send,
   Settings2,
   ShieldCheck,
   Tags,
+  Trash2,
   UserRound,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -24,6 +29,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { SYNC, translateError } from "@/lib/glossary";
 import {
   META_INBOX_CONVERSATION_STATUSES,
+  META_INBOX_CUSTOMER_CONTACT_METHODS,
   META_INBOX_LEAD_QUALITY_LABELS,
   META_INBOX_LEAD_QUALITY_REASON_TAGS,
   META_INBOX_LOST_REASONS,
@@ -39,11 +45,13 @@ import { StatusSentence, type StatusHighlight } from "./status-sentence";
 import type {
   SocialInboxComment,
   SocialInboxConversation,
+  SocialInboxCustomerContactMethod,
   SocialInboxCustomerProfile,
   SocialInboxData,
   SocialInboxConversationHistory,
   SocialInboxFirstTouchSource,
   SocialInboxMessage,
+  MetaInboxContactMethodMutationInput,
   MetaInboxWorkflowPatchInput,
 } from "@/lib/social-inbox";
 import { mergeSocialInboxConversationHistory } from "@/lib/meta-inbox-history";
@@ -116,6 +124,7 @@ type QueueDisplayItem = {
   routingConfidence: number | null;
   inboxConversation: SocialInboxConversation | null;
   profile: SocialInboxCustomerProfile | null;
+  contactMethods: SocialInboxCustomerContactMethod[];
   firstTouch: SocialInboxFirstTouchSource | null;
 };
 
@@ -143,6 +152,13 @@ type WorkflowMutationLoadState = {
   message: string | null;
 };
 
+type ContactMethodMutationLoadState = {
+  conversationId: string | null;
+  contactMethodId: string | null;
+  status: "idle" | "saving" | "saved" | "error";
+  message: string | null;
+};
+
 const IDLE_HISTORY_STATE: ConversationHistoryLoadState = {
   status: "idle",
   data: null,
@@ -151,6 +167,13 @@ const IDLE_HISTORY_STATE: ConversationHistoryLoadState = {
 
 const IDLE_WORKFLOW_STATE: WorkflowMutationLoadState = {
   conversationId: null,
+  status: "idle",
+  message: null,
+};
+
+const IDLE_CONTACT_METHOD_STATE: ContactMethodMutationLoadState = {
+  conversationId: null,
+  contactMethodId: null,
   status: "idle",
   message: null,
 };
@@ -185,6 +208,8 @@ export function SocialInboxClient({
   >({});
   const [workflowMutationState, setWorkflowMutationState] =
     useState<WorkflowMutationLoadState>(IDLE_WORKFLOW_STATE);
+  const [contactMethodMutationState, setContactMethodMutationState] =
+    useState<ContactMethodMutationLoadState>(IDLE_CONTACT_METHOD_STATE);
 
   const queue = useMemo(() => buildQueue(inboxData), [inboxData]);
   const queueCategories = useMemo(() => visibleQueueCategories(inboxData), [inboxData]);
@@ -301,6 +326,10 @@ export function SocialInboxClient({
     workflowMutationState.conversationId === selectedConversationId
       ? workflowMutationState
       : IDLE_WORKFLOW_STATE;
+  const selectedContactMethodMutationState =
+    contactMethodMutationState.conversationId === selectedConversationId
+      ? contactMethodMutationState
+      : IDLE_CONTACT_METHOD_STATE;
 
   const loadConversationHistory = useCallback(
     async (conversationId: string, cursor?: string | null) => {
@@ -400,6 +429,70 @@ export function SocialInboxClient({
       } catch (error) {
         setWorkflowMutationState({
           conversationId,
+          status: "error",
+          message: translateError(error),
+        });
+      }
+    },
+    [],
+  );
+
+  const handleContactMethodMutation = useCallback(
+    async (
+      conversationId: string,
+      method: "POST" | "PATCH" | "DELETE",
+      input: MetaInboxContactMethodMutationInput,
+    ) => {
+      setContactMethodMutationState({
+        conversationId,
+        contactMethodId: input.contactMethodId || null,
+        status: "saving",
+        message: "Saving contact method...",
+      });
+
+      try {
+        const response = await fetch(
+          `/api/social-inbox/conversations/${encodeURIComponent(conversationId)}/contact-methods`,
+          {
+            method,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(input),
+          },
+        );
+        const payload = (await response.json()) as
+          | { contactMethod: SocialInboxCustomerContactMethod; events: unknown[] }
+          | { error: string };
+        if (!response.ok || isContactMethodErrorPayload(payload)) {
+          throw new Error(
+            isContactMethodErrorPayload(payload)
+              ? payload.error
+              : "Could not save contact method.",
+          );
+        }
+
+        setInboxData((current) => {
+          const withoutExisting = current.customerContactMethods.filter(
+            (contactMethod) => contactMethod.id !== payload.contactMethod.id,
+          );
+          return {
+            ...current,
+            customerContactMethods: payload.contactMethod.deleted_at
+              ? withoutExisting
+              : [...withoutExisting, payload.contactMethod],
+          };
+        });
+        setContactMethodMutationState({
+          conversationId,
+          contactMethodId: payload.contactMethod.id,
+          status: "saved",
+          message: `${payload.events.length} contact audit event${
+            payload.events.length === 1 ? "" : "s"
+          } recorded.`,
+        });
+      } catch (error) {
+        setContactMethodMutationState({
+          conversationId,
+          contactMethodId: input.contactMethodId || null,
           status: "error",
           message: translateError(error),
         });
@@ -675,7 +768,12 @@ export function SocialInboxClient({
             </div>
 
             <aside className="min-w-0 p-5">
-              <ConversationSourcePanel item={selectedItem} />
+              <ConversationSourcePanel
+                item={selectedItem}
+                canManageInboxState={canManageInboxState}
+                mutationState={selectedContactMethodMutationState}
+                onContactMethodMutation={handleContactMethodMutation}
+              />
               <WorkflowStatePanel
                 key={selectedConversationId || "empty-workflow"}
                 item={selectedItem}
@@ -723,6 +821,13 @@ export function SocialInboxClient({
 
 function buildQueue(data: SocialInboxData): QueueDisplayItem[] {
   const profileById = new Map(data.customerProfiles.map((profile) => [profile.id, profile]));
+  const contactMethodsByProfileId = new Map<string, SocialInboxCustomerContactMethod[]>();
+  for (const contactMethod of data.customerContactMethods || []) {
+    if (contactMethod.deleted_at) continue;
+    const existing = contactMethodsByProfileId.get(contactMethod.customer_profile_id) || [];
+    existing.push(contactMethod);
+    contactMethodsByProfileId.set(contactMethod.customer_profile_id, existing);
+  }
   const firstTouchByConversationId = new Map(
     data.firstTouchSources.map((source) => [source.conversation_id, source]),
   );
@@ -777,6 +882,7 @@ function buildQueue(data: SocialInboxData): QueueDisplayItem[] {
       routingConfidence: conversation?.routing_confidence ?? null,
       inboxConversation: conversation,
       profile,
+      contactMethods: profile ? contactMethodsByProfileId.get(profile.id) || [] : [],
       firstTouch,
     };
   });
@@ -811,6 +917,7 @@ function buildQueue(data: SocialInboxData): QueueDisplayItem[] {
       routingConfidence: conversation?.routing_confidence ?? null,
       inboxConversation: conversation,
       profile,
+      contactMethods: profile ? contactMethodsByProfileId.get(profile.id) || [] : [],
       firstTouch,
     };
   });
@@ -1088,7 +1195,21 @@ function QueueTab({
   );
 }
 
-function ConversationSourcePanel({ item }: { item: QueueDisplayItem | null }) {
+function ConversationSourcePanel({
+  item,
+  canManageInboxState,
+  mutationState,
+  onContactMethodMutation,
+}: {
+  item: QueueDisplayItem | null;
+  canManageInboxState: boolean;
+  mutationState: ContactMethodMutationLoadState;
+  onContactMethodMutation: (
+    conversationId: string,
+    method: "POST" | "PATCH" | "DELETE",
+    input: MetaInboxContactMethodMutationInput,
+  ) => void;
+}) {
   const firstTouch = item?.firstTouch || null;
   const profile = item?.profile || null;
   return (
@@ -1109,6 +1230,13 @@ function ConversationSourcePanel({ item }: { item: QueueDisplayItem | null }) {
             />
             <InfoLine label="Participant ID" value={item.inboxConversation?.participant_id || null} />
           </div>
+
+          <ContactMethodsPanel
+            item={item}
+            canManageInboxState={canManageInboxState}
+            mutationState={mutationState}
+            onContactMethodMutation={onContactMethodMutation}
+          />
 
           <div className="border-t border-hp-rule pt-4">
             <p className="mb-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
@@ -1134,6 +1262,196 @@ function ConversationSourcePanel({ item }: { item: QueueDisplayItem | null }) {
         <p className="text-sm leading-6 text-hp-muted">
           Select a conversation to see customer profile reference, source channel, and first-touch
           attribution.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ContactMethodsPanel({
+  item,
+  canManageInboxState,
+  mutationState,
+  onContactMethodMutation,
+}: {
+  item: QueueDisplayItem;
+  canManageInboxState: boolean;
+  mutationState: ContactMethodMutationLoadState;
+  onContactMethodMutation: (
+    conversationId: string,
+    method: "POST" | "PATCH" | "DELETE",
+    input: MetaInboxContactMethodMutationInput,
+  ) => void;
+}) {
+  const conversationId = item.inboxConversation?.id || null;
+  const canEdit = Boolean(canManageInboxState && conversationId && item.profile);
+  const [typeDraft, setTypeDraft] = useState<MetaInboxContactMethodMutationInput["type"]>("phone");
+  const [valueDraft, setValueDraft] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValueDraft, setEditValueDraft] = useState("");
+  const activeContacts = item.contactMethods.filter((contactMethod) => !contactMethod.deleted_at);
+  const selectedEdit = activeContacts.find((contactMethod) => contactMethod.id === editingId) || null;
+  const isSaving = mutationState.status === "saving";
+  const statusTone =
+    mutationState.status === "error"
+      ? "text-signal-danger"
+      : mutationState.status === "saved"
+        ? "text-signal-positive"
+        : "text-hp-muted";
+
+  function addContactMethod() {
+    if (!conversationId || !typeDraft) return;
+    onContactMethodMutation(conversationId, "POST", {
+      type: typeDraft,
+      value: valueDraft,
+      changeReason: "Sales entered customer contact method in inbox.",
+    });
+    setValueDraft("");
+  }
+
+  function saveEdit() {
+    if (!conversationId || !selectedEdit) return;
+    onContactMethodMutation(conversationId, "PATCH", {
+      contactMethodId: selectedEdit.id,
+      type: selectedEdit.type,
+      value: editValueDraft,
+      changeReason: "Sales edited customer contact method in inbox.",
+    });
+    setEditingId(null);
+    setEditValueDraft("");
+  }
+
+  function deleteContactMethod(contactMethod: SocialInboxCustomerContactMethod) {
+    if (!conversationId) return;
+    onContactMethodMutation(conversationId, "DELETE", {
+      contactMethodId: contactMethod.id,
+      changeReason: "Sales deleted customer contact method in inbox.",
+    });
+  }
+
+  return (
+    <div className="border-t border-hp-rule pt-4">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+          Contact Methods
+        </p>
+        <span className={`text-[10px] uppercase tracking-[0.14em] ${statusTone}`}>
+          {mutationState.message || (canEdit ? "Editable" : "Read-only")}
+        </span>
+      </div>
+
+      {activeContacts.length ? (
+        <div className="space-y-2">
+          {activeContacts.map((contactMethod) => {
+            const isEditing = editingId === contactMethod.id;
+            return (
+              <div key={contactMethod.id} className="border border-hp-rule bg-hp-card p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-sm text-hp-ink">
+                      {contactMethod.type === "email" ? <Mail size={14} /> : <Phone size={14} />}
+                      <span className="min-w-0 break-all">{contactMethod.value_display}</span>
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-hp-muted">
+                      {metaInboxVocabularyLabel(
+                        META_INBOX_CUSTOMER_CONTACT_METHODS,
+                        contactMethod.type,
+                      )}{" "}
+                      · {contactMethod.source.replaceAll("_", " ")} · future verified matching
+                    </p>
+                  </div>
+                  {canEdit ? (
+                    <div className="flex shrink-0 items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingId(contactMethod.id);
+                          setEditValueDraft(contactMethod.value_display);
+                        }}
+                        disabled={isSaving}
+                        aria-label="Edit Contact"
+                        className="flex h-8 w-8 items-center justify-center border border-hp-rule text-hp-ink transition hover:border-hp-ink disabled:opacity-50"
+                      >
+                        <Pencil size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteContactMethod(contactMethod)}
+                        disabled={isSaving}
+                        aria-label="Delete Contact"
+                        className="flex h-8 w-8 items-center justify-center border border-hp-rule text-signal-danger transition hover:border-signal-danger disabled:opacity-50"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+                {isEditing ? (
+                  <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                    <input
+                      value={editValueDraft}
+                      onChange={(event) => setEditValueDraft(event.target.value)}
+                      className="h-9 min-w-0 border border-hp-rule bg-hp-foundation px-3 text-sm text-hp-ink outline-none focus:border-hp-ink"
+                    />
+                    <button
+                      type="button"
+                      onClick={saveEdit}
+                      disabled={isSaving}
+                      className="h-9 border border-hp-ink px-3 text-[10px] uppercase tracking-[0.14em] text-hp-ink transition hover:bg-hp-ink hover:text-hp-foundation disabled:opacity-50"
+                    >
+                      Save
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="text-sm leading-6 text-hp-muted">
+          No customer phone or email captured yet.
+        </p>
+      )}
+
+      {canEdit ? (
+        <div className="mt-3 grid gap-2">
+          <div className="grid gap-2 sm:grid-cols-[130px_minmax(0,1fr)]">
+            <select
+              value={typeDraft || "phone"}
+              onChange={(event) =>
+                setTypeDraft(event.target.value as MetaInboxContactMethodMutationInput["type"])
+              }
+              className="h-10 border border-hp-rule bg-hp-foundation px-3 text-sm text-hp-ink outline-none focus:border-hp-ink"
+            >
+              {META_INBOX_CUSTOMER_CONTACT_METHODS.map((method) => (
+                <option key={method.key} value={method.key}>
+                  {method.label}
+                </option>
+              ))}
+            </select>
+            <input
+              value={valueDraft}
+              onChange={(event) => setValueDraft(event.target.value)}
+              placeholder="Customer phone or email"
+              className="h-10 min-w-0 border border-hp-rule bg-hp-foundation px-3 text-sm text-hp-ink outline-none placeholder:text-hp-muted focus:border-hp-ink"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={addContactMethod}
+            disabled={isSaving || !valueDraft.trim()}
+            className="flex h-9 items-center justify-center gap-2 border border-hp-ink px-3 text-[10px] uppercase tracking-[0.14em] text-hp-ink transition hover:bg-hp-ink hover:text-hp-foundation disabled:opacity-50"
+          >
+            <Plus size={13} />
+            Add Contact
+          </button>
+          <p className="text-xs leading-5 text-hp-muted">
+            Phone and email stay inbox-owned, audited, and available for future verified matching.
+          </p>
+        </div>
+      ) : (
+        <p className="mt-3 text-xs leading-5 text-hp-muted">
+          Sales users can add, edit, and delete customer phone/email for conversations they can access.
         </p>
       )}
     </div>
@@ -1841,6 +2159,12 @@ function isHistoryErrorPayload(
 
 function isWorkflowErrorPayload(
   value: { conversation: SocialInboxConversation; events: unknown[] } | { error: string },
+): value is { error: string } {
+  return "error" in value;
+}
+
+function isContactMethodErrorPayload(
+  value: { contactMethod: SocialInboxCustomerContactMethod; events: unknown[] } | { error: string },
 ): value is { error: string } {
   return "error" in value;
 }

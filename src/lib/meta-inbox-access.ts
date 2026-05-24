@@ -83,6 +83,7 @@ export function filterSocialInboxDataForQueueAccess(
       comments: [],
       inboxConversations: [],
       customerProfiles: [],
+      customerContactMethods: [],
       firstTouchSources: [],
     };
   }
@@ -111,6 +112,9 @@ export function filterSocialInboxDataForQueueAccess(
     ...data,
     inboxConversations,
     customerProfiles: data.customerProfiles.filter((profile) => profileIds.has(profile.id)),
+    customerContactMethods: (data.customerContactMethods || []).filter((contactMethod) =>
+      profileIds.has(contactMethod.customer_profile_id),
+    ),
     firstTouchSources: data.firstTouchSources.filter((source) =>
       conversationIds.has(source.conversation_id),
     ),

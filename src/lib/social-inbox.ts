@@ -27,9 +27,17 @@ import {
   buildMetaInboxWorkflowMutation,
   type MetaInboxWorkflowPatchInput,
 } from "./meta-inbox-workflow.ts";
+import {
+  buildMetaInboxContactMethodCreate,
+  buildMetaInboxContactMethodDelete,
+  buildMetaInboxContactMethodUpdate,
+  type MetaInboxContactMethodMutationInput,
+  type MetaInboxContactMethodRecord,
+} from "./meta-inbox-contact-methods.ts";
 import { metaInboxAllowedQueueCategoriesForTeams } from "./meta-inbox-foundation.ts";
 import type {
   MetaInboxConversationStatusKey,
+  MetaInboxCustomerContactMethodKey,
   MetaInboxLostReasonKey,
   MetaInboxOutcomeKey,
   MetaInboxQueueCategoryKey,
@@ -183,6 +191,21 @@ export type SocialInboxCustomerProfile = {
   last_profile_synced_at: string | null;
 };
 
+export type SocialInboxCustomerContactMethod = {
+  id: string;
+  customer_profile_id: string;
+  type: MetaInboxCustomerContactMethodKey;
+  value_normalized: string;
+  value_display: string;
+  source: string;
+  raw_input: string | null;
+  verified_for_matching_at: string | null;
+  entered_by: string | null;
+  entered_at: string | null;
+  deleted_by: string | null;
+  deleted_at: string | null;
+};
+
 export type SocialInboxConversation = {
   id: string;
   canonical_conversation_key: string;
@@ -255,6 +278,7 @@ export type SocialInboxData = {
   comments: SocialInboxComment[];
   inboxConversations: SocialInboxConversation[];
   customerProfiles: SocialInboxCustomerProfile[];
+  customerContactMethods: SocialInboxCustomerContactMethod[];
   firstTouchSources: SocialInboxFirstTouchSource[];
   syncRuns: SocialInboxSyncRun[];
 };
@@ -273,6 +297,7 @@ export type MetaWebhookIngestResult = {
 
 export type { SocialInboxConversationHistory };
 export type { MetaInboxWorkflowPatchInput };
+export type { MetaInboxContactMethodMutationInput };
 
 class MetaSocialGraphError extends Error {
   details?: unknown;
@@ -372,6 +397,7 @@ export async function getSocialInboxData(
     comments,
     inboxConversations,
     customerProfiles,
+    customerContactMethods,
     firstTouchSources,
     syncRuns,
   ] = await Promise.all([
@@ -397,6 +423,11 @@ export async function getSocialInboxData(
       .order("updated_at", { ascending: false, nullsFirst: false })
       .limit(250),
     supabase
+      .from("meta_inbox_customer_contact_methods")
+      .select("*")
+      .order("updated_at", { ascending: false, nullsFirst: false })
+      .limit(500),
+    supabase
       .from("meta_inbox_first_touch_sources")
       .select("*")
       .order("updated_at", { ascending: false, nullsFirst: false })
@@ -408,7 +439,16 @@ export async function getSocialInboxData(
       .limit(5),
   ]);
 
-  for (const result of [threads, messages, comments, syncRuns]) {
+  for (const result of [
+    threads,
+    messages,
+    comments,
+    inboxConversations,
+    customerProfiles,
+    customerContactMethods,
+    firstTouchSources,
+    syncRuns,
+  ]) {
     if (result.error) throw result.error;
   }
 
@@ -419,6 +459,7 @@ export async function getSocialInboxData(
     comments: rows<JsonRecord>(comments.data).map(mapComment),
     inboxConversations: rows<JsonRecord>(inboxConversations.data).map(mapInboxConversation),
     customerProfiles: rows<JsonRecord>(customerProfiles.data).map(mapCustomerProfile),
+    customerContactMethods: rows<JsonRecord>(customerContactMethods.data).map(mapContactMethod),
     firstTouchSources: rows<JsonRecord>(firstTouchSources.data).map(mapFirstTouchSource),
     syncRuns: rows<JsonRecord>(syncRuns.data).map(mapSyncRun),
   }, queueAccess);
@@ -537,6 +578,98 @@ export async function updateSocialInboxConversationWorkflow(
   };
 }
 
+export async function updateSocialInboxConversationContactMethod(
+  conversationId: string,
+  profile: MetaInboxAccessProfile,
+  action: "create" | "update" | "delete",
+  input: MetaInboxContactMethodMutationInput,
+): Promise<{ contactMethod: SocialInboxCustomerContactMethod; events: JsonRecord[] }> {
+  const supabase = dynamicSupabase("web");
+  const queueAccess = await resolveSocialInboxQueueAccess(supabase, profile);
+  const conversation = await requireAccessibleConversation(supabase, conversationId, queueAccess);
+  const now = new Date().toISOString();
+  const actorUserId = profile.appUserId && isUuid(profile.appUserId) ? profile.appUserId : null;
+
+  if (action === "create") {
+    const mutation = buildMetaInboxContactMethodCreate(
+      conversation.customer_profile_id,
+      {
+        type: input.type || "phone",
+        value: input.value || "",
+      },
+      { actorUserId, now },
+    );
+    if (input.providedInMessageId && isUuid(input.providedInMessageId)) {
+      mutation.row.provided_in_message_id = input.providedInMessageId;
+    }
+
+    const insert = await supabase
+      .from("meta_inbox_customer_contact_methods")
+      .insert(withAdsAnalystEnvironment(mutation.row))
+      .select("*")
+      .single();
+    if (insert.error) throw insert.error;
+    if (!insert.data) throw new Error("Contact method did not return after insert.");
+
+    const event = await insertContactMethodEvent(supabase, conversation.id, actorUserId, now, {
+      ...mutation.event,
+      newValue: {
+        ...mutation.event.newValue,
+        contactMethodId: String(insert.data.id),
+      },
+      metadata: contactEventMetadata(mutation.event.metadata, input.changeReason),
+    });
+    await updateContactMethodAuditEvent(supabase, String(insert.data.id), String(event.id));
+
+    return {
+      contactMethod: mapContactMethod({ ...insert.data, audit_event_id: event.id }),
+      events: [event],
+    };
+  }
+
+  const existing = await requireContactMethodForConversation(supabase, conversation, input.contactMethodId);
+  const mutation =
+    action === "update"
+      ? buildMetaInboxContactMethodUpdate(
+        existing,
+        {
+          type: input.type || existing.type,
+          value: input.value ?? existing.value_display,
+        },
+        { actorUserId, now },
+      )
+      : buildMetaInboxContactMethodDelete(existing, { actorUserId, now });
+
+  const update = await supabase
+    .from("meta_inbox_customer_contact_methods")
+    .update(mutation.update)
+    .eq("id", existing.id);
+  if (update.error) throw update.error;
+
+  const event = await insertContactMethodEvent(supabase, conversation.id, actorUserId, now, {
+    ...mutation.event,
+    metadata: contactEventMetadata(mutation.event.metadata, input.changeReason),
+  });
+  await updateContactMethodAuditEvent(supabase, existing.id, String(event.id));
+
+  const refreshed = await supabase
+    .from("meta_inbox_customer_contact_methods")
+    .select("*")
+    .eq("id", existing.id)
+    .limit(1);
+  if (refreshed.error) throw refreshed.error;
+
+  const row = rows<JsonRecord>(refreshed.data)[0];
+  return {
+    contactMethod: row ? mapContactMethod(row) : mapContactMethod({
+      ...existing,
+      ...mutation.update,
+      audit_event_id: event.id,
+    }),
+    events: [event],
+  };
+}
+
 async function resolveSocialInboxQueueAccess(
   supabase: DynamicSupabaseClient,
   profile: MetaInboxAccessProfile | null | undefined,
@@ -629,6 +762,104 @@ function missingConversation(): never {
   throw new AuthorizationError("Conversation not found.", 404);
 }
 
+async function requireAccessibleConversation(
+  supabase: DynamicSupabaseClient,
+  conversationId: string,
+  queueAccess: MetaInboxQueueAccessDecision,
+): Promise<SocialInboxConversation> {
+  const conversationResult = await supabase
+    .from("meta_inbox_conversations")
+    .select("*")
+    .eq("id", conversationId)
+    .limit(1);
+  if (conversationResult.error) throw conversationResult.error;
+
+  const conversationRow = rows<JsonRecord>(conversationResult.data)[0];
+  if (!conversationRow) return missingConversation();
+
+  const conversation = mapInboxConversation(conversationRow);
+  if (!canReadMetaInboxConversationForQueueAccess(conversation, queueAccess)) {
+    throw new AuthorizationError("You do not have access to this inbox queue.", 403);
+  }
+
+  return conversation;
+}
+
+async function requireContactMethodForConversation(
+  supabase: DynamicSupabaseClient,
+  conversation: SocialInboxConversation,
+  contactMethodId: string | null | undefined,
+): Promise<MetaInboxContactMethodRecord> {
+  if (!contactMethodId || !isUuid(contactMethodId)) {
+    throw new Error("Contact method id is required.");
+  }
+
+  const result = await supabase
+    .from("meta_inbox_customer_contact_methods")
+    .select("*")
+    .eq("id", contactMethodId)
+    .limit(1);
+  if (result.error) throw result.error;
+
+  const row = rows<JsonRecord>(result.data)[0];
+  if (!row) throw new AuthorizationError("Contact method not found.", 404);
+  if (!conversation.customer_profile_id || stringField(row.customer_profile_id) !== conversation.customer_profile_id) {
+    throw new AuthorizationError("Contact method is not attached to this customer.", 403);
+  }
+
+  return mapContactMethodRecord(row);
+}
+
+async function insertContactMethodEvent(
+  supabase: DynamicSupabaseClient,
+  conversationId: string,
+  actorUserId: string | null,
+  now: string,
+  event: {
+    eventType: "contact_method_changed";
+    previousValue: JsonRecord | null;
+    newValue: JsonRecord;
+    metadata: JsonRecord;
+  },
+) {
+  const insert = await supabase
+    .from("meta_inbox_conversation_events")
+    .insert(withAdsAnalystEnvironment({
+      conversation_id: conversationId,
+      event_type: event.eventType,
+      actor_user_id: actorUserId,
+      event_at: now,
+      previous_value: event.previousValue,
+      new_value: event.newValue,
+      metadata: event.metadata,
+    }))
+    .select("id,conversation_id,event_type,actor_user_id,event_at,previous_value,new_value,metadata")
+    .single();
+  if (insert.error) throw insert.error;
+  if (!insert.data) throw new Error("Contact method audit event did not return after insert.");
+  return insert.data;
+}
+
+async function updateContactMethodAuditEvent(
+  supabase: DynamicSupabaseClient,
+  contactMethodId: string,
+  auditEventId: string,
+) {
+  const update = await supabase
+    .from("meta_inbox_customer_contact_methods")
+    .update({ audit_event_id: auditEventId })
+    .eq("id", contactMethodId);
+  if (update.error) throw update.error;
+}
+
+function contactEventMetadata(metadata: JsonRecord, changeReason: string | null | undefined) {
+  const reason = typeof changeReason === "string" ? changeReason.trim() : "";
+  return {
+    ...metadata,
+    ...(reason ? { changeReason: reason } : {}),
+  };
+}
+
 async function selectKnownMessagesForConversation(
   supabase: DynamicSupabaseClient,
   conversation: SocialInboxConversation,
@@ -701,6 +932,7 @@ export function emptySocialInboxData(): SocialInboxData {
     comments: [],
     inboxConversations: [],
     customerProfiles: [],
+    customerContactMethods: [],
     firstTouchSources: [],
     syncRuns: [],
   };
@@ -1627,6 +1859,40 @@ function mapCustomerProfile(row: JsonRecord): SocialInboxCustomerProfile {
     profile_url: stringField(row.profile_url),
     profile_reference: stringField(row.profile_reference),
     last_profile_synced_at: stringField(row.last_profile_synced_at),
+  };
+}
+
+function mapContactMethod(row: JsonRecord): SocialInboxCustomerContactMethod {
+  const type = row.type === "email" ? "email" : "phone";
+  return {
+    id: String(row.id),
+    customer_profile_id: String(row.customer_profile_id || ""),
+    type,
+    value_normalized: String(row.value_normalized || ""),
+    value_display: String(row.value_display || ""),
+    source: String(row.source || "sales_entered"),
+    raw_input: stringField(row.raw_input),
+    verified_for_matching_at: stringField(row.verified_for_matching_at),
+    entered_by: stringField(row.entered_by),
+    entered_at: stringField(row.entered_at),
+    deleted_by: stringField(row.deleted_by),
+    deleted_at: stringField(row.deleted_at),
+  };
+}
+
+function mapContactMethodRecord(row: JsonRecord): MetaInboxContactMethodRecord {
+  const mapped = mapContactMethod(row);
+  return {
+    id: mapped.id,
+    customer_profile_id: mapped.customer_profile_id,
+    type: mapped.type,
+    value_normalized: mapped.value_normalized,
+    value_display: mapped.value_display,
+    source: mapped.source,
+    raw_input: mapped.raw_input,
+    entered_by: mapped.entered_by,
+    entered_at: mapped.entered_at,
+    deleted_at: mapped.deleted_at,
   };
 }
 
