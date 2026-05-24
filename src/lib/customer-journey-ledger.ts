@@ -1,7 +1,13 @@
 import { differenceInCalendarDays, format, parseISO, subDays } from "date-fns";
+import { unstable_cache } from "next/cache.js";
 
 import { selectOriginalPaidTouch } from "./attribution-touch-selection.ts";
 import { createAdsAnalystClient } from "./ads-analyst-db.ts";
+
+// Phase 2.5 (v3 plan): per-loader server-side cache. 30s TTL gives users
+// near-instant subsequent loads + filter clicks while staying fresh enough
+// for analytics (data syncs are minutes-grained, not seconds-grained).
+const LEDGER_CACHE_TTL_SECONDS = 30;
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_LEDGER_DAYS = 30;
@@ -478,15 +484,43 @@ const APPOINTMENT_COLUMNS = [
   "raw_payload",
 ].join(",");
 
+// Public wrapper. When called with a custom `client` (tests use mock clients)
+// the cache is bypassed — both because mock clients aren't serializable into
+// a cache key and because tests need deterministic, isolated runs.
 export async function fetchCustomerJourneyLedgerData(
   input: {
     days?: number | null;
     endDate?: string | null;
     startDate?: string | null;
   },
-  client: CustomerJourneyLedgerClient = createAdsAnalystClient(
-    "web",
-  ) as unknown as CustomerJourneyLedgerClient,
+  client?: CustomerJourneyLedgerClient,
+): Promise<CustomerJourneyLedgerData> {
+  if (client) {
+    return fetchCustomerJourneyLedgerDataUncached(input, client);
+  }
+  return fetchCustomerJourneyLedgerDataCached(input);
+}
+
+const fetchCustomerJourneyLedgerDataCached = unstable_cache(
+  async (input: {
+    days?: number | null;
+    endDate?: string | null;
+    startDate?: string | null;
+  }): Promise<CustomerJourneyLedgerData> => {
+    const client = createAdsAnalystClient("web") as unknown as CustomerJourneyLedgerClient;
+    return fetchCustomerJourneyLedgerDataUncached(input, client);
+  },
+  ["customer-journey-ledger"],
+  { revalidate: LEDGER_CACHE_TTL_SECONDS },
+);
+
+async function fetchCustomerJourneyLedgerDataUncached(
+  input: {
+    days?: number | null;
+    endDate?: string | null;
+    startDate?: string | null;
+  },
+  client: CustomerJourneyLedgerClient,
 ): Promise<CustomerJourneyLedgerData> {
   const range = normalizeCustomerJourneyLedgerDateRange(input);
   // Use the limited-mode web client. In limited-access mode (staging today,
@@ -651,9 +685,31 @@ export async function fetchCustomerJourneyLedgerData(
     });
   }
 
+  // Phase 2.5 (v3 plan): only fetch the per-visitor session/event/conversion
+  // fan-out for visitors that are anchored to an appointment or a conversion.
+  // Visitor-only rows render from visitor-level fields alone (geo, last_paid_touch,
+  // customer identity) and don't consume the related data — fetching it was
+  // wasted work scaling linearly with window visitor count. Cut /convert load
+  // by ~2-3 seconds at 30-day-window scale.
+  const anchoredVisitorIds = new Set(visitorIdsFromAppointments);
+  const anchoredVisitorIdList = visitors
+    .filter((v) => anchoredVisitorIds.has(v.visitor_id))
+    .map((v) => v.visitor_id);
+
+  if (!anchoredVisitorIdList.length) {
+    return buildCustomerJourneyLedgerData({
+      appointments,
+      conversions: rangeConversions,
+      events: appointmentEvents,
+      range,
+      sessions: [],
+      visitors,
+    });
+  }
+
   const [sessions, visitorEvents, visitorConversions] = await Promise.all([
     fetchRowsByVisitorIds<CustomerJourneyLedgerSessionRow>(
-      visitorIds,
+      anchoredVisitorIdList,
       (batch) =>
         client
           .from("website_sessions")
@@ -664,7 +720,7 @@ export async function fetchCustomerJourneyLedgerData(
       "last_seen_at",
     ),
     fetchRowsByVisitorIds<CustomerJourneyLedgerEventRow>(
-      visitorIds,
+      anchoredVisitorIdList,
       (batch) =>
         client
           .from("website_events")
@@ -675,7 +731,7 @@ export async function fetchCustomerJourneyLedgerData(
       "occurred_at",
     ),
     fetchRowsByVisitorIds<CustomerJourneyLedgerConversionRow>(
-      visitorIds,
+      anchoredVisitorIdList,
       (batch) =>
         client
           .from("website_conversions")

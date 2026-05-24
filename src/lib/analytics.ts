@@ -1,4 +1,5 @@
 import { differenceInCalendarDays, subDays } from "date-fns";
+import { unstable_cache } from "next/cache.js";
 
 import {
   CAMPAIGN_UMBRELLAS,
@@ -387,7 +388,14 @@ export function emptyDashboardPayload(missingEnv = getMissingDashboardEnv()): Da
   };
 }
 
-export async function fetchDashboardData(
+// Phase 2.5 (v3 plan): cache layer. 30s TTL; analytics data is minutes-grained.
+export const fetchDashboardData = unstable_cache(
+  fetchDashboardDataUncached,
+  ["analyst-dashboard"],
+  { revalidate: 30 },
+);
+
+async function fetchDashboardDataUncached(
   dateRangeInput: number | DashboardDateRangeInput = 30,
 ): Promise<DashboardPayload> {
   const missingEnv = getMissingDashboardEnv();

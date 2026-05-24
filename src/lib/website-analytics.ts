@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { addDays, differenceInCalendarDays, format, parseISO, subDays } from "date-fns";
+import { unstable_cache } from "next/cache.js";
 import { z } from "zod";
 
 import {
@@ -848,6 +849,9 @@ export function normalizeBookingConversionPayload(input: unknown) {
   });
 }
 
+// Phase 2.5 (v3 plan): cache layer. When called with a custom `options.client`
+// the cache is bypassed (tests pass mocks; mocks aren't serializable into the
+// cache key and tests want deterministic isolation).
 export async function fetchWebsiteFunnelData(input: {
   startDate?: string | null;
   endDate?: string | null;
@@ -855,8 +859,36 @@ export async function fetchWebsiteFunnelData(input: {
 }, options: {
   client?: WebsiteSupabaseClient;
 } = {}): Promise<WebsiteFunnelData> {
+  if (options.client) {
+    return fetchWebsiteFunnelDataUncached(input, options.client);
+  }
+  return fetchWebsiteFunnelDataCached(input);
+}
+
+const FUNNEL_CACHE_TTL_SECONDS = 30;
+
+const fetchWebsiteFunnelDataCached = unstable_cache(
+  async (input: {
+    startDate?: string | null;
+    endDate?: string | null;
+    days?: number | null;
+  }): Promise<WebsiteFunnelData> => {
+    const client = createWebsiteClient("ingest");
+    return fetchWebsiteFunnelDataUncached(input, client);
+  },
+  ["website-funnel"],
+  { revalidate: FUNNEL_CACHE_TTL_SECONDS },
+);
+
+async function fetchWebsiteFunnelDataUncached(
+  input: {
+    startDate?: string | null;
+    endDate?: string | null;
+    days?: number | null;
+  },
+  client: WebsiteSupabaseClient,
+): Promise<WebsiteFunnelData> {
   const range = normalizeDateRange(input);
-  const client = options.client || createWebsiteClient("ingest");
   const startIso = `${range.start}T00:00:00.000Z`;
   const endIso = `${range.end}T23:59:59.999Z`;
 
