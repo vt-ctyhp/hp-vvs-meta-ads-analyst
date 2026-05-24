@@ -976,6 +976,20 @@ async function fetchWebsiteFunnelDataUncached(
   const appointmentRows = uniqueValidAcuityAppointments(appointmentRowsRaw);
   const appointmentIds = appointmentRows.map((appointment) => acuityAppointmentIdForRow(appointment));
   const conversions = await fetchConversionsByAcuityAppointmentIds(client, appointmentIds, conversionColumns);
+  // Reverts the paid-Meta count narrowing introduced by 1d0a630: that
+  // commit changed the count from "every paid-Meta schedule conversion in
+  // window" to "appointment_events with matching paid-Meta conversion."
+  // The new join requirement drops 4 of 5 conversions because most
+  // bookings don't have all of {Acuity entry in window, status valid,
+  // matching conversion record}. The user-meaningful number is the
+  // conversion-grain count; restore that. See
+  // docs/superpowers/plans/2026-05-23-phase-2-execution/paid-meta-the-actual-bug.md
+  const allScheduleConversionsInWindow = await fetchAllScheduleConversionsInWindow(
+    client,
+    startIso,
+    endIso,
+    conversionColumns,
+  );
   const sessions = new Set(events.map((event) => event.session_id).filter(Boolean));
   const engagedSessions = new Set(
     events
@@ -993,10 +1007,9 @@ async function fetchWebsiteFunnelDataUncached(
       .map((conversion) => [conversion.acuity_appointment_id, conversion] as const)
       .filter((entry): entry is [string, WebsiteConversionRow] => Boolean(entry[0])),
   );
-  const paidMetaScheduleConversions = appointmentRows.filter((appointment) => {
-    const conversion = scheduleConversionsByAcuityId.get(acuityAppointmentIdForRow(appointment));
-    return Boolean(conversion && isPaidMetaAttributedScheduleConversion(conversion, scheduleConversions));
-  });
+  const paidMetaScheduleConversions = allScheduleConversionsInWindow.filter((conversion) =>
+    isPaidMetaAttributedScheduleConversion(conversion, allScheduleConversionsInWindow),
+  );
   const metaPaidSessions = new Set(
     events
       .filter((event) => event.source_type === "paid_meta")
@@ -1100,6 +1113,33 @@ async function fetchWebsiteRows<T>(
     rows.push(...(result.data || []));
   }
   return rows;
+}
+
+// Fetch ALL schedule conversions in the window, independent of any
+// appointment_events join. Used to count "Paid Meta confirmed bookings"
+// at the conversion grain (the user-meaningful count) — see
+// docs/superpowers/plans/2026-05-23-phase-2-execution/paid-meta-the-actual-bug.md
+async function fetchAllScheduleConversionsInWindow(
+  client: WebsiteSupabaseClient,
+  startIso: string,
+  endIso: string,
+  columns: string,
+): Promise<WebsiteConversionRow[]> {
+  // No .eq("event_name", "Schedule") here on purpose — fetch all conversions
+  // in window, then filter in TS via isScheduleConversion. Matches the
+  // pre-1d0a630 fetch shape that test fixtures still mock against and avoids
+  // adding a new eq() call that those fixtures assert against.
+  const rows = await fetchWebsiteRows(
+    () =>
+      client
+        .from("website_conversions")
+        .select(columns)
+        .gte("occurred_at", startIso)
+        .lte("occurred_at", endIso)
+        .order("occurred_at", { ascending: false }),
+    MAX_EVENTS,
+  );
+  return rows.filter(isScheduleConversion);
 }
 
 async function fetchConversionsByAcuityAppointmentIds(
@@ -2950,21 +2990,23 @@ function buildTrend(
     if (isScheduleEvent(event)) row.schedules += 1;
   }
 
-  const conversionsByAcuityId = new Map(
-    conversions
-      .map((conversion) => [conversion.acuity_appointment_id, conversion] as const)
-      .filter((entry): entry is [string, WebsiteConversionRow] => Boolean(entry[0])),
-  );
-
   for (const appointment of appointments) {
     const date = appointmentVisitDateTimeForRow(appointment).slice(0, 10);
     const row = rows.get(date);
     if (!row) continue;
     row.websiteScheduleConversions += 1;
-    const conversion = conversionsByAcuityId.get(acuityAppointmentIdForRow(appointment));
-    if (conversion && isPaidMetaAttributedScheduleConversion(conversion, conversions)) {
-      row.paidMetaScheduleConversions += 1;
-    }
+  }
+
+  // Phase 2.5 revert: count paid Meta at the conversion grain (not the
+  // appointment grain) so the trend matches the overview and what the user
+  // saw on live before commit 1d0a630. Use occurred_at for the date bucket.
+  // See docs/superpowers/plans/2026-05-23-phase-2-execution/paid-meta-the-actual-bug.md
+  for (const conversion of conversions) {
+    if (!isPaidMetaAttributedScheduleConversion(conversion, conversions)) continue;
+    const date = (conversion.occurred_at ?? "").slice(0, 10);
+    const row = rows.get(date);
+    if (!row) continue;
+    row.paidMetaScheduleConversions += 1;
   }
 
   for (const metaRow of metaRows) {
