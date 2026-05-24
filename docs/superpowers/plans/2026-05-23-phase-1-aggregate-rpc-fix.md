@@ -1,5 +1,11 @@
 # Phase 1 — Fix `aggregate_meta_daily_insights` RPC implementation plan
 
+> **⚠️ OBSOLETED 2026-05-23 22:00 PDT.** This plan's premise (the RPC was broken and needed fixing) turned out to be wrong. Task 1 (diagnostic) showed that the apparent reconciliation failures were a bug in the audit tool itself (`reconcile-meta-ads-data.mjs` paginated without ORDER BY), not in the RPC or the data. The audit tool was fixed in commit `5988ccc`; all previously-failing reconciliations now PASS. See [2026-05-23-phase-1-execution/01-diagnostic.md](2026-05-23-phase-1-execution/01-diagnostic.md) for the full diagnostic, and [`../spike/2026-05-23/recommendation.md`](../spike/2026-05-23/recommendation.md) v3 for the corrected scope.
+>
+> The successor plan is [2026-05-23-v3-scope.md](2026-05-23-v3-scope.md), which covers the actually-real defects from the spike (perf indexes, /convert loader, Ask AI 4 layers, ingestion NULLs, plus optional dead-code cleanup and schema reconstruction).
+>
+> Leaving this file in place as historical record of what was investigated and why the plan changed shape.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make `reconcile-meta-ads-data.mjs` PASS for all year windows from 2024 through 2026 (currently FAILS for any window older than ~30 days with 75-178 mismatches per window), without regressing the last-30-day PASS result.
