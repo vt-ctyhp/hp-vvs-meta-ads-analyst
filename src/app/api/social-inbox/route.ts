@@ -7,8 +7,8 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
   try {
-    await requirePermissionFromRequest(request, "view_inbox");
-    return Response.json(await getSocialInboxData());
+    const profile = await requirePermissionFromRequest(request, "view_inbox");
+    return Response.json(await getSocialInboxData(profile));
   } catch (error) {
     return jsonError(error);
   }

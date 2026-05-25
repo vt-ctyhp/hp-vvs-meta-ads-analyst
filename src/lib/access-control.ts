@@ -76,7 +76,8 @@ export const APP_PERMISSIONS: Record<AppPermission, { label: string; description
   },
   manage_inbox_state: {
     label: "Manage Inbox State",
-    description: "Mark conversations read, snooze them, or assign them to a teammate.",
+    description:
+      "Mark conversations read, assign permitted conversations, and update inbox workflow state.",
   },
 };
 
@@ -113,15 +114,13 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       "view_ai_analysis",
       "view_inbox",
       "view_backfill",
-      "send_inbox_reply",
-      "manage_inbox_state",
     ],
   },
   {
     key: "sales",
     label: "Sales",
     description: "Inbox-only access for appointment and customer follow-up.",
-    roles: ["sales", "client_advisor", "joc"],
+    roles: ["sales"],
     permissions: ["view_inbox", "send_inbox_reply", "manage_inbox_state"],
   },
 ];
@@ -218,7 +217,7 @@ export function permissionsForRoles(roles: UserRole[]): AppPermission[] {
       continue;
     }
 
-    if (role === "sales" || role === "client_advisor" || role === "joc") {
+    if (role === "sales") {
       PERMISSION_GROUPS.find((group) => group.key === "sales")?.permissions.forEach((permission) =>
         permissions.add(permission),
       );

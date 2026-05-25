@@ -6,26 +6,19 @@ import { useState } from "react";
  * Reply composer with the PRD §11 human-approval guardrail.
  *
  * Flow:
- *   1. Operator types or clicks "Ask AI" → POST /api/social-inbox/suggest-reply.
- *      Returns a draft inserted into the textarea.
- *   2. Operator edits text.
- *   3. Send button enabled only when text non-empty and user has
+ *   1. Operator types a reply draft.
+ *   2. Send button enabled only when text non-empty and user has
  *      send_inbox_reply permission.
- *   4. First click on Send → shows a confirmation chip "Send as {brand}?".
- *   5. Second click on Send (or Confirm in chip) → POSTs to a real send
- *      endpoint (wired in a follow-up). For now, the second click is
- *      blocked behind a "Send wiring lands in verification phase" notice
- *      because the actual Meta page send + audit row + draft text
- *      comparison is the subject of PRD §11.
+ *   3. First click on Send → shows a confirmation chip "Send as {brand}?".
+ *   4. Second click on Send (or Confirm in chip) records a normalized
+ *      send attempt. Delivery/retry workers decide what can safely go to Meta.
  *
  * The component is deliberately small — every guardrail step is visible
  * inside this file so reviewers can audit the path.
  */
 
 type Props = {
-  platform: "facebook" | "instagram";
-  sourceType: "message" | "comment";
-  sourceId: string;
+  conversationId: string;
   brand: "HP" | "VVS" | "Unassigned";
   /** Roles include send_inbox_reply? */
   canSend: boolean;
@@ -33,72 +26,24 @@ type Props = {
 
 type DraftState = {
   text: string;
-  /** From AI suggestion endpoint when used. */
   draftId: string | null;
-  generating: boolean;
   confirming: boolean;
-  status: "idle" | "sending" | "sent" | "error";
+  status: "idle" | "sending" | "recorded" | "error";
   message: string | null;
 };
 
-const SUGGEST_LANG: "auto" | "en" | "vi" = "auto";
-
 export function ReplyComposer({
-  platform,
-  sourceType,
-  sourceId,
+  conversationId,
   brand,
   canSend,
 }: Props) {
   const [state, setState] = useState<DraftState>({
     text: "",
     draftId: null,
-    generating: false,
     confirming: false,
     status: "idle",
     message: null,
   });
-
-  async function suggest() {
-    if (state.generating) return;
-    setState((s) => ({ ...s, generating: true, message: null }));
-    try {
-      const response = await fetch("/api/social-inbox/suggest-reply", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          platform,
-          sourceType,
-          sourceId,
-          brand,
-          language: SUGGEST_LANG,
-        }),
-      });
-      // suggestSocialReply returns { suggestionId, draft, language, ... }.
-      const body = (await response.json().catch(() => ({}))) as {
-        draft?: string;
-        suggestionId?: string;
-        error?: string;
-      };
-      if (!response.ok) {
-        throw new Error(body.error || `Draft failed (${response.status})`);
-      }
-      setState((s) => ({
-        ...s,
-        generating: false,
-        text: body.draft ?? "",
-        draftId: body.suggestionId ?? null,
-        message: null,
-      }));
-    } catch (e) {
-      setState((s) => ({
-        ...s,
-        generating: false,
-        message: e instanceof Error ? e.message : "Could not draft a reply.",
-      }));
-    }
-  }
 
   function startConfirm() {
     if (!canSend || !state.text.trim()) return;
@@ -113,32 +58,31 @@ export function ReplyComposer({
     if (!canSend || !state.text.trim()) return;
     setState((s) => ({ ...s, status: "sending", message: null }));
     try {
-      const response = await fetch("/api/social-inbox/send-reply", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          platform,
-          sourceType,
-          sourceId,
-          brand,
-          text: state.text,
-          draftId: state.draftId,
-        }),
-      });
+      const response = await fetch(
+        `/api/social-inbox/conversations/${encodeURIComponent(conversationId)}/send-attempts`,
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            replyText: state.text,
+          }),
+        },
+      );
       const body = (await response.json().catch(() => ({}))) as {
         ok?: boolean;
         error?: string;
         notice?: string;
+        sendAttempt?: { status?: string };
       };
       if (!response.ok) {
         throw new Error(body.error || `Send failed (${response.status})`);
       }
       setState((s) => ({
         ...s,
-        status: "sent",
+        status: "recorded",
         confirming: false,
-        message: body.notice ?? "Recorded.",
+        message: body.notice ?? "Send attempt recorded.",
       }));
     } catch (e) {
       setState((s) => ({
@@ -163,7 +107,7 @@ export function ReplyComposer({
         value={state.text}
         onChange={(e) => setState((s) => ({ ...s, text: e.target.value }))}
         rows={5}
-        placeholder="Type or generate a reply…"
+        placeholder="Type a human-approved reply draft..."
         className="min-h-[84px] w-full resize-none border-0 bg-transparent px-4 py-3 text-[14px] text-hp-ink placeholder:text-hp-muted focus:outline-none"
       />
 
@@ -204,21 +148,16 @@ export function ReplyComposer({
             </>
           ) : (
             <>
-              <button
-                type="button"
-                onClick={suggest}
-                disabled={state.generating}
-                className="h-9 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted hover:border-hp-ink hover:text-hp-ink disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {state.generating ? "Drafting…" : "Ask AI"}
-              </button>
+              <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                Manual draft
+              </span>
               <button
                 type="button"
                 onClick={startConfirm}
                 disabled={!state.text.trim() || state.status === "sending" || !canSend}
                 className="h-9 border border-hp-ink bg-hp-ink px-4 text-[10px] uppercase tracking-[0.14em] text-hp-foundation hover:border-hp-pink hover:bg-hp-pink disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {state.status === "sent" ? "Sent" : "Send →"}
+                {state.status === "recorded" ? "Recorded" : "Send →"}
               </button>
             </>
           )}
@@ -229,7 +168,7 @@ export function ReplyComposer({
             className={
               state.status === "error"
                 ? "border-t border-hp-rule-soft px-4 py-3 text-xs text-signal-danger"
-                : state.status === "sent"
+                : state.status === "recorded"
                   ? "border-t border-hp-rule-soft px-4 py-3 text-xs text-signal-positive"
                   : "border-t border-hp-rule-soft px-4 py-3 text-xs text-hp-body"
             }

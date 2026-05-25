@@ -3,66 +3,42 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
-import type { SocialInboxComment, SocialInboxThread } from "@/lib/social-inbox";
+import type { MetaInboxMobileConversationItem } from "@/lib/meta-inbox-queue-view";
 
 /**
  * Mobile conversation list — full-screen card list with search.
  *
- * Each row links to /m/inbox/<id> for the detail view. Snoozed
- * conversations show a snooze chip; unread DMs show the count.
+ * Each row links to /m/inbox/<id> for the detail view. Unread DMs
+ * show the count.
  *
  * Search is client-side over name + body. Server-side full-text search
  * is a Phase 11 polish.
  */
 
 type Props = {
-  threads: SocialInboxThread[];
-  comments: SocialInboxComment[];
+  items: MetaInboxMobileConversationItem[];
 };
 
-type Item =
-  | { kind: "thread"; data: SocialInboxThread; at: string | null; href: string }
-  | { kind: "comment"; data: SocialInboxComment; at: string | null; href: string };
-
-export function ConversationListMobile({ threads, comments }: Props) {
+export function ConversationListMobile({ items: conversations }: Props) {
   const [query, setQuery] = useState("");
 
-  const items = useMemo<Item[]>(() => {
-    const merged: Item[] = [
-      ...threads.map<Item>((t) => ({
-        kind: "thread",
-        data: t,
-        at: t.last_message_at,
-        href: `/m/inbox/t-${encodeURIComponent(t.thread_id)}`,
-      })),
-      ...comments.map<Item>((c) => ({
-        kind: "comment",
-        data: c,
-        at: c.created_time,
-        href: `/m/inbox/c-${encodeURIComponent(c.comment_id)}`,
-      })),
-    ];
+  const items = useMemo<MetaInboxMobileConversationItem[]>(() => {
     const q = query.trim().toLowerCase();
     const filtered = q
-      ? merged.filter((item) => {
-          if (item.kind === "thread") {
-            return (
-              item.data.participant_name?.toLowerCase().includes(q) ||
-              item.data.snippet?.toLowerCase().includes(q)
-            );
-          }
-          return (
-            item.data.author_name?.toLowerCase().includes(q) ||
-            item.data.body?.toLowerCase().includes(q)
-          );
-        })
-      : merged;
+      ? conversations.filter(
+          (item) =>
+            item.sender.toLowerCase().includes(q) ||
+            item.preview.toLowerCase().includes(q) ||
+            item.queueCategoryKey.toLowerCase().includes(q) ||
+            item.sourceChannel.toLowerCase().includes(q),
+        )
+      : conversations;
     return filtered.sort((a, b) => {
-      const aTime = a.at ? Date.parse(a.at) : 0;
-      const bTime = b.at ? Date.parse(b.at) : 0;
+      const aTime = a.timestamp ? Date.parse(a.timestamp) : 0;
+      const bTime = b.timestamp ? Date.parse(b.timestamp) : 0;
       return bTime - aTime;
     });
-  }, [threads, comments, query]);
+  }, [conversations, query]);
 
   return (
     <div className="space-y-3">
@@ -87,36 +63,32 @@ export function ConversationListMobile({ threads, comments }: Props) {
               <Link
                 href={item.href}
                 className={`relative block border border-hp-rule bg-hp-card px-4 py-3 transition-colors hover:bg-hp-inset ${
-                  item.kind === "thread" && item.data.unread_count > 0 ? "pl-[18px]" : ""
+                  item.status === "Needs reply" ? "pl-[18px]" : ""
                 }`}
               >
-                {item.kind === "thread" && item.data.unread_count > 0 ? (
+                {item.status === "Needs reply" ? (
                   <span aria-hidden className="absolute top-0 bottom-0 left-0 w-[3px] bg-hp-pink" />
                 ) : null}
                 <div className="flex items-start gap-3">
                   <PlatformBadge
-                    platform={item.data.platform}
-                    kind={item.kind}
+                    platform={item.platform}
+                    kind={item.type}
                   />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="line-clamp-1 font-[family-name:var(--font-title)] text-base font-medium text-hp-ink">
-                        {item.kind === "thread"
-                          ? item.data.participant_name ?? "Unknown"
-                          : item.data.author_name ?? "Comment"}
+                        {item.sender}
                       </span>
                       <span className="ml-auto text-[10px] tabular-nums text-hp-muted">
-                        {relTime(item.at)}
+                        {relTime(item.timestamp)}
                       </span>
                     </div>
                     <p className="line-clamp-2 pt-0.5 text-[13px] text-hp-body">
-                      {item.kind === "thread"
-                        ? item.data.snippet ?? ""
-                        : item.data.body ?? ""}
+                      {item.preview}
                     </p>
-                    {item.kind === "thread" && item.data.unread_count > 0 ? (
+                    {item.status === "Needs reply" ? (
                       <span className="mt-1 inline-flex h-[22px] items-center bg-hp-pink px-2 text-[10px] font-medium text-hp-foundation">
-                        {item.data.unread_count} unread
+                        Needs reply
                       </span>
                     ) : null}
                   </div>
@@ -135,7 +107,7 @@ function PlatformBadge({
   kind,
 }: {
   platform: string;
-  kind: "thread" | "comment";
+  kind: "message" | "comment";
 }) {
   const platformLabel = platform === "facebook" ? "FB" : "IG";
   const platformStyle = platformBadgeStyle(platform, kind);
@@ -148,13 +120,13 @@ function PlatformBadge({
         {platformLabel}
       </span>
       <span className="text-[9px] uppercase tracking-[0.14em] text-hp-muted">
-        {kind === "thread" ? "Msg" : "Cmt"}
+        {kind === "message" ? "Msg" : "Cmt"}
       </span>
     </div>
   );
 }
 
-function platformBadgeStyle(platform: string, kind: "thread" | "comment") {
+function platformBadgeStyle(platform: string, kind: "message" | "comment") {
   if (kind === "comment") {
     return "border-hp-rule bg-hp-inset text-hp-muted";
   }

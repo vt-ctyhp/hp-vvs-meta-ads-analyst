@@ -51,7 +51,7 @@ export default async function WorkspaceLayout({
   return (
     <div className="min-h-screen text-hp-body">
       <header className="sticky top-0 z-30 border-b border-hp-rule bg-hp-card/90 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-7xl items-center gap-4 px-6">
+        <div className="mx-auto flex min-h-16 max-w-7xl flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3 md:h-16 md:flex-nowrap md:px-6 md:py-0">
           <a
             href={homeHref}
             className="font-[family-name:var(--font-title)] text-lg font-medium tracking-tight text-hp-ink"
@@ -59,7 +59,7 @@ export default async function WorkspaceLayout({
             HP / VVS
           </a>
           <WorkspaceNav rooms={rooms} permissions={profile.permissions} />
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             <HealthPill />
             <IdentityMenu
               email={profile.email}

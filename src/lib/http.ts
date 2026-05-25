@@ -12,6 +12,11 @@ export function jsonError(error: unknown, status = 500) {
     return NextResponse.json({ error: error.message }, { status: error.status });
   }
 
+  const errorStatus = statusCodeFromError(error);
+  if (errorStatus) {
+    return NextResponse.json({ error: safeErrorMessage(error) }, { status: errorStatus });
+  }
+
   if (error instanceof ConfigurationError) {
     return NextResponse.json(
       {
@@ -23,4 +28,19 @@ export function jsonError(error: unknown, status = 500) {
   }
 
   return NextResponse.json({ error: safeErrorMessage(error) }, { status });
+}
+
+function statusCodeFromError(error: unknown) {
+  const candidate = error as { status?: unknown } | null;
+  if (
+    candidate &&
+    typeof candidate.status === "number" &&
+    Number.isInteger(candidate.status) &&
+    candidate.status >= 400 &&
+    candidate.status <= 599
+  ) {
+    return candidate.status;
+  }
+
+  return null;
 }
