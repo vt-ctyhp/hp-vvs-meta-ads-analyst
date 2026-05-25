@@ -33,6 +33,7 @@ export async function POST(request: Request) {
       prompt?: string;
       outputMode?: unknown;
       parentRunId?: string | null;
+      removedContextKeys?: unknown;
     };
     const prompt = body.prompt?.trim();
 
@@ -45,6 +46,10 @@ export async function POST(request: Request) {
       outputMode: normalizeAnalysisOutputMode(body.outputMode),
     };
     if (body.parentRunId) input.parentRunId = body.parentRunId;
+    const removedContextKeys = Array.isArray(body.removedContextKeys)
+      ? body.removedContextKeys.filter((key): key is string => typeof key === "string")
+      : [];
+    if (removedContextKeys.length) input.removedContextKeys = removedContextKeys;
 
     return Response.json({ run: await createAnalysisWorkbenchRun(input) });
   } catch (error) {

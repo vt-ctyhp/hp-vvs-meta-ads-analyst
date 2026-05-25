@@ -59,6 +59,53 @@ test("analysis workbench shell lists recent runs for reopen", () => {
   assert.match(markup, /Answer \+ visuals/);
 });
 
+test("analysis workbench composer renders inherited context as removable chips", () => {
+  const { AnalysisWorkbenchClient } = loadModule("src/components/analysis-workbench-client.tsx");
+
+  const markup = renderToStaticMarkup(
+    React.createElement(AnalysisWorkbenchClient, {
+      initialRuns: [
+        {
+          id: "run-1",
+          status: "completed",
+          prompt: "Show spend by campaign group for Book Appts US last week.",
+          outputMode: "answer_visuals",
+          title: "Show spend by campaign group",
+          intent: {
+            dateRange: {
+              start: "2026-05-18",
+              end: "2026-05-24",
+              days: 7,
+              label: "Last 7 days",
+            },
+            filters: [
+              { field: "campaign_umbrella", operator: "equals", value: "Book Appts US" },
+            ],
+            metrics: ["spend"],
+            dimensions: ["campaign_umbrella"],
+            visual: null,
+          },
+          lineage: { parentRunId: null },
+          answer: { summary: "Spend was $2,500 [F1].", citations: [] },
+          sourceNotes: [],
+          visualCards: [],
+          facts: { status: "computed" },
+          validation: { status: "ready" },
+          dashboardPacket: null,
+          createdAt: "2026-05-25T14:30:00.000Z",
+          updatedAt: "2026-05-25T14:30:00.000Z",
+        },
+      ],
+    }),
+  );
+
+  assert.match(markup, /Inherited Context/);
+  assert.match(markup, /Last 7 days · 2026-05-18 to 2026-05-24/);
+  assert.match(markup, /Campaign group = Book Appts US/);
+  assert.match(markup, /Spend/);
+  assert.match(markup, /Remove inherited context Metric Spend/);
+});
+
 test("run detail renders answer, source notes, and structured visual cards", () => {
   const { RunDetail } = loadModule("src/components/analysis-workbench-client.tsx");
 
@@ -251,9 +298,46 @@ function loadModule(filePath: string) {
       if (id === "react") return React;
       if (id === "@/lib/analysis-workbench-contract") {
         return {
+          buildAnalysisContextChips(context: {
+            dateRange?: { start: string; end: string; label: string };
+            filters?: Array<{ field: string; value: string }>;
+            metrics?: string[];
+            dimensions?: string[];
+          } | null) {
+            if (!context) return [];
+            return [
+              ...(context.dateRange
+                ? [
+                    {
+                      id: "dateRange",
+                      label: "Date",
+                      value: `${context.dateRange.label} · ${context.dateRange.start} to ${context.dateRange.end}`,
+                    },
+                  ]
+                : []),
+              ...(context.filters || []).map((filter) => ({
+                id: `filter:${filter.field}:${filter.value}`,
+                label: "Filter",
+                value: "Campaign group = Book Appts US",
+              })),
+              ...(context.metrics || []).map((metric) => ({
+                id: `metric:${metric}`,
+                label: "Metric",
+                value: metric === "spend" ? "Spend" : metric,
+              })),
+              ...(context.dimensions || []).map((dimension) => ({
+                id: `dimension:${dimension}`,
+                label: "Grouping",
+                value: dimension === "campaign_umbrella" ? "Campaign group" : dimension,
+              })),
+            ];
+          },
           normalizeAnalysisOutputMode(value: unknown) {
             if (value === "answer_only" || value === "full_dashboard") return value;
             return "answer_visuals";
+          },
+          resolveAnalysisRunContext(run: { intent?: unknown }) {
+            return run.intent || null;
           },
         };
       }

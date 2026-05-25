@@ -32,6 +32,60 @@ test("analysis-runs POST creates a workbench run behind the AI analysis permissi
   ]);
 });
 
+test("analysis-runs POST passes parent lineage and removed context chip keys", async () => {
+  const calls: Array<{ name: string; args: unknown[] }> = [];
+  const route = loadRoute(calls);
+
+  const response = await route.POST(
+    jsonRequest("http://localhost/api/analysis-runs", {
+      prompt: "What changed?",
+      outputMode: "answer_visuals",
+      parentRunId: "run-parent",
+      removedContextKeys: ["metric:spend", "filter:brand:HP"],
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(serializable(calls), [
+    { name: "requirePermissionFromRequest", args: ["view_ai_analysis"] },
+    {
+      name: "createAnalysisWorkbenchRun",
+      args: [
+        {
+          prompt: "What changed?",
+          outputMode: "answer_visuals",
+          parentRunId: "run-parent",
+          removedContextKeys: ["metric:spend", "filter:brand:HP"],
+        },
+      ],
+    },
+  ]);
+});
+
+test("analysis-runs POST ignores invalid removed context chip payloads", async () => {
+  const calls: Array<{ name: string; args: unknown[] }> = [];
+  const route = loadRoute(calls);
+
+  const response = await route.POST(
+    jsonRequest("http://localhost/api/analysis-runs", {
+      prompt: "What changed?",
+      removedContextKeys: ["dateRange", 7, null],
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(serializable(calls.at(-1)), {
+    name: "createAnalysisWorkbenchRun",
+    args: [
+      {
+        prompt: "What changed?",
+        outputMode: "answer_visuals",
+        removedContextKeys: ["dateRange"],
+      },
+    ],
+  });
+});
+
 test("analysis-runs POST rejects an empty prompt before repository work", async () => {
   const calls: Array<{ name: string; args: unknown[] }> = [];
   const route = loadRoute(calls);

@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildAnalysisContextChips,
   buildAnalysisRunInsert,
   mapAnalysisRunRecord,
   normalizeAnalysisOutputMode,
+  resolveAnalysisRunContext,
 } from "../src/lib/analysis-workbench-contract.ts";
 
 test("buildAnalysisRunInsert creates the AIW-001 foundation run shape", () => {
@@ -21,7 +23,13 @@ test("buildAnalysisRunInsert creates the AIW-001 foundation run shape", () => {
   assert.equal(run.updated_at, "2026-05-25T14:30:00.000Z");
   assert.equal(run.title, "Which campaign groups moved this week?");
   assert.deepEqual(run.visual_cards, []);
-  assert.deepEqual(run.lineage, { parentRunId: null });
+  assert.deepEqual(run.lineage, {
+    parentRunId: null,
+    inheritedContext: null,
+    removedContextKeys: [],
+    changedContext: {},
+    finalContext: null,
+  });
   assert.deepEqual(run.intent, {
     rawPrompt: "Which campaign groups moved this week?",
     outputMode: "answer_visuals",
@@ -83,6 +91,117 @@ test("buildAnalysisRunInsert persists governed answer text, source notes, and vi
   assert.equal(
     (run.visual_cards as unknown as Array<{ type: string }>)[0]?.type,
     "metric_card",
+  );
+});
+
+test("buildAnalysisRunInsert persists follow-up lineage with inherited, changed, and final context", () => {
+  const run = buildAnalysisRunInsert({
+    prompt: "Now show CPL instead.",
+    outputMode: "answer_visuals",
+    parentRunId: "run-parent",
+    now: "2026-05-25T14:30:00.000Z",
+    inheritedContext: {
+      dateRange: {
+        start: "2026-05-18",
+        end: "2026-05-24",
+        days: 7,
+        label: "Last 7 days",
+      },
+      filters: [{ field: "brand", operator: "equals", value: "HP" }],
+      metrics: ["spend"],
+      dimensions: ["campaign_umbrella"],
+      visual: null,
+    },
+    removedContextKeys: ["metric:spend"],
+    pipelineResult: {
+      status: "completed",
+      title: "Now show CPL instead.",
+      intent: {
+        status: "ready",
+        rawPrompt: "Now show CPL instead.",
+        outputMode: "answer_visuals",
+        dateRange: {
+          start: "2026-05-18",
+          end: "2026-05-24",
+          days: 7,
+          label: "Last 7 days",
+        },
+        filters: [{ field: "brand", operator: "equals", value: "HP" }],
+        metrics: ["cpl"],
+        dimensions: ["campaign_umbrella"],
+        sort: { field: "cpl", direction: "desc" },
+        limit: 20,
+        visual: null,
+      },
+      queryPlan: {
+        status: "ready",
+        source: "meta_ads",
+        aggregateFunction: "aggregate_meta_daily_insights",
+        requests: [],
+      },
+      facts: { status: "computed", items: [] },
+      answer: { summary: "CPL was $20 [F1].", citations: [] },
+      sourceNotes: [],
+      validation: { status: "ready", blockers: [], warnings: [], assumptions: [] },
+      visualCards: [],
+      dashboardPacket: null,
+    },
+  });
+
+  assert.deepEqual(run.lineage, {
+    parentRunId: "run-parent",
+    inheritedContext: {
+      dateRange: {
+        start: "2026-05-18",
+        end: "2026-05-24",
+        days: 7,
+        label: "Last 7 days",
+      },
+      filters: [{ field: "brand", operator: "equals", value: "HP" }],
+      metrics: ["spend"],
+      dimensions: ["campaign_umbrella"],
+      visual: null,
+    },
+    removedContextKeys: ["metric:spend"],
+    changedContext: {
+      metrics: ["cpl"],
+    },
+    finalContext: {
+      dateRange: {
+        start: "2026-05-18",
+        end: "2026-05-24",
+        days: 7,
+        label: "Last 7 days",
+      },
+      filters: [{ field: "brand", operator: "equals", value: "HP" }],
+      metrics: ["cpl"],
+      dimensions: ["campaign_umbrella"],
+      visual: null,
+    },
+  });
+});
+
+test("resolveAnalysisRunContext builds removable inherited context chips from saved runs", () => {
+  const context = resolveAnalysisRunContext({
+    intent: {
+      dateRange: { start: "2026-05-18", end: "2026-05-24", days: 7, label: "Last 7 days" },
+      filters: [{ field: "campaign_umbrella", operator: "equals", value: "Book Appts US" }],
+      metrics: ["spend", "primary_results"],
+      dimensions: ["campaign_umbrella"],
+      visual: null,
+    },
+    lineage: { parentRunId: null },
+  });
+
+  assert.deepEqual(
+    buildAnalysisContextChips(context).map((chip) => [chip.id, chip.label, chip.value]),
+    [
+      ["dateRange", "Date", "Last 7 days · 2026-05-18 to 2026-05-24"],
+      ["filter:campaign_umbrella:Book Appts US", "Filter", "Campaign group = Book Appts US"],
+      ["metric:spend", "Metric", "Spend"],
+      ["metric:primary_results", "Metric", "Primary KPI"],
+      ["dimension:campaign_umbrella", "Grouping", "Campaign group"],
+    ],
   );
 });
 

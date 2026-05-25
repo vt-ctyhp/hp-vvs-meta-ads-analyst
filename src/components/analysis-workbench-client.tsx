@@ -1,11 +1,14 @@
 "use client";
 
-import { AlertTriangle, BarChart3, Clock3, FileText, Info, Loader2, Send, Table2 } from "lucide-react";
+import { AlertTriangle, BarChart3, Clock3, FileText, Info, Loader2, Send, Table2, X } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 
 import {
+  buildAnalysisContextChips,
   normalizeAnalysisOutputMode,
+  resolveAnalysisRunContext,
   type AnalysisOutputMode,
+  type AnalysisWorkbenchContextChip,
   type AnalysisRunStatus,
   type AnalysisWorkbenchVisualCard,
   type AnalysisWorkbenchVisualCell,
@@ -42,6 +45,7 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
   const [statusKind, setStatusKind] = useState<StatusKind>("idle");
+  const [removedContextKeys, setRemovedContextKeys] = useState<string[]>([]);
 
   const statusSentence = useMemo(() => {
     if (selectedRun) {
@@ -52,6 +56,12 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
 
     return "Create the first durable Ask AI run from one prompt.";
   }, [selectedRun]);
+  const inheritedContextChips = useMemo(() => {
+    const chips = buildAnalysisContextChips(
+      selectedRun ? resolveAnalysisRunContext(selectedRun) : null,
+    );
+    return chips.filter((chip) => !removedContextKeys.includes(chip.id));
+  }, [removedContextKeys, selectedRun]);
 
   async function submitRun() {
     const nextPrompt = prompt.trim();
@@ -65,7 +75,12 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
       const response = await fetch("/api/analysis-runs", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt: nextPrompt, outputMode }),
+        body: JSON.stringify({
+          prompt: nextPrompt,
+          outputMode,
+          ...(selectedRun ? { parentRunId: selectedRun.id } : {}),
+          ...(removedContextKeys.length ? { removedContextKeys } : {}),
+        }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Run creation failed");
@@ -73,6 +88,7 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
       setSelectedRun(run);
       setRuns((current) => [run, ...current.filter((item) => item.id !== run.id)].slice(0, 12));
       setPrompt("");
+      setRemovedContextKeys([]);
       setStatus("Run created.");
       setStatusKind("success");
     } catch (error) {
@@ -95,6 +111,7 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
       const run = payload.run as AnalysisWorkbenchRun;
       setSelectedRun(run);
       setOutputMode(normalizeAnalysisOutputMode(run.outputMode));
+      setRemovedContextKeys([]);
       setStatus("Run reopened.");
       setStatusKind("success");
     } catch (error) {
@@ -129,6 +146,14 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
               </div>
 
               <ModeSelector value={outputMode} onChange={setOutputMode} />
+              <InheritedContextChips
+                chips={inheritedContextChips}
+                onRemove={(id) =>
+                  setRemovedContextKeys((current) =>
+                    current.includes(id) ? current : [...current, id],
+                  )
+                }
+              />
 
               <textarea
                 value={prompt}
@@ -232,6 +257,43 @@ export function ModeSelector({
           </button>
         );
       })}
+    </div>
+  );
+}
+
+export function InheritedContextChips({
+  chips,
+  onRemove,
+}: {
+  chips: AnalysisWorkbenchContextChip[];
+  onRemove: (id: string) => void;
+}) {
+  if (!chips.length) return null;
+
+  return (
+    <div className="mt-4 border border-hp-rule bg-hp-foundation p-3">
+      <div className="mb-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+        Inherited Context
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {chips.map((chip) => (
+          <span
+            key={chip.id}
+            className="inline-flex min-h-9 max-w-full items-center gap-2 border border-hp-rule bg-hp-card px-2.5 py-1 text-[11px] uppercase tracking-[0.14em] text-hp-body"
+          >
+            <span className="text-hp-muted">{chip.label}</span>
+            <span className="normal-case tracking-normal text-hp-ink">{chip.value}</span>
+            <button
+              type="button"
+              onClick={() => onRemove(chip.id)}
+              aria-label={`Remove inherited context ${chip.label} ${chip.value}`}
+              className="-mr-1 inline-flex h-6 w-6 items-center justify-center border border-hp-rule text-hp-muted hover:border-hp-ink hover:text-hp-ink"
+            >
+              <X size={12} aria-hidden />
+            </button>
+          </span>
+        ))}
+      </div>
     </div>
   );
 }

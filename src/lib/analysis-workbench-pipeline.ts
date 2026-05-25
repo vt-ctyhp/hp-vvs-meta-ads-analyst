@@ -13,6 +13,7 @@ import {
 import type {
   AnalysisOutputMode,
   AnalysisRunStatus,
+  AnalysisWorkbenchContextSnapshot,
   AnalysisWorkbenchVisualCard,
 } from "./analysis-workbench-contract.ts";
 import type {
@@ -122,6 +123,7 @@ type PipelineInput = {
   prompt: string;
   outputMode: AnalysisOutputMode;
   latestSyncedInsightDate?: string | null;
+  inheritedContext?: AnalysisWorkbenchContextSnapshot | null;
   executeAggregate: (
     request: AnalysisWorkbenchPipelineAggregateRequest,
   ) => Promise<MetaInsightAggregateRow[]>;
@@ -161,6 +163,7 @@ export async function runAnalysisWorkbenchFactsPipeline(
     prompt,
     outputMode: input.outputMode,
     latestSyncedInsightDate: input.latestSyncedInsightDate,
+    inheritedContext: input.inheritedContext || null,
   });
 
   if (planned.semanticValidation.status === "blocked") {
@@ -266,12 +269,31 @@ function planAnalysisWorkbenchIntent(input: {
   prompt: string;
   outputMode: AnalysisOutputMode;
   latestSyncedInsightDate?: string | null;
+  inheritedContext?: AnalysisWorkbenchContextSnapshot | null;
 }): PlannedIntent {
-  const metrics = detectMetrics(input.prompt);
-  const dimensions = detectDimensions(input.prompt);
-  const filters = detectFilters(input.prompt);
+  const inheritedContext = input.inheritedContext || null;
+  const explicitMetrics = detectMetrics(input.prompt, false);
+  const explicitDimensions = detectDimensions(input.prompt, false);
+  const metrics = explicitMetrics.length
+    ? explicitMetrics
+    : inheritedContext?.metrics.length
+      ? inheritedContext.metrics
+      : DEFAULT_METRICS;
+  const dimensions = explicitDimensions.length
+    ? explicitDimensions
+    : inheritedContext?.dimensions.length
+      ? inheritedContext.dimensions
+      : DEFAULT_DIMENSIONS;
+  const filters = uniqueFilters([
+    ...(inheritedContext?.filters || []),
+    ...detectFilters(input.prompt),
+  ]);
   const visual = detectVisualIntent(input.prompt, metrics, dimensions);
-  const dateRange = resolvePromptDateRange(input.prompt, input.latestSyncedInsightDate);
+  const dateRange = resolvePromptDateRange(
+    input.prompt,
+    input.latestSyncedInsightDate,
+    inheritedContext?.dateRange || null,
+  );
   const dateGrain = dateGrainForDimensions(dimensions);
   const semanticValidation = validateAnalysisWorkbenchSemanticIntent({
     prompt: input.prompt,
@@ -861,7 +883,7 @@ function sourceNoteCitation(note: AnalysisWorkbenchSourceNote): AnalysisWorkbenc
   };
 }
 
-function detectMetrics(prompt: string): WorkbenchMetric[] {
+function detectMetrics(prompt: string, useDefault = true): WorkbenchMetric[] {
   const normalizedPrompt = normalizeToken(prompt);
   const catalog = getAnalysisWorkbenchSemanticCatalog();
   const detected = catalog.metrics
@@ -872,7 +894,8 @@ function detectMetrics(prompt: string): WorkbenchMetric[] {
     )
     .map((metric) => metric.key);
 
-  return unique(detected).slice(0, 4).length ? unique(detected).slice(0, 4) : DEFAULT_METRICS;
+  const metrics = unique(detected).slice(0, 4);
+  return metrics.length ? metrics : useDefault ? DEFAULT_METRICS : [];
 }
 
 function detectVisualIntent(
@@ -920,7 +943,7 @@ function detectVisualIntent(
   return null;
 }
 
-function detectDimensions(prompt: string): WorkbenchDimension[] {
+function detectDimensions(prompt: string, useDefault = true): WorkbenchDimension[] {
   const lower = prompt.toLowerCase();
   const dimensions: WorkbenchDimension[] = [];
   if (/\bby\s+(?:day|date)\b|\bdaily\b|\bper\s+day\b/.test(lower)) dimensions.push("date");
@@ -937,7 +960,8 @@ function detectDimensions(prompt: string): WorkbenchDimension[] {
   if (/\bby\s+ads?\b/.test(lower)) dimensions.push("ad");
   if (/\bby\s+(?:ad\s+)?creatives?\b/.test(lower)) dimensions.push("creative");
 
-  return unique(dimensions).length ? unique(dimensions).slice(0, 3) : DEFAULT_DIMENSIONS;
+  const detected = unique(dimensions).slice(0, 3);
+  return detected.length ? detected : useDefault ? DEFAULT_DIMENSIONS : [];
 }
 
 function dateGrainForDimensions(dimensions: WorkbenchDimension[]): WorkbenchDateGrain | null {
@@ -1028,11 +1052,18 @@ function detectFilters(prompt: string): WorkbenchSemanticFilter[] {
   return uniqueFilters(filters);
 }
 
-function resolvePromptDateRange(prompt: string, latestSyncedInsightDate?: string | null) {
+function resolvePromptDateRange(
+  prompt: string,
+  latestSyncedInsightDate?: string | null,
+  inheritedDateRange?: AnalysisWorkbenchContextSnapshot["dateRange"] | null,
+) {
+  const explicitDays = promptDays(prompt);
+  if (!explicitDays && inheritedDateRange) return inheritedDateRange;
+
   const end = isDateString(latestSyncedInsightDate)
     ? latestSyncedInsightDate
     : format(new Date(), "yyyy-MM-dd");
-  const days = promptDays(prompt);
+  const days = explicitDays || 30;
   const start = format(subDays(parseISO(end), days - 1), "yyyy-MM-dd");
 
   return {
@@ -1050,7 +1081,7 @@ function promptDays(prompt: string) {
   if (dayMatch) return wordNumber(dayMatch[1]) || 30;
   const weekMatch = lower.match(new RegExp(`\\b(?:last|past|previous|prior)\\s+${numberPattern}\\s+weeks?\\b`));
   if (weekMatch) return (wordNumber(weekMatch[1]) || 4) * 7;
-  return 30;
+  return null;
 }
 
 function wordNumber(value: string) {

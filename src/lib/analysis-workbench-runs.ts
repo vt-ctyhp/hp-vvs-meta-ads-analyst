@@ -2,6 +2,8 @@ import {
   buildAnalysisRunInsert,
   mapAnalysisRunRecord,
   normalizeAnalysisOutputMode,
+  removeAnalysisContextChips,
+  resolveAnalysisRunContext,
   type AnalysisOutputMode,
   type AnalysisRunRecord,
   type AnalysisWorkbenchRun,
@@ -44,6 +46,7 @@ export async function createAnalysisWorkbenchRun(input: {
   prompt: string;
   outputMode?: AnalysisOutputMode;
   parentRunId?: string | null;
+  removedContextKeys?: string[];
 }): Promise<AnalysisWorkbenchRun> {
   const missing = getMissingDashboardEnv();
   if (missing.length) {
@@ -52,10 +55,16 @@ export async function createAnalysisWorkbenchRun(input: {
 
   const outputMode = normalizeAnalysisOutputMode(input.outputMode);
   const latestSyncedInsightDate = await fetchLatestSyncedInsightDate();
+  const parentRun = input.parentRunId ? await getAnalysisWorkbenchRun(input.parentRunId) : null;
+  const inheritedContext = removeAnalysisContextChips(
+    parentRun ? resolveAnalysisRunContext(parentRun) : null,
+    input.removedContextKeys || [],
+  );
   const pipelineResult = await runAnalysisWorkbenchFactsPipeline({
     prompt: input.prompt,
     outputMode,
     latestSyncedInsightDate,
+    inheritedContext,
     executeAggregate: async (request) =>
       aggregateMetaInsights({
         start: request.start,
@@ -72,6 +81,8 @@ export async function createAnalysisWorkbenchRun(input: {
     prompt: input.prompt,
     outputMode,
     parentRunId: input.parentRunId,
+    inheritedContext,
+    removedContextKeys: input.removedContextKeys || [],
     pipelineResult,
   });
 

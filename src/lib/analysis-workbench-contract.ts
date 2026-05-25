@@ -1,7 +1,15 @@
-import { validateAnalysisWorkbenchSemanticIntent } from "./analysis-workbench-semantic-catalog.ts";
+import {
+  WORKBENCH_DIMENSIONS,
+  WORKBENCH_FILTERS,
+  WORKBENCH_METRICS,
+  getAnalysisWorkbenchSemanticCatalog,
+  validateAnalysisWorkbenchSemanticIntent,
+} from "./analysis-workbench-semantic-catalog.ts";
 import type {
   WorkbenchDimension,
+  WorkbenchFilterField,
   WorkbenchMetric,
+  WorkbenchSemanticVisualIntent,
 } from "./analysis-workbench-semantic-catalog.ts";
 import type { AnalysisWorkbenchPipelineResult } from "./analysis-workbench-pipeline.ts";
 
@@ -25,6 +33,43 @@ export type AnalysisRunStatus = "created" | "running" | "completed" | "failed";
 export type AnalysisRunAnswer = {
   summary: string;
   citations: JsonValue[];
+};
+
+export type AnalysisWorkbenchContextDateRange = {
+  start: string;
+  end: string;
+  days: number;
+  label: string;
+};
+
+export type AnalysisWorkbenchContextFilter = {
+  field: WorkbenchFilterField;
+  operator: "contains" | "equals";
+  value: string;
+};
+
+export type AnalysisWorkbenchContextSnapshot = {
+  dateRange?: AnalysisWorkbenchContextDateRange;
+  filters: AnalysisWorkbenchContextFilter[];
+  metrics: WorkbenchMetric[];
+  dimensions: WorkbenchDimension[];
+  visual: WorkbenchSemanticVisualIntent | null;
+};
+
+export type AnalysisWorkbenchContextChanges = Partial<AnalysisWorkbenchContextSnapshot>;
+
+export type AnalysisWorkbenchLineage = {
+  parentRunId: string | null;
+  inheritedContext: AnalysisWorkbenchContextSnapshot | null;
+  removedContextKeys: string[];
+  changedContext: AnalysisWorkbenchContextChanges;
+  finalContext: AnalysisWorkbenchContextSnapshot | null;
+};
+
+export type AnalysisWorkbenchContextChip = {
+  id: string;
+  label: "Date" | "Filter" | "Metric" | "Grouping" | "Visual";
+  value: string;
 };
 
 export type AnalysisWorkbenchVisualCell =
@@ -202,6 +247,8 @@ export function buildAnalysisRunInsert(input: {
   prompt: string;
   outputMode?: unknown;
   parentRunId?: string | null;
+  inheritedContext?: AnalysisWorkbenchContextSnapshot | null;
+  removedContextKeys?: string[];
   now?: string;
   pipelineResult?: AnalysisWorkbenchPipelineResult;
 }): AnalysisRunInsert {
@@ -224,9 +271,15 @@ export function buildAnalysisRunInsert(input: {
       visual_cards: input.pipelineResult.visualCards as unknown as JsonValue[],
       source_notes: input.pipelineResult.sourceNotes as unknown as JsonValue[],
       validation: input.pipelineResult.validation as JsonValue,
-      lineage: {
+      lineage: buildAnalysisRunLineage({
         parentRunId: input.parentRunId || null,
-      },
+        inheritedContext: input.inheritedContext || null,
+        removedContextKeys: input.removedContextKeys || [],
+        finalContext: resolveAnalysisRunContext({
+          intent: input.pipelineResult.intent as JsonValue,
+          lineage: null,
+        }),
+      }) as unknown as JsonValue,
       answer: input.pipelineResult.answer as unknown as JsonValue,
       dashboard_packet: input.pipelineResult.dashboardPacket,
       created_at: now,
@@ -275,6 +328,10 @@ export function buildAnalysisRunInsert(input: {
         },
     lineage: {
       parentRunId: input.parentRunId || null,
+      inheritedContext: null,
+      removedContextKeys: [],
+      changedContext: {},
+      finalContext: null,
     },
     answer: {
       summary: blocked
@@ -286,6 +343,101 @@ export function buildAnalysisRunInsert(input: {
     created_at: now,
     updated_at: now,
   };
+}
+
+export function buildAnalysisRunLineage(input: {
+  parentRunId?: string | null;
+  inheritedContext?: unknown;
+  removedContextKeys?: string[];
+  finalContext?: unknown;
+}): AnalysisWorkbenchLineage {
+  const inheritedContext = normalizeAnalysisContextSnapshot(input.inheritedContext);
+  const finalContext = normalizeAnalysisContextSnapshot(input.finalContext);
+
+  return {
+    parentRunId: input.parentRunId || null,
+    inheritedContext,
+    removedContextKeys: uniqueStrings(input.removedContextKeys || []),
+    changedContext: changedAnalysisContext(inheritedContext, finalContext),
+    finalContext,
+  };
+}
+
+export function resolveAnalysisRunContext(input: {
+  intent?: unknown;
+  lineage?: unknown;
+}): AnalysisWorkbenchContextSnapshot | null {
+  const lineage =
+    input.lineage && typeof input.lineage === "object" && !Array.isArray(input.lineage)
+      ? (input.lineage as { finalContext?: unknown })
+      : null;
+  const lineageContext = normalizeAnalysisContextSnapshot(lineage?.finalContext);
+  if (lineageContext) return lineageContext;
+
+  return normalizeAnalysisContextSnapshot(input.intent);
+}
+
+export function buildAnalysisContextChips(
+  context: AnalysisWorkbenchContextSnapshot | null,
+): AnalysisWorkbenchContextChip[] {
+  if (!context) return [];
+
+  return [
+    ...(context.dateRange
+      ? [
+          {
+            id: "dateRange",
+            label: "Date" as const,
+            value: `${context.dateRange.label} · ${context.dateRange.start} to ${context.dateRange.end}`,
+          },
+        ]
+      : []),
+    ...context.filters.map((filter) => ({
+      id: `filter:${filter.field}:${filter.value}`,
+      label: "Filter" as const,
+      value: `${contextLabel(filter.field)} = ${filter.value}`,
+    })),
+    ...context.metrics.map((metric) => ({
+      id: `metric:${metric}`,
+      label: "Metric" as const,
+      value: contextLabel(metric),
+    })),
+    ...context.dimensions.map((dimension) => ({
+      id: `dimension:${dimension}`,
+      label: "Grouping" as const,
+      value: contextLabel(dimension),
+    })),
+    ...(context.visual
+      ? [
+          {
+            id: "visual",
+            label: "Visual" as const,
+            value: contextLabel(context.visual.type),
+          },
+        ]
+      : []),
+  ];
+}
+
+export function removeAnalysisContextChips(
+  context: AnalysisWorkbenchContextSnapshot | null,
+  removedContextKeys: string[],
+): AnalysisWorkbenchContextSnapshot | null {
+  if (!context) return null;
+
+  const removed = new Set(removedContextKeys);
+  return normalizeAnalysisContextSnapshot({
+    ...context,
+    dateRange: removed.has("dateRange") ? undefined : context.dateRange,
+    filters: context.filters.filter(
+      (filter) => !removed.has(`filter:${filter.field}:${filter.value}`),
+    ),
+    metrics: context.metrics.filter((metric) => !removed.has(`metric:${metric}`)),
+    dimensions: context.dimensions.filter(
+      (dimension) => !removed.has(`dimension:${dimension}`),
+    ),
+    visual: removed.has("visual") ? null : context.visual,
+  });
 }
 
 export function mapAnalysisRunRecord(record: AnalysisRunRecord): AnalysisWorkbenchRun {
@@ -340,4 +492,144 @@ function normalizeAnswer(answer: JsonValue): AnalysisRunAnswer {
     summary: "Run created. Governed facts, citations, and visuals have not run yet.",
     citations: [],
   };
+}
+
+function normalizeAnalysisContextSnapshot(value: unknown): AnalysisWorkbenchContextSnapshot | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as {
+    dateRange?: unknown;
+    filters?: unknown;
+    metrics?: unknown;
+    dimensions?: unknown;
+    visual?: unknown;
+  };
+  const metrics = uniqueStrings(Array.isArray(candidate.metrics) ? candidate.metrics : []).filter(
+    isWorkbenchMetric,
+  );
+  const dimensions = uniqueStrings(
+    Array.isArray(candidate.dimensions) ? candidate.dimensions : [],
+  ).filter(isWorkbenchDimension);
+  const filters = normalizeContextFilters(candidate.filters);
+  const dateRange = normalizeContextDateRange(candidate.dateRange);
+  const visual = normalizeContextVisual(candidate.visual);
+
+  if (!dateRange && !filters.length && !metrics.length && !dimensions.length && !visual) {
+    return null;
+  }
+
+  return {
+    ...(dateRange ? { dateRange } : {}),
+    filters,
+    metrics,
+    dimensions,
+    visual,
+  };
+}
+
+function normalizeContextDateRange(value: unknown): AnalysisWorkbenchContextDateRange | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const candidate = value as { start?: unknown; end?: unknown; days?: unknown; label?: unknown };
+  if (!isDateString(candidate.start) || !isDateString(candidate.end)) return undefined;
+  const days = typeof candidate.days === "number" && candidate.days > 0 ? candidate.days : 0;
+  if (!days) return undefined;
+
+  return {
+    start: candidate.start,
+    end: candidate.end,
+    days,
+    label: typeof candidate.label === "string" && candidate.label ? candidate.label : `Last ${days} days`,
+  };
+}
+
+function normalizeContextFilters(value: unknown): AnalysisWorkbenchContextFilter[] {
+  if (!Array.isArray(value)) return [];
+  const filters = value.flatMap((filter) => {
+    if (!filter || typeof filter !== "object" || Array.isArray(filter)) return [];
+    const candidate = filter as { field?: unknown; operator?: unknown; value?: unknown };
+    if (!isWorkbenchFilterField(candidate.field) || typeof candidate.value !== "string") return [];
+    const operator: AnalysisWorkbenchContextFilter["operator"] =
+      candidate.operator === "contains" ? "contains" : "equals";
+    return [{ field: candidate.field, operator, value: candidate.value }];
+  });
+
+  const seen = new Set<string>();
+  return filters.filter((filter) => {
+    const key = `${filter.field}\0${filter.operator}\0${filter.value}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function normalizeContextVisual(value: unknown): WorkbenchSemanticVisualIntent | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as WorkbenchSemanticVisualIntent;
+  return typeof candidate.type === "string" && candidate.type ? candidate : null;
+}
+
+function changedAnalysisContext(
+  inheritedContext: AnalysisWorkbenchContextSnapshot | null,
+  finalContext: AnalysisWorkbenchContextSnapshot | null,
+): AnalysisWorkbenchContextChanges {
+  if (!finalContext) return {};
+  if (!inheritedContext) return finalContext;
+
+  return {
+    ...(!sameJson(inheritedContext.dateRange || null, finalContext.dateRange || null)
+      ? { dateRange: finalContext.dateRange }
+      : {}),
+    ...(!sameJson(inheritedContext.filters, finalContext.filters)
+      ? { filters: finalContext.filters }
+      : {}),
+    ...(!sameJson(inheritedContext.metrics, finalContext.metrics)
+      ? { metrics: finalContext.metrics }
+      : {}),
+    ...(!sameJson(inheritedContext.dimensions, finalContext.dimensions)
+      ? { dimensions: finalContext.dimensions }
+      : {}),
+    ...(!sameJson(inheritedContext.visual || null, finalContext.visual || null)
+      ? { visual: finalContext.visual }
+      : {}),
+  };
+}
+
+function contextLabel(value: string) {
+  if (value === "campaign_umbrella") return "Campaign group";
+  const catalog = getAnalysisWorkbenchSemanticCatalog();
+  const label =
+    catalog.metrics.find((definition) => definition.key === value)?.label ||
+    catalog.dimensions.find((definition) => definition.key === value)?.label ||
+    catalog.filters.find((definition) => definition.key === value)?.label;
+  if (label) return label;
+
+  return value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function uniqueStrings(values: unknown[]) {
+  return Array.from(new Set(values.filter((value): value is string => typeof value === "string")));
+}
+
+function isWorkbenchMetric(value: string): value is WorkbenchMetric {
+  return WORKBENCH_METRICS.includes(value as WorkbenchMetric);
+}
+
+function isWorkbenchDimension(value: string): value is WorkbenchDimension {
+  return WORKBENCH_DIMENSIONS.includes(value as WorkbenchDimension);
+}
+
+function isWorkbenchFilterField(value: unknown): value is WorkbenchFilterField {
+  return (
+    typeof value === "string" &&
+    WORKBENCH_FILTERS.includes(value as WorkbenchFilterField)
+  );
+}
+
+function isDateString(value: unknown): value is string {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function sameJson(left: unknown, right: unknown) {
+  return JSON.stringify(left) === JSON.stringify(right);
 }

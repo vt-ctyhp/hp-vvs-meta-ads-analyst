@@ -294,6 +294,120 @@ test("incompatible scatter requests repair to compatible bar charts when obvious
   );
 });
 
+test("follow-up prompts inherit visible date, filters, metrics, and grouping context", async () => {
+  const requests: AnalysisWorkbenchPipelineAggregateRequest[] = [];
+  const result = await runAnalysisWorkbenchFactsPipeline({
+    prompt: "What changed?",
+    outputMode: "answer_visuals",
+    latestSyncedInsightDate: "2026-05-24",
+    inheritedContext: {
+      dateRange: {
+        start: "2026-05-18",
+        end: "2026-05-24",
+        days: 7,
+        label: "Last 7 days",
+      },
+      filters: [{ field: "campaign_umbrella", operator: "equals", value: "Book Appts US" }],
+      metrics: ["spend", "primary_results"],
+      dimensions: ["campaign_umbrella"],
+      visual: null,
+    },
+    executeAggregate: async (request) => {
+      requests.push(request);
+      if (request.dimensions.includes("date")) {
+        return [aggregateRow({ date: "2026-05-24", spend: 700, primary_results: 7, source_rows: 2 })];
+      }
+
+      return request.dimensions.length
+        ? [aggregateRow({ campaign_umbrella: "Book Appts US", spend: 2500, primary_results: 25, source_rows: 8 })]
+        : [aggregateRow({ spend: 2500, primary_results: 25, source_rows: 8 })];
+    },
+  });
+
+  assert.equal(result.status, "completed");
+  assert.deepEqual(result.intent, {
+    status: "ready",
+    rawPrompt: "What changed?",
+    outputMode: "answer_visuals",
+    metrics: ["spend", "primary_results"],
+    dimensions: ["campaign_umbrella"],
+    filters: [{ field: "campaign_umbrella", operator: "equals", value: "Book Appts US" }],
+    dateRange: {
+      start: "2026-05-18",
+      end: "2026-05-24",
+      days: 7,
+      label: "Last 7 days",
+    },
+    sort: { field: "spend", direction: "desc" },
+    limit: 20,
+    visual: null,
+  });
+  assert.deepEqual(
+    requests.map((request) => ({
+      start: request.start,
+      end: request.end,
+      dimensions: request.dimensions,
+      metrics: request.metrics,
+      filters: request.filters,
+    })),
+    [
+      {
+        start: "2026-05-18",
+        end: "2026-05-24",
+        dimensions: ["campaign_umbrella"],
+        metrics: ["spend", "primary_results"],
+        filters: [{ field: "campaign_umbrella", operator: "equals", value: "Book Appts US" }],
+      },
+      {
+        start: "2026-05-18",
+        end: "2026-05-24",
+        dimensions: [],
+        metrics: ["spend", "primary_results"],
+        filters: [{ field: "campaign_umbrella", operator: "equals", value: "Book Appts US" }],
+      },
+      {
+        start: "2026-05-18",
+        end: "2026-05-24",
+        dimensions: ["date"],
+        metrics: ["spend", "primary_results"],
+        filters: [{ field: "campaign_umbrella", operator: "equals", value: "Book Appts US" }],
+      },
+    ],
+  );
+  assert.match(result.answer.summary, /Book Appts US/);
+});
+
+test("removed follow-up context chips are not applied to the next run", async () => {
+  const requests: AnalysisWorkbenchPipelineAggregateRequest[] = [];
+  const result = await runAnalysisWorkbenchFactsPipeline({
+    prompt: "Show CPL instead.",
+    outputMode: "answer_only",
+    latestSyncedInsightDate: "2026-05-24",
+    inheritedContext: {
+      dateRange: {
+        start: "2026-05-18",
+        end: "2026-05-24",
+        days: 7,
+        label: "Last 7 days",
+      },
+      filters: [],
+      metrics: [],
+      dimensions: ["campaign_umbrella"],
+      visual: null,
+    },
+    executeAggregate: async (request) => {
+      requests.push(request);
+      return request.dimensions.length
+        ? [aggregateRow({ campaign_umbrella: "Book Appts US", cpl: 20, source_rows: 8 })]
+        : [aggregateRow({ cpl: 20, source_rows: 8 })];
+    },
+  });
+
+  assert.equal(result.status, "completed");
+  assert.deepEqual(result.intent.metrics, ["cpl"]);
+  assert.deepEqual(requests.map((request) => request.metrics), [["cpl"], ["cpl"]]);
+});
+
 test("impossible scatter requests block before aggregate queries run", async () => {
   let queryCount = 0;
   const result = await runAnalysisWorkbenchFactsPipeline({
