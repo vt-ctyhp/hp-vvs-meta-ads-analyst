@@ -4,14 +4,15 @@
 
 import {
   AlertTriangle,
-  CalendarRange,
+  ChevronDown,
   ChevronRight,
-  FileDown,
+  ChevronUp,
+  ChevronsUpDown,
   Search,
 } from "lucide-react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
-  type FormEvent,
   memo,
   useCallback,
   useDeferredValue,
@@ -19,15 +20,6 @@ import {
   useMemo,
   useState,
 } from "react";
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 
 import type { AppPermission } from "@/lib/access-control";
 import {
@@ -329,41 +321,6 @@ export function DashboardClient({
     data.sourceTransparency.timeRange,
   ]);
 
-  const trendRows = useMemo(() => {
-    const aggregate = (
-      rows: DashboardPayload["dailyTrend"],
-    ): Map<string, Record<string, number>> => {
-      const map = new Map<string, Record<string, number>>();
-      for (const row of rows) {
-        if (brand !== "all" && row.brandCode !== brand) continue;
-        if (umbrella !== "all" && row.campaignUmbrella !== umbrella) continue;
-        const existing = map.get(row.date) || {};
-        const spendKey = `${row.brandCode} spend`;
-        const ctrKey = `${row.brandCode} ctr`;
-        existing[spendKey] = (existing[spendKey] || 0) + row.spend;
-        existing[ctrKey] = row.ctr;
-        map.set(row.date, existing);
-      }
-      return map;
-    };
-
-    const currentByDate = aggregate(data.dailyTrend);
-    const priorByDate = aggregate(data.comparison.dailyTrend);
-    const currentDates = Array.from(currentByDate.keys()).sort();
-    const priorDates = Array.from(priorByDate.keys()).sort();
-
-    return currentDates.map((date, index) => {
-      const current = currentByDate.get(date) || {};
-      const priorDate = priorDates[index];
-      const priorEntry = priorDate ? priorByDate.get(priorDate) || {} : {};
-      const merged: Record<string, string | number> = { date, ...current };
-      for (const [key, value] of Object.entries(priorEntry)) {
-        merged[`${key} prior`] = value;
-      }
-      return merged;
-    });
-  }, [brand, data.comparison.dailyTrend, data.dailyTrend, umbrella]);
-
   const applyDateRange = useCallback(function applyDateRange(nextStart = startDate, nextEnd = endDate) {
     if (!nextStart || !nextEnd) return;
     const url = new URL(window.location.href);
@@ -620,8 +577,45 @@ export function DashboardClient({
           query,
         })}
       >
-        <section className="mx-auto mt-6 flex max-w-7xl flex-col gap-4 border-y border-hp-rule py-4 xl:flex-row xl:flex-wrap xl:items-center xl:justify-between xl:gap-x-6">
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+        <section className="mx-auto mt-6 max-w-7xl border-y border-hp-rule">
+          {/* Row 1: date window + brand + Apply. Per-control eyebrows
+              (Brand) carry context; no row-level eyebrow. */}
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              applyDateRange();
+            }}
+            className="flex flex-wrap items-center gap-x-5 gap-y-3 py-3"
+          >
+            <div className="flex items-center gap-1">
+              {[7, 14, 30].map((days) => (
+                <button
+                  type="button"
+                  key={days}
+                  onClick={() => applyQuickRange(days)}
+                  className="h-9 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-body transition-colors hover:border-hp-ink hover:text-hp-ink"
+                >
+                  {days}D
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 border border-hp-rule px-3 py-1">
+              <input
+                aria-label="Start date"
+                type="date"
+                value={startDate}
+                onChange={(event) => setStartDate(event.target.value)}
+                className="h-7 bg-transparent text-sm outline-none"
+              />
+              <span className="text-hp-muted">to</span>
+              <input
+                aria-label="End date"
+                type="date"
+                value={endDate}
+                onChange={(event) => setEndDate(event.target.value)}
+                className="h-7 bg-transparent text-sm outline-none"
+              />
+            </div>
             <FilterChipGroup
               label="Brand"
               value={brand}
@@ -631,45 +625,112 @@ export function DashboardClient({
                 label: option === "all" ? "All Brands" : option,
               }))}
             />
+            <button
+              type="submit"
+              disabled={isApplyingRange}
+              className="h-9 border border-hp-ink px-3 text-[10px] uppercase tracking-[0.14em] text-hp-ink transition-colors hover:bg-hp-ink hover:text-hp-foundation disabled:cursor-not-allowed disabled:opacity-55"
+            >
+              {isApplyingRange ? "Updating" : "Apply"}
+            </button>
+          </form>
+
+          {/* Row 2: delivery + search + comparison controls. Per-control
+              eyebrows carry context; no row-level eyebrow. */}
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-3 border-t border-hp-rule py-3">
             <FilterChipGroup
               label="Delivery"
               value={delivery}
               onChange={(value) => setDelivery(value as DeliveryFilter)}
               options={[
                 { value: "all", label: "All" },
-                { value: "active", label: "Active" },
+                { value: "active", label: "Live" },
                 { value: "paused", label: "Paused" },
               ]}
             />
-            <label className="flex min-w-0 items-center gap-2 border-b border-hp-rule px-1 py-2 focus-within:border-hp-pink sm:w-64">
-              <Search size={16} className="text-hp-muted" />
+            <label className="flex min-w-0 items-center gap-2 border border-hp-rule px-3 py-1 focus-within:border-hp-ink sm:w-64">
+              <Search size={14} className="text-hp-muted" />
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder={lazyHierarchy ? "Search loaded rows" : "Search creatives"}
-                className="w-full bg-transparent text-sm outline-none placeholder:text-hp-muted"
+                className="h-7 w-full bg-transparent text-sm outline-none placeholder:text-hp-muted"
               />
             </label>
+            <label
+              title={
+                compareEnabled && data.comparison.timeRange.start
+                  ? `Comparing to ${data.comparison.timeRange.start} to ${data.comparison.timeRange.end}`
+                  : "Toggle prior-period comparison"
+              }
+              className={`flex h-9 items-center gap-2 border px-3 text-[10px] uppercase tracking-[0.14em] transition-colors ${
+                compareEnabled
+                  ? "border-hp-ink bg-hp-ink text-hp-foundation"
+                  : "border-hp-rule text-hp-body hover:border-hp-ink hover:text-hp-ink"
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={compareEnabled}
+                onChange={(event) => setCompareEnabled(event.target.checked)}
+                className="sr-only"
+              />
+              vs prior period
+            </label>
+            {compareEnabled ? (
+              <>
+                <label className="flex h-9 items-center gap-2 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-body">
+                  <span>Periods</span>
+                  <select
+                    value={periodCount}
+                    onChange={(event) =>
+                      changePeriodCount(Number(event.target.value) as AnalystPeriodCount)
+                    }
+                    className="bg-transparent text-hp-ink outline-none"
+                  >
+                    {ANALYST_PERIOD_COUNTS.map((count) => (
+                      <option key={count} value={count}>
+                        {count}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex h-9 items-center gap-2 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-body">
+                  <span>Metric</span>
+                  <select
+                    value={periodMetric}
+                    onChange={(event) =>
+                      changePeriodMetric(event.target.value as PeriodMetric)
+                    }
+                    className="bg-transparent text-hp-ink outline-none"
+                  >
+                    {PERIOD_METRIC_OPTIONS.map((metric) => (
+                      <option key={metric} value={metric}>
+                        {periodMetricLabel(metric, currentPrimaryResultLabel)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            ) : null}
           </div>
 
-          <DateRangeControls
-            startDate={startDate}
-            endDate={endDate}
-            onStartDateChange={setStartDate}
-            onEndDateChange={setEndDate}
-            onApply={applyDateRange}
-            onQuickRange={applyQuickRange}
-            isApplying={isApplyingRange}
-            compareEnabled={compareEnabled}
-            onCompareChange={setCompareEnabled}
-            periodCount={periodCount}
-            onPeriodCountChange={changePeriodCount}
-            periodMetric={periodMetric}
-            onPeriodMetricChange={changePeriodMetric}
-            periodWindows={periodWindows}
-            comparisonRange={data.comparison.timeRange}
-            primaryResultLabel={currentPrimaryResultLabel}
-          />
+          {/* Period windows preview when comparing */}
+          {compareEnabled && periodWindows.length ? (
+            <div className="flex w-full flex-wrap items-center gap-2 border-t border-hp-rule py-3 text-[10px] uppercase tracking-[0.12em] text-hp-muted">
+              {periodWindows.map((period) => (
+                <span
+                  key={period.key}
+                  className={`shrink-0 border px-2 py-1 ${
+                    period.isCurrent
+                      ? "border-hp-ink text-hp-ink"
+                      : "border-hp-rule text-hp-muted"
+                  }`}
+                >
+                  {period.label}
+                </span>
+              ))}
+            </div>
+          ) : null}
         </section>
 
         <section className="mx-auto mt-6 max-w-7xl">
@@ -680,63 +741,6 @@ export function DashboardClient({
           />
         </section>
       </UniversalFilterBar>
-
-      <section className="mx-auto mt-6 w-full max-w-7xl min-w-0">
-        <div className="min-w-0 border border-hp-rule bg-hp-card p-6">
-          <SectionHeader eyebrow="Trend Analysis" title="Filtered spend and response" />
-          <div className="h-72 min-w-0">
-            <ResponsiveContainer
-              width="100%"
-              height="100%"
-              initialDimension={{ width: 1, height: 1 }}
-            >
-              <LineChart data={trendRows} margin={{ top: 8, right: 18, bottom: 0, left: 0 }}>
-                <CartesianGrid stroke="#D4CFC4" vertical={false} />
-                <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fill: "#8A8178", fontSize: 11 }} />
-                <YAxis tickLine={false} axisLine={false} tick={{ fill: "#8A8178", fontSize: 11 }} />
-                <Tooltip
-                  contentStyle={{
-                    background: "#FBF7F1",
-                    border: "1px solid #D4CFC4",
-                    borderRadius: 2,
-                    color: "#2A2725",
-                  }}
-                />
-                <Line type="monotone" dataKey="HP spend" stroke="#2A2725" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="VVS spend" stroke="#8B5B19" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="HP ctr" stroke="#245D4D" strokeWidth={1.5} dot={false} />
-                <Line type="monotone" dataKey="VVS ctr" stroke="#8D2E2E" strokeWidth={1.5} dot={false} />
-                {compareEnabled ? (
-                  <>
-                    <Line
-                      type="monotone"
-                      dataKey="HP spend prior"
-                      stroke="#2A2725"
-                      strokeWidth={1}
-                      strokeDasharray="4 4"
-                      strokeOpacity={0.5}
-                      dot={false}
-                      isAnimationActive={false}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="VVS spend prior"
-                      stroke="#8B5B19"
-                      strokeWidth={1}
-                      strokeDasharray="4 4"
-                      strokeOpacity={0.5}
-                      dot={false}
-                      isAnimationActive={false}
-                    />
-                  </>
-                ) : null}
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </section>
-
-      <div className="ornament-rule mx-auto max-w-7xl" />
 
       {umbrella === "all" ? (
         <section className="mx-auto mt-6 max-w-7xl border border-hp-rule bg-hp-card p-6 sm:p-8">
@@ -761,21 +765,21 @@ export function DashboardClient({
             eyebrow="Performance"
             title="Campaign, ad set, and creative performance"
             actions={
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <label className="flex h-10 items-center gap-2 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+              <div className="flex items-center gap-2">
+                <label className="flex h-9 items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
                   <input
                     type="checkbox"
                     checked={hidePdfFinancials}
                     onChange={(event) => setHidePdfFinancials(event.target.checked)}
-                    className="h-4 w-4 accent-hp-ink"
+                    className="h-3.5 w-3.5 accent-hp-ink"
                   />
-                  Hide financials
+                  Hide financials in export
                 </label>
                 <button
+                  type="button"
                   onClick={() => void exportCreativesPdf()}
-                  className="flex h-10 items-center justify-center gap-2 border border-hp-ink px-3 text-[10px] uppercase tracking-[0.14em] text-hp-ink transition-colors hover:bg-hp-ink hover:text-hp-foundation"
+                  className="h-9 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-body transition-colors hover:border-hp-ink hover:text-hp-ink"
                 >
-                  <FileDown size={15} />
                   Export PDF
                 </button>
               </div>
@@ -834,20 +838,16 @@ export function DashboardClient({
 const ShellHeader = memo(function ShellHeader({ data }: { data: DashboardPayload }) {
   const range = data.sourceTransparency.timeRange;
   return (
-    <header className="mx-auto flex max-w-7xl flex-col gap-5 border-b border-hp-rule pb-6 md:flex-row md:items-end md:justify-between">
-      <div>
-        <span className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-          HP/VVS Meta Ads
-        </span>
-        <h1 className="mt-2 font-title text-4xl leading-tight text-hp-ink md:text-5xl">
-          AI Analyst Command Center
-        </h1>
-      </div>
-      <div className="text-sm text-hp-muted md:text-right">
-        <div>
+    <header className="mx-auto flex max-w-7xl flex-col gap-2 border-b border-hp-rule pb-4 text-sm text-hp-muted md:flex-row md:items-baseline md:justify-between">
+      <span className="text-[11px] uppercase tracking-[0.14em]">
+        HP/VVS Meta Ads
+      </span>
+      <div className="md:text-right">
+        <span>
           {range.start || "No data"} to {range.end || "No data"}
-        </div>
-        <div>{data.sourceTransparency.adAccountsAnalyzed.length} ad accounts analyzed</div>
+        </span>
+        <span aria-hidden className="mx-2 text-hp-rule">·</span>
+        <span>{data.sourceTransparency.adAccountsAnalyzed.length} ad accounts analyzed</span>
       </div>
     </header>
   );
@@ -895,10 +895,21 @@ const MetricTile = memo(function MetricTile({
   sparkline?: number[];
   showComparison?: boolean;
 }) {
-  const sparklineData = useMemo(
-    () => (sparkline || []).map((v, i) => ({ i, v })),
-    [sparkline],
-  );
+  // Hand-rolled SVG sparkline. Replaces recharts (Line / LineChart /
+  // ResponsiveContainer) to drop ~96 KB of mostly-unused chart code
+  // from the /analyst bundle. preserveAspectRatio="none" stretches the
+  // path to fill the container; vectorEffect="non-scaling-stroke"
+  // keeps the line at 1 CSS px regardless of stretch.
+  const sparklinePath = useMemo(() => {
+    if (!sparkline || sparkline.length < 2) return null;
+    const min = Math.min(...sparkline);
+    const max = Math.max(...sparkline);
+    const range = max - min || 1;
+    const points = sparkline
+      .map((v, i) => `${i},${(1 - (v - min) / range).toFixed(4)}`)
+      .join(" ");
+    return { points, viewBox: `0 0 ${sparkline.length - 1} 1` };
+  }, [sparkline]);
   return (
     <div className="border border-hp-rule bg-hp-card p-6">
       <div className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">{label}</div>
@@ -910,20 +921,22 @@ const MetricTile = memo(function MetricTile({
           <DeltaChip current={current} previous={previous} lowerIsBetter={lowerIsBetter} />
         </div>
       ) : null}
-      {sparklineData.length > 1 ? (
+      {sparklinePath ? (
         <div className="mt-4 h-8 min-w-0">
-          <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 1, height: 1 }}>
-            <LineChart data={sparklineData} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
-              <Line
-                type="monotone"
-                dataKey="v"
-                stroke="#2A2725"
-                strokeWidth={1}
-                dot={false}
-                isAnimationActive={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+          <svg
+            aria-hidden
+            viewBox={sparklinePath.viewBox}
+            preserveAspectRatio="none"
+            className="block h-full w-full"
+          >
+            <polyline
+              points={sparklinePath.points}
+              fill="none"
+              stroke="#2A2725"
+              strokeWidth="1"
+              vectorEffect="non-scaling-stroke"
+            />
+          </svg>
         </div>
       ) : null}
     </div>
@@ -942,7 +955,7 @@ const DeltaChip = memo(function DeltaChip({
   if (current == null || previous == null || previous === 0) {
     return (
       <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-        — vs prev
+        No prior
       </span>
     );
   }
@@ -951,7 +964,7 @@ const DeltaChip = memo(function DeltaChip({
   if (!Number.isFinite(rounded)) {
     return (
       <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-        — vs prev
+        No prior
       </span>
     );
   }
@@ -963,14 +976,17 @@ const DeltaChip = memo(function DeltaChip({
     ? undefined
     : { color: isGood ? "#245D4D" : "#8D2E2E" };
   const colorClass = isFlat ? "text-hp-muted" : "";
+  const direction = isFlat ? "Flat" : isUp ? "Up" : "Down";
   return (
     <span
+      role="text"
+      aria-label={`${direction} ${Math.abs(rounded).toFixed(1)} percent vs prior period`}
       className={`inline-flex items-baseline gap-1 font-body text-xs tabular-nums ${colorClass}`}
       style={colorStyle}
       title={`Previous: ${previous}`}
     >
       <span aria-hidden className="text-[10px]">{arrow}</span>
-      <span>{Math.abs(rounded).toFixed(1)}%</span>
+      <span aria-hidden>{Math.abs(rounded).toFixed(1)}%</span>
     </span>
   );
 });
@@ -980,180 +996,26 @@ const DataCoverageNotice = memo(function DataCoverageNotice({ data }: { data: Da
   if (coverage.isComplete || coverage.expectedDays === 0) return null;
 
   return (
-    <div className="mb-4 flex gap-3 border border-hp-pink/70 bg-hp-card px-4 py-3 text-sm text-hp-ink">
-      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-hp-pink" />
-      <div>
+    <div
+      role="status"
+      className="mb-4 flex items-start gap-3 border border-signal-warning/70 bg-signal-warning-bg px-4 py-3 text-sm text-hp-ink"
+    >
+      <AlertTriangle aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-signal-warning" />
+      <div className="min-w-0 flex-1">
         <div>
           Stored Meta coverage is incomplete: {coverage.storedDays} of {coverage.expectedDays}{" "}
           selected days have rows.
         </div>
-        <div className="mt-1 text-hp-muted">
+        <div className="mt-1 text-hp-body">
           Totals below only include stored days. Missing days: {coverage.missingDays}.
         </div>
       </div>
-    </div>
-  );
-});
-
-const DateRangeControls = memo(function DateRangeControls({
-  startDate,
-  endDate,
-  onStartDateChange,
-  onEndDateChange,
-  onApply,
-  onQuickRange,
-  isApplying,
-  compareEnabled,
-  onCompareChange,
-  periodCount,
-  onPeriodCountChange,
-  periodMetric,
-  onPeriodMetricChange,
-  periodWindows,
-  comparisonRange,
-  primaryResultLabel,
-}: {
-  startDate: string;
-  endDate: string;
-  onStartDateChange: (value: string) => void;
-  onEndDateChange: (value: string) => void;
-  onApply: (startDate: string, endDate: string) => void;
-  onQuickRange: (days: number) => void;
-  isApplying: boolean;
-  compareEnabled: boolean;
-  onCompareChange: (value: boolean) => void;
-  periodCount: AnalystPeriodCount;
-  onPeriodCountChange: (value: AnalystPeriodCount) => void;
-  periodMetric: PeriodMetric;
-  onPeriodMetricChange: (value: PeriodMetric) => void;
-  periodWindows: ReturnType<typeof rollingAnalystPeriods>;
-  comparisonRange: { start: string; end: string; days: number };
-  /** Live primary-KPI name (e.g. "Messages") — drives the dynamic
-   *  label for `primary_results` and `cost_per_primary_results`
-   *  in the Metric dropdown. Falls back to the static label. */
-  primaryResultLabel?: string | null;
-}) {
-  function submitDateRange(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const formData = new FormData(event.currentTarget);
-    onApply(String(formData.get("start") || ""), String(formData.get("end") || ""));
-  }
-
-  return (
-    <div className="flex w-full flex-col gap-2 xl:w-auto">
-      <form onSubmit={submitDateRange} className="flex flex-col gap-2 lg:flex-row lg:items-center">
-      <div className="flex min-w-0 flex-wrap items-center gap-2 border border-hp-rule px-3 py-2">
-        <CalendarRange size={16} className="text-hp-muted" />
-        <input
-          aria-label="Start date"
-          name="start"
-          type="date"
-          value={startDate}
-          onChange={(event) => onStartDateChange(event.target.value)}
-          className="h-8 bg-transparent text-sm outline-none"
-        />
-        <span className="text-hp-muted">to</span>
-        <input
-          aria-label="End date"
-          name="end"
-          type="date"
-          value={endDate}
-          onChange={(event) => onEndDateChange(event.target.value)}
-          className="h-8 bg-transparent text-sm outline-none"
-        />
-        <button
-          type="submit"
-          disabled={isApplying}
-          className="h-8 border border-hp-ink px-3 text-[10px] uppercase tracking-[0.14em] text-hp-ink transition-colors hover:bg-hp-ink hover:text-hp-foundation"
-        >
-          {isApplying ? "Updating" : "Apply"}
-        </button>
-      </div>
-      <div className="flex items-center gap-1">
-        {[7, 14, 30].map((days) => (
-          <button
-            type="button"
-            key={days}
-            onClick={() => onQuickRange(days)}
-            className="h-8 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted transition-colors hover:border-hp-ink hover:text-hp-ink"
-          >
-            {days}D
-          </button>
-        ))}
-      </div>
-      <label
-        title={
-          compareEnabled && comparisonRange.start
-            ? `Comparing to ${comparisonRange.start} → ${comparisonRange.end}`
-            : "Toggle prior-period comparison"
-        }
-        className={`flex h-8 items-center gap-2 border px-3 text-[10px] uppercase tracking-[0.14em] transition-colors ${
-          compareEnabled
-            ? "border-hp-ink bg-hp-ink text-hp-foundation"
-            : "border-hp-rule text-hp-muted hover:border-hp-ink hover:text-hp-ink"
-        }`}
+      <Link
+        href="/operate/coverage"
+        className="shrink-0 self-center text-[10px] uppercase tracking-[0.14em] text-signal-warning underline-offset-4 transition-colors hover:underline"
       >
-        <input
-          type="checkbox"
-          checked={compareEnabled}
-          onChange={(event) => onCompareChange(event.target.checked)}
-          className="sr-only"
-        />
-        vs Prev
-      </label>
-      {compareEnabled ? (
-        <>
-          <label className="flex h-8 items-center gap-2 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-            <span>Periods</span>
-            <select
-              value={periodCount}
-              onChange={(event) =>
-                onPeriodCountChange(Number(event.target.value) as AnalystPeriodCount)
-              }
-              className="h-6 bg-transparent text-hp-ink outline-none"
-            >
-              {ANALYST_PERIOD_COUNTS.map((count) => (
-                <option key={count} value={count}>
-                  {count}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="flex h-8 items-center gap-2 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-            <span>Metric</span>
-            <select
-              value={periodMetric}
-              onChange={(event) =>
-                onPeriodMetricChange(event.target.value as PeriodMetric)
-              }
-              className="h-6 bg-transparent text-hp-ink outline-none"
-            >
-              {PERIOD_METRIC_OPTIONS.map((metric) => (
-                <option key={metric} value={metric}>
-                  {periodMetricLabel(metric, primaryResultLabel)}
-                </option>
-              ))}
-            </select>
-          </label>
-        </>
-      ) : null}
-      </form>
-      {compareEnabled && periodWindows.length ? (
-        <div className="mt-2 flex w-full flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.12em] text-hp-muted">
-          {periodWindows.map((period) => (
-            <span
-              key={period.key}
-              className={`shrink-0 border px-2 py-1 ${
-                period.isCurrent
-                  ? "border-hp-ink text-hp-ink"
-                  : "border-hp-rule text-hp-muted"
-              }`}
-            >
-              {period.label}
-            </span>
-          ))}
-        </div>
-      ) : null}
+        Open coverage →
+      </Link>
     </div>
   );
 });
@@ -1199,7 +1061,7 @@ const UmbrellaScorecard = memo(function UmbrellaScorecard({
   }, [rows, sortKey, sortDir]);
 
   if (!rows.length) {
-    return <div className="text-sm text-hp-muted">No umbrella data in this period.</div>;
+    return <div className="text-sm text-hp-muted">No group data in this period.</div>;
   }
 
   if (periodMode) {
@@ -1222,7 +1084,7 @@ const UmbrellaScorecard = memo(function UmbrellaScorecard({
           <thead>
             <tr className="bg-hp-inset text-left">
               <th className="border-b border-hp-rule px-4 py-3 text-[10px] font-normal uppercase tracking-[0.14em] text-hp-muted">
-                Umbrella
+                Group
               </th>
               {periodWindows.map((period) => (
                 <PeriodHeader key={period.key} period={period} />
@@ -1297,7 +1159,7 @@ const UmbrellaScorecard = memo(function UmbrellaScorecard({
         <thead>
           <tr className="bg-hp-inset text-left">
             <th className="border-b border-hp-rule px-4 py-3 text-[10px] font-normal uppercase tracking-[0.14em] text-hp-muted">
-              Umbrella
+              Group
             </th>
             <ScorecardHeader label="Spend" active={sortKey === "spend"} dir={sortDir} onClick={() => toggle("spend")} />
             <ScorecardHeader label="Primary KPI" active={sortKey === "primaryResults"} dir={sortDir} onClick={() => toggle("primaryResults")} />
@@ -1380,7 +1242,15 @@ const ScorecardHeader = memo(function ScorecardHeader({
       >
         <span>{label}</span>
         <span aria-hidden className={active ? "text-hp-ink" : "text-hp-muted/60"}>
-          {active ? (dir === "asc" ? "↑" : "↓") : "↕"}
+          {active ? (
+            dir === "asc" ? (
+              <ChevronUp size={12} strokeWidth={1.75} />
+            ) : (
+              <ChevronDown size={12} strokeWidth={1.75} />
+            )
+          ) : (
+            <ChevronsUpDown size={12} strokeWidth={1.5} />
+          )}
         </span>
       </button>
     </th>
@@ -1488,8 +1358,11 @@ const PeriodDeltaCell = memo(function PeriodDeltaCell({
 
   if (!delta) {
     return (
-      <td className={`${compact ? "px-3" : "px-4"} py-4 text-right text-hp-muted`}>
-        —
+      <td
+        className={`${compact ? "px-3" : "px-4"} py-4 text-right text-hp-muted`}
+        aria-label="No comparison data"
+      >
+        <span aria-hidden>·</span>
       </td>
     );
   }
@@ -1525,7 +1398,7 @@ const UmbrellaTabs = memo(function UmbrellaTabs({
     <div className="border-y border-hp-rule">
       <div className="flex items-center gap-1 overflow-x-auto py-3">
         <span className="shrink-0 pr-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-          Umbrella
+          Group
         </span>
         {umbrellas.map((option) => {
           const isActive = value === option;
@@ -1976,19 +1849,19 @@ const MetricTreeRow = memo(function MetricTreeRow({
         </>
       ) : (
         <>
-          <td className="px-3 py-4 text-right font-[family-name:var(--font-title)] text-[17px] leading-tight tabular-nums text-hp-ink">
+          <td className="px-3 py-4 text-right font-title text-[17px] leading-tight tabular-nums text-hp-ink">
             {formatMetric(row.spend, "money")}
           </td>
           <td className="px-3 py-4 text-right">
             <ResultCell row={row} align="right" />
           </td>
-          <td className="px-3 py-4 text-right font-[family-name:var(--font-title)] text-[17px] leading-tight tabular-nums text-hp-ink">
+          <td className="px-3 py-4 text-right font-title text-[17px] leading-tight tabular-nums text-hp-ink">
             {formatMetric(row.costPerPrimaryResult, "money")}
           </td>
-          <td className="px-3 py-4 text-right font-[family-name:var(--font-title)] text-[17px] leading-tight tabular-nums text-hp-ink">
+          <td className="px-3 py-4 text-right font-title text-[17px] leading-tight tabular-nums text-hp-ink">
             {formatMetric(row.ctr, "percent")}
           </td>
-          <td className="px-3 py-4 text-right font-[family-name:var(--font-title)] text-[17px] leading-tight tabular-nums text-hp-ink">
+          <td className="px-3 py-4 text-right font-title text-[17px] leading-tight tabular-nums text-hp-ink">
             {formatMetric(row.cpc, "money")}
           </td>
         </>
@@ -2135,7 +2008,7 @@ const CreativeDrawer = memo(function CreativeDrawer({
             </a>
           ) : (
             <div className="text-center text-xs text-hp-muted">
-              No ad ID on record — open Ads Manager directly.
+              No ad ID on record. Open Ads Manager directly.
             </div>
           )}
         </footer>
@@ -2157,7 +2030,7 @@ const DrawerField = memo(function DrawerField({
     <div className="grid grid-cols-[100px_1fr] gap-3">
       <dt className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{label}</dt>
       <dd className="min-w-0 text-hp-ink [overflow-wrap:anywhere]">
-        <div className="text-sm">{value || "—"}</div>
+        <div className="text-sm">{value || "Not recorded"}</div>
         {id ? (
           <div className="mt-0.5">
             <TechnicalId value={id} label={label} />
@@ -2228,7 +2101,7 @@ const RiskBadge = memo(function RiskBadge({ level }: { level?: PerformanceRow["r
 const ResultCell = memo(function ResultCell({ row, align = "left" }: { row: PerformanceRow; align?: "left" | "right" }) {
   return (
     <div className={align === "right" ? "text-right" : "text-left"}>
-      <div className="font-[family-name:var(--font-title)] text-[17px] leading-tight tabular-nums text-hp-ink">
+      <div className="font-title text-[17px] leading-tight tabular-nums text-hp-ink">
         {formatMetric(row.primaryResults, "number")}
       </div>
       <div className="text-[10px] leading-4 text-hp-muted break-words">
@@ -2710,11 +2583,11 @@ function formatUmbrellaName(value: string) {
  * Delivery-status label for the performance table. Meta's `effective_status`
  * arrives uppercase (ACTIVE / PAUSED / ARCHIVED / DELETED / CAMPAIGN_PAUSED
  * / ADSET_PAUSED / IN_PROCESS / WITH_ISSUES / etc.); we render it title-case.
- * Null / missing → em-dash.
+ * Null / missing falls back to the locked-glossary "Unknown".
  */
 function deliveryStatusLabel(status: string | null | undefined): string {
   const raw = (status || "").trim();
-  if (!raw) return "—";
+  if (!raw) return "Unknown";
   return raw
     .toLowerCase()
     .split("_")

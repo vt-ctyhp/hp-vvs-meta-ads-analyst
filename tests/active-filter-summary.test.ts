@@ -27,7 +27,7 @@ test("all defaults — every segment renders, only Range is non-default, no segm
   assert.equal(summary.length, 7);
   assert.deepEqual(
     summary.map((s) => s.key),
-    ["Brand", "Delivery", "Range", "vs Prev", "Metric", "Umbrella", "Query"],
+    ["Brand", "Delivery", "Range", "Comparing", "Metric", "Group", "Query"],
   );
   assert.deepEqual(
     summary.map((s) => s.isActive),
@@ -38,7 +38,7 @@ test("all defaults — every segment renders, only Range is non-default, no segm
 test("date range formats short month names from ISO YYYY-MM-DD", () => {
   const summary = buildActiveFilterSummary(DEFAULTS);
   const range = summary.find((s) => s.key === "Range");
-  assert.equal(range?.value, "Apr 23 — May 22");
+  assert.equal(range?.value, "Apr 23 to May 22");
 });
 
 test("malformed date range falls back to raw strings", () => {
@@ -48,7 +48,7 @@ test("malformed date range falls back to raw strings", () => {
     endDate: "",
   });
   const range = summary.find((s) => s.key === "Range");
-  assert.equal(range?.value, "not-a-date — —");
+  assert.equal(range?.value, "not-a-date to None");
 });
 
 test("brand non-default → segment shows code and is active", () => {
@@ -71,14 +71,14 @@ test("vs Prev on → value shows period count and is active", () => {
     compareEnabled: true,
     periodCount: 4,
   });
-  const vp = summary.find((s) => s.key === "vs Prev");
+  const vp = summary.find((s) => s.key === "Comparing");
   assert.equal(vp?.value, "× 4 periods");
   assert.equal(vp?.isActive, true);
 });
 
 test("vs Prev off → value reads 'off' and is not active", () => {
   const summary = buildActiveFilterSummary(DEFAULTS);
-  const vp = summary.find((s) => s.key === "vs Prev");
+  const vp = summary.find((s) => s.key === "Comparing");
   assert.equal(vp?.value, "off");
   assert.equal(vp?.isActive, false);
 });
@@ -165,7 +165,7 @@ test("umbrella non-default → segment shows name and is active", () => {
     ...DEFAULTS,
     umbrella: "Facebook US Product",
   });
-  const um = summary.find((s) => s.key === "Umbrella");
+  const um = summary.find((s) => s.key === "Group");
   assert.equal(um?.value, "Facebook US Product");
   assert.equal(um?.isActive, true);
 });
@@ -188,18 +188,18 @@ test("everything customised → every segment except Range is active", () => {
       { key: "Brand", isActive: true },
       { key: "Delivery", isActive: true },
       { key: "Range", isActive: false },
-      { key: "vs Prev", isActive: true },
+      { key: "Comparing", isActive: true },
       { key: "Metric", isActive: true },
-      { key: "Umbrella", isActive: true },
+      { key: "Group", isActive: true },
       { key: "Query", isActive: true },
     ],
   );
 });
 
-test("/analyst · empty query → '—' and not active", () => {
+test("/analyst · empty query → 'None' and not active", () => {
   const summary = buildActiveFilterSummary({ ...DEFAULTS, query: "" });
   const q = summary.find((s) => s.key === "Query");
-  assert.equal(q?.value, "—");
+  assert.equal(q?.value, "None");
   assert.equal(q?.isActive, false);
 });
 
@@ -229,7 +229,7 @@ test("creative analysis · all defaults → 8 segments, only Range is non-defaul
   assert.equal(summary.length, 8);
   assert.deepEqual(
     summary.map((s) => s.key),
-    ["Brand", "Delivery", "Range", "Umbrella", "Campaign", "Ad Set", "Status", "Query"],
+    ["Brand", "Delivery", "Range", "Group", "Campaign", "Ad Set", "Status", "Query"],
   );
   assert.deepEqual(
     summary.map((s) => s.isActive),
@@ -240,7 +240,7 @@ test("creative analysis · all defaults → 8 segments, only Range is non-defaul
 test("creative analysis · range formats short month names", () => {
   const range = buildCreativeAnalysisFilterSummary(CREATIVE_DEFAULTS)
     .find((s) => s.key === "Range");
-  assert.equal(range?.value, "Apr 23 — May 22");
+  assert.equal(range?.value, "Apr 23 to May 22");
 });
 
 test("creative analysis · brand non-default → segment shows brand code and is active", () => {
@@ -264,10 +264,10 @@ test("creative analysis · umbrella/campaign/ad set cascade — each non-default
     campaign: "CBI_Evergreen_FB_Product_2026",
     adSet: "Lookalike 1% — US",
   });
-  assert.equal(summary.find((s) => s.key === "Umbrella")?.value, "Facebook US Product");
+  assert.equal(summary.find((s) => s.key === "Group")?.value, "Facebook US Product");
   assert.equal(summary.find((s) => s.key === "Campaign")?.value, "CBI_Evergreen_FB_Product_2026");
   assert.equal(summary.find((s) => s.key === "Ad Set")?.value, "Lookalike 1% — US");
-  for (const key of ["Umbrella", "Campaign", "Ad Set"]) {
+  for (const key of ["Group", "Campaign", "Ad Set"]) {
     assert.equal(summary.find((s) => s.key === key)?.isActive, true);
   }
 });
@@ -279,10 +279,10 @@ test("creative analysis · status non-default shows label as-is and is active", 
   assert.equal(status?.isActive, true);
 });
 
-test("creative analysis · empty query → '—' and not active", () => {
+test("creative analysis · empty query → 'None' and not active", () => {
   const summary = buildCreativeAnalysisFilterSummary({ ...CREATIVE_DEFAULTS, query: "" });
   const q = summary.find((s) => s.key === "Query");
-  assert.equal(q?.value, "—");
+  assert.equal(q?.value, "None");
   assert.equal(q?.isActive, false);
 });
 
@@ -314,7 +314,7 @@ test("ask AI · all defaults → 4 segments, only Range is non-default", () => {
   assert.equal(summary.length, 4);
   assert.deepEqual(
     summary.map((s) => s.key),
-    ["Brand", "Delivery", "Umbrella", "Range"],
+    ["Brand", "Delivery", "Group", "Range"],
   );
   assert.deepEqual(
     summary.map((s) => s.isActive),
@@ -326,7 +326,7 @@ test("ask AI · null filters render as 'All'", () => {
   const summary = buildAskAiFilterSummary(ASK_AI_DEFAULTS);
   assert.equal(summary.find((s) => s.key === "Brand")?.value, "All");
   assert.equal(summary.find((s) => s.key === "Delivery")?.value, "All");
-  assert.equal(summary.find((s) => s.key === "Umbrella")?.value, "All");
+  assert.equal(summary.find((s) => s.key === "Group")?.value, "All");
 });
 
 test("ask AI · non-null brand → segment is active and shows brand code", () => {
@@ -336,21 +336,21 @@ test("ask AI · non-null brand → segment is active and shows brand code", () =
   assert.equal(brand?.isActive, true);
 });
 
-test("ask AI · non-null delivery shows title case and is active", () => {
+test("ask AI · non-null delivery uses glossary label and is active", () => {
   const summary = buildAskAiFilterSummary({ ...ASK_AI_DEFAULTS, delivery: "active" });
   const delivery = summary.find((s) => s.key === "Delivery");
-  assert.equal(delivery?.value, "Active");
+  assert.equal(delivery?.value, "Live");
   assert.equal(delivery?.isActive, true);
 });
 
 test("ask AI · non-null umbrella → segment is active and shows umbrella name", () => {
   const summary = buildAskAiFilterSummary({ ...ASK_AI_DEFAULTS, umbrella: "Book Appts US" });
-  const um = summary.find((s) => s.key === "Umbrella");
+  const um = summary.find((s) => s.key === "Group");
   assert.equal(um?.value, "Book Appts US");
   assert.equal(um?.isActive, true);
 });
 
 test("ask AI · range always renders short month format", () => {
   const range = buildAskAiFilterSummary(ASK_AI_DEFAULTS).find((s) => s.key === "Range");
-  assert.equal(range?.value, "Apr 23 — May 22");
+  assert.equal(range?.value, "Apr 23 to May 22");
 });

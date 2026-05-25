@@ -1,0 +1,269 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-05-24T00:00:00Z",
+  "title": "Design System: HP/VVS Meta Ads AI Analyst",
+  "extensions": {
+    "colorMeta": {
+      "foundation": {
+        "role": "neutral",
+        "displayName": "Foundation Cream",
+        "canonical": "oklch(95% 0.008 60)",
+        "tonalRamp": ["#2a2522", "#5a4f48", "#7f7368", "#a39686", "#c5b8a8", "#dccfbe", "#ebdfcd", "#f7f1eb"]
+      },
+      "card": {
+        "role": "neutral",
+        "displayName": "Card Cream",
+        "canonical": "oklch(97% 0.006 60)",
+        "tonalRamp": ["#2c2724", "#5c514a", "#82766a", "#a69988", "#c8bbab", "#dfd2c1", "#eee2d0", "#fbf7f1"]
+      },
+      "inset": {
+        "role": "neutral",
+        "displayName": "Inset Cream",
+        "canonical": "oklch(93% 0.009 60)",
+        "tonalRamp": ["#26221f", "#544940", "#776c5f", "#9b8d7b", "#bbac99", "#d2c3af", "#e0d2bd", "#efe8dd"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink Deep",
+        "canonical": "oklch(24% 0.005 60)",
+        "tonalRamp": ["#2a2725", "#4a4540", "#6b645c", "#8a8178", "#a89e93", "#c4baad", "#dfd6c9", "#f5ede1"]
+      },
+      "ink-body": {
+        "role": "neutral",
+        "displayName": "Ink Body",
+        "canonical": "oklch(36% 0.005 60)",
+        "tonalRamp": ["#2a2725", "#4a4540", "#665e57", "#857c72", "#a39989", "#bfb4a3", "#d9cebd", "#efe5d3"]
+      },
+      "ink-muted": {
+        "role": "neutral",
+        "displayName": "Ink Muted",
+        "canonical": "oklch(58% 0.008 60)",
+        "tonalRamp": ["#2a2725", "#4a4540", "#6a6259", "#8a8178", "#a89e93", "#c4baad", "#dfd6c9", "#f5ede1"]
+      },
+      "rule": {
+        "role": "neutral",
+        "displayName": "Rule Warm",
+        "canonical": "oklch(83% 0.01 60)",
+        "tonalRamp": ["#2b2722", "#5a5247", "#7f7768", "#a39c8b", "#c4bca8", "#d4cfc4", "#e6dfd2", "#f3ede0"]
+      },
+      "rule-soft": {
+        "role": "neutral",
+        "displayName": "Rule Soft",
+        "canonical": "oklch(89% 0.008 60)",
+        "tonalRamp": ["#2b2722", "#5a5247", "#7f7768", "#a39c8b", "#c4bca8", "#d4cfc4", "#e6dfd2", "#f3ede0"]
+      },
+      "hp-pink": {
+        "role": "primary",
+        "displayName": "Hung Phat Pink",
+        "canonical": "oklch(60% 0.245 359)",
+        "tonalRamp": ["#3a0a20", "#5e0d33", "#83104a", "#a8125e", "#cb1772", "#e91d79", "#f15a98", "#fab7d2"]
+      },
+      "gilt": {
+        "role": "secondary",
+        "displayName": "Editorial Gilt",
+        "canonical": "oklch(56% 0.07 75)",
+        "tonalRamp": ["#2a200f", "#4a3819", "#6a4f24", "#9c7b3f", "#b59257", "#c9a875", "#dac09a", "#ead7be"]
+      },
+      "platinum": {
+        "role": "tertiary",
+        "displayName": "Cool Platinum",
+        "canonical": "oklch(78% 0.008 240)",
+        "tonalRamp": ["#202325", "#3f4346", "#5d6266", "#7d8286", "#9da3a7", "#bdc1c6", "#d6d9dc", "#ecedef"]
+      },
+      "positive": {
+        "role": "signal",
+        "displayName": "Forest Positive",
+        "canonical": "oklch(45% 0.05 165)",
+        "tonalRamp": ["#0a1b16", "#13332b", "#1c4a3e", "#245d4d", "#3d7a68", "#5c9586", "#8cb6ab", "#c2d7cf"]
+      },
+      "warning": {
+        "role": "signal",
+        "displayName": "Burnt Amber Warning",
+        "canonical": "oklch(50% 0.09 75)",
+        "tonalRamp": ["#241608", "#3f2812", "#5c3b19", "#8b5b19", "#a87731", "#c39455", "#d7b283", "#e9cfb1"]
+      },
+      "danger": {
+        "role": "signal",
+        "displayName": "Brick Danger",
+        "canonical": "oklch(47% 0.13 25)",
+        "tonalRamp": ["#260b0b", "#411414", "#5c1d1d", "#8d2e2e", "#a94f4f", "#c47373", "#d99c9c", "#ecc8c8"]
+      },
+      "info": {
+        "role": "signal",
+        "displayName": "Ink Blue Info",
+        "canonical": "oklch(38% 0.09 240)",
+        "tonalRamp": ["#031424", "#0a2a44", "#0f3a5e", "#0f4c75", "#306e9a", "#5891bb", "#8bb4d4", "#c0d7ea"]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display (Hero Number)",
+        "purpose": "Executive Snapshot hero numbers. One per card; never two display elements above the fold. Oldstyle proportional figures."
+      },
+      "headline": {
+        "displayName": "Headline (Status Sentence)",
+        "purpose": "The lead voice on every room. The status sentence at the top of Optimize, Convert, Operate, and every detail screen."
+      },
+      "title": {
+        "displayName": "Title (Section)",
+        "purpose": "Section titles inside a page, dropdown headers, card titles. Cormorant 500."
+      },
+      "body": {
+        "displayName": "Body (Cardo)",
+        "purpose": "Paragraphs, descriptions, AI analysis prose, conversation messages. Capped at 65–75ch."
+      },
+      "label": {
+        "displayName": "Smallcaps Label",
+        "purpose": "Eyebrow labels above hero numbers, chip text, button text, table column headers, status pill text. Uppercase with 0.14em tracking."
+      }
+    },
+    "shadows": [
+      {
+        "name": "ambient-lift",
+        "value": "0 8px 24px rgba(42, 39, 37, 0.08)",
+        "purpose": "The single shadow in the system. Warm-tinted (rgba derives from ink #2a2725). Used on dropdowns, user-menu panels, modal overlays, popovers. Never on static cards."
+      }
+    ],
+    "motion": [
+      {
+        "name": "fade-up",
+        "value": "520ms cubic-bezier(0.2, 0.7, 0.2, 1)",
+        "purpose": "Page-load reveal. Sections opt in with .fade-up and .fade-up-d1..d4 stagger classes. Disabled under prefers-reduced-motion."
+      },
+      {
+        "name": "bar-fade-in",
+        "value": "120ms ease-out",
+        "purpose": "Sticky filter bar fade-in on /analyst when the collapsed bar appears on scroll-past."
+      },
+      {
+        "name": "state-transition",
+        "value": "150ms linear",
+        "purpose": "Default transition for hover/focus state changes on chips, buttons, links. Always color/border, never layout."
+      }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" },
+      { "name": "xl", "value": "1280px" },
+      { "name": "2xl", "value": "1536px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The principal call-to-action. Ink fill on cream foundation, square corners, smallcaps label.",
+      "html": "<button class=\"ds-btn-primary\">Save</button>",
+      "css": ".ds-btn-primary { background: #2a2725; color: #f7f1eb; height: 40px; padding: 0 16px; border: 0; border-radius: 0; font-family: 'Cardo', Georgia, serif; font-size: 11px; font-weight: 400; letter-spacing: 0.14em; text-transform: uppercase; cursor: pointer; transition: background 150ms linear; } .ds-btn-primary:hover { background: #4a4540; } .ds-btn-primary:focus-visible { outline: 1px solid #e91d79; outline-offset: 2px; } .ds-btn-primary:disabled { opacity: 0.55; cursor: not-allowed; }"
+    },
+    {
+      "name": "Secondary Chip Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Default action chip. Hairline border on card cream, swaps to ink border on hover. Same shape as filter chips at rest.",
+      "html": "<button class=\"ds-btn-secondary\">Apply</button>",
+      "css": ".ds-btn-secondary { background: #fbf7f1; color: #4a4540; height: 36px; padding: 0 12px; border: 1px solid #d4cfc4; border-radius: 0; font-family: 'Cardo', Georgia, serif; font-size: 11px; font-weight: 400; letter-spacing: 0.14em; text-transform: uppercase; cursor: pointer; transition: background 150ms linear, border-color 150ms linear, color 150ms linear; } .ds-btn-secondary:hover { background: #efe8dd; border-color: #2a2725; color: #2a2725; } .ds-btn-secondary:focus-visible { outline: 1px solid #e91d79; outline-offset: 2px; }"
+    },
+    {
+      "name": "Active Filter Chip",
+      "kind": "chip",
+      "refersTo": "chip-active",
+      "description": "Selected filter chip. Ink fill, foundation text. Same shape as the secondary chip when unselected.",
+      "html": "<button class=\"ds-chip-active\" aria-pressed=\"true\">HP <span class=\"ds-chip-active__count\">12</span></button>",
+      "css": ".ds-chip-active { background: #2a2725; color: #f7f1eb; height: 36px; padding: 0 12px; border: 1px solid #d4cfc4; border-radius: 0; font-family: 'Cardo', Georgia, serif; font-size: 11px; font-weight: 400; letter-spacing: 0.14em; text-transform: uppercase; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; } .ds-chip-active__count { display: inline-flex; align-items: center; padding: 0 4px; border: 1px solid #f7f1eb; font-size: 9px; letter-spacing: 0.12em; line-height: 1.4; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input-text",
+      "description": "Default text/search/date input. The one place pure white appears in the chrome — reads as paper on paper.",
+      "html": "<label class=\"ds-field\"><span class=\"ds-field__label\">Search</span><input class=\"ds-input-text\" type=\"text\" placeholder=\"Search by name or text…\" /></label>",
+      "css": ".ds-field { display: grid; gap: 4px; } .ds-field__label { font-family: 'Cardo', Georgia, serif; font-size: 11px; font-weight: 400; letter-spacing: 0.14em; text-transform: uppercase; color: #8a8178; } .ds-input-text { background: #ffffff; color: #4a4540; height: 40px; padding: 0 12px; border: 1px solid #d4cfc4; border-radius: 0; font-family: 'Cardo', Georgia, serif; font-size: 15px; line-height: 1.5; outline: none; transition: border-color 150ms linear, box-shadow 150ms linear; } .ds-input-text::placeholder { color: #a89e93; } .ds-input-text:focus { border-color: #2a2725; box-shadow: inset 0 -1px 0 0 #e91d79; }"
+    },
+    {
+      "name": "Hero Number",
+      "kind": "custom",
+      "refersTo": null,
+      "description": "Executive Snapshot signature. A card-tinted block at 60% opacity with a 1px gilt hairline at the top edge as a section mark. The number itself is Cormorant Garamond at 52–56px with oldstyle proportional figures.",
+      "html": "<section class=\"ds-hero-number\"><div class=\"ds-hero-number__mark\" aria-hidden=\"true\"></div><div class=\"ds-hero-number__label\">Bookings this week</div><div class=\"ds-hero-number__row\"><span class=\"ds-hero-number__value\">47</span><span class=\"ds-hero-number__delta\">+8 vs. last week</span></div><p class=\"ds-hero-number__caption\">Above the four-week average by twelve.</p></section>",
+      "css": ".ds-hero-number { position: relative; background: rgba(251, 247, 241, 0.6); padding: 24px 20px 20px; -webkit-backdrop-filter: blur(1px); backdrop-filter: blur(1px); } .ds-hero-number__mark { position: absolute; left: 20px; right: 20px; top: 0; height: 1px; background: rgba(156, 123, 63, 0.55); } .ds-hero-number__label { font-family: 'Cardo', Georgia, serif; font-size: 10px; font-weight: 400; letter-spacing: 0.14em; text-transform: uppercase; color: #8a8178; } .ds-hero-number__row { margin-top: 8px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; } .ds-hero-number__value { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 52px; line-height: 1.02; color: #2a2725; font-feature-settings: 'onum' 1, 'pnum' 1; } .ds-hero-number__delta { font-family: 'Cardo', Georgia, serif; font-size: 12px; color: #245d4d; } .ds-hero-number__caption { margin-top: 8px; max-width: 28ch; font-family: 'Cardo', Georgia, serif; font-size: 12px; line-height: 1.4; font-style: italic; color: #8a8178; }"
+    },
+    {
+      "name": "Status Sentence",
+      "kind": "custom",
+      "refersTo": null,
+      "description": "The lead voice on every room. Cormorant Garamond headline with optional smallcaps context above and an optional primary action button on the right. Separated from content by a 1px rule.",
+      "html": "<header class=\"ds-status-sentence\"><div class=\"ds-status-sentence__text\"><p class=\"ds-status-sentence__context\">Optimize · Today</p><h1 class=\"ds-status-sentence__headline\">Three creatives need attention; one campaign group is overspending; one waiting reply.</h1></div><button class=\"ds-btn-primary\">Open queue</button></header>",
+      "css": ".ds-status-sentence { display: flex; flex-direction: column; gap: 8px; padding-bottom: 20px; border-bottom: 1px solid #d4cfc4; } @media (min-width: 768px) { .ds-status-sentence { flex-direction: row; align-items: flex-end; justify-content: space-between; gap: 24px; } } .ds-status-sentence__text { min-width: 0; } .ds-status-sentence__context { font-family: 'Cardo', Georgia, serif; font-size: 11px; font-weight: 400; letter-spacing: 0.14em; text-transform: uppercase; color: #8a8178; margin: 0; } .ds-status-sentence__headline { margin: 4px 0 0; font-family: 'Cormorant Garamond', Georgia, serif; font-size: 26px; font-weight: 500; line-height: 1.25; color: #2a2725; }"
+    },
+    {
+      "name": "Ornament Rule",
+      "kind": "custom",
+      "refersTo": null,
+      "description": "A 1px rule-soft horizontal line with a centered gilt ❦ mark on a foundation swatch. Used between the three sections of the Executive Snapshot. One per visible view.",
+      "html": "<hr class=\"ds-ornament-rule\" aria-hidden=\"true\" />",
+      "css": ".ds-ornament-rule { position: relative; height: 1px; background: #e6dfd2; border: 0; margin: 36px 0; } .ds-ornament-rule::before { content: '❦'; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -55%); color: #9c7b3f; background: #f7f1eb; padding: 0 10px; font-size: 12px; letter-spacing: 0; font-family: 'Cardo', Georgia, serif; }"
+    },
+    {
+      "name": "Top Nav Item",
+      "kind": "nav",
+      "refersTo": null,
+      "description": "Square chip nav item used in the top navigation. Active state mirrors the active filter chip; inactive matches the secondary chip.",
+      "html": "<nav class=\"ds-top-nav\"><a href=\"#\" class=\"ds-nav-item ds-nav-item--active\">Optimize</a><a href=\"#\" class=\"ds-nav-item\">Convert</a><a href=\"#\" class=\"ds-nav-item\">Operate</a></nav>",
+      "css": ".ds-top-nav { display: inline-flex; gap: 6px; padding: 12px 16px; background: rgba(251, 247, 241, 0.9); border-bottom: 1px solid #d4cfc4; } .ds-nav-item { display: inline-flex; align-items: center; height: 36px; padding: 0 12px; border: 1px solid #d4cfc4; border-radius: 0; font-family: 'Cardo', Georgia, serif; font-size: 11px; font-weight: 400; letter-spacing: 0.14em; text-transform: uppercase; color: #4a4540; text-decoration: none; transition: background 150ms linear, border-color 150ms linear, color 150ms linear; } .ds-nav-item:hover { border-color: #2a2725; background: #efe8dd; color: #2a2725; } .ds-nav-item--active { background: #2a2725; color: #f7f1eb; border-color: #2a2725; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Editorial Broadsheet",
+    "overview": "The interface reads like a printed broadsheet laid on a desk — a warm cream paper foundation with a faint radial vignette and a low-opacity grain that gives the page tooth instead of fill. Two type families do all the work: Cormorant Garamond for display and headlines, Cardo for body. Numerals are oldstyle in prose and lining-tabular in money columns. Rules are hairlines; ornament is a single gilt mark on a divider. The accent — Hung Phat Pink, #e91d79 — appears rarely, on selection chrome, links, the section ornaments. The page does not raise its voice.\n\nThe job this system serves is daily ad-triage and customer-conversation work for HP/VVS jewelry, so density matters. Editorial does not mean sparse; the broadsheet packs a lot onto a page without losing composure. Section rhythm comes from spacing variance and hairline rules, not from card stacking. The signal palette (positive forest, burnt amber warning, brick danger, ink blue info) is muted enough to sit on cream without shouting.\n\nThis system explicitly rejects: the Linear / Vercel / Stripe cool-grey SaaS shell with neon accents; Datadog / Grafana cold-observability dark mode; consumer-fintech glassmorphism with gradient blob backgrounds; Bootstrap and Material admin templates with rounded cards and breadcrumbs everywhere. It also rejects the two currently-saturated category reflexes: the AI tool that's cream-plus-violet-plus-sparkle-icon lane, and the luxury brand that's black-plus-gold-plus-serif lane. The pink and the gilt are the differentiators — they are used sparingly and on purpose.",
+    "keyCharacteristics": [
+      "Warm cream foundation with paper grain and corner vignette; never #fff, never pure black",
+      "Two-family serif system (Cormorant display, Cardo body); no sans-serif anywhere in the chrome",
+      "Square corners on action elements (buttons, chips, inputs, data cards); rounded-full reserved for status dots and pills",
+      "Hairline borders (rule / rule-soft) as the primary container treatment; no thick or colored strokes",
+      "Smallcaps eyebrow labels with 0.14em tracking; oldstyle figures in prose, lining-tabular in money columns",
+      "Ambient warm shadow (0 8px 24px rgba(42,39,37,0.08)) only on lifted surfaces (dropdowns, overlays); flat at rest",
+      "Single gilt ornament (❦) on dividers; never two on the same view",
+      "Hung Phat Pink (#e91d79) used on ≤10% of any surface"
+    ],
+    "rules": [
+      { "name": "The One Voice Rule", "body": "Hung Phat Pink covers ≤10% of any rendered surface. Its rarity is the point. If pink occupies more than a tenth of the visible page, recolor with neutrals.", "section": "colors" },
+      { "name": "The One Gilt Mark Rule", "body": "Editorial Gilt appears once per visible view. The ornament rule between sections is one instance; the hairline section mark above a hero number is another. Two on one screen reads as decoration, not punctuation.", "section": "colors" },
+      { "name": "The Warm Neutral Rule", "body": "Every neutral is tinted toward the cream hue. Pure #fff, pure #000, and cool greys are prohibited in the chrome.", "section": "colors" },
+      { "name": "The Muted Signal Rule", "body": "Positive/warning/danger/info colors are intentionally desaturated to sit on cream. Do not 'fix' them to brighter web-app defaults; the muting is the brand fit.", "section": "colors" },
+      { "name": "The Two-Family Rule", "body": "Cormorant Garamond and Cardo only. Do not introduce a sans-serif, a mono, or a third serif. If a screen feels mechanical, switch to lining-tabular numerals before reaching for a new face.", "section": "typography" },
+      { "name": "The Oldstyle-In-Prose Rule", "body": "Inline figures in body text and headlines use oldstyle (.oldstyle-nums). Columns of money in tables use lining-tabular (.lining-nums) so digits align. Mixing them inside the same paragraph is wrong.", "section": "typography" },
+      { "name": "The Smallcaps Eyebrow Rule", "body": "Every section, every chip, every primary metric label uses the .smallcaps class with 0.14em tracking and text-[10px]–text-[11px]. This is the unifying micro-element; do not invent new label styles.", "section": "typography" },
+      { "name": "The Line-Length Rule", "body": "Body prose blocks cap at 65–75ch. The data UI is dense, but reading copy never spans the full broadsheet width.", "section": "typography" },
+      { "name": "The Flat-At-Rest Rule", "body": "Static surfaces — cards, panels, table rows — never carry a shadow. If a card feels like it needs lift, the layout is wrong; rework spacing or tone shift instead.", "section": "elevation" },
+      { "name": "The Warm-Shadow Rule", "body": "Any shadow in the system is tinted with the ink hue, not pure black. Pure-black or cool-grey shadows look pasted-on against the cream foundation.", "section": "elevation" },
+      { "name": "The No-Glass Rule", "body": "backdrop-filter: blur is forbidden as a decorative treatment. The top-nav's 90% card-cream opacity is the one allowed translucency, and it reads as paper sitting on paper, not as glass.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do use #f7f1eb (foundation cream) as the page background. Tint every other neutral toward this hue.",
+      "Do open every room and detail screen with a status sentence in font-title 24–26px, followed by a border-b border-hp-rule divider. Charts and tables support the sentence; they don't replace it.",
+      "Do keep square corners on buttons, chips, inputs, and data cards (rounded: 0). rounded-full is for status dots and pills only.",
+      "Do use hairline 1px borders (rule for active, rule-soft for quiet) on all containers. Borders are the primary separator; spacing is the second.",
+      "Do put oldstyle figures (.oldstyle-nums) in prose and headlines, and lining-tabular figures (.lining-nums) in money columns. Mixing them in one paragraph is wrong.",
+      "Do keep the gilt mark and the pink accent at one-per-view and ≤10%-per-surface respectively.",
+      "Do use the Ambient Lift shadow (0 8px 24px rgba(42,39,37,0.08)) only on popovers, dropdowns, and overlays. Static cards stay flat.",
+      "Do name every state with the locked glossary verbs (Live / Paused / Off / Queued / Running / Done / Failed / Snoozed) and action verbs (Save / Delete / Open / Dismiss / Apply / Send / Cancel) from PRODUCT.md and the UI Rebuild PRD."
+    ],
+    "donts": [
+      "Don't use side-stripe borders (border-l-[3px] or any border-left / border-right greater than 1px as a colored accent on cards, list items, callouts, or alerts). The skill's absolute ban applies. Rewrite with full borders, background tints, leading numbers, or nothing.",
+      "Don't use gradient text (background-clip: text with a gradient). Emphasis comes from weight, size, or the pink accent applied as a solid color.",
+      "Don't use glassmorphism (backdrop-filter: blur(...)) decoratively. The single allowed translucency is the top-nav bg-hp-card/90.",
+      "Don't build the hero-metric template (big number + small label + supporting stats with a gradient accent). The Executive Snapshot's Hero Number is the only sanctioned big-number pattern, and it uses a gilt hairline section mark instead of a gradient.",
+      "Don't stack identical card grids of icon + heading + text. If three rectangles look the same, redesign one of them.",
+      "Don't reach for a modal as the first option. Inline expand, drawer (vaul), and side panel come first; modal is the last resort.",
+      "Don't introduce a sans-serif, a monospace, or a third serif. Cormorant Garamond and Cardo carry the system.",
+      "Don't use #000 or #fff anywhere except inside <input> fields (the one sanctioned use of pure white). Tinted ink (#2a2725) and tinted cream (#f7f1eb) are the extremes.",
+      "Don't ship the Linear / Vercel / Stripe cool-grey SaaS look, the Datadog / Grafana cold-observability dark mode, consumer-fintech glassmorphism, or Bootstrap / Material admin templates.",
+      "Don't default to dark mode. Dark theme is never the default here; if a screen ever goes dark, the scene sentence has to force it.",
+      "Don't add a notification dot, a NEW badge, or any attention-grabbing micro-element. Information density is high; visual shouting is not the answer.",
+      "Don't use em dashes in prose or labels. Commas, colons, semicolons, periods, or parentheses instead. Also not --."
+    ]
+  }
+}

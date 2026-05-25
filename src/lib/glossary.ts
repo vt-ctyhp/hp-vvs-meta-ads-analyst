@@ -40,10 +40,10 @@ export const ACTIONS = {
 
 // ── Domain terms (the platform's product vocabulary) ───────────────────────
 export const TERMS = {
-  /** Full form. Use for section headers, eyebrows, descriptive copy. */
-  campaignUmbrella: "Campaign Umbrella",
-  /** Short form. Use for tight contexts only: table column headers, tab strips. */
-  umbrellaShort: "Umbrella",
+  /** Canonical label for the internal campaign grouping (was "Campaign Umbrella" / "Umbrella"). PRODUCT.md glossary maps this concept to "Group". */
+  campaignUmbrella: "Group",
+  /** Short form retained for API parity. Same canonical label. */
+  umbrellaShort: "Group",
   /** Column / tile header for the canonical primary KPI column. */
   primaryKpi: "Primary KPI",
   /** Fallback label when the resolved KPI label is missing. */
