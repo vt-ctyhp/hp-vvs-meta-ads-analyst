@@ -547,7 +547,7 @@ async function fetchCustomerJourneyLedgerDataUncached(
   const startIso = `${range.start}T00:00:00.000Z`;
   const endIso = `${range.end}T23:59:59.999Z`;
 
-  const [appointmentsResult, windowVisitorsResult] = await Promise.all([
+  const [appointmentsResult, windowVisitorsResult, funnelActiveVisitorIds] = await Promise.all([
     client
       .from("appointment_events")
       .select(APPOINTMENT_COLUMNS)
@@ -566,6 +566,7 @@ async function fetchCustomerJourneyLedgerDataUncached(
       .lte("last_seen_at", endIso)
       .order("last_seen_at", { ascending: false })
       .limit(MAX_LEDGER_VISITORS),
+    fetchFunnelActiveVisitorIds(client, startIso, endIso),
   ]);
 
   if (appointmentsResult.error) throw appointmentsResult.error;
@@ -573,7 +574,26 @@ async function fetchCustomerJourneyLedgerDataUncached(
 
   const appointments = uniqueValidAcuityAppointments(appointmentsResult.data || []);
   const appointmentIds = appointments.map((appointment) => appointmentAcuityId(appointment));
-  const windowVisitors = uniqueVisitors(windowVisitorsResult.data || []);
+  // Fetch visitor rows for booking-funnel-active visitor IDs separately so
+  // they bypass the MAX_LEDGER_VISITORS top-N-by-recency cap on the broad
+  // window query. Without this, /convert silently drops booking-funnel
+  // visitors once window-active visitors exceed 500.
+  const funnelActiveVisitors = funnelActiveVisitorIds.length
+    ? await fetchRowsByVisitorIds<CustomerJourneyLedgerVisitorRow>(
+        funnelActiveVisitorIds,
+        (batch) =>
+          client
+            .from("website_visitors")
+            .select(VISITOR_COLUMNS)
+            .in("visitor_id", batch)
+            .limit(MAX_RELATED_ROWS),
+        "last_seen_at",
+      )
+    : [];
+  const windowVisitors = uniqueVisitors([
+    ...(windowVisitorsResult.data || []),
+    ...funnelActiveVisitors,
+  ]);
 
   if (!appointmentIds.length) {
     // No appointments in window, but window visitors may still exist —
@@ -861,6 +881,50 @@ async function fetchBookingStageEventsForVisitors(
   }
 
   return rows;
+}
+
+// Return visitor_ids that had any booking-funnel event in window. Used to
+// bypass the MAX_LEDGER_VISITORS top-N cap for the population the funnel
+// counts — without that, visitors with booking PageViews / form events
+// silently drop off /convert when there are more than 500 window-active
+// visitors. Two cheap queries (visitor_id column only) keyed on the same
+// filters the funnel uses.
+async function fetchFunnelActiveVisitorIds(
+  client: CustomerJourneyLedgerClient,
+  startIso: string,
+  endIso: string,
+): Promise<string[]> {
+  const env = websiteAttributionEnvironment();
+  const [pageViewResult, formResult] = await Promise.all([
+    client
+      .from("website_events")
+      .select("event_id,visitor_id")
+      .eq("environment", env)
+      .eq("event_name", "PageView")
+      .ilike("page_url", BOOKING_PAGE_URL_PATTERN)
+      .gte("occurred_at", startIso)
+      .lte("occurred_at", endIso)
+      .limit(MAX_RELATED_ROWS),
+    client
+      .from("website_events")
+      .select("event_id,visitor_id")
+      .eq("environment", env)
+      .in("event_name", [...BOOKING_FORM_EVENT_NAMES])
+      .gte("occurred_at", startIso)
+      .lte("occurred_at", endIso)
+      .limit(MAX_RELATED_ROWS),
+  ]);
+  if (pageViewResult.error) throw pageViewResult.error;
+  if (formResult.error) throw formResult.error;
+
+  const ids = new Set<string>();
+  for (const row of (pageViewResult.data || []) as Array<{ visitor_id: string | null }>) {
+    if (row.visitor_id) ids.add(row.visitor_id);
+  }
+  for (const row of (formResult.data || []) as Array<{ visitor_id: string | null }>) {
+    if (row.visitor_id) ids.add(row.visitor_id);
+  }
+  return Array.from(ids);
 }
 
 async function fetchRowsByAcuityAppointmentIds<Row>(

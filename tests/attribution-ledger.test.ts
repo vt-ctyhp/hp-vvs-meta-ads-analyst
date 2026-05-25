@@ -223,7 +223,11 @@ describe("attribution ledger row merging", () => {
     assert.equal(data.rows.length, 240);
     assert.equal(inFilters.filter((filter) => filter.table === "website_visitors").length, 3);
     assert.equal(inFilters.filter((filter) => filter.table === "website_sessions").length, 3);
-    assert.equal(inFilters.filter((filter) => filter.table === "website_events").length, 6);
+    // 6 from acuity-id + visitor-id event fetches; +1 from the funnel-active
+    // visitor-id seed query (.in("event_name", BOOKING_FORM_EVENT_NAMES)).
+    // That .in() uses a fixed-size string list, not a batched ID list, so it
+    // doesn't risk unbounded URL length.
+    assert.equal(inFilters.filter((filter) => filter.table === "website_events").length, 7);
     // Conversions are now fetched via a single window query (no .in() batching),
     // so only the per-visitor-id fan-out fetch produces .in() filters here.
     assert.equal(inFilters.filter((filter) => filter.table === "website_conversions").length, 3);
