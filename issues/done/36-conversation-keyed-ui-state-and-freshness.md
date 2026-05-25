@@ -37,3 +37,14 @@ Known unrelated failures from handoff/current branch:
 - `npm test` fails at `tests/website-analytics.test.ts:140`.
 
 Do not chase those failures unless this issue changes them.
+
+## Status - 2026-05-25
+
+Completed in this Ralph run. Added conversation-keyed draft/guidance state, keyed action/note/QA/template panels to the selected conversation, refreshed selected history after sync, made reply-window labels tick over time, and tightened long-label wrapping around the primary reply workflow.
+
+Verification:
+
+- Focused UI freshness and UI contract tests pass.
+- `npm run test` still fails at the known unrelated `tests/website-analytics.test.ts:140` pagination assertion.
+- `npm run typecheck` cannot run because `package.json` has no `typecheck` script.
+- `npx --no-install tsc --noEmit --pretty false` still fails at the known unrelated `tests/meta-ads-e2e-truth.test.ts:286` type assertion.

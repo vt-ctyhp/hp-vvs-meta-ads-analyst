@@ -27,7 +27,7 @@ import {
   Trash2,
   UserRound,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { SYNC, translateError } from "@/lib/glossary";
 import { buildMetaInboxManagerDashboard } from "@/lib/meta-inbox-manager-dashboard";
@@ -35,6 +35,14 @@ import {
   buildMetaInboxQueueItems,
   type MetaInboxQueueDisplayItem,
 } from "@/lib/meta-inbox-queue-view";
+import {
+  clearConversationTextState,
+  readConversationTextState,
+  resolveReplyWindowDetail,
+  resolveReplyWindowState,
+  writeConversationTextState,
+  type ConversationTextState,
+} from "@/lib/social-inbox-ui-freshness";
 import {
   META_INBOX_CONVERSATION_STATUSES,
   META_INBOX_CUSTOMER_CONTACT_METHODS,
@@ -187,6 +195,7 @@ type CommentActionMutationLoadState = {
 };
 
 type SavedReplyMutationLoadState = {
+  conversationId: string | null;
   status: "idle" | "saving" | "saved" | "error";
   message: string | null;
 };
@@ -242,6 +251,7 @@ const IDLE_COMMENT_ACTION_STATE: CommentActionMutationLoadState = {
 };
 
 const IDLE_SAVED_REPLY_STATE: SavedReplyMutationLoadState = {
+  conversationId: null,
   status: "idle",
   message: null,
 };
@@ -293,9 +303,12 @@ export function SocialInboxClient({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(dataError);
-  const [replyContextId, setReplyContextId] = useState<string | null>(null);
-  const [replyInstruction, setReplyInstruction] = useState("");
-  const [replyDraft, setReplyDraft] = useState("");
+  const [replyDraftByConversationId, setReplyDraftByConversationId] =
+    useState<ConversationTextState>({});
+  const [replyInstructionByConversationId, setReplyInstructionByConversationId] =
+    useState<ConversationTextState>({});
+  const [replyWindowNow, setReplyWindowNow] = useState(() => Date.now());
+  const selectedConversationIdRef = useRef<string | null>(null);
   const [historyByConversationId, setHistoryByConversationId] = useState<
     Record<string, ConversationHistoryLoadState>
   >({});
@@ -451,10 +464,14 @@ export function SocialInboxClient({
     const root = inboxData.comments.find((comment) => comment.comment_id === selectedItem.sourceId);
     return root ? [root] : [];
   }, [inboxData.comments, selectedHistoryState?.data, selectedItem]);
-  const selectedContextId = selectedItem?.id || null;
-  const isReplyContextActive = replyContextId === selectedContextId;
-  const activeReplyDraft = isReplyContextActive ? replyDraft : "";
-  const activeReplyInstruction = isReplyContextActive ? replyInstruction : "";
+  const activeReplyDraft = readConversationTextState(
+    replyDraftByConversationId,
+    selectedConversationId,
+  );
+  const activeReplyInstruction = readConversationTextState(
+    replyInstructionByConversationId,
+    selectedConversationId,
+  );
   const selectedHistoryNextCursor = selectedHistoryState?.data?.pageInfo.nextCursor || null;
   const selectedWorkflowMutationState =
     workflowMutationState.conversationId === selectedConversationId
@@ -480,6 +497,10 @@ export function SocialInboxClient({
     qaScorecardMutationState.conversationId === selectedConversationId
       ? qaScorecardMutationState
       : IDLE_QA_SCORECARD_STATE;
+  const selectedSavedReplyMutationState =
+    savedReplyMutationState.conversationId === selectedConversationId
+      ? savedReplyMutationState
+      : IDLE_SAVED_REPLY_STATE;
 
   const loadConversationHistory = useCallback(
     async (conversationId: string, cursor?: string | null) => {
@@ -574,6 +595,16 @@ export function SocialInboxClient({
     },
     [],
   );
+
+  useEffect(() => {
+    selectedConversationIdRef.current = selectedConversationId;
+    setReplyWindowNow(Date.now());
+  }, [selectedConversationId]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => setReplyWindowNow(Date.now()), 60_000);
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   useEffect(() => {
     if (!selectedConversationId) return;
@@ -762,8 +793,9 @@ export function SocialInboxClient({
             payload.events.length === 1 ? "" : "s"
           } recorded. live Meta delivery remains disabled.`,
         });
-        setReplyContextId(conversationId);
-        setReplyDraft("");
+        setReplyDraftByConversationId((current) =>
+          clearConversationTextState(current, conversationId),
+        );
       } catch (error) {
         setReplyAttemptMutationState({
           conversationId,
@@ -1035,8 +1067,9 @@ export function SocialInboxClient({
   );
 
   const handleSavedReplyCreate = useCallback(
-    async (input: MetaInboxSavedReplyInput) => {
+    async (conversationId: string, input: MetaInboxSavedReplyInput) => {
       setSavedReplyMutationState({
+        conversationId,
         status: "saving",
         message: "Saving personal draft...",
       });
@@ -1060,11 +1093,13 @@ export function SocialInboxClient({
 
         setInboxData((current) => upsertSavedReply(current, payload.savedReply));
         setSavedReplyMutationState({
+          conversationId,
           status: "saved",
           message: "Personal draft saved for matching conversations.",
         });
       } catch (error) {
         setSavedReplyMutationState({
+          conversationId,
           status: "error",
           message: translateError(error),
         });
@@ -1192,6 +1227,11 @@ export function SocialInboxClient({
       }
 
       setInboxData(freshData);
+      const refreshedSelectedConversationId = selectedConversationIdRef.current;
+      if (refreshedSelectedConversationId) {
+        setSyncStatus("Sync complete. Refreshing selected conversation history...");
+        await loadConversationHistory(refreshedSelectedConversationId);
+      }
       const metrics = syncPayload.metrics || {};
       const errorNote = syncPayload.errors?.length
         ? ` ${syncPayload.errors.length} source warning(s); first: ${syncPayload.errors[0]}`
@@ -1402,7 +1442,7 @@ export function SocialInboxClient({
                 <span className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
                   Conversation Detail
                 </span>
-                <h2 className="mt-2 font-title text-[34px] leading-tight text-hp-ink">
+                <h2 className="mt-2 font-title break-words text-[34px] leading-tight text-hp-ink">
                   {selectedItem ? selectedItem.sender : "Select a thread"}
                 </h2>
                 {syncStatus ? (
@@ -1450,15 +1490,18 @@ export function SocialInboxClient({
 
               <div className="border-t border-hp-rule p-4">
                 <ReplyAttemptPanel
+                  key={conversationPanelKey(selectedItem, "reply-attempt")}
                   item={selectedItem}
                   draft={activeReplyDraft}
                   onDraftChange={(value) => {
-                    setReplyContextId(selectedContextId);
-                    setReplyDraft(value);
+                    setReplyDraftByConversationId((current) =>
+                      writeConversationTextState(current, selectedConversationId, value),
+                    );
                   }}
                   canSendInboxReply={canSendInboxReply}
                   mutationState={selectedReplyAttemptMutationState}
-                  savedReplyMutationState={savedReplyMutationState}
+                  savedReplyMutationState={selectedSavedReplyMutationState}
+                  replyWindowNow={replyWindowNow}
                   onCreateSendAttempt={handleSendAttemptCreate}
                   onQueueSendAttempt={handleSendAttemptQueue}
                   onRetrySendAttempt={handleSendAttemptRetry}
@@ -1469,6 +1512,7 @@ export function SocialInboxClient({
 
             <aside className="min-w-0 p-5">
               <ConversationSourcePanel
+                key={conversationPanelKey(selectedItem, "source")}
                 item={selectedItem}
                 canManageInboxState={canManageInboxState}
                 mutationState={selectedContactMethodMutationState}
@@ -1482,13 +1526,16 @@ export function SocialInboxClient({
                 onWorkflowUpdate={handleWorkflowUpdate}
                 instruction={activeReplyInstruction}
                 onInstructionChange={(value) => {
-                  setReplyContextId(selectedContextId);
-                  setReplyInstruction(value);
+                  setReplyInstructionByConversationId((current) =>
+                    writeConversationTextState(current, selectedConversationId, value),
+                  );
                 }}
+                replyWindowNow={replyWindowNow}
               />
               <AuditTrailPanel item={selectedItem} />
 
               <NotesCoachingPanel
+                key={conversationPanelKey(selectedItem, "notes")}
                 item={selectedItem}
                 canManageInboxState={canManageInboxState}
                 canCreateManagerCoaching={canCreateManagerCoaching}
@@ -1497,6 +1544,7 @@ export function SocialInboxClient({
               />
 
               <QaScorecardPanel
+                key={conversationPanelKey(selectedItem, "qa-scorecard")}
                 item={selectedItem}
                 canManageInboxState={canManageInboxState}
                 canCreateManagerCoaching={canCreateManagerCoaching}
@@ -1667,6 +1715,7 @@ function SelectedItemDetail({
           </a>
         ) : null}
         <PublicCommentActionPanel
+          key={conversationPanelKey(item, "comment-actions")}
           item={item}
           rootComment={rootComment}
           canSendInboxReply={canSendInboxReply}
@@ -2121,6 +2170,7 @@ function ReplyAttemptPanel({
   canSendInboxReply,
   mutationState,
   savedReplyMutationState,
+  replyWindowNow,
   onCreateSendAttempt,
   onQueueSendAttempt,
   onRetrySendAttempt,
@@ -2132,14 +2182,15 @@ function ReplyAttemptPanel({
   canSendInboxReply: boolean;
   mutationState: ReplyAttemptMutationLoadState;
   savedReplyMutationState: SavedReplyMutationLoadState;
+  replyWindowNow: number;
   onCreateSendAttempt: (conversationId: string, input: MetaInboxSendAttemptInput) => void;
   onQueueSendAttempt: (conversationId: string, input: MetaInboxQueueSendAttemptInput) => void;
   onRetrySendAttempt: (conversationId: string, input: MetaInboxRetrySendAttemptInput) => void;
-  onCreateSavedReply: (input: MetaInboxSavedReplyInput) => void;
+  onCreateSavedReply: (conversationId: string, input: MetaInboxSavedReplyInput) => void;
 }) {
   const [savedReplyTitle, setSavedReplyTitle] = useState("");
   const conversationId = item?.inboxConversation?.id || null;
-  const windowState = item ? replyWindowState(item) : null;
+  const windowState = item ? resolveReplyWindowState(item, replyWindowNow) : null;
   const failedAttempts = (item?.sendAttempts || [])
     .filter((attempt) => attempt.status === "failed_retryable" || attempt.status === "failed_terminal")
     .sort((a, b) => String(b.updated_at || b.created_at || "").localeCompare(String(a.updated_at || a.created_at || "")));
@@ -2165,7 +2216,15 @@ function ReplyAttemptPanel({
     ? "Select conversation first"
     : mutationState.status === "saving"
       ? "Recording..."
-      : "Record send attempt";
+      : !canSendInboxReply
+        ? "Read-only role"
+        : !windowState?.canAttemptSend
+          ? windowState?.label === "Expired"
+            ? "Reply window expired"
+            : "Reply unavailable"
+          : !draft.trim()
+            ? "Draft reply first"
+            : "Record send attempt";
 
   function recordSendAttempt() {
     if (!conversationId) return;
@@ -2176,8 +2235,8 @@ function ReplyAttemptPanel({
   }
 
   function savePersonalDraft() {
-    if (!item || !draft.trim()) return;
-    onCreateSavedReply({
+    if (!item || !conversationId || !draft.trim()) return;
+    onCreateSavedReply(conversationId, {
       title: savedReplyTitle.trim() || defaultSavedReplyTitle(draft),
       body: draft,
       visibility: "personal",
@@ -2535,6 +2594,7 @@ function ConversationSourcePanel({
           </div>
 
           <ContactMethodsPanel
+            key={conversationPanelKey(item, "contact-methods")}
             item={item}
             canManageInboxState={canManageInboxState}
             mutationState={mutationState}
@@ -2778,6 +2838,10 @@ function workflowPanelKey(item: QueueDisplayItem | null) {
   ].join(":");
 }
 
+function conversationPanelKey(item: QueueDisplayItem | null, panel: string) {
+  return `${panel}:${item?.inboxConversation?.id || item?.id || "empty"}`;
+}
+
 function WorkflowStatePanel({
   item,
   canManageInboxState,
@@ -2785,6 +2849,7 @@ function WorkflowStatePanel({
   onWorkflowUpdate,
   instruction,
   onInstructionChange,
+  replyWindowNow,
 }: {
   item: QueueDisplayItem | null;
   canManageInboxState: boolean;
@@ -2792,6 +2857,7 @@ function WorkflowStatePanel({
   onWorkflowUpdate: (conversationId: string, input: MetaInboxWorkflowPatchInput) => void;
   instruction: string;
   onInstructionChange: (value: string) => void;
+  replyWindowNow: number;
 }) {
   const conversation = item?.inboxConversation || null;
   const [queueDraft, setQueueDraft] = useState<MetaInboxQueueCategoryKey>(
@@ -2885,7 +2951,7 @@ function WorkflowStatePanel({
         <StateTile
           label="Reply Window"
           value={item ? sendEligibilityLabel(item) : "No conversation"}
-          detail={item ? replyWindowDetail(item) : null}
+          detail={item ? resolveReplyWindowDetail(item, replyWindowNow) : null}
         />
       </div>
 
@@ -3662,7 +3728,7 @@ function StateTile({
   return (
     <div className="border border-hp-rule bg-hp-inset p-3">
       <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{label}</p>
-      <p className="mt-1 text-sm font-medium text-hp-ink">{value}</p>
+      <p className="mt-1 break-words text-sm font-medium text-hp-ink">{value}</p>
       {detail ? <p className="mt-1 text-xs leading-5 text-hp-muted">{detail}</p> : null}
     </div>
   );
@@ -3673,71 +3739,6 @@ function sendEligibilityLabel(item: QueueDisplayItem) {
   if (item.sendEligibility === "human_agent_allowed") return "Human Agent Window";
   if (item.sendEligibility === "expired") return "Expired";
   return "Unknown";
-}
-
-function replyWindowState(item: QueueDisplayItem) {
-  const now = Date.now();
-  const standardOpen =
-    item.sendEligibility === "standard_reply_allowed" &&
-    Boolean(item.replyWindowExpiresAt) &&
-    Date.parse(item.replyWindowExpiresAt || "") > now;
-  const humanAgentOpen =
-    (item.sendEligibility === "human_agent_allowed" ||
-      item.sendEligibility === "standard_reply_allowed") &&
-    Boolean(item.humanAgentWindowExpiresAt) &&
-    Date.parse(item.humanAgentWindowExpiresAt || "") > now;
-
-  if (standardOpen) {
-    return {
-      canAttemptSend: true,
-      label: "Standard Reply",
-      detail: `${timeUntilLabel(item.replyWindowExpiresAt || "")} remaining for standard response.`,
-    };
-  }
-
-  if (humanAgentOpen) {
-    return {
-      canAttemptSend: true,
-      label: "Human Agent Window",
-      detail: `${timeUntilLabel(item.humanAgentWindowExpiresAt || "")} remaining with Human Agent tag.`,
-    };
-  }
-
-  if (item.sendEligibility === "expired") {
-    return {
-      canAttemptSend: false,
-      label: "Expired",
-      detail: "Meta reply window is closed for normal send attempts.",
-    };
-  }
-
-  return {
-    canAttemptSend: false,
-    label: sendEligibilityLabel(item),
-    detail: "Reply eligibility is unknown. Sync or repair the conversation before send attempt.",
-  };
-}
-
-function replyWindowDetail(item: QueueDisplayItem) {
-  const target =
-    item.sendEligibility === "standard_reply_allowed"
-      ? item.replyWindowExpiresAt
-      : item.sendEligibility === "human_agent_allowed"
-        ? item.humanAgentWindowExpiresAt
-        : null;
-  if (!target) return null;
-  return `${timeUntilLabel(target)} remaining`;
-}
-
-function timeUntilLabel(iso: string) {
-  const diffMs = Date.parse(iso) - Date.now();
-  if (!Number.isFinite(diffMs)) return "Unknown";
-  if (diffMs <= 0) return "Expired";
-  const minutes = Math.ceil(diffMs / 60_000);
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.ceil(minutes / 60);
-  if (hours < 24) return `${hours} hr`;
-  return `${Math.ceil(hours / 24)} day`;
 }
 
 function upsertSendAttempt(data: SocialInboxData, sendAttempt: SocialInboxSendAttempt): SocialInboxData {
@@ -4301,7 +4302,7 @@ function QueueItem({
         </span>
       </div>
       <p className="mt-2 line-clamp-2 text-sm leading-6 text-hp-body">{item.preview}</p>
-      <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+      <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2 break-words text-[10px] uppercase leading-5 tracking-[0.14em] text-hp-muted">
         <Clock size={13} />
         {item.brand} · {metaInboxVocabularyLabel(META_INBOX_QUEUE_CATEGORIES, item.queueCategoryKey)} ·{" "}
         {metaInboxVocabularyLabel(META_INBOX_SOURCE_CHANNELS, item.sourceChannel)} · {item.status}
