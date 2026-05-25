@@ -40,6 +40,52 @@ test("normalizeAnalysisOutputMode defaults invalid values to Answer + visuals", 
   assert.equal(normalizeAnalysisOutputMode(null), "answer_visuals");
 });
 
+test("buildAnalysisRunInsert persists governed answer text, source notes, and visual cards", () => {
+  const run = buildAnalysisRunInsert({
+    prompt: "Show spend by campaign group.",
+    outputMode: "answer_visuals",
+    now: "2026-05-25T14:30:00.000Z",
+    pipelineResult: {
+      status: "completed",
+      title: "Show spend by campaign group.",
+      intent: { status: "ready" },
+      queryPlan: {
+        status: "ready",
+        source: "meta_ads",
+        aggregateFunction: "aggregate_meta_daily_insights",
+        requests: [],
+      },
+      facts: { status: "computed", items: [] },
+      answer: { summary: "Spend was $3,400 [F1].", citations: [] },
+      sourceNotes: [{ id: "S1", label: "Data source", value: "Meta Ads daily insights" }],
+      validation: { status: "ready", blockers: [], warnings: [], assumptions: [] },
+      visualCards: [
+        {
+          id: "metric_spend",
+          type: "metric_card",
+          title: "Total Spend",
+          metric: "spend",
+          value: 3400,
+          formattedValue: "$3,400",
+          citationId: "F1",
+          sourceNoteIds: ["S1"],
+        },
+      ],
+      dashboardPacket: null,
+    },
+  });
+
+  assert.equal(run.status, "completed");
+  assert.equal((run.answer as { summary: string }).summary, "Spend was $3,400 [F1].");
+  assert.deepEqual(run.source_notes, [
+    { id: "S1", label: "Data source", value: "Meta Ads daily insights" },
+  ]);
+  assert.equal(
+    (run.visual_cards as unknown as Array<{ type: string }>)[0]?.type,
+    "metric_card",
+  );
+});
+
 test("buildAnalysisRunInsert blocks unsupported source prompts before an answer", () => {
   const run = buildAnalysisRunInsert({
     prompt: "Show revenue and ROAS by campaign.",

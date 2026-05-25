@@ -21,6 +21,10 @@ test("analysis workbench shell defaults to Answer + visuals and avoids legacy As
 
   assert.match(markup, /Ask AI Workbench/);
   assert.match(markup, /Answer \+ visuals/);
+  assert.match(markup, /aria-checked="true"/);
+  assert.match(markup, /Text answer with cited numbers, assumptions, and no charts/);
+  assert.match(markup, /Text answer plus key chart and table cards for quick understanding/);
+  assert.match(markup, /Saved packet with editable charts, pivot tables, exports, and source notes/);
   assert.match(markup, /Run analysis/);
   assert.match(markup, /No runs yet/);
   assert.doesNotMatch(markup, />Ask</);
@@ -53,6 +57,123 @@ test("analysis workbench shell lists recent runs for reopen", () => {
   assert.match(markup, /Recent Runs/);
   assert.match(markup, /Which groups moved/);
   assert.match(markup, /Answer \+ visuals/);
+});
+
+test("run detail renders answer, source notes, and structured visual cards", () => {
+  const { RunDetail } = loadModule("src/components/analysis-workbench-client.tsx");
+
+  const markup = renderToStaticMarkup(
+    React.createElement(RunDetail, {
+      run: {
+        id: "run-1",
+        status: "completed",
+        prompt: "Which groups moved?",
+        outputMode: "answer_visuals",
+        title: "Which groups moved?",
+        answer: { summary: "Spend was $3,400 [F1].", citations: [] },
+        facts: { status: "computed" },
+        sourceNotes: [
+          { id: "S1", label: "Data source", value: "Meta Ads daily insights" },
+          { id: "S3", label: "Matched rows", value: "12 matching Meta Ads daily rows" },
+        ],
+        visualCards: [
+          {
+            id: "metric_spend",
+            type: "metric_card",
+            title: "Total Spend",
+            metric: "spend",
+            value: 3400,
+            formattedValue: "$3,400",
+            citationId: "F1",
+            sourceNoteIds: ["S1", "S3"],
+          },
+          {
+            id: "table_campaign_umbrella",
+            type: "flat_table",
+            title: "Campaign group evidence",
+            columns: [
+              { key: "entity", label: "Campaign group", kind: "dimension" },
+              { key: "spend", label: "Spend", kind: "metric", metric: "spend" },
+            ],
+            rows: [
+              {
+                entity: "Book Appts US",
+                spend: { value: 2500, formattedValue: "$2,500" },
+              },
+            ],
+            sourceNoteIds: ["S1", "S3"],
+          },
+          {
+            id: "bar_campaign_umbrella_spend",
+            type: "bar_chart",
+            title: "Spend by campaign group",
+            metric: "spend",
+            dimension: "campaign_umbrella",
+            bars: [
+              { label: "Book Appts US", value: 2500, formattedValue: "$2,500" },
+              { label: "Cash for Gold US", value: 900, formattedValue: "$900" },
+            ],
+            sourceNoteIds: ["S1", "S3"],
+          },
+          {
+            id: "line_date_spend",
+            type: "line_chart",
+            title: "Spend trend",
+            metric: "spend",
+            dimension: "date",
+            points: [
+              { label: "2026-05-18", value: 300, formattedValue: "$300" },
+              { label: "2026-05-19", value: 420, formattedValue: "$420" },
+            ],
+            sourceNoteIds: ["S1", "S3"],
+          },
+        ],
+        validation: { status: "ready" },
+        lineage: { parentRunId: null },
+        dashboardPacket: null,
+        createdAt: "2026-05-25T14:30:00.000Z",
+        updatedAt: "2026-05-25T14:30:00.000Z",
+      },
+    }),
+  );
+
+  assert.match(markup, /Answer/);
+  assert.match(markup, /Spend was \$3,400/);
+  assert.match(markup, /Source Notes/);
+  assert.match(markup, /12 matching Meta Ads daily rows/);
+  assert.match(markup, /Total Spend/);
+  assert.match(markup, /\$3,400/);
+  assert.match(markup, /Campaign group evidence/);
+  assert.match(markup, /Book Appts US/);
+  assert.match(markup, /Spend by campaign group/);
+  assert.match(markup, /Cash for Gold US/);
+  assert.match(markup, /Spend trend/);
+  assert.match(markup, /2026-05-18/);
+});
+
+test("workbench status and visual regions render loading, empty, and error states", () => {
+  const { EmptyRunDetail, StatusNotice, VisualCardGrid } = loadModule(
+    "src/components/analysis-workbench-client.tsx",
+  );
+
+  const loadingMarkup = renderToStaticMarkup(
+    React.createElement(StatusNotice, { loading: true, status: "", kind: "idle" }),
+  );
+  assert.match(loadingMarkup, /Creating governed run/);
+
+  const errorMarkup = renderToStaticMarkup(
+    React.createElement(StatusNotice, { loading: false, status: "Run failed.", kind: "error" }),
+  );
+  assert.match(errorMarkup, /role="alert"/);
+  assert.match(errorMarkup, /Run failed/);
+
+  const noRunMarkup = renderToStaticMarkup(React.createElement(EmptyRunDetail));
+  assert.match(noRunMarkup, /No run selected/);
+
+  const noVisualMarkup = renderToStaticMarkup(
+    React.createElement(VisualCardGrid, { cards: [], runStatus: "completed" }),
+  );
+  assert.match(noVisualMarkup, /No visual cards saved for this run/);
 });
 
 function loadModule(filePath: string) {

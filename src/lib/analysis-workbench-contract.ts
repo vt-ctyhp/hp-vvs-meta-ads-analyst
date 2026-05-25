@@ -1,4 +1,8 @@
 import { validateAnalysisWorkbenchSemanticIntent } from "./analysis-workbench-semantic-catalog.ts";
+import type {
+  WorkbenchDimension,
+  WorkbenchMetric,
+} from "./analysis-workbench-semantic-catalog.ts";
 import type { AnalysisWorkbenchPipelineResult } from "./analysis-workbench-pipeline.ts";
 
 export type JsonValue =
@@ -23,6 +27,88 @@ export type AnalysisRunAnswer = {
   citations: JsonValue[];
 };
 
+export type AnalysisWorkbenchVisualCell =
+  | string
+  | number
+  | null
+  | {
+      value: string | number | null;
+      formattedValue: string;
+      metric?: WorkbenchMetric;
+      citationId?: string;
+    };
+
+export type AnalysisWorkbenchVisualColumn = {
+  key: string;
+  label: string;
+  kind: "dimension" | "metric";
+  metric?: WorkbenchMetric;
+};
+
+export type AnalysisWorkbenchMetricVisualCard = {
+  id: string;
+  type: "metric_card";
+  title: string;
+  metric: WorkbenchMetric;
+  value: number | null;
+  formattedValue: string;
+  citationId: string;
+  sourceNoteIds: string[];
+  caveats?: string[];
+  assumptions?: string[];
+};
+
+export type AnalysisWorkbenchTableVisualCard = {
+  id: string;
+  type: "flat_table";
+  title: string;
+  columns: AnalysisWorkbenchVisualColumn[];
+  rows: Array<Record<string, AnalysisWorkbenchVisualCell>>;
+  sourceNoteIds: string[];
+  caveats?: string[];
+  assumptions?: string[];
+};
+
+export type AnalysisWorkbenchBarVisualCard = {
+  id: string;
+  type: "bar_chart";
+  title: string;
+  metric: WorkbenchMetric;
+  dimension: WorkbenchDimension;
+  bars: Array<{
+    label: string;
+    value: number;
+    formattedValue: string;
+    citationId?: string;
+  }>;
+  sourceNoteIds: string[];
+  caveats?: string[];
+  assumptions?: string[];
+};
+
+export type AnalysisWorkbenchLineVisualCard = {
+  id: string;
+  type: "line_chart";
+  title: string;
+  metric: WorkbenchMetric;
+  dimension: "date";
+  points: Array<{
+    label: string;
+    value: number;
+    formattedValue: string;
+    citationId?: string;
+  }>;
+  sourceNoteIds: string[];
+  caveats?: string[];
+  assumptions?: string[];
+};
+
+export type AnalysisWorkbenchVisualCard =
+  | AnalysisWorkbenchMetricVisualCard
+  | AnalysisWorkbenchTableVisualCard
+  | AnalysisWorkbenchBarVisualCard
+  | AnalysisWorkbenchLineVisualCard;
+
 export type AnalysisWorkbenchRun = {
   id: string;
   status: AnalysisRunStatus;
@@ -32,7 +118,7 @@ export type AnalysisWorkbenchRun = {
   intent: JsonValue;
   queryPlan: JsonValue;
   facts: JsonValue;
-  visualCards: JsonValue[];
+  visualCards: AnalysisWorkbenchVisualCard[];
   sourceNotes: JsonValue[];
   validation: JsonValue;
   lineage: JsonValue;
@@ -92,7 +178,7 @@ export function buildAnalysisRunInsert(input: {
       intent: input.pipelineResult.intent as JsonValue,
       query_plan: input.pipelineResult.queryPlan as JsonValue,
       facts: input.pipelineResult.facts as JsonValue,
-      visual_cards: input.pipelineResult.visualCards as JsonValue[],
+      visual_cards: input.pipelineResult.visualCards as unknown as JsonValue[],
       source_notes: input.pipelineResult.sourceNotes as unknown as JsonValue[],
       validation: input.pipelineResult.validation as JsonValue,
       lineage: {
@@ -169,7 +255,9 @@ export function mapAnalysisRunRecord(record: AnalysisRunRecord): AnalysisWorkben
     intent: record.intent || {},
     queryPlan: record.query_plan || {},
     facts: record.facts || {},
-    visualCards: Array.isArray(record.visual_cards) ? record.visual_cards : [],
+    visualCards: Array.isArray(record.visual_cards)
+      ? (record.visual_cards as unknown as AnalysisWorkbenchVisualCard[])
+      : [],
     sourceNotes: Array.isArray(record.source_notes) ? record.source_notes : [],
     validation: record.validation || {},
     lineage: record.lineage || { parentRunId: null },

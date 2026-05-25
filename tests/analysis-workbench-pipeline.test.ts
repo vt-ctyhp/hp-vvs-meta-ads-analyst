@@ -91,6 +91,99 @@ test("answer-only requests run through governed intent, query, facts, and cited 
   assert.deepEqual(validateAnalysisWorkbenchNarrativeGrounding(result.answer.summary, result.answer.citations), []);
 });
 
+test("answer plus visuals creates structured metric, table, bar, and line visual cards", async () => {
+  const requests: AnalysisWorkbenchPipelineAggregateRequest[] = [];
+  const result = await runAnalysisWorkbenchFactsPipeline({
+    prompt: "Show spend and primary KPI by campaign group for the last 7 days.",
+    outputMode: "answer_visuals",
+    latestSyncedInsightDate: "2026-05-24",
+    executeAggregate: async (request) => {
+      requests.push(request);
+      if (request.dimensions.includes("date")) {
+        return [
+          aggregateRow({ date: "2026-05-18", spend: 300, primary_results: 3, source_rows: 2 }),
+          aggregateRow({ date: "2026-05-19", spend: 420, primary_results: 4, source_rows: 2 }),
+          aggregateRow({ date: "2026-05-20", spend: 510, primary_results: 5, source_rows: 2 }),
+        ];
+      }
+
+      return request.dimensions.length
+        ? [
+            aggregateRow({
+              campaign_umbrella: "Book Appts US",
+              spend: 2500,
+              primary_results: 25,
+              source_rows: 8,
+            }),
+            aggregateRow({
+              campaign_umbrella: "Cash for Gold US",
+              spend: 900,
+              primary_results: 9,
+              source_rows: 4,
+            }),
+          ]
+        : [
+            aggregateRow({
+              spend: 3400,
+              primary_results: 34,
+              source_rows: 12,
+            }),
+          ];
+    },
+  });
+
+  assert.equal(result.status, "completed");
+  assert.deepEqual(
+    requests.map((request) => request.dimensions),
+    [["campaign_umbrella"], [], ["date"]],
+  );
+  assert.match(result.answer.summary, /Answer \+ visuals mode/);
+  assert.deepEqual(
+    result.visualCards.map((card) => card.type),
+    ["metric_card", "metric_card", "flat_table", "bar_chart", "line_chart"],
+  );
+  assert.deepEqual(result.visualCards.map((card) => card.sourceNoteIds), [
+    ["S1", "S2", "S3"],
+    ["S1", "S2", "S3"],
+    ["S1", "S2", "S3", "S4"],
+    ["S1", "S2", "S3", "S4"],
+    ["S1", "S2", "S3"],
+  ]);
+
+  const table = result.visualCards.find((card) => card.type === "flat_table");
+  assert.ok(table && table.type === "flat_table");
+  assert.equal(table.title, "Campaign group evidence");
+  assert.equal(table.rows[0]?.entity, "Book Appts US");
+  const spendCell = table.rows[0]?.spend;
+  assert.equal(
+    spendCell && typeof spendCell === "object" && "formattedValue" in spendCell
+      ? spendCell.formattedValue
+      : null,
+    "$2,500",
+  );
+
+  const line = result.visualCards.find((card) => card.type === "line_chart");
+  assert.ok(line && line.type === "line_chart");
+  assert.equal(line.title, "Spend trend");
+  assert.equal(line.points[0]?.label, "2026-05-18");
+  assert.equal(line.points[2]?.formattedValue, "$510");
+});
+
+test("answer-only mode keeps visual objects out of the saved run", async () => {
+  const result = await runAnalysisWorkbenchFactsPipeline({
+    prompt: "Show spend by campaign group.",
+    outputMode: "answer_only",
+    latestSyncedInsightDate: "2026-05-24",
+    executeAggregate: async (request) =>
+      request.dimensions.length
+        ? [aggregateRow({ campaign_umbrella: "Book Appts US", spend: 1000, source_rows: 3 })]
+        : [aggregateRow({ spend: 1000, source_rows: 3 })],
+  });
+
+  assert.deepEqual(result.visualCards, []);
+  assert.match(result.answer.summary, /Answer only mode/);
+});
+
 test("unsupported requests are blocked before any aggregate query runs", async () => {
   let queryCount = 0;
   const result = await runAnalysisWorkbenchFactsPipeline({

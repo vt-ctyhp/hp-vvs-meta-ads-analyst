@@ -1,11 +1,14 @@
 "use client";
 
-import { BarChart3, Clock3, FileText, Loader2, Send, Table2 } from "lucide-react";
+import { AlertTriangle, BarChart3, Clock3, FileText, Info, Loader2, Send, Table2 } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 
 import {
   normalizeAnalysisOutputMode,
   type AnalysisOutputMode,
+  type AnalysisRunStatus,
+  type AnalysisWorkbenchVisualCard,
+  type AnalysisWorkbenchVisualCell,
   type AnalysisWorkbenchRun,
 } from "@/lib/analysis-workbench-contract";
 import { translateError } from "@/lib/glossary";
@@ -27,6 +30,7 @@ const OUTPUT_MODE_HELP: Record<AnalysisOutputMode, string> = {
 };
 
 const OUTPUT_MODES: AnalysisOutputMode[] = ["answer_only", "answer_visuals", "full_dashboard"];
+type StatusKind = "idle" | "success" | "error";
 
 export function AnalysisWorkbenchClient({ initialRuns }: Props) {
   const [runs, setRuns] = useState(initialRuns);
@@ -37,6 +41,7 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
   const [outputMode, setOutputMode] = useState<AnalysisOutputMode>("answer_visuals");
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("");
+  const [statusKind, setStatusKind] = useState<StatusKind>("idle");
 
   const statusSentence = useMemo(() => {
     if (selectedRun) {
@@ -54,6 +59,7 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
 
     setLoading(true);
     setStatus("");
+    setStatusKind("idle");
 
     try {
       const response = await fetch("/api/analysis-runs", {
@@ -68,8 +74,10 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
       setRuns((current) => [run, ...current.filter((item) => item.id !== run.id)].slice(0, 12));
       setPrompt("");
       setStatus("Run created.");
+      setStatusKind("success");
     } catch (error) {
       setStatus(translateError(error));
+      setStatusKind("error");
     } finally {
       setLoading(false);
     }
@@ -78,6 +86,7 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
   async function reopenRun(runId: string) {
     setLoading(true);
     setStatus("");
+    setStatusKind("idle");
 
     try {
       const response = await fetch(`/api/analysis-runs?runId=${encodeURIComponent(runId)}`);
@@ -86,8 +95,11 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
       const run = payload.run as AnalysisWorkbenchRun;
       setSelectedRun(run);
       setOutputMode(normalizeAnalysisOutputMode(run.outputMode));
+      setStatus("Run reopened.");
+      setStatusKind("success");
     } catch (error) {
       setStatus(translateError(error));
+      setStatusKind("error");
     } finally {
       setLoading(false);
     }
@@ -133,11 +145,7 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
                 {loading ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
                 Run analysis
               </button>
-              {status ? (
-                <p className="mt-3 border border-hp-rule bg-hp-inset px-3 py-2 text-sm text-hp-body">
-                  {status}
-                </p>
-              ) : null}
+              <StatusNotice loading={loading} status={status} kind={statusKind} />
             </section>
 
             <section className="border border-hp-rule bg-hp-card p-5">
@@ -179,7 +187,7 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
   );
 }
 
-function ModeSelector({
+export function ModeSelector({
   value,
   onChange,
 }: {
@@ -187,23 +195,39 @@ function ModeSelector({
   onChange: (value: AnalysisOutputMode) => void;
 }) {
   return (
-    <div className="grid gap-2">
+    <div
+      aria-label="Output mode"
+      role="radiogroup"
+      className="grid overflow-visible border border-hp-rule bg-hp-foundation sm:grid-cols-3"
+    >
       {OUTPUT_MODES.map((mode) => {
         const active = value === mode;
+        const helpId = `output-mode-help-${mode}`;
         return (
           <button
             key={mode}
             type="button"
+            role="radio"
+            aria-checked={active}
+            aria-describedby={helpId}
             onClick={() => onChange(mode)}
             title={OUTPUT_MODE_HELP[mode]}
             className={
               active
-                ? "border border-hp-ink bg-hp-ink px-3 py-3 text-left text-hp-foundation"
-                : "border border-hp-rule bg-hp-foundation px-3 py-3 text-left text-hp-body transition-colors hover:border-hp-ink"
+                ? "group relative min-h-[72px] border-b border-hp-ink bg-hp-ink px-3 py-3 text-left text-hp-foundation last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0"
+                : "group relative min-h-[72px] border-b border-hp-rule bg-hp-foundation px-3 py-3 text-left text-hp-body transition-colors hover:bg-hp-inset hover:text-hp-ink last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0"
             }
           >
-            <span className="block text-[11px] uppercase tracking-[0.14em]">
-              {OUTPUT_MODE_LABELS[mode]}
+            <span className="flex items-center justify-between gap-2 text-[11px] uppercase tracking-[0.14em]">
+              <span>{OUTPUT_MODE_LABELS[mode]}</span>
+              <Info size={13} aria-hidden />
+            </span>
+            <span
+              id={helpId}
+              role="tooltip"
+              className="absolute left-0 top-[calc(100%+8px)] z-30 hidden w-72 border border-hp-rule bg-hp-card px-3 py-2 text-sm normal-case leading-5 tracking-normal text-hp-body shadow-[0_8px_24px_rgba(42,39,37,0.08)] group-hover:block group-focus-visible:block"
+            >
+              {OUTPUT_MODE_HELP[mode]}
             </span>
           </button>
         );
@@ -212,7 +236,46 @@ function ModeSelector({
   );
 }
 
-function RunDetail({ run }: { run: AnalysisWorkbenchRun }) {
+export function StatusNotice({
+  loading,
+  status,
+  kind,
+}: {
+  loading: boolean;
+  status: string;
+  kind: StatusKind;
+}) {
+  if (loading) {
+    return (
+      <p
+        role="status"
+        className="mt-3 flex items-start gap-2 border border-hp-rule bg-hp-inset px-3 py-2 text-sm text-hp-body"
+      >
+        <Loader2 size={15} className="mt-1 shrink-0 animate-spin" />
+        Creating governed run...
+      </p>
+    );
+  }
+
+  if (!status) return null;
+
+  const error = kind === "error";
+  return (
+    <p
+      role={error ? "alert" : "status"}
+      className={
+        error
+          ? "mt-3 flex items-start gap-2 border border-signal-danger bg-signal-danger-bg px-3 py-2 text-sm text-hp-ink"
+          : "mt-3 border border-hp-rule bg-hp-inset px-3 py-2 text-sm text-hp-body"
+      }
+    >
+      {error ? <AlertTriangle size={15} className="mt-1 shrink-0" /> : null}
+      <span>{status}</span>
+    </p>
+  );
+}
+
+export function RunDetail({ run }: { run: AnalysisWorkbenchRun }) {
   return (
     <article>
       <div className="flex flex-col gap-4 border-b border-hp-rule pb-5 md:flex-row md:items-start md:justify-between">
@@ -242,6 +305,10 @@ function RunDetail({ run }: { run: AnalysisWorkbenchRun }) {
         <p className="max-w-3xl text-sm leading-6 text-hp-body">{run.answer.summary}</p>
       </section>
 
+      <SourceNotes notes={run.sourceNotes} />
+
+      <VisualCardGrid cards={run.visualCards} runStatus={run.status} />
+
       <section className="grid gap-4 py-5 md:grid-cols-2">
         <StructuredStatus icon={<Table2 size={17} />} label="Facts" value={statusFromJson(run.facts)} />
         <StructuredStatus
@@ -254,10 +321,235 @@ function RunDetail({ run }: { run: AnalysisWorkbenchRun }) {
   );
 }
 
-function EmptyRunDetail() {
+export function VisualCardGrid({
+  cards,
+  runStatus,
+}: {
+  cards: AnalysisWorkbenchVisualCard[];
+  runStatus: AnalysisRunStatus;
+}) {
+  if (!cards.length) {
+    return (
+      <section className="border-b border-hp-rule py-5">
+        <div className="mb-3 flex items-center gap-2 text-hp-ink">
+          <BarChart3 size={17} />
+          <span className="text-[11px] uppercase tracking-[0.14em]">Visual Cards</span>
+        </div>
+        <p className="border border-dashed border-hp-rule bg-hp-foundation p-4 text-sm text-hp-muted">
+          {runStatus === "failed"
+            ? "Run failed validation; no visual cards rendered."
+            : "No visual cards saved for this run."}
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="border-b border-hp-rule py-5">
+      <div className="mb-4 flex items-center gap-2 text-hp-ink">
+        <BarChart3 size={17} />
+        <span className="text-[11px] uppercase tracking-[0.14em]">Visual Cards</span>
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        {cards.map((card) => (
+          <VisualCard key={card.id} card={card} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+export function EmptyRunDetail() {
   return (
     <div className="flex min-h-96 items-center justify-center border border-dashed border-hp-rule bg-hp-foundation p-6 text-center">
       <p className="max-w-sm text-sm leading-6 text-hp-muted">No run selected.</p>
+    </div>
+  );
+}
+
+function SourceNotes({ notes }: { notes: unknown[] }) {
+  const normalized = notes.map(normalizeSourceNote).filter(Boolean) as Array<{
+    id: string;
+    label: string;
+    value: string;
+  }>;
+
+  return (
+    <section className="border-b border-hp-rule py-5">
+      <div className="mb-3 flex items-center gap-2 text-hp-ink">
+        <Table2 size={17} />
+        <span className="text-[11px] uppercase tracking-[0.14em]">Source Notes</span>
+      </div>
+      {normalized.length ? (
+        <dl className="grid gap-3 md:grid-cols-2">
+          {normalized.map((note) => (
+            <div key={`${note.id}-${note.label}`} className="border border-hp-rule bg-hp-foundation p-3">
+              <dt className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{note.label}</dt>
+              <dd className="mt-1 text-sm leading-5 text-hp-body">{note.value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <p className="border border-dashed border-hp-rule bg-hp-foundation p-4 text-sm text-hp-muted">
+          No source notes saved for this run.
+        </p>
+      )}
+    </section>
+  );
+}
+
+function VisualCard({ card }: { card: AnalysisWorkbenchVisualCard }) {
+  if (card.type === "metric_card") return <MetricVisualCard card={card} />;
+  if (card.type === "flat_table") return <TableVisualCard card={card} />;
+  if (card.type === "bar_chart") return <BarVisualCard card={card} />;
+  return <LineVisualCard card={card} />;
+}
+
+function MetricVisualCard({ card }: { card: Extract<AnalysisWorkbenchVisualCard, { type: "metric_card" }> }) {
+  return (
+    <section className="border border-hp-rule bg-hp-foundation p-4">
+      <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Metric card</p>
+      <h3 className="mt-2 font-title text-2xl leading-tight text-hp-ink">{card.title}</h3>
+      <p className="mt-3 font-title text-4xl leading-none text-hp-ink">{card.formattedValue}</p>
+      <VisualCardMeta card={card} />
+    </section>
+  );
+}
+
+function TableVisualCard({ card }: { card: Extract<AnalysisWorkbenchVisualCard, { type: "flat_table" }> }) {
+  return (
+    <section className="overflow-hidden border border-hp-rule bg-hp-foundation">
+      <div className="border-b border-hp-rule p-4">
+        <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Flat table</p>
+        <h3 className="mt-2 font-title text-2xl leading-tight text-hp-ink">{card.title}</h3>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full border-collapse text-sm">
+          <thead>
+            <tr className="bg-hp-inset text-left">
+              {card.columns.map((column) => (
+                <th
+                  key={column.key}
+                  className={
+                    column.kind === "metric"
+                      ? "border-b border-hp-rule px-3 py-3 text-right text-[10px] font-normal uppercase tracking-[0.14em] text-hp-muted"
+                      : "border-b border-hp-rule px-3 py-3 text-[10px] font-normal uppercase tracking-[0.14em] text-hp-muted"
+                  }
+                >
+                  {column.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {card.rows.map((row, rowIndex) => (
+              <tr key={rowIndex} className="border-b border-hp-rule last:border-b-0">
+                {card.columns.map((column) => (
+                  <td
+                    key={column.key}
+                    className={
+                      column.kind === "metric"
+                        ? "px-3 py-3 text-right tabular-nums text-hp-ink"
+                        : "px-3 py-3 text-hp-ink"
+                    }
+                  >
+                    {formatVisualCell(row[column.key])}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="p-4 pt-3">
+        <VisualCardMeta card={card} />
+      </div>
+    </section>
+  );
+}
+
+function BarVisualCard({ card }: { card: Extract<AnalysisWorkbenchVisualCard, { type: "bar_chart" }> }) {
+  const maxValue = Math.max(1, ...card.bars.map((bar) => bar.value));
+
+  return (
+    <section className="border border-hp-rule bg-hp-foundation p-4">
+      <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Bar chart</p>
+      <h3 className="mt-2 font-title text-2xl leading-tight text-hp-ink">{card.title}</h3>
+      <div className="mt-4 space-y-3">
+        {card.bars.map((bar) => (
+          <div key={bar.label} className="grid grid-cols-[minmax(90px,0.8fr)_minmax(120px,1.2fr)_auto] items-center gap-3">
+            <span className="truncate text-sm text-hp-ink">{bar.label}</span>
+            <span className="h-3 bg-hp-inset">
+              <span
+                className="block h-3 bg-hp-ink"
+                style={{ width: `${Math.max(4, (bar.value / maxValue) * 100)}%` }}
+              />
+            </span>
+            <span className="text-right text-sm tabular-nums text-hp-ink">{bar.formattedValue}</span>
+          </div>
+        ))}
+      </div>
+      <VisualCardMeta card={card} />
+    </section>
+  );
+}
+
+function LineVisualCard({ card }: { card: Extract<AnalysisWorkbenchVisualCard, { type: "line_chart" }> }) {
+  const polyline = lineChartPoints(card.points);
+
+  return (
+    <section className="border border-hp-rule bg-hp-foundation p-4">
+      <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Line chart</p>
+      <h3 className="mt-2 font-title text-2xl leading-tight text-hp-ink">{card.title}</h3>
+      <div className="mt-4 border border-hp-rule bg-hp-card p-3">
+        {card.points.length ? (
+          <>
+            <svg role="img" aria-label={card.title} viewBox="0 0 320 120" className="h-36 w-full">
+              <title>{card.title}</title>
+              <polyline
+                points={polyline}
+                fill="none"
+                stroke="#2a2725"
+                strokeWidth="2"
+                vectorEffect="non-scaling-stroke"
+              />
+              {polyline.split(" ").map((point, index) => {
+                const [cx, cy] = point.split(",");
+                return <circle key={`${point}-${index}`} cx={cx} cy={cy} r="3" fill="#9c7b3f" />;
+              })}
+            </svg>
+            <div className="mt-2 flex justify-between gap-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+              <span>{card.points[0]?.label}</span>
+              <span>{card.points[card.points.length - 1]?.label}</span>
+            </div>
+          </>
+        ) : (
+          <p className="p-4 text-sm text-hp-muted">No trend points saved.</p>
+        )}
+      </div>
+      <VisualCardMeta card={card} />
+    </section>
+  );
+}
+
+function VisualCardMeta({ card }: { card: AnalysisWorkbenchVisualCard }) {
+  return (
+    <div className="mt-4 space-y-2 border-t border-hp-rule pt-3 text-[11px] leading-5 text-hp-muted">
+      <p>
+        <span className="uppercase tracking-[0.14em]">Sources</span>{" "}
+        {card.sourceNoteIds.join(", ")}
+      </p>
+      {card.assumptions?.length ? (
+        <p>
+          <span className="uppercase tracking-[0.14em]">Assumption</span>{" "}
+          {card.assumptions[0]}
+        </p>
+      ) : null}
+      {card.caveats?.length ? (
+        <p>
+          <span className="uppercase tracking-[0.14em]">Caveat</span> {card.caveats[0]}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -298,6 +590,49 @@ function statusFromJson(value: unknown) {
   }
 
   return "pending";
+}
+
+function normalizeSourceNote(note: unknown) {
+  if (!note || typeof note !== "object" || Array.isArray(note)) return null;
+  const candidate = note as { id?: unknown; label?: unknown; value?: unknown };
+  if (typeof candidate.label !== "string" || typeof candidate.value !== "string") return null;
+  return {
+    id: typeof candidate.id === "string" ? candidate.id : candidate.label,
+    label: candidate.label,
+    value: candidate.value,
+  };
+}
+
+function formatVisualCell(cell: AnalysisWorkbenchVisualCell | undefined) {
+  if (cell === null || cell === undefined || cell === "") return "n/a";
+  if (typeof cell === "object") return cell.formattedValue || String(cell.value ?? "n/a");
+  return String(cell);
+}
+
+function lineChartPoints(points: Array<{ value: number }>) {
+  if (!points.length) return "";
+  if (points.length === 1) return "160,60";
+
+  const values = points.map((point) => point.value);
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const range = maxValue - minValue || 1;
+  const left = 12;
+  const width = 296;
+  const top = 12;
+  const height = 96;
+
+  return points
+    .map((point, index) => {
+      const x = left + (index / (points.length - 1)) * width;
+      const y = top + height - ((point.value - minValue) / range) * height;
+      return `${roundChartPoint(x)},${roundChartPoint(y)}`;
+    })
+    .join(" ");
+}
+
+function roundChartPoint(value: number) {
+  return Math.round(value * 100) / 100;
 }
 
 function formatDate(value: string) {

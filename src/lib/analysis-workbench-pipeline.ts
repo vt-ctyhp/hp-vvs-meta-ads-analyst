@@ -8,7 +8,11 @@ import {
   type WorkbenchSemanticFilter,
   type WorkbenchSemanticIssue,
 } from "./analysis-workbench-semantic-catalog.ts";
-import type { AnalysisOutputMode, AnalysisRunStatus } from "./analysis-workbench-contract.ts";
+import type {
+  AnalysisOutputMode,
+  AnalysisRunStatus,
+  AnalysisWorkbenchVisualCard,
+} from "./analysis-workbench-contract.ts";
 import type {
   MetaInsightAggregateRow,
   MetaInsightDimension,
@@ -107,7 +111,7 @@ export type AnalysisWorkbenchPipelineResult = {
     warnings: WorkbenchSemanticIssue[];
     assumptions: Array<{ code: string; message: string }>;
   };
-  visualCards: [];
+  visualCards: AnalysisWorkbenchVisualCard[];
   dashboardPacket: null;
 };
 
@@ -162,11 +166,16 @@ export async function runAnalysisWorkbenchFactsPipeline(
 
   const groupedRequest = aggregateRequest(planned, planned.dimensions, MAX_GROUP_ROWS);
   const totalRequest = aggregateRequest(planned, [], 1);
+  const trendRequest = shouldBuildVisualCards(planned.outputMode)
+    ? trendAggregateRequest(planned)
+    : null;
   const groupedRows = await input.executeAggregate(groupedRequest);
   const totalRows = await input.executeAggregate(totalRequest);
+  const trendRows = trendRequest ? await input.executeAggregate(trendRequest) : [];
   const sourceNotes = sourceNotesFor(planned, groupedRows, totalRows);
   const facts = computeFacts(planned, groupedRows, totalRows, sourceNotes);
   const answer = composeAnswer(planned, facts.items, sourceNotes);
+  const visualCards = buildVisualCards(planned, facts.items, groupedRows, trendRows);
   const groundingIssues = validateAnalysisWorkbenchNarrativeGrounding(
     answer.summary,
     answer.citations,
@@ -206,13 +215,13 @@ export async function runAnalysisWorkbenchFactsPipeline(
       status: "ready",
       source: "meta_ads",
       aggregateFunction: "aggregate_meta_daily_insights",
-      requests: [groupedRequest, totalRequest],
+      requests: [groupedRequest, totalRequest, ...(trendRequest ? [trendRequest] : [])],
     },
     facts,
     answer,
     sourceNotes,
     validation,
-    visualCards: [],
+    visualCards,
     dashboardPacket: null,
   };
 }
@@ -353,6 +362,14 @@ function aggregateRequest(
   };
 }
 
+function trendAggregateRequest(planned: PlannedIntent): AnalysisWorkbenchPipelineAggregateRequest {
+  return {
+    ...aggregateRequest(planned, ["date"], Math.min(planned.dateRange.days, 120)),
+    sortField: "date",
+    sortDirection: "asc",
+  };
+}
+
 function computeFacts(
   planned: PlannedIntent,
   groupedRows: MetaInsightAggregateRow[],
@@ -422,7 +439,7 @@ function composeAnswer(
 
   return {
     summary: [
-      `Answer only mode used governed Meta Ads facts. Totals: ${totalSentence}.`,
+      `${outputModeLabel(planned.outputMode)} mode used governed Meta Ads facts. Totals: ${totalSentence}.`,
       rankSentence,
       comparisonSentence,
       "Assumption: relative range ends at latest synced Meta Ads day [S1].",
@@ -468,6 +485,145 @@ function sourceNotesFor(
         ? planned.filters.map((filter) => `${filter.field} ${filter.operator} ${filter.value}`).join("; ")
         : "No filters",
     },
+  ];
+}
+
+function buildVisualCards(
+  planned: PlannedIntent,
+  facts: AnalysisWorkbenchComputedFact[],
+  groupedRows: MetaInsightAggregateRow[],
+  trendRows: MetaInsightAggregateRow[],
+): AnalysisWorkbenchVisualCard[] {
+  if (!shouldBuildVisualCards(planned.outputMode)) return [];
+  const totalFacts = facts.filter((fact) => fact.type === "total" && fact.metric);
+  if (!totalFacts.length) return [];
+
+  const visualCards: AnalysisWorkbenchVisualCard[] = totalFacts.slice(0, 2).map((fact) => ({
+    id: `metric_${fact.metric}`,
+    type: "metric_card",
+    title: `Total ${metricLabel(fact.metric)}`,
+    metric: fact.metric as WorkbenchMetric,
+    value: typeof fact.value === "number" ? fact.value : null,
+    formattedValue: fact.formattedValue || "n/a",
+    citationId: fact.citationId,
+    sourceNoteIds: ["S1", "S2", "S3"],
+    caveats: fact.caveat ? [fact.caveat] : undefined,
+    assumptions: visualAssumptions(planned),
+  }));
+
+  const dimension = primaryEntityDimension(planned.dimensions);
+  const metrics = planned.metrics.slice(0, 4);
+  if (dimension && groupedRows.length && metrics.length) {
+    visualCards.push(flatTableVisualCard(planned, dimension, metrics, groupedRows));
+    visualCards.push(barChartVisualCard(planned, dimension, metrics[0], groupedRows));
+  }
+
+  if (trendRows.some((row) => row.date) && metrics[0]) {
+    visualCards.push(lineChartVisualCard(planned, metrics[0], trendRows));
+  }
+
+  return visualCards;
+}
+
+function flatTableVisualCard(
+  planned: PlannedIntent,
+  dimension: WorkbenchDimension,
+  metrics: WorkbenchMetric[],
+  groupedRows: MetaInsightAggregateRow[],
+): AnalysisWorkbenchVisualCard {
+  return {
+    id: `table_${dimension}`,
+    type: "flat_table",
+    title: `${sentenceCase(visualDimensionLabel(dimension))} evidence`,
+    columns: [
+      { key: "entity", label: sentenceCase(visualDimensionLabel(dimension)), kind: "dimension" },
+      ...metrics.map((metric) => ({
+        key: metric,
+        label: metricLabel(metric),
+        kind: "metric" as const,
+        metric,
+      })),
+    ],
+    rows: groupedRows.slice(0, 10).map((row) => ({
+      entity: entityName(row, dimension),
+      ...Object.fromEntries(
+        metrics.map((metric) => [
+          metric,
+          {
+            value: metricValue(row, metric),
+            formattedValue: formatMetric(metricValue(row, metric), metric),
+            metric,
+          },
+        ]),
+      ),
+    })),
+    sourceNoteIds: ["S1", "S2", "S3", "S4"],
+    assumptions: visualAssumptions(planned),
+  };
+}
+
+function barChartVisualCard(
+  planned: PlannedIntent,
+  dimension: WorkbenchDimension,
+  metric: WorkbenchMetric,
+  groupedRows: MetaInsightAggregateRow[],
+): AnalysisWorkbenchVisualCard {
+  return {
+    id: `bar_${dimension}_${metric}`,
+    type: "bar_chart",
+    title: `${metricLabel(metric)} by ${visualDimensionLabel(dimension)}`,
+    metric,
+    dimension,
+    bars: [...groupedRows]
+      .sort((a, b) => metricValue(b, metric) - metricValue(a, metric))
+      .slice(0, 8)
+      .map((row) => {
+        const value = metricValue(row, metric);
+        return {
+          label: entityName(row, dimension),
+          value,
+          formattedValue: formatMetric(value, metric),
+        };
+      }),
+    sourceNoteIds: ["S1", "S2", "S3", "S4"],
+    assumptions: visualAssumptions(planned),
+  };
+}
+
+function lineChartVisualCard(
+  planned: PlannedIntent,
+  metric: WorkbenchMetric,
+  trendRows: MetaInsightAggregateRow[],
+): AnalysisWorkbenchVisualCard {
+  return {
+    id: `line_date_${metric}`,
+    type: "line_chart",
+    title: `${metricLabel(metric)} trend`,
+    metric,
+    dimension: "date",
+    points: trendRows
+      .filter((row) => row.date)
+      .map((row) => {
+        const value = metricValue(row, metric);
+        return {
+          label: row.date || "",
+          value,
+          formattedValue: formatMetric(value, metric),
+        };
+      }),
+    sourceNoteIds: ["S1", "S2", "S3"],
+    assumptions: visualAssumptions(planned),
+  };
+}
+
+function shouldBuildVisualCards(outputMode: AnalysisOutputMode) {
+  return outputMode === "answer_visuals" || outputMode === "full_dashboard";
+}
+
+function visualAssumptions(planned: PlannedIntent) {
+  return [
+    "Relative date range ends at the latest complete synced Meta Ads date.",
+    ...planned.semanticValidation.assumptions.map((assumption) => assumption.message),
   ];
 }
 
@@ -802,9 +958,24 @@ function dimensionLabel(dimension?: WorkbenchDimension | null) {
   ).toLowerCase();
 }
 
+function visualDimensionLabel(dimension?: WorkbenchDimension | null) {
+  if (dimension === "campaign_umbrella") return "campaign group";
+  return dimensionLabel(dimension);
+}
+
 function metricCaveat(metric: WorkbenchMetric) {
   return getAnalysisWorkbenchSemanticCatalog().metrics.find((definition) => definition.key === metric)
     ?.caveat;
+}
+
+function outputModeLabel(outputMode: AnalysisOutputMode) {
+  if (outputMode === "answer_only") return "Answer only";
+  if (outputMode === "full_dashboard") return "Full dashboard";
+  return "Answer + visuals";
+}
+
+function sentenceCase(value: string) {
+  return value ? `${value[0].toUpperCase()}${value.slice(1)}` : value;
 }
 
 function formatMetric(value: number | null | undefined, metric: WorkbenchMetric) {
