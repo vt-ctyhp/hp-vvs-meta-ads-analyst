@@ -100,9 +100,9 @@ test("validator rejects invalid fields and impossible chart combinations", () =>
     dimensions: ["campaign", "sales_rep"],
     dateGrain: "hour",
     visual: {
-      type: "line_chart",
-      metrics: ["spend"],
-      dimensions: ["campaign"],
+      type: "scatter_chart",
+      metrics: ["spend", "cpl"],
+      dimensions: ["date"],
     },
   });
 
@@ -111,5 +111,79 @@ test("validator rejects invalid fields and impossible chart combinations", () =>
     result.blockers.map((blocker) => blocker.code),
     ["invalid_metric", "invalid_dimension", "invalid_date_grain", "incompatible_chart"],
   );
-  assert.match(result.blockers.at(-1)?.message || "", /time grain/);
+  assert.match(result.blockers.at(-1)?.message || "", /entity dimension/);
+});
+
+test("validator repairs obvious pivot and scatter chart requests", () => {
+  const pivot = validateAnalysisWorkbenchSemanticIntent({
+    metrics: ["spend"],
+    dimensions: ["campaign_umbrella", "week"],
+    visual: {
+      type: "pivot_table",
+      metrics: ["spend"],
+      dimensions: ["campaign_umbrella", "week"],
+    },
+  });
+
+  assert.equal(pivot.status, "ready");
+  assert.deepEqual(pivot.repairedIntent.visual, {
+    type: "pivot_table",
+    metrics: ["spend"],
+    dimensions: ["campaign_umbrella", "week"],
+    rowDimension: "campaign_umbrella",
+    columnDimension: "week",
+  });
+  assert.deepEqual(
+    pivot.assumptions.map((assumption) => assumption.code),
+    ["repaired_visual_layout"],
+  );
+
+  const scatter = validateAnalysisWorkbenchSemanticIntent({
+    metrics: ["spend"],
+    dimensions: ["campaign_umbrella"],
+    visual: {
+      type: "scatter_chart",
+      metrics: ["spend"],
+      dimensions: ["campaign_umbrella"],
+    },
+  });
+
+  assert.equal(scatter.status, "ready");
+  assert.equal(scatter.repairedIntent.visual?.type, "bar_chart");
+  assert.deepEqual(
+    scatter.assumptions.map((assumption) => assumption.code),
+    ["repaired_visual_type"],
+  );
+});
+
+test("validator blocks impossible pivot and scatter requests with suggested fixes", () => {
+  const pivot = validateAnalysisWorkbenchSemanticIntent({
+    metrics: ["spend"],
+    dimensions: ["campaign_umbrella"],
+    visual: {
+      type: "pivot_table",
+      metrics: ["spend"],
+      dimensions: ["campaign_umbrella"],
+      rowDimension: "campaign_umbrella",
+      columnDimension: "campaign_umbrella",
+    },
+  });
+
+  assert.equal(pivot.status, "blocked");
+  assert.equal(pivot.blockers[0]?.code, "incompatible_chart");
+  assert.match(pivot.blockers[0]?.suggestedRequest || "", /campaign group by week/i);
+
+  const scatter = validateAnalysisWorkbenchSemanticIntent({
+    metrics: ["spend", "cpl"],
+    dimensions: ["date"],
+    visual: {
+      type: "scatter_chart",
+      metrics: ["spend", "cpl"],
+      dimensions: ["date"],
+    },
+  });
+
+  assert.equal(scatter.status, "blocked");
+  assert.equal(scatter.blockers[0]?.code, "incompatible_chart");
+  assert.match(scatter.blockers[0]?.suggestedRequest || "", /by campaign group/i);
 });

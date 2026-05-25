@@ -3,10 +3,12 @@ import { format, parseISO, subDays } from "date-fns";
 import {
   getAnalysisWorkbenchSemanticCatalog,
   validateAnalysisWorkbenchSemanticIntent,
+  type WorkbenchDateGrain,
   type WorkbenchDimension,
   type WorkbenchMetric,
   type WorkbenchSemanticFilter,
   type WorkbenchSemanticIssue,
+  type WorkbenchSemanticVisualIntent,
 } from "./analysis-workbench-semantic-catalog.ts";
 import type {
   AnalysisOutputMode,
@@ -84,6 +86,7 @@ export type AnalysisWorkbenchPipelineIntent = {
     direction: "asc" | "desc";
   };
   limit: number;
+  visual: WorkbenchSemanticVisualIntent | null;
 };
 
 export type AnalysisWorkbenchPipelineResult = {
@@ -267,28 +270,28 @@ function planAnalysisWorkbenchIntent(input: {
   const metrics = detectMetrics(input.prompt);
   const dimensions = detectDimensions(input.prompt);
   const filters = detectFilters(input.prompt);
+  const visual = detectVisualIntent(input.prompt, metrics, dimensions);
   const dateRange = resolvePromptDateRange(input.prompt, input.latestSyncedInsightDate);
-  const dateGrain = dimensions.find((dimension) =>
-    dimension === "date" || dimension === "week" || dimension === "month" || dimension === "quarter"
-      ? dimension
-      : null,
-  );
+  const dateGrain = dateGrainForDimensions(dimensions);
   const semanticValidation = validateAnalysisWorkbenchSemanticIntent({
     prompt: input.prompt,
     metrics,
     dimensions,
     filters,
     dateGrain: dateGrain || null,
+    ...(visual ? { visual } : {}),
   });
   const repairedFilters = semanticValidation.repairedIntent.filters as MetaInsightFilter[];
   const sortField = metrics[0] || "spend";
+  const repairedVisual = semanticValidation.repairedIntent.visual;
+  const repairedDimensions = dimensionsForVisual(dimensions, repairedVisual);
 
   return {
     status: semanticValidation.status === "blocked" ? "blocked" : "ready",
     rawPrompt: input.prompt,
     outputMode: input.outputMode,
     metrics,
-    dimensions,
+    dimensions: repairedDimensions,
     filters: repairedFilters,
     dateRange,
     sort: {
@@ -296,6 +299,7 @@ function planAnalysisWorkbenchIntent(input: {
       direction: "desc",
     },
     limit: MAX_GROUP_ROWS,
+    visual: repairedVisual,
     semanticValidation,
   };
 }
@@ -518,6 +522,15 @@ function buildVisualCards(
     visualCards.push(barChartVisualCard(planned, dimension, metrics[0], groupedRows));
   }
 
+  const pivotVisual = pivotVisualIntent(planned);
+  if (pivotVisual && groupedRows.length) {
+    visualCards.push(pivotTableVisualCard(planned, pivotVisual, groupedRows));
+  }
+
+  if (planned.visual?.type === "scatter_chart" && groupedRows.length) {
+    visualCards.push(scatterChartVisualCard(planned, planned.visual, groupedRows));
+  }
+
   if (trendRows.some((row) => row.date) && metrics[0]) {
     visualCards.push(lineChartVisualCard(planned, metrics[0], trendRows));
   }
@@ -612,6 +625,116 @@ function lineChartVisualCard(
         };
       }),
     sourceNoteIds: ["S1", "S2", "S3"],
+    assumptions: visualAssumptions(planned),
+  };
+}
+
+function pivotTableVisualCard(
+  planned: PlannedIntent,
+  visual: WorkbenchSemanticVisualIntent & {
+    rowDimension: WorkbenchDimension;
+    columnDimension: WorkbenchDimension;
+  },
+  groupedRows: MetaInsightAggregateRow[],
+): AnalysisWorkbenchVisualCard {
+  const metric = visual.metrics?.find(isWorkbenchMetric) || planned.metrics[0] || "spend";
+  const columnLabels = unique(
+    groupedRows.map((row) => dimensionValue(row, visual.columnDimension)),
+  ).slice(0, 12);
+  const rowLabels = unique(
+    groupedRows.map((row) => dimensionValue(row, visual.rowDimension)),
+  ).slice(0, 10);
+
+  return {
+    id: `pivot_${visual.rowDimension}_${visual.columnDimension}_${metric}`,
+    type: "pivot_table",
+    title: `${metricLabel(metric)} by ${visualDimensionLabel(
+      visual.rowDimension,
+    )} and ${visualDimensionLabel(visual.columnDimension)}`,
+    rowDimension: visual.rowDimension,
+    columnDimension: visual.columnDimension,
+    metric,
+    columns: columnLabels.map((label) => ({ key: label, label })),
+    rows: rowLabels.map((rowLabel) => {
+      const cells = Object.fromEntries(
+        columnLabels.map((columnLabel) => {
+          const value = groupedRows
+            .filter(
+              (row) =>
+                dimensionValue(row, visual.rowDimension) === rowLabel &&
+                dimensionValue(row, visual.columnDimension) === columnLabel,
+            )
+            .reduce((sum, row) => sum + metricValue(row, metric), 0);
+
+          return [
+            columnLabel,
+            {
+              value,
+              formattedValue: formatMetric(value, metric),
+              metric,
+            },
+          ];
+        }),
+      );
+      const totalValue = Object.values(cells).reduce(
+        (sum, cell) => sum + (typeof cell.value === "number" ? cell.value : 0),
+        0,
+      );
+
+      return {
+        rowLabel,
+        cells,
+        total: {
+          value: totalValue,
+          formattedValue: formatMetric(totalValue, metric),
+          metric,
+        },
+      };
+    }),
+    sourceNoteIds: ["S1", "S2", "S3", "S4"],
+    caveats: metricCaveat(metric) ? [metricCaveat(metric) as string] : undefined,
+    assumptions: visualAssumptions(planned),
+  };
+}
+
+function scatterChartVisualCard(
+  planned: PlannedIntent,
+  visual: WorkbenchSemanticVisualIntent,
+  groupedRows: MetaInsightAggregateRow[],
+): AnalysisWorkbenchVisualCard {
+  const dimension =
+    visual.dimensions?.find(
+      (candidate): candidate is WorkbenchDimension =>
+        isWorkbenchDimension(candidate) && ENTITY_DIMENSIONS.has(candidate),
+    ) ||
+    primaryEntityDimension(planned.dimensions) ||
+    "campaign_umbrella";
+  const metrics = (visual.metrics || []).filter(isWorkbenchMetric);
+  const xMetric = metrics[0] || planned.metrics[0] || "spend";
+  const yMetric = metrics[1] || planned.metrics.find((metric) => metric !== xMetric) || "cpl";
+
+  return {
+    id: `scatter_${dimension}_${xMetric}_${yMetric}`,
+    type: "scatter_chart",
+    title: `${metricLabel(xMetric)} versus ${metricLabel(yMetric)} by ${visualDimensionLabel(
+      dimension,
+    )}`,
+    dimension,
+    xMetric,
+    yMetric,
+    points: groupedRows.slice(0, 20).map((row) => {
+      const x = metricValue(row, xMetric);
+      const y = metricValue(row, yMetric);
+      return {
+        label: dimensionValue(row, dimension),
+        x,
+        y,
+        formattedX: formatMetric(x, xMetric),
+        formattedY: formatMetric(y, yMetric),
+      };
+    }),
+    sourceNoteIds: ["S1", "S2", "S3", "S4"],
+    caveats: [metricCaveat(xMetric), metricCaveat(yMetric)].filter(Boolean) as string[],
     assumptions: visualAssumptions(planned),
   };
 }
@@ -752,15 +875,60 @@ function detectMetrics(prompt: string): WorkbenchMetric[] {
   return unique(detected).slice(0, 4).length ? unique(detected).slice(0, 4) : DEFAULT_METRICS;
 }
 
+function detectVisualIntent(
+  prompt: string,
+  metrics: WorkbenchMetric[],
+  dimensions: WorkbenchDimension[],
+): WorkbenchSemanticVisualIntent | null {
+  const lower = prompt.toLowerCase();
+
+  if (/\b(pivot|cross[-\s]?tab|crosstab|matrix|row[-\s]?by[-\s]?column)\b/.test(lower)) {
+    return {
+      type: "pivot_table",
+      metrics,
+      dimensions,
+    };
+  }
+
+  if (
+    /\b(scatter|correlation|relationship|plot)\b/.test(lower) ||
+    (metrics.length >= 2 && /\b(?:versus|vs\.?)\b/.test(lower))
+  ) {
+    return {
+      type: "scatter_chart",
+      metrics,
+      dimensions,
+    };
+  }
+
+  if (/\bline\s+chart\b|\btrend\b/.test(lower)) {
+    return {
+      type: "line_chart",
+      metrics,
+      dimensions,
+    };
+  }
+
+  if (/\bbar\s+chart\b|\bbars?\b/.test(lower)) {
+    return {
+      type: "bar_chart",
+      metrics,
+      dimensions,
+    };
+  }
+
+  return null;
+}
+
 function detectDimensions(prompt: string): WorkbenchDimension[] {
   const lower = prompt.toLowerCase();
   const dimensions: WorkbenchDimension[] = [];
-  if (/\bby\s+(?:day|date)\b|\bdaily\b/.test(lower)) dimensions.push("date");
-  if (/\bby\s+week\b|\bweekly\b/.test(lower)) dimensions.push("week");
-  if (/\bby\s+month\b|\bmonthly\b/.test(lower)) dimensions.push("month");
-  if (/\bby\s+quarter\b|\bquarterly\b/.test(lower)) dimensions.push("quarter");
-  if (/\bby\s+brands?\b/.test(lower)) dimensions.push("brand");
-  if (/\bby\s+(?:campaign\s+)?(?:groups?|umbrellas?)\b|\bcampaign\s+umbrella\b/.test(lower)) {
+  if (/\bby\s+(?:day|date)\b|\bdaily\b|\bper\s+day\b/.test(lower)) dimensions.push("date");
+  if (/\bby\s+week\b|\bweekly\b|\bper\s+week\b/.test(lower)) dimensions.push("week");
+  if (/\bby\s+month\b|\bmonthly\b|\bper\s+month\b/.test(lower)) dimensions.push("month");
+  if (/\bby\s+quarter\b|\bquarterly\b|\bper\s+quarter\b/.test(lower)) dimensions.push("quarter");
+  if (/\bby\s+brands?\b|\bbrands?\s+(?:rows?|columns?)\b/.test(lower)) dimensions.push("brand");
+  if (/\bby\s+(?:campaign\s+)?(?:groups?|umbrellas?)\b|\bcampaign\s+umbrella\b|\bcampaign\s+groups?\s+(?:rows?|columns?)?\b/.test(lower)) {
     dimensions.push("campaign_umbrella");
   } else if (/\bby\s+campaigns?\b/.test(lower)) {
     dimensions.push("campaign");
@@ -770,6 +938,69 @@ function detectDimensions(prompt: string): WorkbenchDimension[] {
   if (/\bby\s+(?:ad\s+)?creatives?\b/.test(lower)) dimensions.push("creative");
 
   return unique(dimensions).length ? unique(dimensions).slice(0, 3) : DEFAULT_DIMENSIONS;
+}
+
+function dateGrainForDimensions(dimensions: WorkbenchDimension[]): WorkbenchDateGrain | null {
+  if (dimensions.includes("date")) return "day";
+  if (dimensions.includes("week")) return "week";
+  if (dimensions.includes("month")) return "month";
+  if (dimensions.includes("quarter")) return "quarter";
+  return null;
+}
+
+function dimensionsForVisual(
+  dimensions: WorkbenchDimension[],
+  visual: WorkbenchSemanticVisualIntent | null,
+): WorkbenchDimension[] {
+  if (!visual) return dimensions;
+
+  return unique([
+    ...dimensions,
+    ...(visual.dimensions || []).filter(isWorkbenchDimension),
+    ...(visual.rowDimension && isWorkbenchDimension(visual.rowDimension)
+      ? [visual.rowDimension]
+      : []),
+    ...(visual.columnDimension && isWorkbenchDimension(visual.columnDimension)
+      ? [visual.columnDimension]
+      : []),
+  ]).slice(0, 3);
+}
+
+function pivotVisualIntent(
+  planned: PlannedIntent,
+): (WorkbenchSemanticVisualIntent & {
+  rowDimension: WorkbenchDimension;
+  columnDimension: WorkbenchDimension;
+}) | null {
+  if (
+    planned.visual?.type === "pivot_table" &&
+    planned.visual.rowDimension &&
+    planned.visual.columnDimension &&
+    isWorkbenchDimension(planned.visual.rowDimension) &&
+    isWorkbenchDimension(planned.visual.columnDimension)
+  ) {
+    return {
+      ...planned.visual,
+      rowDimension: planned.visual.rowDimension,
+      columnDimension: planned.visual.columnDimension,
+    };
+  }
+
+  if (planned.visual) return null;
+
+  const rowDimension = planned.dimensions.find((dimension) => ENTITY_DIMENSIONS.has(dimension));
+  const columnDimension = planned.dimensions.find(
+    (dimension) => dimension === "date" || dimension === "week" || dimension === "month" || dimension === "quarter",
+  );
+  if (!rowDimension || !columnDimension || rowDimension === columnDimension) return null;
+
+  return {
+    type: "pivot_table",
+    metrics: planned.metrics.slice(0, 1),
+    dimensions: planned.dimensions,
+    rowDimension,
+    columnDimension,
+  };
 }
 
 function detectFilters(prompt: string): WorkbenchSemanticFilter[] {
@@ -933,8 +1164,29 @@ function entityName(row: MetaInsightAggregateRow, dimension: WorkbenchDimension)
   return "All Meta Ads";
 }
 
+function dimensionValue(row: MetaInsightAggregateRow, dimension: WorkbenchDimension) {
+  const value = row[dimension];
+  if (value) return String(value);
+  if (ENTITY_DIMENSIONS.has(dimension)) return entityName(row, dimension);
+  return "Unspecified";
+}
+
 function primaryEntityDimension(dimensions: WorkbenchDimension[]) {
   return dimensions.find((dimension) => ENTITY_DIMENSIONS.has(dimension)) || dimensions[0] || null;
+}
+
+function isWorkbenchMetric(value: unknown): value is WorkbenchMetric {
+  return (
+    typeof value === "string" &&
+    getAnalysisWorkbenchSemanticCatalog().metrics.some((definition) => definition.key === value)
+  );
+}
+
+function isWorkbenchDimension(value: unknown): value is WorkbenchDimension {
+  return (
+    typeof value === "string" &&
+    getAnalysisWorkbenchSemanticCatalog().dimensions.some((definition) => definition.key === value)
+  );
 }
 
 function metricLabel(metric?: WorkbenchMetric) {

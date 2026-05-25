@@ -103,15 +103,23 @@ export type WorkbenchSemanticIssue = {
   message: string;
   field?: string;
   value?: string;
+  suggestedRequest?: string;
 };
 
-export type WorkbenchSemanticAssumption = {
-  code: "repaired_filter_value";
-  field: string;
-  from: string;
-  to: string;
-  message: string;
-};
+export type WorkbenchSemanticAssumption =
+  | {
+      code: "repaired_filter_value";
+      field: string;
+      from: string;
+      to: string;
+      message: string;
+    }
+  | {
+      code: "repaired_visual_layout" | "repaired_visual_type";
+      from: string;
+      to: string;
+      message: string;
+    };
 
 export type WorkbenchSemanticValidationResult = {
   status: "ready" | "blocked";
@@ -499,9 +507,12 @@ export function validateAnalysisWorkbenchSemanticIntent(
   }
 
   const repairedFilters = repairAndValidateFilters(intent.filters || [], blockers, assumptions);
+  let repairedVisual = intent.visual || null;
   if (intent.visual) {
-    const chartIssue = validateVisual(intent.visual);
-    if (chartIssue) blockers.push(chartIssue);
+    const visualResult = repairAndValidateVisual(intent.visual);
+    repairedVisual = visualResult.visual;
+    assumptions.push(...visualResult.assumptions);
+    if (visualResult.issue) blockers.push(visualResult.issue);
   }
 
   return {
@@ -514,7 +525,7 @@ export function validateAnalysisWorkbenchSemanticIntent(
       dimensions,
       filters: repairedFilters,
       dateGrain,
-      visual: intent.visual || null,
+      visual: repairedVisual,
     },
   };
 }
@@ -691,73 +702,245 @@ function canonicalFilterField(field: string) {
   return alias?.kind === "filter" ? alias.key : field;
 }
 
-function validateVisual(visual: WorkbenchSemanticVisualIntent): WorkbenchSemanticIssue | null {
+function repairAndValidateVisual(visual: WorkbenchSemanticVisualIntent): {
+  visual: WorkbenchSemanticVisualIntent | null;
+  assumptions: WorkbenchSemanticAssumption[];
+  issue: WorkbenchSemanticIssue | null;
+} {
   if (!isVisualType(visual.type)) {
     return {
-      code: "invalid_chart_type",
-      field: "visual.type",
-      value: visual.type,
-      message: `Visual type "${visual.type}" is not approved for Meta Ads workbench analysis.`,
+      visual: null,
+      assumptions: [],
+      issue: {
+        code: "invalid_chart_type",
+        field: "visual.type",
+        value: visual.type,
+        message: `Visual type "${visual.type}" is not approved for Meta Ads workbench analysis.`,
+      },
     };
   }
 
-  const metrics = visual.metrics || [];
-  const dimensions = [
+  const metrics = unique([
+    ...(visual.metrics || []),
+    ...(visual.x && isMetric(visual.x) ? [visual.x] : []),
+    ...(visual.y && isMetric(visual.y) ? [visual.y] : []),
+  ]);
+  const dimensions = unique([
     ...(visual.dimensions || []),
     ...(visual.rowDimension ? [visual.rowDimension] : []),
     ...(visual.columnDimension ? [visual.columnDimension] : []),
-    ...(visual.x ? [visual.x] : []),
+    ...(visual.x && isDimension(visual.x) ? [visual.x] : []),
     ...(visual.y && isDimension(visual.y) ? [visual.y] : []),
-  ];
+  ]);
+  const entityDimension = dimensions.find((dimension) => ENTITY_DIMENSIONS.has(dimension));
+  const timeDimension = dimensions.find((dimension) => TIME_DIMENSIONS.has(dimension));
+  const assumption = (
+    code: Extract<WorkbenchSemanticAssumption["code"], "repaired_visual_layout" | "repaired_visual_type">,
+    from: string,
+    to: string,
+    message: string,
+  ): WorkbenchSemanticAssumption => ({ code, from, to, message });
+
+  if (visual.type === "metric_card") {
+    return { visual: { ...visual, metrics, dimensions }, assumptions: [], issue: null };
+  }
+
+  if (visual.type === "flat_table") {
+    if (!dimensions.length || !metrics.length) {
+      return {
+        visual,
+        assumptions: [],
+        issue: incompatibleChartIssue(
+          visual.type,
+          "Flat tables require at least one dimension and one metric.",
+          "Show spend by campaign group as a table.",
+        ),
+      };
+    }
+
+    return { visual: { ...visual, metrics, dimensions }, assumptions: [], issue: null };
+  }
 
   if (visual.type === "line_chart") {
     const hasTimeDimension = dimensions.some((dimension) => TIME_DIMENSIONS.has(dimension));
     if (!hasTimeDimension) {
+      if (entityDimension && metrics.length) {
+        return {
+          visual: { ...visual, type: "bar_chart", metrics, dimensions },
+          assumptions: [
+            assumption(
+              "repaired_visual_type",
+              "line_chart",
+              "bar_chart",
+              "Changed line chart to bar chart because entity comparisons require bars, not a time axis.",
+            ),
+          ],
+          issue: null,
+        };
+      }
+
       return {
-        code: "incompatible_chart",
-        field: "visual",
-        value: visual.type,
-        message: "Line charts require a time grain dimension such as day, week, month, or quarter.",
+        visual,
+        assumptions: [],
+        issue: incompatibleChartIssue(
+          visual.type,
+          "Line charts require a time grain dimension such as day, week, month, or quarter.",
+          "Show spend by day as a line chart.",
+        ),
       };
     }
+
+    return { visual: { ...visual, metrics, dimensions }, assumptions: [], issue: null };
   }
 
   if (visual.type === "bar_chart") {
-    const hasEntityDimension = dimensions.some((dimension) => ENTITY_DIMENSIONS.has(dimension));
-    if (!hasEntityDimension || !metrics.length) {
+    if (!entityDimension || !metrics.length) {
+      if (timeDimension && metrics.length) {
+        return {
+          visual: { ...visual, type: "line_chart", metrics, dimensions },
+          assumptions: [
+            assumption(
+              "repaired_visual_type",
+              "bar_chart",
+              "line_chart",
+              "Changed bar chart to line chart because time-grain comparisons require a trend axis.",
+            ),
+          ],
+          issue: null,
+        };
+      }
+
       return {
-        code: "incompatible_chart",
-        field: "visual",
-        value: visual.type,
-        message: "Bar charts require an entity dimension and at least one metric.",
+        visual,
+        assumptions: [],
+        issue: incompatibleChartIssue(
+          visual.type,
+          "Bar charts require an entity dimension and at least one metric.",
+          "Show spend by campaign group as a bar chart.",
+        ),
       };
     }
+
+    return { visual: { ...visual, metrics, dimensions }, assumptions: [], issue: null };
   }
 
   if (visual.type === "pivot_table") {
-    if (!visual.rowDimension || !visual.columnDimension || visual.rowDimension === visual.columnDimension) {
+    if (!metrics.length) {
       return {
-        code: "incompatible_chart",
-        field: "visual",
-        value: visual.type,
-        message: "Pivot tables require distinct row and column dimensions.",
+        visual,
+        assumptions: [],
+        issue: incompatibleChartIssue(
+          visual.type,
+          "Pivot tables require at least one metric.",
+          "Show spend by campaign group by week as a pivot table.",
+        ),
       };
     }
+
+    const requestedRow = visual.rowDimension && isDimension(visual.rowDimension)
+      ? visual.rowDimension
+      : null;
+    const requestedColumn = visual.columnDimension && isDimension(visual.columnDimension)
+      ? visual.columnDimension
+      : null;
+    const rowDimension = requestedRow || entityDimension || dimensions[0] || null;
+    const columnDimension =
+      requestedColumn && requestedColumn !== rowDimension
+        ? requestedColumn
+        : timeDimension && timeDimension !== rowDimension
+          ? timeDimension
+          : dimensions.find((dimension) => dimension !== rowDimension) || null;
+
+    if (rowDimension && columnDimension && rowDimension !== columnDimension) {
+      const repaired = {
+        ...visual,
+        type: "pivot_table",
+        metrics,
+        dimensions: unique([...dimensions, rowDimension, columnDimension]),
+        rowDimension,
+        columnDimension,
+      };
+      const repairedLayout =
+        requestedRow !== rowDimension || requestedColumn !== columnDimension;
+      return {
+        visual: repaired,
+        assumptions: repairedLayout
+          ? [
+              assumption(
+                "repaired_visual_layout",
+                `${requestedRow || "missing row"} / ${requestedColumn || "missing column"}`,
+                `${rowDimension} / ${columnDimension}`,
+                `Used ${labelForDimension(rowDimension)} as rows and ${labelForDimension(
+                  columnDimension,
+                )} as columns for the pivot table.`,
+              ),
+            ]
+          : [],
+        issue: null,
+      };
+    }
+
+    return {
+      visual,
+      assumptions: [],
+      issue: incompatibleChartIssue(
+        visual.type,
+        "Pivot tables require distinct row and column dimensions.",
+        "Show spend by campaign group by week as a pivot table.",
+      ),
+    };
   }
 
   if (visual.type === "scatter_chart") {
-    const hasEntityDimension = dimensions.some((dimension) => ENTITY_DIMENSIONS.has(dimension));
-    if (!hasEntityDimension || metrics.length < 2) {
+    if (entityDimension && metrics.length >= 2) {
       return {
-        code: "incompatible_chart",
-        field: "visual",
-        value: visual.type,
-        message: "Scatter charts require one entity dimension and two numeric metrics.",
+        visual: { ...visual, metrics: metrics.slice(0, 2), dimensions: unique([...dimensions, entityDimension]) },
+        assumptions: [],
+        issue: null,
       };
     }
+
+    if (entityDimension && metrics.length === 1) {
+      return {
+        visual: { ...visual, type: "bar_chart", metrics, dimensions },
+        assumptions: [
+          assumption(
+            "repaired_visual_type",
+            "scatter_chart",
+            "bar_chart",
+            "Changed scatter chart to bar chart because only one numeric metric was available.",
+          ),
+        ],
+        issue: null,
+      };
+    }
+
+    return {
+      visual,
+      assumptions: [],
+      issue: incompatibleChartIssue(
+        visual.type,
+        "Scatter charts require one entity dimension and two numeric metrics.",
+        "Show spend versus CPL by campaign group as a scatter chart.",
+      ),
+    };
   }
 
-  return null;
+  return { visual: { ...visual, metrics, dimensions }, assumptions: [], issue: null };
+}
+
+function incompatibleChartIssue(
+  visualType: WorkbenchVisualType,
+  message: string,
+  suggestedRequest: string,
+): WorkbenchSemanticIssue {
+  return {
+    code: "incompatible_chart",
+    field: "visual",
+    value: visualType,
+    message: `${message} Try: "${suggestedRequest}"`,
+    suggestedRequest,
+  };
 }
 
 function normalizeCampaignUmbrellas(value: string | string[] | null | undefined) {
@@ -797,6 +980,11 @@ function labelForFilterValue(field: string) {
   return field;
 }
 
+function labelForDimension(dimension: string) {
+  if (dimension === "campaign_umbrella") return "campaign group";
+  return dimension.replace(/_/g, " ");
+}
+
 function normalizeToken(value: string) {
   return value
     .toLowerCase()
@@ -804,4 +992,8 @@ function normalizeToken(value: string) {
     .replace(/[()/.]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function unique<T>(values: T[]): T[] {
+  return Array.from(new Set(values));
 }

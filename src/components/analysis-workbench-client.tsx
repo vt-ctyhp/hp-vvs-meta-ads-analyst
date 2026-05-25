@@ -402,6 +402,8 @@ function VisualCard({ card }: { card: AnalysisWorkbenchVisualCard }) {
   if (card.type === "metric_card") return <MetricVisualCard card={card} />;
   if (card.type === "flat_table") return <TableVisualCard card={card} />;
   if (card.type === "bar_chart") return <BarVisualCard card={card} />;
+  if (card.type === "pivot_table") return <PivotVisualCard card={card} />;
+  if (card.type === "scatter_chart") return <ScatterVisualCard card={card} />;
   return <LineVisualCard card={card} />;
 }
 
@@ -532,6 +534,98 @@ function LineVisualCard({ card }: { card: Extract<AnalysisWorkbenchVisualCard, {
   );
 }
 
+function PivotVisualCard({ card }: { card: Extract<AnalysisWorkbenchVisualCard, { type: "pivot_table" }> }) {
+  return (
+    <section className="overflow-hidden border border-hp-rule bg-hp-foundation">
+      <div className="border-b border-hp-rule p-4">
+        <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Pivot table</p>
+        <h3 className="mt-2 font-title text-2xl leading-tight text-hp-ink">{card.title}</h3>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full border-collapse text-sm">
+          <thead>
+            <tr className="bg-hp-inset text-left">
+              <th className="border-b border-hp-rule px-3 py-3 text-[10px] font-normal uppercase tracking-[0.14em] text-hp-muted">
+                Row
+              </th>
+              {card.columns.map((column) => (
+                <th
+                  key={column.key}
+                  className="border-b border-hp-rule px-3 py-3 text-right text-[10px] font-normal uppercase tracking-[0.14em] text-hp-muted"
+                >
+                  {column.label}
+                </th>
+              ))}
+              <th className="border-b border-hp-rule px-3 py-3 text-right text-[10px] font-normal uppercase tracking-[0.14em] text-hp-muted">
+                Total
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {card.rows.map((row) => (
+              <tr key={row.rowLabel} className="border-b border-hp-rule last:border-b-0">
+                <td className="px-3 py-3 text-hp-ink">{row.rowLabel}</td>
+                {card.columns.map((column) => (
+                  <td key={column.key} className="px-3 py-3 text-right tabular-nums text-hp-ink">
+                    {formatVisualCell(row.cells[column.key])}
+                  </td>
+                ))}
+                <td className="px-3 py-3 text-right tabular-nums text-hp-ink">
+                  {formatVisualCell(row.total)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="p-4 pt-3">
+        <VisualCardMeta card={card} />
+      </div>
+    </section>
+  );
+}
+
+function ScatterVisualCard({ card }: { card: Extract<AnalysisWorkbenchVisualCard, { type: "scatter_chart" }> }) {
+  const points = scatterChartPoints(card.points);
+
+  return (
+    <section className="border border-hp-rule bg-hp-foundation p-4">
+      <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Scatter chart</p>
+      <h3 className="mt-2 font-title text-2xl leading-tight text-hp-ink">{card.title}</h3>
+      <div className="mt-4 border border-hp-rule bg-hp-card p-3">
+        {card.points.length ? (
+          <>
+            <svg role="img" aria-label={card.title} viewBox="0 0 320 160" className="h-40 w-full">
+              <title>{card.title}</title>
+              <line x1="28" y1="132" x2="304" y2="132" stroke="#d4cfc4" strokeWidth="1" />
+              <line x1="28" y1="16" x2="28" y2="132" stroke="#d4cfc4" strokeWidth="1" />
+              {points.map((point) => (
+                <circle key={point.label} cx={point.cx} cy={point.cy} r="4" fill="#2a2725" />
+              ))}
+            </svg>
+            <div className="mt-2 grid gap-2">
+              {card.points.slice(0, 4).map((point) => (
+                <div
+                  key={point.label}
+                  className="flex items-center justify-between gap-3 text-sm text-hp-body"
+                >
+                  <span className="truncate text-hp-ink">{point.label}</span>
+                  <span className="shrink-0 tabular-nums text-hp-ink">
+                    {point.formattedX} / {point.formattedY}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <p className="p-4 text-sm text-hp-muted">No scatter points saved.</p>
+        )}
+      </div>
+      <VisualCardMeta card={card} />
+    </section>
+  );
+}
+
 function VisualCardMeta({ card }: { card: AnalysisWorkbenchVisualCard }) {
   return (
     <div className="mt-4 space-y-2 border-t border-hp-rule pt-3 text-[11px] leading-5 text-hp-muted">
@@ -629,6 +723,25 @@ function lineChartPoints(points: Array<{ value: number }>) {
       return `${roundChartPoint(x)},${roundChartPoint(y)}`;
     })
     .join(" ");
+}
+
+function scatterChartPoints(points: Array<{ label: string; x: number; y: number }>) {
+  if (!points.length) return [];
+
+  const xValues = points.map((point) => point.x);
+  const yValues = points.map((point) => point.y);
+  const minX = Math.min(...xValues);
+  const maxX = Math.max(...xValues);
+  const minY = Math.min(...yValues);
+  const maxY = Math.max(...yValues);
+  const xRange = maxX - minX || 1;
+  const yRange = maxY - minY || 1;
+
+  return points.map((point) => ({
+    label: point.label,
+    cx: roundChartPoint(28 + ((point.x - minX) / xRange) * 276),
+    cy: roundChartPoint(132 - ((point.y - minY) / yRange) * 116),
+  }));
 }
 
 function roundChartPoint(value: number) {

@@ -103,11 +103,54 @@ export type AnalysisWorkbenchLineVisualCard = {
   assumptions?: string[];
 };
 
+export type AnalysisWorkbenchPivotVisualCard = {
+  id: string;
+  type: "pivot_table";
+  title: string;
+  rowDimension: WorkbenchDimension;
+  columnDimension: WorkbenchDimension;
+  metric: WorkbenchMetric;
+  columns: Array<{
+    key: string;
+    label: string;
+  }>;
+  rows: Array<{
+    rowLabel: string;
+    cells: Record<string, AnalysisWorkbenchVisualCell>;
+    total: AnalysisWorkbenchVisualCell;
+  }>;
+  sourceNoteIds: string[];
+  caveats?: string[];
+  assumptions?: string[];
+};
+
+export type AnalysisWorkbenchScatterVisualCard = {
+  id: string;
+  type: "scatter_chart";
+  title: string;
+  dimension: WorkbenchDimension;
+  xMetric: WorkbenchMetric;
+  yMetric: WorkbenchMetric;
+  points: Array<{
+    label: string;
+    x: number;
+    y: number;
+    formattedX: string;
+    formattedY: string;
+    citationId?: string;
+  }>;
+  sourceNoteIds: string[];
+  caveats?: string[];
+  assumptions?: string[];
+};
+
 export type AnalysisWorkbenchVisualCard =
   | AnalysisWorkbenchMetricVisualCard
   | AnalysisWorkbenchTableVisualCard
   | AnalysisWorkbenchBarVisualCard
-  | AnalysisWorkbenchLineVisualCard;
+  | AnalysisWorkbenchLineVisualCard
+  | AnalysisWorkbenchPivotVisualCard
+  | AnalysisWorkbenchScatterVisualCard;
 
 export type AnalysisWorkbenchRun = {
   id: string;

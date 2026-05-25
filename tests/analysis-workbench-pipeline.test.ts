@@ -169,6 +169,149 @@ test("answer plus visuals creates structured metric, table, bar, and line visual
   assert.equal(line.points[2]?.formattedValue, "$510");
 });
 
+test("visual planner builds pivot table cards for row-by-column comparisons", async () => {
+  const requests: AnalysisWorkbenchPipelineAggregateRequest[] = [];
+  const result = await runAnalysisWorkbenchFactsPipeline({
+    prompt: "Make a pivot table of spend by campaign group by week for the last 14 days.",
+    outputMode: "answer_visuals",
+    latestSyncedInsightDate: "2026-05-24",
+    executeAggregate: async (request) => {
+      requests.push(request);
+      if (request.dimensions.includes("date")) return [];
+      if (request.dimensions.length) {
+        return [
+          aggregateRow({
+            campaign_umbrella: "Book Appts US",
+            week: "2026-W20",
+            spend: 1200,
+            source_rows: 3,
+          }),
+          aggregateRow({
+            campaign_umbrella: "Book Appts US",
+            week: "2026-W21",
+            spend: 1300,
+            source_rows: 4,
+          }),
+          aggregateRow({
+            campaign_umbrella: "Cash for Gold US",
+            week: "2026-W20",
+            spend: 600,
+            source_rows: 2,
+          }),
+        ];
+      }
+
+      return [aggregateRow({ spend: 3100, source_rows: 9 })];
+    },
+  });
+
+  assert.equal(result.status, "completed");
+  assert.deepEqual(requests[0]?.dimensions, ["week", "campaign_umbrella"]);
+  const pivot = result.visualCards.find((card) => card.type === "pivot_table");
+  assert.ok(pivot && pivot.type === "pivot_table");
+  assert.equal(pivot.rowDimension, "campaign_umbrella");
+  assert.equal(pivot.columnDimension, "week");
+  assert.equal(pivot.metric, "spend");
+  assert.deepEqual(
+    pivot.columns.map((column) => column.label),
+    ["2026-W20", "2026-W21"],
+  );
+  assert.equal(pivot.rows[0]?.rowLabel, "Book Appts US");
+  const pivotTotal = pivot.rows[0]?.total;
+  assert.equal(
+    pivotTotal && typeof pivotTotal === "object" && "formattedValue" in pivotTotal
+      ? pivotTotal.formattedValue
+      : null,
+    "$2,500",
+  );
+  assert.deepEqual(pivot.sourceNoteIds, ["S1", "S2", "S3", "S4"]);
+  assert.ok(pivot.assumptions?.some((assumption) => /Relative date range/.test(assumption)));
+});
+
+test("visual planner builds scatter cards when two metrics and one entity grain exist", async () => {
+  const result = await runAnalysisWorkbenchFactsPipeline({
+    prompt: "Show a scatter chart of spend versus CPL by campaign group for the last 7 days.",
+    outputMode: "answer_visuals",
+    latestSyncedInsightDate: "2026-05-24",
+    executeAggregate: async (request) => {
+      if (request.dimensions.includes("date")) return [];
+      if (request.dimensions.length) {
+        return [
+          aggregateRow({
+            campaign_umbrella: "Book Appts US",
+            spend: 2500,
+            cpl: 20,
+            source_rows: 8,
+          }),
+          aggregateRow({
+            campaign_umbrella: "Cash for Gold US",
+            spend: 900,
+            cpl: 45,
+            source_rows: 4,
+          }),
+        ];
+      }
+
+      return [aggregateRow({ spend: 3400, cpl: 25, source_rows: 12 })];
+    },
+  });
+
+  assert.equal(result.status, "completed");
+  const scatter = result.visualCards.find((card) => card.type === "scatter_chart");
+  assert.ok(scatter && scatter.type === "scatter_chart");
+  assert.equal(scatter.dimension, "campaign_umbrella");
+  assert.equal(scatter.xMetric, "spend");
+  assert.equal(scatter.yMetric, "cpl");
+  assert.deepEqual(
+    scatter.points.map((point) => [point.label, point.formattedX, point.formattedY]),
+    [
+      ["Book Appts US", "$2,500", "$20"],
+      ["Cash for Gold US", "$900", "$45"],
+    ],
+  );
+  assert.deepEqual(scatter.sourceNoteIds, ["S1", "S2", "S3", "S4"]);
+});
+
+test("incompatible scatter requests repair to compatible bar charts when obvious", async () => {
+  const result = await runAnalysisWorkbenchFactsPipeline({
+    prompt: "Show a scatter chart of spend by campaign group.",
+    outputMode: "answer_visuals",
+    latestSyncedInsightDate: "2026-05-24",
+    executeAggregate: async (request) =>
+      request.dimensions.length
+        ? [
+            aggregateRow({ campaign_umbrella: "Book Appts US", spend: 1000, source_rows: 3 }),
+          ]
+        : [aggregateRow({ spend: 1000, source_rows: 3 })],
+  });
+
+  assert.equal(result.status, "completed");
+  assert.ok(result.visualCards.some((card) => card.type === "bar_chart"));
+  assert.ok(!result.visualCards.some((card) => card.type === "scatter_chart"));
+  assert.deepEqual(
+    result.validation.assumptions.map((assumption) => assumption.code),
+    ["relative_date_range", "repaired_visual_type"],
+  );
+});
+
+test("impossible scatter requests block before aggregate queries run", async () => {
+  let queryCount = 0;
+  const result = await runAnalysisWorkbenchFactsPipeline({
+    prompt: "Show a scatter chart of spend versus CPL by day.",
+    outputMode: "answer_visuals",
+    latestSyncedInsightDate: "2026-05-24",
+    executeAggregate: async () => {
+      queryCount += 1;
+      return [];
+    },
+  });
+
+  assert.equal(queryCount, 0);
+  assert.equal(result.status, "failed");
+  assert.equal(result.validation.blockers[0]?.code, "incompatible_chart");
+  assert.match(result.validation.blockers[0]?.suggestedRequest || "", /by campaign group/i);
+});
+
 test("answer-only mode keeps visual objects out of the saved run", async () => {
   const result = await runAnalysisWorkbenchFactsPipeline({
     prompt: "Show spend by campaign group.",

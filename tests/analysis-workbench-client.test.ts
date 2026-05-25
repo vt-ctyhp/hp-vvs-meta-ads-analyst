@@ -127,6 +127,54 @@ test("run detail renders answer, source notes, and structured visual cards", () 
             ],
             sourceNoteIds: ["S1", "S3"],
           },
+          {
+            id: "pivot_campaign_umbrella_week_spend",
+            type: "pivot_table",
+            title: "Spend by campaign group and week",
+            rowDimension: "campaign_umbrella",
+            columnDimension: "week",
+            metric: "spend",
+            columns: [
+              { key: "2026-W20", label: "2026-W20" },
+              { key: "2026-W21", label: "2026-W21" },
+            ],
+            rows: [
+              {
+                rowLabel: "Book Appts US",
+                cells: {
+                  "2026-W20": { value: 1200, formattedValue: "$1,200" },
+                  "2026-W21": { value: 1300, formattedValue: "$1,300" },
+                },
+                total: { value: 2500, formattedValue: "$2,500" },
+              },
+            ],
+            sourceNoteIds: ["S1", "S3"],
+          },
+          {
+            id: "scatter_campaign_umbrella_spend_cpl",
+            type: "scatter_chart",
+            title: "Spend versus CPL by campaign group",
+            dimension: "campaign_umbrella",
+            xMetric: "spend",
+            yMetric: "cpl",
+            points: [
+              {
+                label: "Book Appts US",
+                x: 2500,
+                y: 20,
+                formattedX: "$2,500",
+                formattedY: "$20",
+              },
+              {
+                label: "Cash for Gold US",
+                x: 900,
+                y: 45,
+                formattedX: "$900",
+                formattedY: "$45",
+              },
+            ],
+            sourceNoteIds: ["S1", "S3"],
+          },
         ],
         validation: { status: "ready" },
         lineage: { parentRunId: null },
@@ -149,6 +197,12 @@ test("run detail renders answer, source notes, and structured visual cards", () 
   assert.match(markup, /Cash for Gold US/);
   assert.match(markup, /Spend trend/);
   assert.match(markup, /2026-05-18/);
+  assert.match(markup, /Pivot table/);
+  assert.match(markup, /2026-W21/);
+  assert.match(markup, /\$2,500/);
+  assert.match(markup, /Scatter chart/);
+  assert.match(markup, /Spend versus CPL by campaign group/);
+  assert.match(markup, /\$900 \/ \$45/);
 });
 
 test("workbench status and visual regions render loading, empty, and error states", () => {
