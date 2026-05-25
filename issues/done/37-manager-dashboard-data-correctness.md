@@ -38,3 +38,14 @@ Known unrelated failures from handoff/current branch:
 - `npm test` fails at `tests/website-analytics.test.ts:140`.
 
 Do not chase those failures unless this issue changes them.
+
+## Status - 2026-05-25
+
+Completed in this Ralph run. Added a complete manager-dashboard read path separate from the capped inbox list payload, switched first-response math to the earliest outbound reply after first inbound, and added composed filters for user, team, queue, source channel, campaign umbrella, ad, creative, and message context after queue access scoping.
+
+Verification:
+
+- Focused manager dashboard, attribution filter, review regression, and QA scorecard tests pass.
+- `npm run test` still fails at the known unrelated `tests/website-analytics.test.ts:140` pagination assertion.
+- `npm run typecheck` cannot run because `package.json` has no `typecheck` script.
+- `npx tsc --noEmit --pretty false` still fails at the known unrelated `tests/meta-ads-e2e-truth.test.ts:286` type assertion.

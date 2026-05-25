@@ -11,8 +11,16 @@ import type { SocialInboxData } from "./social-inbox.ts";
 
 type Conversation = SocialInboxData["inboxConversations"][number];
 type FirstTouchSource = SocialInboxData["firstTouchSources"][number];
+type Message = SocialInboxData["messages"][number];
 type SendAttempt = SocialInboxData["sendAttempts"][number];
+type CommentAction = SocialInboxData["commentActions"][number];
 type QaScorecard = SocialInboxData["qaScorecards"][number];
+
+type DashboardInputData = Pick<
+  SocialInboxData,
+  "inboxConversations" | "sendAttempts" | "firstTouchSources" | "qaScorecards"
+> &
+  Partial<Pick<SocialInboxData, "messages" | "commentActions">>;
 
 export type MetaInboxManagerDashboardMetric = {
   totalConversations: number;
@@ -110,13 +118,22 @@ export type MetaInboxManagerDashboard = {
 type DashboardOptions = {
   now?: string | Date;
   days?: number | null;
+  filters?: MetaInboxManagerDashboardFilters;
+};
+
+export type MetaInboxManagerDashboardFilters = {
+  assignedUserId?: string | null;
+  assignedTeamId?: string | null;
+  queueCategoryKey?: MetaInboxQueueCategoryKey | "all" | string | null;
+  sourceChannel?: MetaInboxSourceChannelKey | "all" | string | null;
+  campaignUmbrellaId?: string | null;
+  adId?: string | null;
+  creativeId?: string | null;
+  messageContext?: string | null;
 };
 
 export function buildMetaInboxManagerDashboard(
-  data: Pick<
-    SocialInboxData,
-    "inboxConversations" | "sendAttempts" | "firstTouchSources" | "qaScorecards"
-  >,
+  data: DashboardInputData,
   options: DashboardOptions = {},
 ): MetaInboxManagerDashboard {
   const now = normalizeDate(options.now);
@@ -126,12 +143,24 @@ export function buildMetaInboxManagerDashboard(
   const startTime = Date.parse(startAt);
   const endTime = Date.parse(endAt);
 
-  const conversations = data.inboxConversations.filter((conversation) =>
-    isConversationInRange(conversation, startTime, endTime),
+  const firstTouchByConversationId = new Map(
+    (data.firstTouchSources || []).map((source) => [source.conversation_id, source]),
   );
+  const conversations = data.inboxConversations
+    .filter((conversation) => isConversationInRange(conversation, startTime, endTime))
+    .filter((conversation) =>
+      conversationMatchesDashboardFilters(
+        conversation,
+        firstTouchByConversationId.get(conversation.id) || null,
+        options.filters,
+      ),
+    );
   const conversationIds = new Set(conversations.map((conversation) => conversation.id));
-  const sendAttempts = data.sendAttempts.filter((attempt) =>
+  const sendAttempts = (data.sendAttempts || []).filter((attempt) =>
     conversationIds.has(attempt.conversation_id),
+  );
+  const commentActions = (data.commentActions || []).filter((action) =>
+    conversationIds.has(action.conversation_id),
   );
   const qaScorecards = (data.qaScorecards || []).filter((scorecard) =>
     conversationIds.has(scorecard.conversation_id) && !scorecard.deleted_at,
@@ -141,13 +170,14 @@ export function buildMetaInboxManagerDashboard(
   );
   const retryBacklog = failedAttempts.filter((attempt) => attempt.status === "failed_retryable");
   const failedAttemptsByConversationId = groupSendAttemptsByConversationId(failedAttempts);
-  const firstTouchByConversationId = new Map(
-    (data.firstTouchSources || []).map((source) => [source.conversation_id, source]),
+  const firstResponseAtByConversationId = buildFirstResponseAtByConversationId(
+    conversations,
+    data.messages || [],
+    sendAttempts,
+    commentActions,
   );
   const responseTimes = conversations
-    .map((conversation) =>
-      minutesBetween(conversation.first_inbound_at, conversation.latest_outbound_at),
-    )
+    .map((conversation) => firstResponseMinutes(conversation, firstResponseAtByConversationId))
     .filter((value): value is number => value !== null && value >= 0);
   const labelCompleteCount = conversations.filter(hasCompleteLeadLabel).length;
 
@@ -198,7 +228,12 @@ export function buildMetaInboxManagerDashboard(
         failedSends: countFailedSends(queueConversations, failedAttemptsByConversationId),
       };
     }).filter((row) => row.totalConversations || row.failedSends),
-    byAssignee: buildAssigneeRows(conversations, failedAttemptsByConversationId, endTime),
+    byAssignee: buildAssigneeRows(
+      conversations,
+      failedAttemptsByConversationId,
+      firstResponseAtByConversationId,
+      endTime,
+    ),
     bySourceChannel: META_INBOX_SOURCE_CHANNELS.map((channel) => {
       const sourceConversations = conversations.filter(
         (conversation) => conversation.source_channel === channel.key,
@@ -209,7 +244,10 @@ export function buildMetaInboxManagerDashboard(
         totalConversations: sourceConversations.length,
         needsReply: sourceConversations.filter((conversation) => conversation.needs_reply).length,
         failedSends: countFailedSends(sourceConversations, failedAttemptsByConversationId),
-        averageFirstResponseMinutes: averageResponseMinutes(sourceConversations),
+        averageFirstResponseMinutes: averageResponseMinutes(
+          sourceConversations,
+          firstResponseAtByConversationId,
+        ),
       };
     }).filter((row) => row.totalConversations || row.failedSends),
     byOutcome: META_INBOX_OUTCOMES.map((outcome) => ({
@@ -222,6 +260,7 @@ export function buildMetaInboxManagerDashboard(
       conversations,
       firstTouchByConversationId,
       failedAttemptsByConversationId,
+      firstResponseAtByConversationId,
       (source) => source.campaign_umbrella_id || null,
       (source) => source.campaign_umbrella_id || source.ref || null,
       "Unattributed",
@@ -230,6 +269,7 @@ export function buildMetaInboxManagerDashboard(
       conversations,
       firstTouchByConversationId,
       failedAttemptsByConversationId,
+      firstResponseAtByConversationId,
       (source) => source.ad_id || null,
       (source) => attributionLabel("Ad", source.ad_id, source.ref),
       null,
@@ -238,6 +278,7 @@ export function buildMetaInboxManagerDashboard(
       conversations,
       firstTouchByConversationId,
       failedAttemptsByConversationId,
+      firstResponseAtByConversationId,
       (source) => source.creative_id || null,
       (source) => attributionLabel("Creative", source.creative_id, source.ref),
       null,
@@ -270,6 +311,71 @@ function isConversationInRange(conversation: Conversation, startTime: number, en
     const time = Date.parse(String(value || ""));
     return Number.isFinite(time) && time >= startTime && time <= endTime;
   });
+}
+
+function conversationMatchesDashboardFilters(
+  conversation: Conversation,
+  firstTouch: FirstTouchSource | null,
+  filters: MetaInboxManagerDashboardFilters | null | undefined,
+) {
+  const assignedUserId = normalizedFilterValue(filters?.assignedUserId);
+  if (assignedUserId && conversation.assigned_user_id !== assignedUserId) return false;
+
+  const assignedTeamId = normalizedFilterValue(filters?.assignedTeamId);
+  if (assignedTeamId && conversation.assigned_team_id !== assignedTeamId) return false;
+
+  const queueCategoryKey = normalizedFilterValue(filters?.queueCategoryKey);
+  if (queueCategoryKey && conversation.queue_category_key !== queueCategoryKey) return false;
+
+  const sourceChannel = normalizedFilterValue(filters?.sourceChannel);
+  if (sourceChannel && conversation.source_channel !== sourceChannel) return false;
+
+  const campaignUmbrellaId = normalizedFilterValue(filters?.campaignUmbrellaId);
+  if (campaignUmbrellaId && firstTouch?.campaign_umbrella_id !== campaignUmbrellaId) {
+    return false;
+  }
+
+  const adId = normalizedFilterValue(filters?.adId);
+  if (adId && firstTouch?.ad_id !== adId) return false;
+
+  const creativeId = normalizedFilterValue(filters?.creativeId);
+  if (creativeId && firstTouch?.creative_id !== creativeId) return false;
+
+  const messageContext = normalizedFilterValue(filters?.messageContext);
+  if (
+    messageContext &&
+    !conversationMatchesMessageContext(conversation, firstTouch, messageContext)
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function normalizedFilterValue(value: string | null | undefined) {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (!normalized || normalized === "all") return null;
+  return normalized;
+}
+
+function conversationMatchesMessageContext(
+  conversation: Conversation,
+  firstTouch: FirstTouchSource | null,
+  messageContext: string,
+) {
+  return [
+    conversation.source_type,
+    conversation.source_id,
+    conversation.platform_thread_id,
+    conversation.parent_content_id,
+    firstTouch?.first_message_id,
+    firstTouch?.ref,
+    firstTouch?.source_post_id,
+    firstTouch?.source_media_id,
+    firstTouch?.source_comment_id,
+    firstTouch?.source_product_id,
+    firstTouch?.source_permalink,
+  ].some((value) => value === messageContext);
 }
 
 function isMissedFollowUp(
@@ -354,6 +460,7 @@ function buildResponseAgeBuckets(
 function buildAssigneeRows(
   conversations: Conversation[],
   failedAttemptsByConversationId: Map<string, SendAttempt[]>,
+  firstResponseAtByConversationId: Map<string, string>,
   nowTime: number,
 ): MetaInboxManagerDashboardAssigneeRow[] {
   const conversationsByAssignee = new Map<string, Conversation[]>();
@@ -375,7 +482,10 @@ function buildAssigneeRows(
         isMissedFollowUp(conversation.follow_up_at, conversation.conversation_status, nowTime),
       ).length,
       failedSends: countFailedSends(assigneeConversations, failedAttemptsByConversationId),
-      averageFirstResponseMinutes: averageResponseMinutes(assigneeConversations),
+      averageFirstResponseMinutes: averageResponseMinutes(
+        assigneeConversations,
+        firstResponseAtByConversationId,
+      ),
     }))
     .sort((a, b) => {
       if (b.needsReply !== a.needsReply) return b.needsReply - a.needsReply;
@@ -390,6 +500,7 @@ function buildAttributionRows(
   conversations: Conversation[],
   firstTouchByConversationId: Map<string, FirstTouchSource>,
   failedAttemptsByConversationId: Map<string, SendAttempt[]>,
+  firstResponseAtByConversationId: Map<string, string>,
   keyForSource: (source: FirstTouchSource) => string | null,
   labelForSource: (source: FirstTouchSource) => string | null,
   missingLabel: string | null,
@@ -428,7 +539,10 @@ function buildAttributionRows(
       totalConversations: group.conversations.length,
       needsReply: group.conversations.filter((conversation) => conversation.needs_reply).length,
       failedSends: countFailedSends(group.conversations, failedAttemptsByConversationId),
-      averageFirstResponseMinutes: averageResponseMinutes(group.conversations),
+      averageFirstResponseMinutes: averageResponseMinutes(
+        group.conversations,
+        firstResponseAtByConversationId,
+      ),
       averageAttributionConfidence: averageDecimal(group.confidenceValues),
     }))
     .sort((a, b) => {
@@ -473,12 +587,114 @@ function countFailedSends(
   );
 }
 
-function averageResponseMinutes(conversations: Conversation[]) {
+function buildFirstResponseAtByConversationId(
+  conversations: Conversation[],
+  messages: Message[],
+  sendAttempts: SendAttempt[],
+  commentActions: CommentAction[],
+) {
+  const conversationById = new Map(conversations.map((conversation) => [conversation.id, conversation]));
+  const conversationIdsByThreadKey = new Map<string, string[]>();
+  const firstResponseAtByConversationId = new Map<string, string>();
+
+  for (const conversation of conversations) {
+    for (const key of conversationThreadKeys(conversation)) {
+      conversationIdsByThreadKey.set(key, [
+        ...(conversationIdsByThreadKey.get(key) || []),
+        conversation.id,
+      ]);
+    }
+  }
+
+  for (const message of messages) {
+    if (message.direction !== "outbound" || !message.sent_at) continue;
+    const threadKey = historyKey(message.platform, message.thread_id);
+    if (!threadKey) continue;
+    const conversationIds = conversationIdsByThreadKey.get(threadKey) || [];
+    for (const conversationId of conversationIds) {
+      recordFirstResponseAt(
+        firstResponseAtByConversationId,
+        conversationById.get(conversationId) || null,
+        message.sent_at,
+      );
+    }
+  }
+
+  for (const attempt of sendAttempts) {
+    if (attempt.status !== "sent" || !attempt.sent_at) continue;
+    recordFirstResponseAt(
+      firstResponseAtByConversationId,
+      conversationById.get(attempt.conversation_id) || null,
+      attempt.sent_at,
+    );
+  }
+
+  for (const action of commentActions) {
+    if (
+      action.status !== "succeeded" ||
+      !action.completed_at ||
+      (action.action_type !== "public_reply" && action.action_type !== "private_reply")
+    ) {
+      continue;
+    }
+    recordFirstResponseAt(
+      firstResponseAtByConversationId,
+      conversationById.get(action.conversation_id) || null,
+      action.completed_at,
+    );
+  }
+
+  return firstResponseAtByConversationId;
+}
+
+function conversationThreadKeys(conversation: Conversation) {
+  if (conversation.source_type !== "message_thread" && conversation.source_type !== "private_reply") {
+    return [];
+  }
+
+  return [conversation.platform_thread_id, conversation.source_id]
+    .map((id) => historyKey(conversation.platform, id))
+    .filter((key): key is string => Boolean(key));
+}
+
+function historyKey(platform: string | null | undefined, id: string | null | undefined) {
+  const normalizedId = typeof id === "string" ? id.trim() : "";
+  if (!normalizedId) return null;
+  return `${platform || "unknown"}:${normalizedId}`;
+}
+
+function recordFirstResponseAt(
+  firstResponseAtByConversationId: Map<string, string>,
+  conversation: Conversation | null,
+  responseAt: string,
+) {
+  if (!conversation?.first_inbound_at) return;
+  const minutes = minutesBetween(conversation.first_inbound_at, responseAt);
+  if (minutes === null || minutes < 0) return;
+
+  const existing = firstResponseAtByConversationId.get(conversation.id);
+  if (!existing || Date.parse(responseAt) < Date.parse(existing)) {
+    firstResponseAtByConversationId.set(conversation.id, responseAt);
+  }
+}
+
+function firstResponseMinutes(
+  conversation: Conversation,
+  firstResponseAtByConversationId: Map<string, string>,
+) {
+  return minutesBetween(
+    conversation.first_inbound_at,
+    firstResponseAtByConversationId.get(conversation.id) || conversation.latest_outbound_at,
+  );
+}
+
+function averageResponseMinutes(
+  conversations: Conversation[],
+  firstResponseAtByConversationId: Map<string, string>,
+) {
   return average(
     conversations
-      .map((conversation) =>
-        minutesBetween(conversation.first_inbound_at, conversation.latest_outbound_at),
-      )
+      .map((conversation) => firstResponseMinutes(conversation, firstResponseAtByConversationId))
       .filter((value): value is number => value !== null && value >= 0),
   );
 }

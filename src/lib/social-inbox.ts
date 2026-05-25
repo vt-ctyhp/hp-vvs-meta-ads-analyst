@@ -140,18 +140,15 @@ type DynamicMaybeSingleResult = {
   error: Error | null;
 };
 
-type DynamicQueryOrder = {
-  limit: (count: number) => Promise<DynamicQueryResult>;
-};
-
 type DynamicQuery = {
   eq: (column: string, value: string | boolean | number) => DynamicQuery;
   in: (column: string, values: string[]) => DynamicQuery;
   order: (
     column: string,
     options?: { ascending?: boolean; nullsFirst?: boolean },
-  ) => DynamicQueryOrder;
+  ) => DynamicQuery;
   limit: (count: number) => Promise<DynamicQueryResult>;
+  range: (from: number, to: number) => Promise<DynamicQueryResult>;
 };
 
 type DynamicTable = {
@@ -206,6 +203,8 @@ type SocialSyncMetrics = {
   messages: number;
   comments: number;
 };
+
+const MANAGER_DASHBOARD_PAGE_SIZE = 1000;
 
 export type SocialInboxThread = {
   id: string;
@@ -672,6 +671,73 @@ export async function getSocialInboxData(
     notes: rows<JsonRecord>(notes.data).map(mapConversationNote),
     qaScorecards: rows<JsonRecord>(qaScorecards.data).map(mapQaScorecard),
     syncRuns: rows<JsonRecord>(syncRuns.data).map(mapSyncRun),
+  }, queueAccess);
+}
+
+export async function getSocialInboxManagerDashboardData(
+  profile?: MetaInboxAccessProfile | null,
+): Promise<SocialInboxData> {
+  const supabase = dynamicSupabase("web");
+  const queueAccess = await resolveSocialInboxQueueAccess(supabase, profile);
+  const inboxConversationRows = await selectAllInboxConversationsForQueueAccess(
+    supabase,
+    queueAccess,
+  );
+  const inboxConversations = inboxConversationRows.map(mapInboxConversation);
+  const conversationIds = uniqueStrings(
+    inboxConversations.map((conversation) => conversation.id),
+  );
+
+  if (!conversationIds.length) {
+    return {
+      ...emptySocialInboxData(),
+      queueAccess,
+    };
+  }
+
+  const [
+    messageRows,
+    firstTouchSourceRows,
+    sendAttemptRows,
+    commentActionRows,
+    qaScorecardRows,
+  ] = await Promise.all([
+    selectMessagesForDashboardConversations(supabase, inboxConversations),
+    selectAllActiveMetaInboxRowsForConversationIds(
+      supabase,
+      "meta_inbox_first_touch_sources",
+      conversationIds,
+      "updated_at",
+    ),
+    selectAllActiveMetaInboxRowsForConversationIds(
+      supabase,
+      "meta_inbox_send_attempts",
+      conversationIds,
+      "created_at",
+    ),
+    selectAllActiveMetaInboxRowsForConversationIds(
+      supabase,
+      "meta_inbox_comment_actions",
+      conversationIds,
+      "created_at",
+    ),
+    selectAllActiveMetaInboxRowsForConversationIds(
+      supabase,
+      "meta_inbox_qa_scorecards",
+      conversationIds,
+      "created_at",
+    ),
+  ]);
+
+  return filterSocialInboxDataForQueueAccess({
+    ...emptySocialInboxData(),
+    queueAccess,
+    messages: messageRows.map(mapMessage),
+    inboxConversations,
+    firstTouchSources: firstTouchSourceRows.map(mapFirstTouchSource),
+    sendAttempts: sendAttemptRows.map(mapSendAttempt),
+    commentActions: commentActionRows.map(mapCommentAction),
+    qaScorecards: qaScorecardRows.map(mapQaScorecard),
   }, queueAccess);
 }
 
@@ -1624,6 +1690,23 @@ function selectInboxConversationsForQueueAccess(
     .limit(250);
 }
 
+async function selectAllInboxConversationsForQueueAccess(
+  supabase: DynamicSupabaseClient,
+  access: MetaInboxQueueAccessDecision,
+): Promise<JsonRecord[]> {
+  if (access.mode === "none") return [];
+  if (access.mode === "team" && !access.allowedQueueCategoryKeys.length) return [];
+
+  return selectAllActiveMetaInboxRows(supabase, "meta_inbox_conversations", {
+    orderColumn: "last_activity_at",
+    orderOptions: { ascending: false, nullsFirst: false },
+    applyQuery:
+      access.mode === "team"
+        ? (query) => query.in("queue_category_key", access.allowedQueueCategoryKeys)
+        : undefined,
+  });
+}
+
 async function selectSendAttemptsForQueueAccess(
   supabase: DynamicSupabaseClient,
   access: MetaInboxQueueAccessDecision,
@@ -1766,6 +1849,79 @@ async function selectQaScorecardsForQueueAccess(
 
 function emptyQueryResult(): Promise<DynamicQueryResult> {
   return Promise.resolve({ data: [], error: null });
+}
+
+async function selectAllActiveMetaInboxRowsForConversationIds(
+  supabase: DynamicSupabaseClient,
+  table: string,
+  conversationIds: string[],
+  orderColumn: string,
+) {
+  const allRows: JsonRecord[] = [];
+  for (const conversationIdChunk of chunks(conversationIds, 500)) {
+    allRows.push(
+      ...await selectAllActiveMetaInboxRows(supabase, table, {
+        orderColumn,
+        orderOptions: { ascending: false, nullsFirst: false },
+        applyQuery: (query) => query.in("conversation_id", conversationIdChunk),
+      }),
+    );
+  }
+  return allRows;
+}
+
+async function selectMessagesForDashboardConversations(
+  supabase: DynamicSupabaseClient,
+  conversations: SocialInboxConversation[],
+) {
+  const threadIds = uniqueStrings(
+    conversations.flatMap((conversation) =>
+      conversation.source_type === "message_thread" || conversation.source_type === "private_reply"
+        ? [conversation.platform_thread_id, conversation.source_id]
+        : [],
+    ),
+  );
+  if (!threadIds.length) return [];
+
+  const messagesById = new Map<string, JsonRecord>();
+  for (const threadIdChunk of chunks(threadIds, 500)) {
+    const rows = await selectAllActiveMetaInboxRows(supabase, "meta_social_messages", {
+      orderColumn: "sent_at",
+      orderOptions: { ascending: true, nullsFirst: true },
+      applyQuery: (query) => query.in("thread_id", threadIdChunk),
+    });
+    for (const row of rows) {
+      messagesById.set(String(row.id), row);
+    }
+  }
+
+  return Array.from(messagesById.values());
+}
+
+async function selectAllActiveMetaInboxRows(
+  supabase: DynamicSupabaseClient,
+  table: string,
+  options: {
+    columns?: string;
+    orderColumn: string;
+    orderOptions?: { ascending?: boolean; nullsFirst?: boolean };
+    applyQuery?: (query: DynamicQuery) => DynamicQuery;
+  },
+) {
+  const output: JsonRecord[] = [];
+  for (let from = 0; ; from += MANAGER_DASHBOARD_PAGE_SIZE) {
+    const baseQuery = selectActiveMetaInboxRows(supabase, table, options.columns || "*");
+    const query = options.applyQuery ? options.applyQuery(baseQuery) : baseQuery;
+    const result = await query
+      .order(options.orderColumn, options.orderOptions)
+      .range(from, from + MANAGER_DASHBOARD_PAGE_SIZE - 1);
+    if (result.error) throw normalizeMetaInboxSchemaError(result.error);
+
+    const page = rows<JsonRecord>(result.data);
+    output.push(...page);
+    if (page.length < MANAGER_DASHBOARD_PAGE_SIZE) break;
+  }
+  return output;
 }
 
 function missingConversation(): never {

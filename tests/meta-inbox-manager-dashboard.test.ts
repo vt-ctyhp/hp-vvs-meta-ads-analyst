@@ -3,9 +3,12 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import { buildMetaInboxManagerDashboard } from "../src/lib/meta-inbox-manager-dashboard.ts";
+import { filterSocialInboxDataForQueueAccess } from "../src/lib/meta-inbox-access.ts";
 import type {
   SocialInboxConversation,
   SocialInboxData,
+  SocialInboxFirstTouchSource,
+  SocialInboxMessage,
   SocialInboxSendAttempt,
 } from "../src/lib/social-inbox.ts";
 
@@ -47,8 +50,9 @@ describe("Meta inbox manager dashboard foundation", () => {
 
   it("exposes an inbox-scoped API and compact desktop panel", () => {
     assert.match(ROUTE, /requirePermissionFromRequest\(request, "view_inbox"\)/);
-    assert.match(ROUTE, /getSocialInboxData\(profile\)/);
+    assert.match(ROUTE, /getSocialInboxManagerDashboardData\(profile\)/);
     assert.match(ROUTE, /buildMetaInboxManagerDashboard/);
+    assert.match(ROUTE, /managerDashboardFiltersFromSearchParams/);
     assert.match(DESKTOP_INBOX, /ManagerSnapshotPanel/);
     assert.match(DESKTOP_INBOX, /Manager Snapshot/);
     assert.match(DESKTOP_INBOX, /Needs Reply/);
@@ -117,7 +121,190 @@ describe("Meta inbox manager dashboard foundation", () => {
     assert.match(DESKTOP_INBOX, /Source Health/);
     assert.match(DESKTOP_INBOX, /Label Complete/);
   });
+
+  it("counts complete range data above the inbox list cap", () => {
+    const conversations = Array.from({ length: 260 }, (_, index) =>
+      conversationFixture({
+        id: `conversation-${index}`,
+        queue_category_key: index % 2 ? "cash_for_gold" : "book_appointment",
+        needs_reply: true,
+        first_inbound_at: "2026-05-24T08:00:00.000Z",
+        latest_inbound_at: "2026-05-24T08:00:00.000Z",
+        last_activity_at: "2026-05-24T08:00:00.000Z",
+      }),
+    );
+    const sendAttempts = conversations.map((conversation, index) =>
+      sendAttemptFixture({
+        id: `send-attempt-${index}`,
+        conversation_id: conversation.id,
+        status: index % 3 === 0 ? "failed_retryable" : "approved",
+      }),
+    );
+
+    const dashboard = buildMetaInboxManagerDashboard(
+      {
+        ...emptyDataFixture(),
+        inboxConversations: conversations,
+        sendAttempts,
+      },
+      { now: "2026-05-24T12:00:00.000Z" },
+    );
+
+    assert.equal(dashboard.metrics.totalConversations, 260);
+    assert.equal(dashboard.metrics.needsReply, 260);
+    assert.equal(dashboard.metrics.retryBacklog, 87);
+  });
+
+  it("uses the earliest outbound reply after first inbound for first-response math", () => {
+    const dashboard = buildMetaInboxManagerDashboard(
+      {
+        ...emptyDataFixture(),
+        inboxConversations: [
+          conversationFixture({
+            id: "conversation-response",
+            first_inbound_at: "2026-05-24T10:00:00.000Z",
+            latest_inbound_at: "2026-05-24T10:00:00.000Z",
+            latest_outbound_at: "2026-05-24T12:00:00.000Z",
+            last_activity_at: "2026-05-24T12:00:00.000Z",
+            assigned_user_id: "11111111-1111-4111-8111-111111111111",
+          }),
+        ],
+        messages: [
+          messageFixture({
+            id: "inbound",
+            direction: "inbound",
+            sent_at: "2026-05-24T10:00:00.000Z",
+          }),
+          messageFixture({
+            id: "first-outbound",
+            direction: "outbound",
+            sent_at: "2026-05-24T10:15:00.000Z",
+          }),
+          messageFixture({
+            id: "latest-outbound",
+            direction: "outbound",
+            sent_at: "2026-05-24T12:00:00.000Z",
+          }),
+        ],
+      },
+      { now: "2026-05-24T12:30:00.000Z" },
+    );
+
+    assert.equal(dashboard.metrics.averageFirstResponseMinutes, 15);
+    assert.equal(dashboard.metrics.medianFirstResponseMinutes, 15);
+    assert.equal(dashboard.byAssignee[0].averageFirstResponseMinutes, 15);
+    assert.equal(dashboard.bySourceChannel[0].averageFirstResponseMinutes, 15);
+  });
+
+  it("composes manager filters after queue access is applied", () => {
+    const data = {
+      ...emptyDataFixture(),
+      inboxConversations: [
+        conversationFixture({
+          id: "allowed-match",
+          queue_category_key: "cash_for_gold",
+          source_channel: "facebook_message",
+          assigned_team_id: "team-1",
+          assigned_user_id: "11111111-1111-4111-8111-111111111111",
+          platform_thread_id: "thread-allowed",
+          source_id: "thread-allowed",
+          first_inbound_at: "2026-05-24T08:00:00.000Z",
+          latest_inbound_at: "2026-05-24T08:00:00.000Z",
+          last_activity_at: "2026-05-24T08:00:00.000Z",
+        }),
+        conversationFixture({
+          id: "allowed-wrong-source",
+          queue_category_key: "cash_for_gold",
+          source_channel: "instagram_message",
+          assigned_team_id: "team-1",
+          assigned_user_id: "11111111-1111-4111-8111-111111111111",
+          first_inbound_at: "2026-05-24T08:00:00.000Z",
+          latest_inbound_at: "2026-05-24T08:00:00.000Z",
+          last_activity_at: "2026-05-24T08:00:00.000Z",
+        }),
+        conversationFixture({
+          id: "blocked-match",
+          queue_category_key: "book_appointment",
+          source_channel: "facebook_message",
+          assigned_team_id: "team-1",
+          assigned_user_id: "11111111-1111-4111-8111-111111111111",
+          first_inbound_at: "2026-05-24T08:00:00.000Z",
+          latest_inbound_at: "2026-05-24T08:00:00.000Z",
+          last_activity_at: "2026-05-24T08:00:00.000Z",
+        }),
+      ],
+      firstTouchSources: [
+        firstTouchFixture({
+          conversation_id: "allowed-match",
+          campaign_umbrella_id: "cash-may",
+          ad_id: "ad-1",
+          creative_id: "creative-1",
+          ref: "message-angle-1",
+          source_post_id: "post-1",
+        }),
+        firstTouchFixture({
+          conversation_id: "allowed-wrong-source",
+          campaign_umbrella_id: "cash-may",
+          ad_id: "ad-1",
+          creative_id: "creative-1",
+          ref: "message-angle-1",
+          source_post_id: "post-1",
+        }),
+        firstTouchFixture({
+          conversation_id: "blocked-match",
+          campaign_umbrella_id: "cash-may",
+          ad_id: "ad-1",
+          creative_id: "creative-1",
+          ref: "message-angle-1",
+          source_post_id: "post-1",
+        }),
+      ],
+    };
+    const scoped = filterSocialInboxDataForQueueAccess(data, {
+      mode: "team",
+      allowedQueueCategoryKeys: ["cash_for_gold"],
+      reason: "team_queue_access",
+    });
+
+    const dashboard = buildMetaInboxManagerDashboard(scoped, {
+      now: "2026-05-24T12:00:00.000Z",
+      filters: {
+        assignedTeamId: "team-1",
+        assignedUserId: "11111111-1111-4111-8111-111111111111",
+        queueCategoryKey: "cash_for_gold",
+        sourceChannel: "facebook_message",
+        campaignUmbrellaId: "cash-may",
+        adId: "ad-1",
+        creativeId: "creative-1",
+        messageContext: "post-1",
+      },
+    });
+
+    assert.equal(dashboard.metrics.totalConversations, 1);
+    assert.deepEqual(dashboard.byQueue.map((row) => row.queueCategoryKey), ["cash_for_gold"]);
+    assert.deepEqual(dashboard.byCampaignUmbrella.map((row) => row.key), ["cash-may"]);
+  });
 });
+
+function emptyDataFixture(): SocialInboxData {
+  return {
+    queueAccess: { mode: "all", allowedQueueCategoryKeys: null, reason: "full_access_role" },
+    threads: [],
+    messages: [],
+    comments: [],
+    customerProfiles: [],
+    customerContactMethods: [],
+    firstTouchSources: [],
+    syncRuns: [],
+    commentActions: [],
+    conversationEvents: [],
+    savedReplies: [],
+    notes: [],
+    qaScorecards: [],
+    inboxConversations: [],
+    sendAttempts: [],
+  };
+}
 
 function dataFixture(): SocialInboxData {
   return {
@@ -275,6 +462,49 @@ function sendAttemptFixture(overrides: Partial<SocialInboxSendAttempt> = {}): So
     idempotency_key: "send-key",
     created_at: "2026-05-24T00:00:00.000Z",
     updated_at: "2026-05-24T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function firstTouchFixture(
+  overrides: Partial<SocialInboxFirstTouchSource> = {},
+): SocialInboxFirstTouchSource {
+  return {
+    id: "first-touch",
+    conversation_id: "conversation",
+    first_message_id: null,
+    first_message_at: null,
+    ad_id: null,
+    ref: null,
+    source_post_id: null,
+    source_media_id: null,
+    source_comment_id: null,
+    source_product_id: null,
+    source_permalink: null,
+    campaign_umbrella_id: null,
+    campaign_id: null,
+    adset_id: null,
+    creative_id: null,
+    attribution_method: "meta_referral",
+    attribution_confidence: null,
+    ...overrides,
+  };
+}
+
+function messageFixture(overrides: Partial<SocialInboxMessage> = {}): SocialInboxMessage {
+  return {
+    id: "message",
+    platform: "facebook",
+    thread_id: "thread-1",
+    message_id: "message-1",
+    direction: "inbound",
+    sender_id: "customer-1",
+    sender_name: "Customer",
+    recipient_id: "page-1",
+    recipient_name: "Page",
+    body: "Message",
+    attachments: [],
+    sent_at: "2026-05-24T10:00:00.000Z",
     ...overrides,
   };
 }
