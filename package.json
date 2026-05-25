@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "node --test --experimental-strip-types tests/*.test.ts",
+    "qa:analysis-workbench": "node --test --experimental-strip-types tests/analysis-workbench-qa-gate.test.ts",
     "typecheck": "tsc --noEmit",
     "typegen:supabase": "npx supabase gen types typescript --linked > src/lib/database.types.ts",
     "sync:meta": "node -e \"fetch('http://localhost:3000/api/sync',{method:'POST'}).then(r=>r.json()).then(console.log)\""

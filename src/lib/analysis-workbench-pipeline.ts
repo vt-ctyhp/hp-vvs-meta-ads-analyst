@@ -961,7 +961,7 @@ function detectDimensions(prompt: string, useDefault = true): WorkbenchDimension
   const dimensions: WorkbenchDimension[] = [];
   if (/\bby\s+(?:day|date)\b|\bdaily\b|\bper\s+day\b/.test(lower)) dimensions.push("date");
   if (/\bby\s+week\b|\bweekly\b|\bper\s+week\b/.test(lower)) dimensions.push("week");
-  if (/\bby\s+month\b|\bmonthly\b|\bper\s+month\b/.test(lower)) dimensions.push("month");
+  if (/\bby\s+month\b|\bmonthly\b(?!\s+budget)|\bper\s+month\b/.test(lower)) dimensions.push("month");
   if (/\bby\s+quarter\b|\bquarterly\b|\bper\s+quarter\b/.test(lower)) dimensions.push("quarter");
   if (/\bby\s+brands?\b|\bbrands?\s+(?:rows?|columns?)\b/.test(lower)) dimensions.push("brand");
   if (/\bby\s+(?:campaign\s+)?(?:groups?|umbrellas?)\b|\bcampaign\s+umbrella\b|\bcampaign\s+groups?\s+(?:rows?|columns?)?\b/.test(lower)) {
@@ -1334,8 +1334,7 @@ function titleFromPrompt(prompt: string) {
 function normalizeToken(value: string) {
   return value
     .toLowerCase()
-    .replace(/[_-]+/g, " ")
-    .replace(/[()/.]+/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }

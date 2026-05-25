@@ -988,8 +988,7 @@ function labelForDimension(dimension: string) {
 function normalizeToken(value: string) {
   return value
     .toLowerCase()
-    .replace(/[_-]+/g, " ")
-    .replace(/[()/.]+/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
