@@ -40,6 +40,23 @@ test("normalizeAnalysisOutputMode defaults invalid values to Answer + visuals", 
   assert.equal(normalizeAnalysisOutputMode(null), "answer_visuals");
 });
 
+test("buildAnalysisRunInsert blocks unsupported source prompts before an answer", () => {
+  const run = buildAnalysisRunInsert({
+    prompt: "Show revenue and ROAS by campaign.",
+    outputMode: "answer_only",
+    now: "2026-05-25T14:30:00.000Z",
+  });
+
+  assert.equal(run.status, "failed");
+  assert.deepEqual(
+    (run.validation as { blockers: Array<{ code: string }> }).blockers.map(
+      (blocker) => blocker.code,
+    ),
+    ["unsupported_revenue", "unsupported_roas"],
+  );
+  assert.match((run.answer as { summary: string }).summary, /Request blocked/);
+});
+
 test("mapAnalysisRunRecord exposes persisted runs in client-ready shape", () => {
   const mapped = mapAnalysisRunRecord({
     id: "run-1",

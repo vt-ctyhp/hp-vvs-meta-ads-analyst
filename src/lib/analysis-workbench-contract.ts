@@ -1,3 +1,5 @@
+import { validateAnalysisWorkbenchSemanticIntent } from "./analysis-workbench-semantic-catalog.ts";
+
 export type JsonValue =
   | string
   | number
@@ -79,9 +81,11 @@ export function buildAnalysisRunInsert(input: {
 
   const outputMode = normalizeAnalysisOutputMode(input.outputMode);
   const now = input.now || new Date().toISOString();
+  const semanticValidation = validateAnalysisWorkbenchSemanticIntent({ prompt });
+  const blocked = semanticValidation.status === "blocked";
 
   return {
-    status: "created",
+    status: blocked ? "failed" : "created",
     prompt,
     output_mode: outputMode,
     title: titleFromPrompt(prompt),
@@ -101,20 +105,28 @@ export function buildAnalysisRunInsert(input: {
     visual_cards: [],
     source_notes: [
       {
-        label: "Foundation run",
-        value: "Saved prompt and run identity. Governed facts arrive in the next slice.",
+        label: blocked ? "Governed semantic validation" : "Foundation run",
+        value: blocked
+          ? "Request blocked before analysis because it asks for unsupported or ungoverned data."
+          : "Saved prompt and run identity. Governed facts arrive in the next slice.",
       },
     ],
-    validation: {
-      status: "not_run",
-      blockers: [],
-      warnings: ["Foundation run created before governed planner and fact engine are connected."],
-    },
+    validation: blocked
+      ? semanticValidation
+      : {
+          status: "not_run",
+          blockers: [],
+          warnings: [
+            "Foundation run created before governed planner and fact engine are connected.",
+          ],
+        },
     lineage: {
       parentRunId: input.parentRunId || null,
     },
     answer: {
-      summary: "Run created. Governed facts, citations, and visuals have not run yet.",
+      summary: blocked
+        ? "Request blocked. This analysis asks for data outside the governed Meta Ads catalog."
+        : "Run created. Governed facts, citations, and visuals have not run yet.",
       citations: [],
     },
     dashboard_packet: null,
