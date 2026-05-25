@@ -58,6 +58,7 @@ export const ANALYST_OWNED_TABLES = [
   "ad_notes",
   "ai_analysis_dashboards",
   "ai_analysis_runs",
+  "ai_analysis_workbench_runs",
   "ai_chat_messages",
   "ai_chat_sessions",
   "ai_reply_suggestions",

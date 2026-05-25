@@ -1,28 +1,11 @@
-import { OptimizeAiPanel } from "@/components/v2/optimize/ai-panel";
-import { fetchSavedAnalysisDashboards } from "@/lib/ad-hoc-analytics";
-import {
-  resolveAnalysisRouteDateRange,
-  resolveAnalysisRouteFilters,
-  type AnalysisRouteSearchParams,
-} from "@/lib/analysis-route";
+import { AnalysisWorkbenchClient } from "@/components/analysis-workbench-client";
+import { listAnalysisWorkbenchRuns } from "@/lib/analysis-workbench-runs";
 import { requirePagePermission } from "@/lib/server-route-auth";
 
 export const dynamic = "force-dynamic";
 
-export default async function AnalysisPage({
-  searchParams,
-}: {
-  searchParams: Promise<AnalysisRouteSearchParams>;
-}) {
+export default async function AnalysisPage() {
   await requirePagePermission("view_ai_analysis", "/analysis");
-  const params = await searchParams;
-  const savedDashboards = await fetchSavedAnalysisDashboards();
-  return (
-    <OptimizeAiPanel
-      initialSaved={savedDashboards}
-      canUseAdHocAnalysis
-      dateRange={resolveAnalysisRouteDateRange(params)}
-      initialFilters={resolveAnalysisRouteFilters(params)}
-    />
-  );
+  const runs = await listAnalysisWorkbenchRuns();
+  return <AnalysisWorkbenchClient initialRuns={runs} />;
 }
