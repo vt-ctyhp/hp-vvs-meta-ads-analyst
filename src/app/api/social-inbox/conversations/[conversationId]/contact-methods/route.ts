@@ -1,5 +1,6 @@
 import { requirePermissionFromRequest } from "@/lib/app-auth";
 import { jsonError } from "@/lib/http";
+import { parseJsonObjectBody } from "@/lib/meta-inbox-api-validation";
 import {
   updateSocialInboxConversationContactMethod,
   type MetaInboxContactMethodMutationInput,
@@ -11,6 +12,14 @@ export const dynamic = "force-dynamic";
 type Params = {
   conversationId: string;
 };
+
+const CONTACT_METHOD_BODY_FIELDS = {
+  contactMethodId: { type: "string", nullable: true },
+  type: { type: "string", nullable: true },
+  value: { type: "string", nullable: true },
+  providedInMessageId: { type: "string", nullable: true },
+  changeReason: { type: "string", nullable: true },
+} as const;
 
 export async function POST(
   request: Request,
@@ -41,7 +50,10 @@ async function mutateContactMethod(
   try {
     const profile = await requirePermissionFromRequest(request, "manage_inbox_state");
     const { conversationId } = await params;
-    const input = (await request.json()) as MetaInboxContactMethodMutationInput;
+    const input = await parseJsonObjectBody<MetaInboxContactMethodMutationInput>(
+      request,
+      CONTACT_METHOD_BODY_FIELDS,
+    );
     const result = await updateSocialInboxConversationContactMethod(
       decodeURIComponent(conversationId),
       profile,

@@ -1,7 +1,11 @@
-import { createAdsAnalystClient, withAdsAnalystEnvironment } from "./ads-analyst-db.ts";
+import { createAdsAnalystClient } from "./ads-analyst-db.ts";
 import { getMetaApiVersion } from "./env.ts";
 import { safeErrorMessage } from "./error-message.ts";
 import { isLiveSendEnabled } from "./social-reply-send-flags.ts";
+import {
+  scopeActiveMetaInboxEnvironment,
+  withActiveMetaInboxEnvironment,
+} from "./meta-inbox-environment.ts";
 import {
   buildMetaInboxDeliveryFailureUpdate,
   buildMetaInboxDeliverySendingUpdate,
@@ -114,9 +118,7 @@ export async function deliverQueuedMetaInboxSendAttempts(
   const supabase =
     options.supabase || (createAdsAnalystClient("worker") as unknown as DynamicSupabaseClient);
   const managedPageResolver = options.managedPageResolver || defaultManagedPageResolver;
-  const queued = await supabase
-    .from("meta_inbox_send_attempts")
-    .select("*")
+  const queued = await selectActiveMetaInboxRows(supabase, "meta_inbox_send_attempts")
     .in("status", ["queued", "failed_retryable"])
     .order("created_at", { ascending: true, nullsFirst: false })
     .limit(limit * 4);
@@ -217,13 +219,19 @@ async function defaultManagedPageResolver(pageSelector: string) {
   return getManagedPage(pageSelector);
 }
 
+function selectActiveMetaInboxRows(
+  supabase: DynamicSupabaseClient,
+  table: string,
+  columns = "*",
+) {
+  return scopeActiveMetaInboxEnvironment(supabase.from(table).select(columns));
+}
+
 async function loadDeliveryConversation(
   supabase: DynamicSupabaseClient,
   conversationId: string,
 ): Promise<MetaInboxDeliveryConversation> {
-  const query = await supabase
-    .from("meta_inbox_conversations")
-    .select("*")
+  const query = await selectActiveMetaInboxRows(supabase, "meta_inbox_conversations")
     .eq("id", conversationId)
     .limit(1);
   if (query.error) throw query.error;
@@ -238,9 +246,9 @@ async function claimSendAttemptForDelivery(
   context: { now: string },
 ) {
   const sending = buildMetaInboxDeliverySendingUpdate(attempt, context);
-  const result = await supabase
-    .from("meta_inbox_send_attempts")
-    .update(sending.update)
+  const result = await scopeActiveMetaInboxEnvironment(
+    supabase.from("meta_inbox_send_attempts").update(sending.update),
+  )
     .eq("id", attempt.id)
     .eq("status", attempt.status)
     .select("*")
@@ -258,9 +266,9 @@ async function updateSendAttempt(
   sendAttemptId: string,
   update: JsonRecord,
 ) {
-  const result = await supabase
-    .from("meta_inbox_send_attempts")
-    .update(update)
+  const result = await scopeActiveMetaInboxEnvironment(
+    supabase.from("meta_inbox_send_attempts").update(update),
+  )
     .eq("id", sendAttemptId)
     .select("id")
     .single();
@@ -275,9 +283,7 @@ async function hydrateDeliveryAttemptAttachments(
   const attachmentIds = attempt.attachment_ids || [];
   if (!attachmentIds.length) return attempt;
 
-  const result = await supabase
-    .from("meta_inbox_attachments")
-    .select("*")
+  const result = await selectActiveMetaInboxRows(supabase, "meta_inbox_attachments")
     .in("id", attachmentIds)
     .limit(attachmentIds.length);
   if (result.error) throw result.error;
@@ -317,7 +323,7 @@ async function insertSendAttemptEvent(
 ) {
   const insert = await supabase
     .from("meta_inbox_conversation_events")
-    .insert(withAdsAnalystEnvironment({
+    .insert(withActiveMetaInboxEnvironment({
       conversation_id: conversationId,
       event_type: event.eventType,
       actor_user_id: null,
@@ -424,7 +430,7 @@ async function recordOutboundDeliveryRow(
     if (args.target.sourceType === "message") {
       const insert = await supabase
         .from("meta_social_messages")
-        .insert(withAdsAnalystEnvironment({
+        .insert(withActiveMetaInboxEnvironment({
           platform: args.conversation.platform,
           thread_id: args.target.sourceId,
           message_id: args.metaSendId,
@@ -449,7 +455,7 @@ async function recordOutboundDeliveryRow(
 
     const insert = await supabase
       .from("meta_social_comments")
-      .insert(withAdsAnalystEnvironment({
+      .insert(withActiveMetaInboxEnvironment({
         platform: args.conversation.platform,
         comment_id: args.metaSendId,
         parent_comment_id: args.target.sourceId,

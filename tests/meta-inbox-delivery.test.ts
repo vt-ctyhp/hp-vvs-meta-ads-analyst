@@ -16,6 +16,7 @@ import { deliverQueuedMetaInboxSendAttempts } from "../src/lib/meta-inbox-delive
 
 const NOW = "2026-05-24T12:00:00.000Z";
 const ATTACHMENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const ENVIRONMENT = "production";
 
 describe("Meta inbox delivery worker foundation", () => {
   it("builds a Facebook message send target with response messaging type", () => {
@@ -374,8 +375,8 @@ function attemptFixture(
 }
 
 function fakeDeliverySupabase(options: { failSecondEventInsert?: boolean } = {}) {
-  const attempt = attemptFixture();
-  const conversation = conversationFixture();
+  const attempt = { ...attemptFixture(), environment: ENVIRONMENT };
+  const conversation = { ...conversationFixture(), environment: ENVIRONMENT };
   const updates: Array<{ table: string; row: Record<string, unknown> }> = [];
   let eventInsertCount = 0;
 
@@ -432,11 +433,16 @@ function fakeDeliveryLifecycleSupabase(
       attempt.id,
       {
         ...attempt,
+        environment: ENVIRONMENT,
         next_retry_at: "next_retry_at" in attempt ? attempt.next_retry_at : null,
       } as Record<string, unknown>,
     ]),
   );
-  const conversation = conversationFixture();
+  const conversation = { ...conversationFixture(), environment: ENVIRONMENT };
+  const attachmentRows = attachments.map((attachment) => ({
+    ...attachment,
+    environment: ENVIRONMENT,
+  }));
 
   return {
     finalStatuses() {
@@ -471,7 +477,7 @@ function fakeDeliveryLifecycleSupabase(
       if (table === "meta_inbox_attachments") {
         return {
           select() {
-            return lifecycleQueryChain(attachments);
+            return lifecycleQueryChain(attachmentRows);
           },
         };
       }

@@ -10,6 +10,7 @@ const MIGRATION = readFileSync(
   "supabase/migrations/20260524120000_meta_inbox_comment_actions.sql",
   "utf8",
 );
+const ENVIRONMENT = "production";
 
 describe("Meta inbox comment action delivery worker", () => {
   it("stays disabled unless live Meta sends are explicitly enabled", () => {
@@ -165,6 +166,7 @@ describe("Meta inbox comment action delivery worker", () => {
 
 function actionFixture(overrides: Record<string, unknown> = {}) {
   return {
+    environment: ENVIRONMENT,
     id: "55555555-5555-4555-8555-555555555555",
     conversation_id: "33333333-3333-4333-8333-333333333333",
     comment_id: "comment-1",
@@ -182,6 +184,7 @@ function actionFixture(overrides: Record<string, unknown> = {}) {
 function fakeCommentActionSupabase(options: { failSecondEventInsert?: boolean } = {}) {
   const action = actionFixture();
   const conversation = {
+    environment: ENVIRONMENT,
     id: "33333333-3333-4333-8333-333333333333",
     source_type: "public_comment",
     source_id: "comment-1",
@@ -233,8 +236,12 @@ function fakeCommentActionSupabase(options: { failSecondEventInsert?: boolean } 
 }
 
 function fakeCommentActionLifecycleSupabase(actions: Record<string, unknown>[]) {
-  const rowsById = new Map(actions.map((action) => [String(action.id), { ...action }]));
+  const rowsById = new Map<string, Record<string, unknown>>(actions.map((action) => [
+    String(action.id),
+    { ...action, environment: ENVIRONMENT },
+  ]));
   const conversation = {
+    environment: ENVIRONMENT,
     id: "33333333-3333-4333-8333-333333333333",
     source_type: "public_comment",
     source_id: "comment-1",

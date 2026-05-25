@@ -310,7 +310,7 @@ describe("Meta inbox attachment foundation", () => {
   it("wires send-attempt approval through attachment validation", () => {
     assert.match(SOCIAL_INBOX, /validateSendAttemptAttachmentsForApproval/);
     assert.match(SOCIAL_INBOX, /validateMetaInboxSendAttachments/);
-    assert.match(SOCIAL_INBOX, /from\("meta_inbox_attachments"\)/);
+    assert.match(SOCIAL_INBOX, /selectActiveMetaInboxRows\([\s\S]*"meta_inbox_attachments"/);
   });
 });
 

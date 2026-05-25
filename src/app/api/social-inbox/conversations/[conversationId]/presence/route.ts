@@ -1,5 +1,6 @@
 import { requirePermissionFromRequest } from "@/lib/app-auth";
 import { jsonError } from "@/lib/http";
+import { parseJsonObjectBody } from "@/lib/meta-inbox-api-validation";
 import {
   recordSocialInboxPresence,
   type MetaInboxPresenceInput,
@@ -12,6 +13,10 @@ type Params = {
   conversationId: string;
 };
 
+const PRESENCE_BODY_FIELDS = {
+  activity: { type: "string", nullable: true },
+} as const;
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<Params> },
@@ -19,7 +24,10 @@ export async function POST(
   try {
     const profile = await requirePermissionFromRequest(request, "view_inbox");
     const { conversationId } = await params;
-    const input = (await request.json().catch(() => ({}))) as MetaInboxPresenceInput;
+    const input = await parseJsonObjectBody<MetaInboxPresenceInput>(
+      request,
+      PRESENCE_BODY_FIELDS,
+    );
     const result = await recordSocialInboxPresence(
       decodeURIComponent(conversationId),
       profile,

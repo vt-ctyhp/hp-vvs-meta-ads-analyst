@@ -3,12 +3,14 @@ import { ConfigurationError, getMetaApiVersion } from "./env";
 import { safeErrorMessage } from "./error-message";
 import { getMetaPermissionHealth } from "./meta";
 import {
-  adsAnalystOnConflict,
   createAdsAnalystClient,
-  getAdsAnalystEnvironment,
-  withAdsAnalystEnvironment,
-  withAdsAnalystEnvironmentRows,
 } from "./ads-analyst-db";
+import {
+  activeMetaInboxOnConflict,
+  scopeActiveMetaInboxEnvironment,
+  withActiveMetaInboxEnvironment,
+  withActiveMetaInboxEnvironmentRows,
+} from "./meta-inbox-environment.ts";
 import {
   buildMetaInboxNormalizationBatch,
   type MetaInboxNormalizationInput,
@@ -158,9 +160,7 @@ type DynamicTable = {
       single: () => Promise<DynamicSingleResult>;
     };
   };
-  update: (row: JsonRecord) => {
-    eq: (column: string, value: string) => Promise<{ error: Error | null }>;
-  };
+  update: (row: JsonRecord) => DynamicUpdateFilterQuery;
   upsert: (
     rows: JsonRecord[],
     options: { onConflict: string; ignoreDuplicates?: boolean },
@@ -168,6 +168,10 @@ type DynamicTable = {
     select: (columns: string) => Promise<DynamicQueryResult>;
   };
   select: (columns: string) => DynamicQuery;
+};
+
+type DynamicUpdateFilterQuery = PromiseLike<{ error: Error | null }> & {
+  eq: (column: string, value: string | boolean | number) => DynamicUpdateFilterQuery;
 };
 
 type DynamicConditionalUpdateQuery = {
@@ -497,7 +501,7 @@ export async function syncSocialInbox(
   const supabase = dynamicSupabase("worker");
   const runInsert = await supabase
     .from("meta_social_sync_runs")
-    .insert(withAdsAnalystEnvironment({
+    .insert(withActiveMetaInboxEnvironment({
       trigger,
       status: "running",
     }))
@@ -520,9 +524,11 @@ export async function syncSocialInbox(
     const pages = await fetchManagedPages();
     metrics.pages = pages.length;
 
-    await supabase
-      .from("meta_social_sync_runs")
-      .update(withAdsAnalystEnvironment({ page_ids: pages.map((page) => page.pageId) }))
+    await updateActiveMetaInboxRows(
+      supabase,
+      "meta_social_sync_runs",
+      withActiveMetaInboxEnvironment({ page_ids: pages.map((page) => page.pageId) }),
+    )
       .eq("id", syncRunId);
 
     await upsertPages(pages);
@@ -541,27 +547,31 @@ export async function syncSocialInbox(
         : "failed"
       : "success";
 
-    await supabase
-      .from("meta_social_sync_runs")
-      .update(withAdsAnalystEnvironment({
+    await updateActiveMetaInboxRows(
+      supabase,
+      "meta_social_sync_runs",
+      withActiveMetaInboxEnvironment({
         status,
         completed_at: new Date().toISOString(),
         metrics,
         errors,
-      }))
+      }),
+    )
       .eq("id", syncRunId);
 
     return { status, metrics, errors, syncRunId };
   } catch (error) {
     errors.push(errorToMessage(error));
-    await supabase
-      .from("meta_social_sync_runs")
-      .update(withAdsAnalystEnvironment({
+    await updateActiveMetaInboxRows(
+      supabase,
+      "meta_social_sync_runs",
+      withActiveMetaInboxEnvironment({
         status: "failed",
         completed_at: new Date().toISOString(),
         metrics,
         errors,
-      }))
+      }),
+    )
       .eq("id", syncRunId);
 
     return { status: "failed", metrics, errors, syncRunId };
@@ -589,50 +599,34 @@ export async function getSocialInboxData(
     qaScorecards,
     syncRuns,
   ] = await Promise.all([
-    supabase
-      .from("meta_social_threads")
-      .select("*")
+    selectActiveMetaInboxRows(supabase, "meta_social_threads")
       .order("last_message_at", { ascending: false, nullsFirst: false })
       .limit(100),
-    supabase
-      .from("meta_social_messages")
-      .select("*")
+    selectActiveMetaInboxRows(supabase, "meta_social_messages")
       .order("sent_at", { ascending: false, nullsFirst: false })
       .limit(300),
-    supabase
-      .from("meta_social_comments")
-      .select("*")
+    selectActiveMetaInboxRows(supabase, "meta_social_comments")
       .order("created_time", { ascending: false, nullsFirst: false })
       .limit(150),
     selectInboxConversationsForQueueAccess(supabase, queueAccess),
-    supabase
-      .from("meta_inbox_customer_profiles")
-      .select("*")
+    selectActiveMetaInboxRows(supabase, "meta_inbox_customer_profiles")
       .order("updated_at", { ascending: false, nullsFirst: false })
       .limit(250),
-    supabase
-      .from("meta_inbox_customer_contact_methods")
-      .select("*")
+    selectActiveMetaInboxRows(supabase, "meta_inbox_customer_contact_methods")
       .order("updated_at", { ascending: false, nullsFirst: false })
       .limit(500),
-    supabase
-      .from("meta_inbox_first_touch_sources")
-      .select("*")
+    selectActiveMetaInboxRows(supabase, "meta_inbox_first_touch_sources")
       .order("updated_at", { ascending: false, nullsFirst: false })
       .limit(250),
     selectSendAttemptsForQueueAccess(supabase, queueAccess),
     selectCommentActionsForQueueAccess(supabase, queueAccess),
     selectConversationEventsForQueueAccess(supabase, queueAccess),
-    supabase
-      .from("meta_inbox_saved_replies")
-      .select("*")
+    selectActiveMetaInboxRows(supabase, "meta_inbox_saved_replies")
       .order("updated_at", { ascending: false, nullsFirst: false })
       .limit(250),
     selectNotesForQueueAccess(supabase, queueAccess),
     selectQaScorecardsForQueueAccess(supabase, queueAccess),
-    supabase
-      .from("meta_social_sync_runs")
-      .select("*")
+    selectActiveMetaInboxRows(supabase, "meta_social_sync_runs")
       .order("started_at", { ascending: false })
       .limit(5),
   ]);
@@ -688,9 +682,10 @@ export async function getSocialInboxConversationHistory(
 ): Promise<SocialInboxConversationHistory | null> {
   const supabase = dynamicSupabase("web");
   const queueAccess = await resolveSocialInboxQueueAccess(supabase, profile);
-  const conversationResult = await supabase
-    .from("meta_inbox_conversations")
-    .select("*")
+  const conversationResult = await selectActiveMetaInboxRows(
+    supabase,
+    "meta_inbox_conversations",
+  )
     .eq("id", conversationId)
     .limit(1);
   if (conversationResult.error) throw normalizeMetaInboxSchemaError(conversationResult.error);
@@ -728,9 +723,10 @@ export async function updateSocialInboxConversationWorkflow(
 ): Promise<{ conversation: SocialInboxConversation; events: JsonRecord[] }> {
   const supabase = dynamicSupabase("web");
   const queueAccess = await resolveSocialInboxMutationAccess(supabase, profile);
-  const conversationResult = await supabase
-    .from("meta_inbox_conversations")
-    .select("*")
+  const conversationResult = await selectActiveMetaInboxRows(
+    supabase,
+    "meta_inbox_conversations",
+  )
     .eq("id", conversationId)
     .limit(1);
   if (conversationResult.error) throw normalizeMetaInboxSchemaError(conversationResult.error);
@@ -751,12 +747,14 @@ export async function updateSocialInboxConversationWorkflow(
   });
 
   if (Object.keys(mutation.update).length) {
-    const updateResult = await supabase
-      .from("meta_inbox_conversations")
-      .update({
+    const updateResult = await updateActiveMetaInboxRows(
+      supabase,
+      "meta_inbox_conversations",
+      {
         ...mutation.update,
         updated_at: now,
-      })
+      },
+    )
       .eq("id", conversation.id);
     if (updateResult.error) throw normalizeMetaInboxSchemaError(updateResult.error);
   }
@@ -765,7 +763,7 @@ export async function updateSocialInboxConversationWorkflow(
   for (const event of mutation.events) {
     const insert = await supabase
       .from("meta_inbox_conversation_events")
-      .insert(withAdsAnalystEnvironment({
+      .insert(withActiveMetaInboxEnvironment({
         conversation_id: conversation.id,
         event_type: event.eventType,
         actor_user_id: actorUserId,
@@ -780,9 +778,10 @@ export async function updateSocialInboxConversationWorkflow(
     if (insert.data) insertedEvents.push(insert.data);
   }
 
-  const updatedResult = await supabase
-    .from("meta_inbox_conversations")
-    .select("*")
+  const updatedResult = await selectActiveMetaInboxRows(
+    supabase,
+    "meta_inbox_conversations",
+  )
     .eq("id", conversation.id)
     .limit(1);
   if (updatedResult.error) throw normalizeMetaInboxSchemaError(updatedResult.error);
@@ -821,7 +820,7 @@ export async function updateSocialInboxConversationContactMethod(
 
     const insert = await supabase
       .from("meta_inbox_customer_contact_methods")
-      .insert(withAdsAnalystEnvironment(mutation.row))
+      .insert(withActiveMetaInboxEnvironment(mutation.row))
       .select("*")
       .single();
     if (insert.error) throw normalizeMetaInboxSchemaError(insert.error);
@@ -856,9 +855,11 @@ export async function updateSocialInboxConversationContactMethod(
       )
       : buildMetaInboxContactMethodDelete(existing, { actorUserId, now });
 
-  const update = await supabase
-    .from("meta_inbox_customer_contact_methods")
-    .update(mutation.update)
+  const update = await updateActiveMetaInboxRows(
+    supabase,
+    "meta_inbox_customer_contact_methods",
+    mutation.update,
+  )
     .eq("id", existing.id);
   if (update.error) throw normalizeMetaInboxSchemaError(update.error);
 
@@ -868,9 +869,10 @@ export async function updateSocialInboxConversationContactMethod(
   });
   await updateContactMethodAuditEvent(supabase, existing.id, String(event.id));
 
-  const refreshed = await supabase
-    .from("meta_inbox_customer_contact_methods")
-    .select("*")
+  const refreshed = await selectActiveMetaInboxRows(
+    supabase,
+    "meta_inbox_customer_contact_methods",
+  )
     .eq("id", existing.id)
     .limit(1);
   if (refreshed.error) throw normalizeMetaInboxSchemaError(refreshed.error);
@@ -892,9 +894,10 @@ async function selectExistingSendAttemptForIdempotency(
   idempotencyKey: string,
 ) {
   if (!idempotencyKey) return null;
-  const existing = await supabase
-    .from("meta_inbox_send_attempts")
-    .select("*")
+  const existing = await selectActiveMetaInboxRows(
+    supabase,
+    "meta_inbox_send_attempts",
+  )
     .eq("conversation_id", conversationId)
     .eq("idempotency_key", idempotencyKey)
     .limit(1);
@@ -908,9 +911,10 @@ async function selectExistingCommentActionForIdempotency(
   idempotencyKey: string,
 ) {
   if (!idempotencyKey) return null;
-  const existing = await supabase
-    .from("meta_inbox_comment_actions")
-    .select("*")
+  const existing = await selectActiveMetaInboxRows(
+    supabase,
+    "meta_inbox_comment_actions",
+  )
     .eq("conversation_id", conversationId)
     .eq("idempotency_key", idempotencyKey)
     .limit(1);
@@ -924,9 +928,11 @@ async function updateSendAttemptWithExpectedStatus(
   expectedStatus: MetaInboxSendAttemptStatus,
   update: JsonRecord,
 ) {
-  const result = await (supabase
-    .from("meta_inbox_send_attempts")
-    .update(update) as unknown as DynamicConditionalUpdateQuery)
+  const result = await scopeActiveMetaInboxEnvironment(
+    supabase
+      .from("meta_inbox_send_attempts")
+      .update(update) as unknown as DynamicConditionalUpdateQuery,
+  )
     .eq("id", sendAttemptId)
     .eq("status", expectedStatus)
     .select("*")
@@ -947,9 +953,11 @@ async function updateCommentActionWithExpectedStatus(
   expectedStatus: MetaInboxCommentActionStatus,
   update: JsonRecord,
 ) {
-  const result = await (supabase
-    .from("meta_inbox_comment_actions")
-    .update(update) as unknown as DynamicConditionalUpdateQuery)
+  const result = await scopeActiveMetaInboxEnvironment(
+    supabase
+      .from("meta_inbox_comment_actions")
+      .update(update) as unknown as DynamicConditionalUpdateQuery,
+  )
     .eq("id", commentActionId)
     .eq("status", expectedStatus)
     .select("*")
@@ -1008,7 +1016,7 @@ export async function createSocialInboxSendAttempt(
 
   const insert = await supabase
     .from("meta_inbox_send_attempts")
-    .insert(withAdsAnalystEnvironment(mutation.row))
+    .insert(withActiveMetaInboxEnvironment(mutation.row))
     .select("*")
     .single();
   if (insert.error) throw normalizeMetaInboxSchemaError(insert.error);
@@ -1036,9 +1044,10 @@ async function validateSendAttemptAttachmentsForApproval(
   const requestedIds = arrayField(attachmentIds).map(String).filter(Boolean);
   if (!requestedIds.length) return [];
 
-  const result = await supabase
-    .from("meta_inbox_attachments")
-    .select("*")
+  const result = await selectActiveMetaInboxRows(
+    supabase,
+    "meta_inbox_attachments",
+  )
     .in("id", requestedIds)
     .limit(requestedIds.length);
   if (result.error) throw normalizeMetaInboxSchemaError(result.error);
@@ -1146,7 +1155,7 @@ export async function createSocialInboxCommentAction(
 
   const insert = await supabase
     .from("meta_inbox_comment_actions")
-    .insert(withAdsAnalystEnvironment(mutation.row))
+    .insert(withActiveMetaInboxEnvironment(mutation.row))
     .select("*")
     .single();
   if (insert.error) throw normalizeMetaInboxSchemaError(insert.error);
@@ -1269,7 +1278,7 @@ export async function recordSocialInboxPresence(
 
     const upsert = await supabase
       .from("meta_inbox_presence")
-      .upsert([{ ...heartbeat.row, environment: getAdsAnalystEnvironment() }], {
+      .upsert([withActiveMetaInboxEnvironment(heartbeat.row)], {
         onConflict: "environment,conversation_id,app_user_id",
       })
       .select("*");
@@ -1327,7 +1336,7 @@ export async function createSocialInboxSavedReply(
 
   const insert = await supabase
     .from("meta_inbox_saved_replies")
-    .insert(withAdsAnalystEnvironment(mutation.row))
+    .insert(withActiveMetaInboxEnvironment(mutation.row))
     .select("*")
     .single();
   if (insert.error) throw normalizeMetaInboxSchemaError(insert.error);
@@ -1349,9 +1358,10 @@ export async function updateSocialInboxSavedReplyStatus(
 
   const supabase = dynamicSupabase("web");
   const queueAccess = await resolveSocialInboxMutationAccess(supabase, profile);
-  const existingResult = await supabase
-    .from("meta_inbox_saved_replies")
-    .select("*")
+  const existingResult = await selectActiveMetaInboxRows(
+    supabase,
+    "meta_inbox_saved_replies",
+  )
     .eq("id", savedReplyId)
     .limit(1);
   if (existingResult.error) throw normalizeMetaInboxSchemaError(existingResult.error);
@@ -1381,15 +1391,18 @@ export async function updateSocialInboxSavedReplyStatus(
     new Date().toISOString(),
   );
 
-  const updateResult = await supabase
-    .from("meta_inbox_saved_replies")
-    .update(update)
+  const updateResult = await updateActiveMetaInboxRows(
+    supabase,
+    "meta_inbox_saved_replies",
+    update,
+  )
     .eq("id", savedReplyId);
   if (updateResult.error) throw normalizeMetaInboxSchemaError(updateResult.error);
 
-  const refreshed = await supabase
-    .from("meta_inbox_saved_replies")
-    .select("*")
+  const refreshed = await selectActiveMetaInboxRows(
+    supabase,
+    "meta_inbox_saved_replies",
+  )
     .eq("id", savedReplyId)
     .limit(1);
   if (refreshed.error) throw normalizeMetaInboxSchemaError(refreshed.error);
@@ -1430,7 +1443,7 @@ export async function createSocialInboxConversationNote(
 
   const insert = await supabase
     .from("meta_inbox_notes")
-    .insert(withAdsAnalystEnvironment(mutation.row))
+    .insert(withActiveMetaInboxEnvironment(mutation.row))
     .select("*")
     .single();
   if (insert.error) throw normalizeMetaInboxSchemaError(insert.error);
@@ -1492,7 +1505,7 @@ export async function createSocialInboxQaScorecard(
 
   const insert = await supabase
     .from("meta_inbox_qa_scorecards")
-    .insert(withAdsAnalystEnvironment(mutation.row))
+    .insert(withActiveMetaInboxEnvironment(mutation.row))
     .select("*")
     .single();
   if (insert.error) throw normalizeMetaInboxSchemaError(insert.error);
@@ -1537,9 +1550,11 @@ async function resolveSocialInboxQueueAccess(
     };
   }
 
-  const members = await supabase
-    .from("meta_inbox_team_members")
-    .select("team_id")
+  const members = await selectActiveMetaInboxRows(
+    supabase,
+    "meta_inbox_team_members",
+    "team_id",
+  )
     .eq("app_user_id", appUserId)
     .limit(100);
   if (members.error) throw normalizeMetaInboxSchemaError(members.error);
@@ -1552,9 +1567,11 @@ async function resolveSocialInboxQueueAccess(
     };
   }
 
-  const teams = await supabase
-    .from("meta_inbox_teams")
-    .select("id")
+  const teams = await selectActiveMetaInboxRows(
+    supabase,
+    "meta_inbox_teams",
+    "id",
+  )
     .in("id", teamIds)
     .eq("active", true)
     .limit(100);
@@ -1568,9 +1585,11 @@ async function resolveSocialInboxQueueAccess(
     };
   }
 
-  const accessRows = await supabase
-    .from("meta_inbox_team_queue_access")
-    .select("queue_category_key")
+  const accessRows = await selectActiveMetaInboxRows(
+    supabase,
+    "meta_inbox_team_queue_access",
+    "queue_category_key",
+  )
     .in("team_id", activeTeamIds)
     .limit(500);
   if (accessRows.error) throw normalizeMetaInboxSchemaError(accessRows.error);
@@ -1594,7 +1613,7 @@ function selectInboxConversationsForQueueAccess(
     return emptyQueryResult();
   }
 
-  const query = supabase.from("meta_inbox_conversations").select("*");
+  const query = selectActiveMetaInboxRows(supabase, "meta_inbox_conversations");
   const scoped =
     access.mode === "team"
       ? query.in("queue_category_key", access.allowedQueueCategoryKeys)
@@ -1615,9 +1634,7 @@ async function selectSendAttemptsForQueueAccess(
   }
 
   if (access.mode === "all") {
-    return supabase
-      .from("meta_inbox_send_attempts")
-      .select("*")
+    return selectActiveMetaInboxRows(supabase, "meta_inbox_send_attempts")
       .order("created_at", { ascending: false, nullsFirst: false })
       .limit(250);
   }
@@ -1629,9 +1646,7 @@ async function selectSendAttemptsForQueueAccess(
   );
   if (!conversationIds.length) return emptyQueryResult();
 
-  return supabase
-    .from("meta_inbox_send_attempts")
-    .select("*")
+  return selectActiveMetaInboxRows(supabase, "meta_inbox_send_attempts")
     .in("conversation_id", conversationIds)
     .order("created_at", { ascending: false, nullsFirst: false })
     .limit(250);
@@ -1647,9 +1662,7 @@ async function selectCommentActionsForQueueAccess(
   }
 
   if (access.mode === "all") {
-    return supabase
-      .from("meta_inbox_comment_actions")
-      .select("*")
+    return selectActiveMetaInboxRows(supabase, "meta_inbox_comment_actions")
       .order("created_at", { ascending: false, nullsFirst: false })
       .limit(250);
   }
@@ -1661,9 +1674,7 @@ async function selectCommentActionsForQueueAccess(
   );
   if (!conversationIds.length) return emptyQueryResult();
 
-  return supabase
-    .from("meta_inbox_comment_actions")
-    .select("*")
+  return selectActiveMetaInboxRows(supabase, "meta_inbox_comment_actions")
     .in("conversation_id", conversationIds)
     .order("created_at", { ascending: false, nullsFirst: false })
     .limit(250);
@@ -1679,9 +1690,7 @@ async function selectConversationEventsForQueueAccess(
   }
 
   if (access.mode === "all") {
-    return supabase
-      .from("meta_inbox_conversation_events")
-      .select("*")
+    return selectActiveMetaInboxRows(supabase, "meta_inbox_conversation_events")
       .order("event_at", { ascending: false, nullsFirst: false })
       .limit(500);
   }
@@ -1693,9 +1702,7 @@ async function selectConversationEventsForQueueAccess(
   );
   if (!conversationIds.length) return emptyQueryResult();
 
-  return supabase
-    .from("meta_inbox_conversation_events")
-    .select("*")
+  return selectActiveMetaInboxRows(supabase, "meta_inbox_conversation_events")
     .in("conversation_id", conversationIds)
     .order("event_at", { ascending: false, nullsFirst: false })
     .limit(500);
@@ -1711,9 +1718,7 @@ async function selectNotesForQueueAccess(
   }
 
   if (access.mode === "all") {
-    return supabase
-      .from("meta_inbox_notes")
-      .select("*")
+    return selectActiveMetaInboxRows(supabase, "meta_inbox_notes")
       .order("created_at", { ascending: false, nullsFirst: false })
       .limit(250);
   }
@@ -1725,9 +1730,7 @@ async function selectNotesForQueueAccess(
   );
   if (!conversationIds.length) return emptyQueryResult();
 
-  return supabase
-    .from("meta_inbox_notes")
-    .select("*")
+  return selectActiveMetaInboxRows(supabase, "meta_inbox_notes")
     .in("conversation_id", conversationIds)
     .order("created_at", { ascending: false, nullsFirst: false })
     .limit(250);
@@ -1743,9 +1746,7 @@ async function selectQaScorecardsForQueueAccess(
   }
 
   if (access.mode === "all") {
-    return supabase
-      .from("meta_inbox_qa_scorecards")
-      .select("*")
+    return selectActiveMetaInboxRows(supabase, "meta_inbox_qa_scorecards")
       .order("created_at", { ascending: false, nullsFirst: false })
       .limit(250);
   }
@@ -1757,9 +1758,7 @@ async function selectQaScorecardsForQueueAccess(
   );
   if (!conversationIds.length) return emptyQueryResult();
 
-  return supabase
-    .from("meta_inbox_qa_scorecards")
-    .select("*")
+  return selectActiveMetaInboxRows(supabase, "meta_inbox_qa_scorecards")
     .in("conversation_id", conversationIds)
     .order("created_at", { ascending: false, nullsFirst: false })
     .limit(250);
@@ -1778,9 +1777,10 @@ async function requireAccessibleConversation(
   conversationId: string,
   queueAccess: MetaInboxQueueAccessDecision,
 ): Promise<SocialInboxConversation> {
-  const conversationResult = await supabase
-    .from("meta_inbox_conversations")
-    .select("*")
+  const conversationResult = await selectActiveMetaInboxRows(
+    supabase,
+    "meta_inbox_conversations",
+  )
     .eq("id", conversationId)
     .limit(1);
   if (conversationResult.error) throw normalizeMetaInboxSchemaError(conversationResult.error);
@@ -1815,9 +1815,10 @@ async function requireContactMethodForConversation(
     throw new Error("Contact method id is required.");
   }
 
-  const result = await supabase
-    .from("meta_inbox_customer_contact_methods")
-    .select("*")
+  const result = await selectActiveMetaInboxRows(
+    supabase,
+    "meta_inbox_customer_contact_methods",
+  )
     .eq("id", contactMethodId)
     .limit(1);
   if (result.error) throw normalizeMetaInboxSchemaError(result.error);
@@ -1840,9 +1841,10 @@ async function requireSendAttemptForConversation(
     throw new Error("Send attempt id is required.");
   }
 
-  const result = await supabase
-    .from("meta_inbox_send_attempts")
-    .select("*")
+  const result = await selectActiveMetaInboxRows(
+    supabase,
+    "meta_inbox_send_attempts",
+  )
     .eq("id", sendAttemptId)
     .limit(1);
   if (result.error) throw normalizeMetaInboxSchemaError(result.error);
@@ -1865,9 +1867,10 @@ async function requireCommentActionForConversation(
     throw new Error("Comment action id is required.");
   }
 
-  const result = await supabase
-    .from("meta_inbox_comment_actions")
-    .select("*")
+  const result = await selectActiveMetaInboxRows(
+    supabase,
+    "meta_inbox_comment_actions",
+  )
     .eq("id", commentActionId)
     .limit(1);
   if (result.error) throw normalizeMetaInboxSchemaError(result.error);
@@ -1899,9 +1902,10 @@ async function selectActivePresenceForConversation(
   currentUserId: string | null,
   now: string,
 ): Promise<SocialInboxPresence[]> {
-  const result = await supabase
-    .from("meta_inbox_presence")
-    .select("*")
+  const result = await selectActiveMetaInboxRows(
+    supabase,
+    "meta_inbox_presence",
+  )
     .eq("conversation_id", conversationId)
     .limit(50);
   if (result.error) throw normalizeMetaInboxSchemaError(result.error);
@@ -1940,7 +1944,7 @@ async function insertConversationEvent(
 ) {
   const insert = await supabase
     .from("meta_inbox_conversation_events")
-    .insert(withAdsAnalystEnvironment({
+    .insert(withActiveMetaInboxEnvironment({
       conversation_id: conversationId,
       event_type: event.eventType,
       actor_user_id: actorUserId,
@@ -1970,7 +1974,7 @@ async function insertContactMethodEvent(
 ) {
   const insert = await supabase
     .from("meta_inbox_conversation_events")
-    .insert(withAdsAnalystEnvironment({
+    .insert(withActiveMetaInboxEnvironment({
       conversation_id: conversationId,
       event_type: event.eventType,
       actor_user_id: actorUserId,
@@ -1991,9 +1995,11 @@ async function updateContactMethodAuditEvent(
   contactMethodId: string,
   auditEventId: string,
 ) {
-  const update = await supabase
-    .from("meta_inbox_customer_contact_methods")
-    .update({ audit_event_id: auditEventId })
+  const update = await updateActiveMetaInboxRows(
+    supabase,
+    "meta_inbox_customer_contact_methods",
+    { audit_event_id: auditEventId },
+  )
     .eq("id", contactMethodId);
   if (update.error) throw normalizeMetaInboxSchemaError(update.error);
 }
@@ -2014,9 +2020,7 @@ async function selectKnownMessagesForConversation(
     return [];
   }
 
-  const result = await supabase
-    .from("meta_social_messages")
-    .select("*")
+  const result = await selectActiveMetaInboxRows(supabase, "meta_social_messages")
     .eq("platform", conversation.platform)
     .eq("thread_id", conversation.platform_thread_id)
     .order("sent_at", { ascending: true, nullsFirst: true })
@@ -2035,16 +2039,12 @@ async function selectKnownCommentsForConversation(
   }
 
   const [root, replies] = await Promise.all([
-    supabase
-      .from("meta_social_comments")
-      .select("*")
+    selectActiveMetaInboxRows(supabase, "meta_social_comments")
       .eq("platform", conversation.platform)
       .eq("comment_id", conversation.source_id)
       .order("created_time", { ascending: true, nullsFirst: true })
       .limit(1),
-    supabase
-      .from("meta_social_comments")
-      .select("*")
+    selectActiveMetaInboxRows(supabase, "meta_social_comments")
       .eq("platform", conversation.platform)
       .eq("parent_comment_id", conversation.source_id)
       .order("created_time", { ascending: true, nullsFirst: true })
@@ -2139,7 +2139,7 @@ export async function ingestMetaWebhookPayload(payload: JsonRecord): Promise<Met
 
   if (result.messages || result.comments) {
     const supabase = dynamicSupabase("ingest");
-    const { error } = await supabase.from("meta_social_sync_runs").insert(withAdsAnalystEnvironment({
+    const { error } = await supabase.from("meta_social_sync_runs").insert(withActiveMetaInboxEnvironment({
       trigger: "webhook",
       status: "success",
       completed_at: new Date().toISOString(),
@@ -2755,8 +2755,8 @@ async function upsertMany(
   for (const chunk of chunks(rows, 500)) {
     const { data, error } = await supabase
       .from(table)
-      .upsert(withAdsAnalystEnvironmentRows(chunk), {
-        onConflict: adsAnalystOnConflict(onConflict),
+      .upsert(withActiveMetaInboxEnvironmentRows(chunk), {
+        onConflict: activeMetaInboxOnConflict(onConflict),
       })
       .select("*");
 
@@ -2925,21 +2925,19 @@ async function selectMetaInboxConversationWorkflowState(
   if (!keys.length) return state;
 
   const supabase = dynamicSupabase(role);
-  const environment = getAdsAnalystEnvironment();
   for (const chunk of chunks(keys, 500)) {
-    const { data, error } = await supabase
-      .from("meta_inbox_conversations")
-      .select(
-        [
-          "canonical_conversation_key",
-          "conversation_status",
-          "queue_category_key",
-          "routing_source",
-          "routing_confidence",
-          "routing_explanation",
-        ].join(","),
-      )
-      .eq("environment", environment)
+    const { data, error } = await selectActiveMetaInboxRows(
+      supabase,
+      "meta_inbox_conversations",
+      [
+        "canonical_conversation_key",
+        "conversation_status",
+        "queue_category_key",
+        "routing_source",
+        "routing_confidence",
+        "routing_explanation",
+      ].join(","),
+    )
       .in("canonical_conversation_key", chunk)
       .limit(chunk.length);
     if (error) throw error;
@@ -2977,21 +2975,14 @@ async function upsertMetaInboxMany(
 ) {
   if (!rows.length) return [];
   const supabase = dynamicSupabase(role);
-  const environment = getAdsAnalystEnvironment();
-  const conflict = onConflict
-    .split(",")
-    .map((column) => column.trim())
-    .filter(Boolean)
-    .includes("environment")
-    ? onConflict
-    : `environment,${onConflict}`;
+  const conflict = activeMetaInboxOnConflict(onConflict);
   const results: JsonRecord[] = [];
 
   for (const chunk of chunks(rows, 500)) {
     const { data, error } = await supabase
       .from(table)
       .upsert(
-        chunk.map((row) => ({ ...row, environment })),
+        withActiveMetaInboxEnvironmentRows(chunk),
         {
           onConflict: conflict,
           ignoreDuplicates: options.ignoreDuplicates,
@@ -3008,6 +2999,22 @@ async function upsertMetaInboxMany(
 
 function dynamicSupabase(role: "web" | "worker" | "ingest") {
   return createAdsAnalystClient(role) as unknown as DynamicSupabaseClient;
+}
+
+function selectActiveMetaInboxRows(
+  supabase: DynamicSupabaseClient,
+  table: string,
+  columns = "*",
+) {
+  return scopeActiveMetaInboxEnvironment(supabase.from(table).select(columns));
+}
+
+function updateActiveMetaInboxRows(
+  supabase: DynamicSupabaseClient,
+  table: string,
+  row: JsonRecord,
+) {
+  return scopeActiveMetaInboxEnvironment(supabase.from(table).update(row));
 }
 
 function mapThread(row: JsonRecord): SocialInboxThread {

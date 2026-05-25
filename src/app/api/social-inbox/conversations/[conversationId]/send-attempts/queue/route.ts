@@ -1,5 +1,6 @@
 import { requirePermissionFromRequest } from "@/lib/app-auth";
 import { jsonError } from "@/lib/http";
+import { parseJsonObjectBody } from "@/lib/meta-inbox-api-validation";
 import {
   queueSocialInboxSendAttempt,
   type MetaInboxQueueSendAttemptInput,
@@ -12,6 +13,10 @@ type Params = {
   conversationId: string;
 };
 
+const QUEUE_SEND_ATTEMPT_BODY_FIELDS = {
+  sendAttemptId: { type: "string", nullable: true },
+} as const;
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<Params> },
@@ -19,7 +24,10 @@ export async function POST(
   try {
     const profile = await requirePermissionFromRequest(request, "send_inbox_reply");
     const { conversationId } = await params;
-    const input = (await request.json()) as MetaInboxQueueSendAttemptInput;
+    const input = await parseJsonObjectBody<MetaInboxQueueSendAttemptInput>(
+      request,
+      QUEUE_SEND_ATTEMPT_BODY_FIELDS,
+    );
     const result = await queueSocialInboxSendAttempt(
       decodeURIComponent(conversationId),
       profile,

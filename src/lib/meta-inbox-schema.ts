@@ -10,6 +10,7 @@ export const META_INBOX_REQUIRED_MIGRATIONS = [
   "20260524140000_meta_inbox_saved_replies.sql",
   "20260524150000_meta_inbox_notes.sql",
   "20260524160000_meta_inbox_qa_scorecards.sql",
+  "20260524170000_meta_inbox_environment_relationships.sql",
 ] as const;
 
 export const META_INBOX_REQUIRED_TABLES = [

@@ -1,6 +1,10 @@
-import { createAdsAnalystClient, withAdsAnalystEnvironment } from "./ads-analyst-db.ts";
+import { createAdsAnalystClient } from "./ads-analyst-db.ts";
 import { getMetaApiVersion } from "./env.ts";
 import { safeErrorMessage } from "./error-message.ts";
+import {
+  scopeActiveMetaInboxEnvironment,
+  withActiveMetaInboxEnvironment,
+} from "./meta-inbox-environment.ts";
 import {
   buildMetaInboxCommentActionDeliveryTarget,
   buildMetaInboxCommentActionFailureUpdate,
@@ -114,9 +118,7 @@ export async function deliverQueuedMetaInboxCommentActions(
   const supabase =
     options.supabase || (createAdsAnalystClient("worker") as unknown as DynamicSupabaseClient);
   const managedPageResolver = options.managedPageResolver || defaultManagedPageResolver;
-  const queued = await supabase
-    .from("meta_inbox_comment_actions")
-    .select("*")
+  const queued = await selectActiveMetaInboxRows(supabase, "meta_inbox_comment_actions")
     .in("status", ["queued", "failed_retryable"])
     .order("created_at", { ascending: true, nullsFirst: false })
     .limit(limit * 4);
@@ -200,13 +202,19 @@ async function defaultManagedPageResolver(pageSelector: string) {
   return getManagedPage(pageSelector);
 }
 
+function selectActiveMetaInboxRows(
+  supabase: DynamicSupabaseClient,
+  table: string,
+  columns = "*",
+) {
+  return scopeActiveMetaInboxEnvironment(supabase.from(table).select(columns));
+}
+
 async function loadCommentActionConversation(
   supabase: DynamicSupabaseClient,
   conversationId: string,
 ): Promise<MetaInboxCommentActionConversation> {
-  const query = await supabase
-    .from("meta_inbox_conversations")
-    .select("*")
+  const query = await selectActiveMetaInboxRows(supabase, "meta_inbox_conversations")
     .eq("id", conversationId)
     .limit(1);
   if (query.error) throw query.error;
@@ -223,9 +231,9 @@ async function claimCommentActionForDelivery(
   context: { now: string },
 ) {
   const sending = buildMetaInboxCommentActionSendingUpdate(action, context);
-  const result = await supabase
-    .from("meta_inbox_comment_actions")
-    .update(sending.update)
+  const result = await scopeActiveMetaInboxEnvironment(
+    supabase.from("meta_inbox_comment_actions").update(sending.update),
+  )
     .eq("id", action.id)
     .eq("status", action.status)
     .select("*")
@@ -243,9 +251,9 @@ async function updateCommentAction(
   commentActionId: string,
   update: JsonRecord,
 ) {
-  const result = await supabase
-    .from("meta_inbox_comment_actions")
-    .update(update)
+  const result = await scopeActiveMetaInboxEnvironment(
+    supabase.from("meta_inbox_comment_actions").update(update),
+  )
     .eq("id", commentActionId)
     .select("id")
     .single();
@@ -265,7 +273,7 @@ async function insertCommentActionEvent(
 ) {
   const insert = await supabase
     .from("meta_inbox_conversation_events")
-    .insert(withAdsAnalystEnvironment({
+    .insert(withActiveMetaInboxEnvironment({
       conversation_id: conversationId,
       event_type: event.eventType,
       actor_user_id: null,

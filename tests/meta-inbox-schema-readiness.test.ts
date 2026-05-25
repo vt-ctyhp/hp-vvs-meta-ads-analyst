@@ -37,6 +37,37 @@ describe("Meta inbox schema readiness", () => {
     }
   });
 
+  it("keeps new inbox child relationships environment-aware", () => {
+    for (const index of [
+      "meta_social_messages_environment_id_idx",
+      "meta_social_comments_environment_id_idx",
+      "meta_inbox_teams_environment_id_idx",
+      "meta_inbox_customer_profiles_environment_id_idx",
+      "meta_inbox_conversations_environment_id_idx",
+      "meta_inbox_send_attempts_environment_id_idx",
+    ]) {
+      assert.match(migrationText, new RegExp(`create unique index if not exists ${index}`));
+    }
+
+    for (const constraint of [
+      "meta_inbox_team_members_environment_team_fk",
+      "meta_inbox_team_queue_access_environment_team_fk",
+      "meta_inbox_conversations_environment_profile_fk",
+      "meta_inbox_contact_methods_environment_profile_fk",
+      "meta_inbox_first_touch_sources_environment_conversation_fk",
+      "meta_inbox_conversation_events_environment_conversation_fk",
+      "meta_inbox_send_attempts_environment_conversation_fk",
+      "meta_inbox_attachments_environment_conversation_fk",
+      "meta_inbox_attachments_environment_send_attempt_fk",
+      "meta_inbox_comment_actions_environment_conversation_fk",
+      "meta_inbox_presence_environment_conversation_fk",
+      "meta_inbox_notes_environment_conversation_fk",
+      "meta_inbox_qa_scorecards_environment_conversation_fk",
+    ]) {
+      assert.match(migrationText, new RegExp(`constraint ${constraint}`));
+    }
+  });
+
   it("turns missing PostgREST schema-cache errors into migration guidance", () => {
     const error = {
       code: "PGRST205",
@@ -49,7 +80,7 @@ describe("Meta inbox schema readiness", () => {
     const message = metaInboxSchemaReadinessMessage(error);
     assert.match(String(message), /Social inbox database schema is not ready/);
     assert.match(String(message), /public\.meta_inbox_conversations/);
-    assert.match(String(message), /20260524160000_meta_inbox_qa_scorecards\.sql/);
+    assert.match(String(message), /20260524170000_meta_inbox_environment_relationships\.sql/);
     assert.doesNotMatch(String(message), /schema cache/);
 
     const normalized = normalizeMetaInboxSchemaError(error);
