@@ -1,12 +1,15 @@
 import {
   buildAnalysisRunInsert,
   mapAnalysisRunRecord,
+  normalizeAnalysisOutputMode,
   type AnalysisOutputMode,
   type AnalysisRunRecord,
   type AnalysisWorkbenchRun,
 } from "./analysis-workbench-contract.ts";
+import { runAnalysisWorkbenchFactsPipeline } from "./analysis-workbench-pipeline.ts";
 import { createAdsAnalystClient, withAdsAnalystEnvironment } from "./ads-analyst-db.ts";
 import { ConfigurationError, getMissingDashboardEnv } from "./env.ts";
+import { aggregateMetaInsights } from "./meta-insight-aggregates.ts";
 
 const RUN_COLUMNS =
   "id,status,prompt,output_mode,title,intent,query_plan,facts,visual_cards,source_notes,validation,lineage,answer,dashboard_packet,created_at,updated_at";
@@ -47,10 +50,29 @@ export async function createAnalysisWorkbenchRun(input: {
     throw new ConfigurationError("Analysis run storage is not configured.", missing);
   }
 
+  const outputMode = normalizeAnalysisOutputMode(input.outputMode);
+  const latestSyncedInsightDate = await fetchLatestSyncedInsightDate();
+  const pipelineResult = await runAnalysisWorkbenchFactsPipeline({
+    prompt: input.prompt,
+    outputMode,
+    latestSyncedInsightDate,
+    executeAggregate: async (request) =>
+      aggregateMetaInsights({
+        start: request.start,
+        end: request.end,
+        dimensions: request.dimensions,
+        filters: request.filters,
+        sortField: request.sortField,
+        sortDirection: request.sortDirection,
+        limit: request.limit,
+      }),
+  });
+
   const run = buildAnalysisRunInsert({
     prompt: input.prompt,
-    outputMode: input.outputMode,
+    outputMode,
     parentRunId: input.parentRunId,
+    pipelineResult,
   });
 
   const supabase = createAdsAnalystClient("web");
@@ -62,4 +84,18 @@ export async function createAnalysisWorkbenchRun(input: {
 
   if (response.error) throw response.error;
   return mapAnalysisRunRecord(response.data as AnalysisRunRecord);
+}
+
+async function fetchLatestSyncedInsightDate() {
+  const supabase = createAdsAnalystClient("web");
+  const response = await supabase
+    .from("meta_daily_insights")
+    .select("date_start")
+    .order("date_start", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (response.error) throw response.error;
+  const value = (response.data as { date_start?: unknown } | null)?.date_start;
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
 }

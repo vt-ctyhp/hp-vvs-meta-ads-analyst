@@ -1,4 +1,5 @@
 import { validateAnalysisWorkbenchSemanticIntent } from "./analysis-workbench-semantic-catalog.ts";
+import type { AnalysisWorkbenchPipelineResult } from "./analysis-workbench-pipeline.ts";
 
 export type JsonValue =
   | string
@@ -73,6 +74,7 @@ export function buildAnalysisRunInsert(input: {
   outputMode?: unknown;
   parentRunId?: string | null;
   now?: string;
+  pipelineResult?: AnalysisWorkbenchPipelineResult;
 }): AnalysisRunInsert {
   const prompt = normalizePrompt(input.prompt);
   if (!prompt) {
@@ -81,6 +83,28 @@ export function buildAnalysisRunInsert(input: {
 
   const outputMode = normalizeAnalysisOutputMode(input.outputMode);
   const now = input.now || new Date().toISOString();
+  if (input.pipelineResult) {
+    return {
+      status: input.pipelineResult.status,
+      prompt,
+      output_mode: outputMode,
+      title: input.pipelineResult.title || titleFromPrompt(prompt),
+      intent: input.pipelineResult.intent as JsonValue,
+      query_plan: input.pipelineResult.queryPlan as JsonValue,
+      facts: input.pipelineResult.facts as JsonValue,
+      visual_cards: input.pipelineResult.visualCards as JsonValue[],
+      source_notes: input.pipelineResult.sourceNotes as unknown as JsonValue[],
+      validation: input.pipelineResult.validation as JsonValue,
+      lineage: {
+        parentRunId: input.parentRunId || null,
+      },
+      answer: input.pipelineResult.answer as unknown as JsonValue,
+      dashboard_packet: input.pipelineResult.dashboardPacket,
+      created_at: now,
+      updated_at: now,
+    };
+  }
+
   const semanticValidation = validateAnalysisWorkbenchSemanticIntent({ prompt });
   const blocked = semanticValidation.status === "blocked";
 
