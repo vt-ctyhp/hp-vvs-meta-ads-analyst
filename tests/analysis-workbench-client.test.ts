@@ -252,6 +252,116 @@ test("run detail renders answer, source notes, and structured visual cards", () 
   assert.match(markup, /\$900 \/ \$45/);
 });
 
+test("run detail exposes promotion and renders saved dashboard packet sections", () => {
+  const { RunDetail } = loadModule("src/components/analysis-workbench-client.tsx");
+
+  const promoteMarkup = renderToStaticMarkup(
+    React.createElement(RunDetail, {
+      run: {
+        id: "run-1",
+        status: "completed",
+        prompt: "Which groups moved?",
+        outputMode: "answer_visuals",
+        title: "Which groups moved?",
+        answer: { summary: "Spend was $3,400 [F1].", citations: [] },
+        facts: { status: "computed" },
+        sourceNotes: [],
+        visualCards: [],
+        validation: { status: "ready" },
+        lineage: { parentRunId: null },
+        dashboardPacket: null,
+        createdAt: "2026-05-25T14:30:00.000Z",
+        updatedAt: "2026-05-25T14:30:00.000Z",
+      },
+      onPromote: () => undefined,
+      promoting: false,
+    }),
+  );
+
+  assert.match(promoteMarkup, /Promote to dashboard/);
+
+  const packetMarkup = renderToStaticMarkup(
+    React.createElement(RunDetail, {
+      run: {
+        id: "run-2",
+        status: "completed",
+        prompt: "Build dashboard",
+        outputMode: "full_dashboard",
+        title: "Build dashboard",
+        answer: { summary: "Dashboard saved [S1].", citations: [] },
+        facts: { status: "computed" },
+        sourceNotes: [{ id: "S1", label: "Data source", value: "Meta Ads daily insights" }],
+        visualCards: [],
+        validation: { status: "ready" },
+        lineage: { parentRunId: null },
+        dashboardPacket: {
+          kind: "analysis_dashboard_packet",
+          version: 1,
+          generatedAt: "2026-05-25T14:35:00.000Z",
+          promotedFromRunId: "run-1",
+          directAnswer: { summary: "Dashboard saved [S1].", citations: [] },
+          primaryEvidenceTable: {
+            id: "table_campaign_umbrella",
+            type: "flat_table",
+            title: "Campaign group evidence",
+            columns: [{ key: "entity", label: "Campaign group", kind: "dimension" }],
+            rows: [{ entity: "Book Appts US" }],
+            sourceNoteIds: ["S1"],
+          },
+          visualObjects: [],
+          insightSummary: {
+            winners: [
+              {
+                id: "winner_primary",
+                title: "Winner",
+                detail: "Book Appts US leads with $2,500 Spend.",
+                sourceNoteIds: ["S1"],
+              },
+            ],
+            losers: [
+              {
+                id: "loser_primary",
+                title: "Loser",
+                detail: "Cash for Gold US trails at $900 Spend.",
+                sourceNoteIds: ["S1"],
+              },
+            ],
+            anomalies: [
+              {
+                id: "anomaly_primary",
+                title: "Anomaly",
+                detail: "Book Appts US is $800 above average.",
+                sourceNoteIds: ["S1"],
+              },
+            ],
+          },
+          nextActions: [
+            {
+              id: "action_winner",
+              title: "Scale review",
+              detail: "Inspect Book Appts US before changing budgets.",
+              sourceNoteIds: ["S1"],
+            },
+          ],
+          assumptions: ["Relative date range ends at latest synced day."],
+          caveats: ["Primary KPI is group-specific and can blend proxy metrics across groups."],
+          sourceNotes: [{ id: "S1", label: "Data source", value: "Meta Ads daily insights" }],
+        },
+        createdAt: "2026-05-25T14:30:00.000Z",
+        updatedAt: "2026-05-25T14:35:00.000Z",
+      },
+    }),
+  );
+
+  assert.match(packetMarkup, /Dashboard Packet/);
+  assert.match(packetMarkup, /Campaign group evidence/);
+  assert.match(packetMarkup, /Winner/);
+  assert.match(packetMarkup, /Cash for Gold US trails/);
+  assert.match(packetMarkup, /Scale review/);
+  assert.match(packetMarkup, /Primary KPI is group-specific/);
+  assert.doesNotMatch(packetMarkup, /Promote to dashboard/);
+});
+
 test("workbench status and visual regions render loading, empty, and error states", () => {
   const { EmptyRunDetail, StatusNotice, VisualCardGrid } = loadModule(
     "src/components/analysis-workbench-client.tsx",

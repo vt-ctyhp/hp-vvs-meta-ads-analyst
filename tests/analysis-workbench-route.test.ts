@@ -86,6 +86,50 @@ test("analysis-runs POST ignores invalid removed context chip payloads", async (
   });
 });
 
+test("analysis-runs PATCH promotes an existing answer run into a full dashboard packet", async () => {
+  const calls: Array<{ name: string; args: unknown[] }> = [];
+  const route = loadRoute(calls);
+
+  const response = await route.PATCH(
+    jsonRequest("http://localhost/api/analysis-runs", {
+      action: "promote_dashboard",
+      runId: "run-1",
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    run: {
+      id: "run-1",
+      prompt: "Saved",
+      outputMode: "full_dashboard",
+      dashboardPacket: { kind: "analysis_dashboard_packet" },
+    },
+  });
+  assert.deepEqual(serializable(calls), [
+    { name: "requirePermissionFromRequest", args: ["view_ai_analysis"] },
+    { name: "promoteAnalysisWorkbenchRunToDashboard", args: ["run-1"] },
+  ]);
+});
+
+test("analysis-runs PATCH rejects unsupported dashboard actions", async () => {
+  const calls: Array<{ name: string; args: unknown[] }> = [];
+  const route = loadRoute(calls);
+
+  const response = await route.PATCH(
+    jsonRequest("http://localhost/api/analysis-runs", {
+      action: "delete_legacy",
+      runId: "run-1",
+    }),
+  );
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: "Unsupported analysis run action" });
+  assert.deepEqual(calls, [
+    { name: "requirePermissionFromRequest", args: ["view_ai_analysis"] },
+  ]);
+});
+
 test("analysis-runs POST rejects an empty prompt before repository work", async () => {
   const calls: Array<{ name: string; args: unknown[] }> = [];
   const route = loadRoute(calls);
@@ -114,7 +158,12 @@ test("analysis-runs GET lists recent runs or reopens one saved run", async () =>
     new Request("http://localhost/api/analysis-runs?runId=run-7"),
   );
   assert.deepEqual(await reopenResponse.json(), {
-    run: { id: "run-7", prompt: "Saved", outputMode: "full_dashboard" },
+    run: {
+      id: "run-7",
+      prompt: "Saved",
+      outputMode: "full_dashboard",
+      dashboardPacket: { kind: "analysis_dashboard_packet" },
+    },
   });
 
   assert.deepEqual(calls, [
@@ -140,11 +189,25 @@ function loadRoute(calls: Array<{ name: string; args: unknown[] }>) {
       },
       async getAnalysisWorkbenchRun(...args: unknown[]) {
         calls.push({ name: "getAnalysisWorkbenchRun", args });
-        return { id: args[0], prompt: "Saved", outputMode: "full_dashboard" };
+        return {
+          id: args[0],
+          prompt: "Saved",
+          outputMode: "full_dashboard",
+          dashboardPacket: { kind: "analysis_dashboard_packet" },
+        };
       },
       async listAnalysisWorkbenchRuns(...args: unknown[]) {
         calls.push({ name: "listAnalysisWorkbenchRuns", args });
         return [{ id: "run-1", prompt: "Recent", outputMode: "answer_visuals" }];
+      },
+      async promoteAnalysisWorkbenchRunToDashboard(...args: unknown[]) {
+        calls.push({ name: "promoteAnalysisWorkbenchRunToDashboard", args });
+        return {
+          id: args[0],
+          prompt: "Saved",
+          outputMode: "full_dashboard",
+          dashboardPacket: { kind: "analysis_dashboard_packet" },
+        };
       },
     },
     "@/lib/app-auth": {
@@ -163,6 +226,7 @@ function loadRoute(calls: Array<{ name: string; args: unknown[] }>) {
   }) as {
     GET(request: Request): Promise<Response>;
     POST(request: Request): Promise<Response>;
+    PATCH(request: Request): Promise<Response>;
   };
 }
 

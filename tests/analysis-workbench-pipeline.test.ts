@@ -169,6 +169,73 @@ test("answer plus visuals creates structured metric, table, bar, and line visual
   assert.equal(line.points[2]?.formattedValue, "$510");
 });
 
+test("full dashboard mode creates a durable dashboard packet snapshot", async () => {
+  const result = await runAnalysisWorkbenchFactsPipeline({
+    prompt: "Build a full dashboard for spend and primary KPI by campaign group for the last 7 days.",
+    outputMode: "full_dashboard",
+    latestSyncedInsightDate: "2026-05-24",
+    executeAggregate: async (request) => {
+      if (request.dimensions.includes("date")) {
+        return [
+          aggregateRow({ date: "2026-05-18", spend: 300, primary_results: 3, source_rows: 2 }),
+          aggregateRow({ date: "2026-05-19", spend: 420, primary_results: 4, source_rows: 2 }),
+        ];
+      }
+
+      return request.dimensions.length
+        ? [
+            aggregateRow({
+              campaign_umbrella: "Book Appts US",
+              spend: 2500,
+              primary_results: 25,
+              source_rows: 8,
+            }),
+            aggregateRow({
+              campaign_umbrella: "Cash for Gold US",
+              spend: 900,
+              primary_results: 9,
+              source_rows: 4,
+            }),
+          ]
+        : [aggregateRow({ spend: 3400, primary_results: 34, source_rows: 12 })];
+    },
+  });
+
+  assert.equal(result.status, "completed");
+  assert.ok(result.dashboardPacket);
+  assert.equal(result.dashboardPacket.kind, "analysis_dashboard_packet");
+  assert.equal(result.dashboardPacket.directAnswer.summary, result.answer.summary);
+  assert.equal(result.dashboardPacket.primaryEvidenceTable?.type, "flat_table");
+  assert.deepEqual(
+    result.dashboardPacket.visualObjects.map((card) => card.id),
+    result.visualCards.map((card) => card.id),
+  );
+  assert.ok(
+    result.dashboardPacket.insightSummary.winners.some((insight) =>
+      /Book Appts US/.test(insight.detail),
+    ),
+  );
+  assert.ok(
+    result.dashboardPacket.insightSummary.losers.some((insight) =>
+      /Cash for Gold US/.test(insight.detail),
+    ),
+  );
+  assert.ok(result.dashboardPacket.insightSummary.anomalies.length >= 1);
+  assert.ok(result.dashboardPacket.nextActions.length >= 3);
+  assert.ok(
+    result.dashboardPacket.assumptions.some((assumption) =>
+      /Relative date range/.test(assumption),
+    ),
+  );
+  assert.ok(result.dashboardPacket.caveats.some((caveat) => /Primary KPI/.test(caveat)));
+  assert.deepEqual(
+    result.dashboardPacket.sourceNotes.map((note) =>
+      typeof note === "object" && note && "id" in note ? note.id : null,
+    ),
+    ["S1", "S2", "S3", "S4", "S5"],
+  );
+});
+
 test("visual planner builds pivot table cards for row-by-column comparisons", async () => {
   const requests: AnalysisWorkbenchPipelineAggregateRequest[] = [];
   const result = await runAnalysisWorkbenchFactsPipeline({

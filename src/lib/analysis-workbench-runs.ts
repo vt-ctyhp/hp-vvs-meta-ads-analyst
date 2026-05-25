@@ -1,4 +1,5 @@
 import {
+  buildAnalysisDashboardPacket,
   buildAnalysisRunInsert,
   mapAnalysisRunRecord,
   normalizeAnalysisOutputMode,
@@ -7,6 +8,7 @@ import {
   type AnalysisOutputMode,
   type AnalysisRunRecord,
   type AnalysisWorkbenchRun,
+  type JsonValue,
 } from "./analysis-workbench-contract.ts";
 import { runAnalysisWorkbenchFactsPipeline } from "./analysis-workbench-pipeline.ts";
 import { createAdsAnalystClient, withAdsAnalystEnvironment } from "./ads-analyst-db.ts";
@@ -90,6 +92,44 @@ export async function createAnalysisWorkbenchRun(input: {
   const response = await supabase
     .from("ai_analysis_workbench_runs")
     .insert(withAdsAnalystEnvironment(run))
+    .select(RUN_COLUMNS)
+    .single();
+
+  if (response.error) throw response.error;
+  return mapAnalysisRunRecord(response.data as AnalysisRunRecord);
+}
+
+export async function promoteAnalysisWorkbenchRunToDashboard(
+  runId: string,
+): Promise<AnalysisWorkbenchRun> {
+  const missing = getMissingDashboardEnv();
+  if (missing.length) {
+    throw new ConfigurationError("Analysis run storage is not configured.", missing);
+  }
+
+  const sourceRun = await getAnalysisWorkbenchRun(runId);
+  if (sourceRun.status !== "completed") {
+    throw new Error("Only completed analysis runs can be promoted to a dashboard packet.");
+  }
+
+  const dashboardPacket = buildAnalysisDashboardPacket({
+    promotedFromRunId: sourceRun.id,
+    answer: sourceRun.answer,
+    facts: sourceRun.facts,
+    visualCards: sourceRun.visualCards,
+    sourceNotes: sourceRun.sourceNotes,
+    validation: sourceRun.validation,
+  });
+  const supabase = createAdsAnalystClient("web");
+  const response = await supabase
+    .from("ai_analysis_workbench_runs")
+    .update(
+      withAdsAnalystEnvironment({
+        output_mode: "full_dashboard",
+        dashboard_packet: dashboardPacket as unknown as JsonValue,
+      }),
+    )
+    .eq("id", sourceRun.id)
     .select(RUN_COLUMNS)
     .single();
 

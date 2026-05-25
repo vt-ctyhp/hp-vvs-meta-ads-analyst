@@ -1,6 +1,17 @@
 "use client";
 
-import { AlertTriangle, BarChart3, Clock3, FileText, Info, Loader2, Send, Table2, X } from "lucide-react";
+import {
+  AlertTriangle,
+  BarChart3,
+  Clock3,
+  FileText,
+  Info,
+  LayoutDashboard,
+  Loader2,
+  Send,
+  Table2,
+  X,
+} from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 
 import {
@@ -8,6 +19,7 @@ import {
   normalizeAnalysisOutputMode,
   resolveAnalysisRunContext,
   type AnalysisOutputMode,
+  type AnalysisWorkbenchDashboardPacket,
   type AnalysisWorkbenchContextChip,
   type AnalysisRunStatus,
   type AnalysisWorkbenchVisualCard,
@@ -43,6 +55,7 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
   const [prompt, setPrompt] = useState("");
   const [outputMode, setOutputMode] = useState<AnalysisOutputMode>("answer_visuals");
   const [loading, setLoading] = useState(false);
+  const [promoting, setPromoting] = useState(false);
   const [status, setStatus] = useState("");
   const [statusKind, setStatusKind] = useState<StatusKind>("idle");
   const [removedContextKeys, setRemovedContextKeys] = useState<string[]>([]);
@@ -119,6 +132,38 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
       setStatusKind("error");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function promoteSelectedRun() {
+    if (!selectedRun) return;
+
+    setPromoting(true);
+    setStatus("");
+    setStatusKind("idle");
+
+    try {
+      const response = await fetch("/api/analysis-runs", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "promote_dashboard",
+          runId: selectedRun.id,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Dashboard promotion failed");
+      const run = payload.run as AnalysisWorkbenchRun;
+      setSelectedRun(run);
+      setRuns((current) => [run, ...current.filter((item) => item.id !== run.id)].slice(0, 12));
+      setOutputMode("full_dashboard");
+      setStatus("Dashboard packet saved.");
+      setStatusKind("success");
+    } catch (error) {
+      setStatus(translateError(error));
+      setStatusKind("error");
+    } finally {
+      setPromoting(false);
     }
   }
 
@@ -204,7 +249,15 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
           </aside>
 
           <section className="min-w-0 border border-hp-rule bg-hp-card p-5">
-            {selectedRun ? <RunDetail run={selectedRun} /> : <EmptyRunDetail />}
+            {selectedRun ? (
+              <RunDetail
+                run={selectedRun}
+                onPromote={promoteSelectedRun}
+                promoting={promoting}
+              />
+            ) : (
+              <EmptyRunDetail />
+            )}
           </section>
         </main>
       </div>
@@ -337,7 +390,17 @@ export function StatusNotice({
   );
 }
 
-export function RunDetail({ run }: { run: AnalysisWorkbenchRun }) {
+export function RunDetail({
+  run,
+  onPromote,
+  promoting = false,
+}: {
+  run: AnalysisWorkbenchRun;
+  onPromote?: () => void;
+  promoting?: boolean;
+}) {
+  const canPromote = run.status === "completed" && run.outputMode !== "full_dashboard" && onPromote;
+
   return (
     <article>
       <div className="flex flex-col gap-4 border-b border-hp-rule pb-5 md:flex-row md:items-start md:justify-between">
@@ -348,8 +411,25 @@ export function RunDetail({ run }: { run: AnalysisWorkbenchRun }) {
           <h2 className="mt-2 font-title text-3xl leading-tight text-hp-ink">{run.title}</h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-hp-body">{run.prompt}</p>
         </div>
-        <div className="border border-hp-rule bg-hp-foundation px-3 py-2 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-          {OUTPUT_MODE_LABELS[run.outputMode]}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          {canPromote ? (
+            <button
+              type="button"
+              onClick={onPromote}
+              disabled={promoting}
+              className="inline-flex h-10 items-center justify-center gap-2 border border-hp-rule bg-hp-ink px-3 text-[11px] uppercase tracking-[0.14em] text-hp-foundation transition-colors hover:bg-hp-body disabled:hover:bg-hp-ink"
+            >
+              {promoting ? (
+                <Loader2 size={14} className="animate-spin" aria-hidden />
+              ) : (
+                <LayoutDashboard size={14} aria-hidden />
+              )}
+              Promote to dashboard
+            </button>
+          ) : null}
+          <div className="border border-hp-rule bg-hp-foundation px-3 py-2 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+            {OUTPUT_MODE_LABELS[run.outputMode]}
+          </div>
         </div>
       </div>
 
@@ -366,6 +446,8 @@ export function RunDetail({ run }: { run: AnalysisWorkbenchRun }) {
         </div>
         <p className="max-w-3xl text-sm leading-6 text-hp-body">{run.answer.summary}</p>
       </section>
+
+      {run.dashboardPacket ? <DashboardPacketView packet={run.dashboardPacket} /> : null}
 
       <SourceNotes notes={run.sourceNotes} />
 
@@ -425,6 +507,125 @@ export function EmptyRunDetail() {
   return (
     <div className="flex min-h-96 items-center justify-center border border-dashed border-hp-rule bg-hp-foundation p-6 text-center">
       <p className="max-w-sm text-sm leading-6 text-hp-muted">No run selected.</p>
+    </div>
+  );
+}
+
+function DashboardPacketView({ packet }: { packet: AnalysisWorkbenchDashboardPacket }) {
+  const sourceNotes = packet.sourceNotes.map(normalizeSourceNote).filter(Boolean) as Array<{
+    id: string;
+    label: string;
+    value: string;
+  }>;
+
+  return (
+    <section className="border-b border-hp-rule py-5">
+      <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-hp-ink">
+            <LayoutDashboard size={17} />
+            <span className="text-[11px] uppercase tracking-[0.14em]">Dashboard Packet</span>
+          </div>
+          <h3 className="mt-2 font-title text-2xl leading-tight text-hp-ink">
+            Full dashboard packet
+          </h3>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-hp-body">
+            {packet.directAnswer.summary}
+          </p>
+        </div>
+        <div className="border border-hp-rule bg-hp-foundation px-3 py-2 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+          {formatDateTime(packet.generatedAt)}
+        </div>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-3">
+        <PacketStat
+          label="Evidence table"
+          value={packet.primaryEvidenceTable?.title || "No evidence table"}
+        />
+        <PacketStat label="Visual objects" value={`${packet.visualObjects.length}`} />
+        <PacketStat label="Source notes" value={`${sourceNotes.length}`} />
+      </div>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-3">
+        <PacketInsightGroup title="Winners" insights={packet.insightSummary.winners} />
+        <PacketInsightGroup title="Losers" insights={packet.insightSummary.losers} />
+        <PacketInsightGroup title="Anomalies" insights={packet.insightSummary.anomalies} />
+      </div>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-3">
+        <PacketList
+          title="Next Actions"
+          items={packet.nextActions.map((action) => `${action.title}: ${action.detail}`)}
+        />
+        <PacketList title="Assumptions" items={packet.assumptions} />
+        <PacketList title="Caveats" items={packet.caveats} />
+      </div>
+
+      {sourceNotes.length ? (
+        <dl className="mt-4 grid gap-3 md:grid-cols-2">
+          {sourceNotes.map((note) => (
+            <div key={`${note.id}-${note.label}`} className="border border-hp-rule bg-hp-foundation p-3">
+              <dt className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{note.label}</dt>
+              <dd className="mt-1 text-sm leading-5 text-hp-body">{note.value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+    </section>
+  );
+}
+
+function PacketStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="border border-hp-rule bg-hp-foundation p-3">
+      <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{label}</div>
+      <div className="mt-1 text-sm leading-5 text-hp-ink">{value}</div>
+    </div>
+  );
+}
+
+function PacketInsightGroup({
+  title,
+  insights,
+}: {
+  title: string;
+  insights: AnalysisWorkbenchDashboardPacket["insightSummary"]["winners"];
+}) {
+  return (
+    <div className="border border-hp-rule bg-hp-foundation p-3">
+      <h4 className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{title}</h4>
+      {insights.length ? (
+        <ul className="mt-2 space-y-2">
+          {insights.map((insight) => (
+            <li key={insight.id} className="text-sm leading-5 text-hp-body">
+              <span className="font-bold text-hp-ink">{insight.title}: </span>
+              {insight.detail}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-2 text-sm text-hp-muted">None saved.</p>
+      )}
+    </div>
+  );
+}
+
+function PacketList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="border border-hp-rule bg-hp-foundation p-3">
+      <h4 className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{title}</h4>
+      {items.length ? (
+        <ul className="mt-2 space-y-2">
+          {items.map((item) => (
+            <li key={item} className="text-sm leading-5 text-hp-body">
+              {item}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-2 text-sm text-hp-muted">None saved.</p>
+      )}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import {
   createAnalysisWorkbenchRun,
   getAnalysisWorkbenchRun,
   listAnalysisWorkbenchRuns,
+  promoteAnalysisWorkbenchRunToDashboard,
 } from "@/lib/analysis-workbench-runs";
 import { requirePermissionFromRequest } from "@/lib/app-auth";
 import { jsonError } from "@/lib/http";
@@ -52,6 +53,29 @@ export async function POST(request: Request) {
     if (removedContextKeys.length) input.removedContextKeys = removedContextKeys;
 
     return Response.json({ run: await createAnalysisWorkbenchRun(input) });
+  } catch (error) {
+    return jsonError(error);
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    await requirePermissionFromRequest(request, "view_ai_analysis");
+    const body = (await request.json()) as {
+      action?: unknown;
+      runId?: unknown;
+    };
+
+    if (body.action !== "promote_dashboard") {
+      return Response.json({ error: "Unsupported analysis run action" }, { status: 400 });
+    }
+    if (typeof body.runId !== "string" || !body.runId.trim()) {
+      return Response.json({ error: "Run ID is required" }, { status: 400 });
+    }
+
+    return Response.json({
+      run: await promoteAnalysisWorkbenchRunToDashboard(body.runId.trim()),
+    });
   } catch (error) {
     return jsonError(error);
   }

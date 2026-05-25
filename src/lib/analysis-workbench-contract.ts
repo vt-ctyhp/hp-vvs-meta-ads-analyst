@@ -197,6 +197,40 @@ export type AnalysisWorkbenchVisualCard =
   | AnalysisWorkbenchPivotVisualCard
   | AnalysisWorkbenchScatterVisualCard;
 
+export type AnalysisWorkbenchDashboardInsight = {
+  id: string;
+  title: "Winner" | "Loser" | "Anomaly";
+  detail: string;
+  citationId?: string;
+  sourceNoteIds: string[];
+};
+
+export type AnalysisWorkbenchDashboardAction = {
+  id: string;
+  title: string;
+  detail: string;
+  sourceNoteIds: string[];
+};
+
+export type AnalysisWorkbenchDashboardPacket = {
+  kind: "analysis_dashboard_packet";
+  version: 1;
+  generatedAt: string;
+  promotedFromRunId: string | null;
+  directAnswer: AnalysisRunAnswer;
+  primaryEvidenceTable: AnalysisWorkbenchTableVisualCard | null;
+  visualObjects: AnalysisWorkbenchVisualCard[];
+  insightSummary: {
+    winners: AnalysisWorkbenchDashboardInsight[];
+    losers: AnalysisWorkbenchDashboardInsight[];
+    anomalies: AnalysisWorkbenchDashboardInsight[];
+  };
+  nextActions: AnalysisWorkbenchDashboardAction[];
+  assumptions: string[];
+  caveats: string[];
+  sourceNotes: JsonValue[];
+};
+
 export type AnalysisWorkbenchRun = {
   id: string;
   status: AnalysisRunStatus;
@@ -211,7 +245,7 @@ export type AnalysisWorkbenchRun = {
   validation: JsonValue;
   lineage: JsonValue;
   answer: AnalysisRunAnswer;
-  dashboardPacket: JsonValue | null;
+  dashboardPacket: AnalysisWorkbenchDashboardPacket | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -281,7 +315,7 @@ export function buildAnalysisRunInsert(input: {
         }),
       }) as unknown as JsonValue,
       answer: input.pipelineResult.answer as unknown as JsonValue,
-      dashboard_packet: input.pipelineResult.dashboardPacket,
+      dashboard_packet: input.pipelineResult.dashboardPacket as unknown as JsonValue,
       created_at: now,
       updated_at: now,
     };
@@ -360,6 +394,58 @@ export function buildAnalysisRunLineage(input: {
     removedContextKeys: uniqueStrings(input.removedContextKeys || []),
     changedContext: changedAnalysisContext(inheritedContext, finalContext),
     finalContext,
+  };
+}
+
+export function buildAnalysisDashboardPacket(input: {
+  promotedFromRunId?: string | null;
+  generatedAt?: string;
+  answer: unknown;
+  facts?: unknown;
+  visualCards?: AnalysisWorkbenchVisualCard[];
+  sourceNotes?: JsonValue[];
+  validation?: unknown;
+}): AnalysisWorkbenchDashboardPacket {
+  const visualObjects = input.visualCards || [];
+  const primaryEvidenceTable =
+    visualObjects.find((card): card is AnalysisWorkbenchTableVisualCard => card.type === "flat_table") ||
+    null;
+  const sourceNotes = Array.isArray(input.sourceNotes) ? input.sourceNotes : [];
+  const sourceNoteIds = normalizedSourceNoteIds(sourceNotes);
+  const facts = factItems(input.facts);
+  const tableInsights = primaryEvidenceTable
+    ? insightsFromEvidenceTable(primaryEvidenceTable, sourceNoteIds)
+    : { winners: [], losers: [] };
+  const anomalies = anomalyInsightsFromFacts(facts, sourceNoteIds);
+  const assumptions = uniqueStrings([
+    ...assumptionMessages(input.validation),
+    ...visualObjects.flatMap((card) => card.assumptions || []),
+  ]);
+  const caveats = uniqueStrings([
+    ...facts.map((fact) => stringField(fact.caveat)).filter(Boolean),
+    ...visualObjects.flatMap((card) => card.caveats || []),
+  ]);
+  const insightSummary = {
+    winners: tableInsights.winners,
+    losers: tableInsights.losers,
+    anomalies,
+  };
+
+  return {
+    kind: "analysis_dashboard_packet",
+    version: 1,
+    generatedAt: input.generatedAt || new Date().toISOString(),
+    promotedFromRunId: input.promotedFromRunId || null,
+    directAnswer: normalizeAnswer(input.answer as JsonValue),
+    primaryEvidenceTable,
+    visualObjects,
+    insightSummary,
+    nextActions: nextActionsForInsights(insightSummary, sourceNoteIds),
+    assumptions,
+    caveats: caveats.length
+      ? caveats
+      : ["This packet is limited to governed Meta Ads data and excludes revenue, ROAS, CRM, website, social inbox, and staff facts."],
+    sourceNotes,
   };
 }
 
@@ -457,7 +543,7 @@ export function mapAnalysisRunRecord(record: AnalysisRunRecord): AnalysisWorkben
     validation: record.validation || {},
     lineage: record.lineage || { parentRunId: null },
     answer: normalizeAnswer(record.answer),
-    dashboardPacket: record.dashboard_packet ?? null,
+    dashboardPacket: normalizeDashboardPacket(record.dashboard_packet),
     createdAt: String(record.created_at),
     updatedAt: String(record.updated_at),
   };
@@ -492,6 +578,281 @@ function normalizeAnswer(answer: JsonValue): AnalysisRunAnswer {
     summary: "Run created. Governed facts, citations, and visuals have not run yet.",
     citations: [],
   };
+}
+
+function normalizeDashboardPacket(value: JsonValue | null): AnalysisWorkbenchDashboardPacket | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as Partial<AnalysisWorkbenchDashboardPacket>;
+  if (candidate.kind !== "analysis_dashboard_packet") return null;
+
+  return {
+    kind: "analysis_dashboard_packet",
+    version: 1,
+    generatedAt:
+      typeof candidate.generatedAt === "string" ? candidate.generatedAt : new Date(0).toISOString(),
+    promotedFromRunId:
+      typeof candidate.promotedFromRunId === "string" ? candidate.promotedFromRunId : null,
+    directAnswer: normalizeAnswer(candidate.directAnswer as unknown as JsonValue),
+    primaryEvidenceTable:
+      candidate.primaryEvidenceTable && candidate.primaryEvidenceTable.type === "flat_table"
+        ? candidate.primaryEvidenceTable
+        : null,
+    visualObjects: Array.isArray(candidate.visualObjects)
+      ? (candidate.visualObjects as AnalysisWorkbenchVisualCard[])
+      : [],
+    insightSummary: normalizeDashboardInsightSummary(candidate.insightSummary),
+    nextActions: Array.isArray(candidate.nextActions)
+      ? candidate.nextActions.filter(isDashboardAction)
+      : [],
+    assumptions: uniqueStrings(Array.isArray(candidate.assumptions) ? candidate.assumptions : []),
+    caveats: uniqueStrings(Array.isArray(candidate.caveats) ? candidate.caveats : []),
+    sourceNotes: Array.isArray(candidate.sourceNotes)
+      ? (candidate.sourceNotes as unknown as JsonValue[])
+      : [],
+  };
+}
+
+function normalizeDashboardInsightSummary(
+  value: unknown,
+): AnalysisWorkbenchDashboardPacket["insightSummary"] {
+  const candidate =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Partial<AnalysisWorkbenchDashboardPacket["insightSummary"]>)
+      : {};
+
+  return {
+    winners: normalizeDashboardInsights(candidate.winners, "Winner"),
+    losers: normalizeDashboardInsights(candidate.losers, "Loser"),
+    anomalies: normalizeDashboardInsights(candidate.anomalies, "Anomaly"),
+  };
+}
+
+function normalizeDashboardInsights(
+  value: unknown,
+  title: AnalysisWorkbenchDashboardInsight["title"],
+) {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((insight) => {
+    if (!insight || typeof insight !== "object" || Array.isArray(insight)) return [];
+    const candidate = insight as Partial<AnalysisWorkbenchDashboardInsight>;
+    if (typeof candidate.id !== "string" || typeof candidate.detail !== "string") return [];
+    return [
+      {
+        id: candidate.id,
+        title,
+        detail: candidate.detail,
+        ...(typeof candidate.citationId === "string" ? { citationId: candidate.citationId } : {}),
+        sourceNoteIds: uniqueStrings(
+          Array.isArray(candidate.sourceNoteIds) ? candidate.sourceNoteIds : [],
+        ),
+      },
+    ];
+  });
+}
+
+function isDashboardAction(value: unknown): value is AnalysisWorkbenchDashboardAction {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Partial<AnalysisWorkbenchDashboardAction>;
+  return (
+    typeof candidate.id === "string" &&
+    typeof candidate.title === "string" &&
+    typeof candidate.detail === "string" &&
+    Array.isArray(candidate.sourceNoteIds)
+  );
+}
+
+function normalizedSourceNoteIds(sourceNotes: JsonValue[]) {
+  const ids = sourceNotes.flatMap((note) => {
+    if (!note || typeof note !== "object" || Array.isArray(note)) return [];
+    const id = (note as { id?: unknown }).id;
+    return typeof id === "string" && id ? [id] : [];
+  });
+
+  return uniqueStrings(ids).length ? uniqueStrings(ids) : ["S1"];
+}
+
+function factItems(facts: unknown): Array<Record<string, unknown>> {
+  if (!facts || typeof facts !== "object" || Array.isArray(facts)) return [];
+  const items = (facts as { items?: unknown }).items;
+  if (!Array.isArray(items)) return [];
+  return items.filter(
+    (item): item is Record<string, unknown> =>
+      Boolean(item) && typeof item === "object" && !Array.isArray(item),
+  );
+}
+
+function insightsFromEvidenceTable(
+  table: AnalysisWorkbenchTableVisualCard,
+  fallbackSourceNoteIds: string[],
+) {
+  const metricColumn = table.columns.find((column) => column.kind === "metric");
+  if (!metricColumn) return { winners: [], losers: [] };
+  const dimensionColumn = table.columns.find((column) => column.kind === "dimension");
+  const sourceNoteIds = table.sourceNoteIds.length ? table.sourceNoteIds : fallbackSourceNoteIds;
+  const rows = table.rows
+    .map((row) => {
+      const cell = row[metricColumn.key];
+      return {
+        entity: String(
+          (dimensionColumn ? row[dimensionColumn.key] : row.entity) || "Unspecified",
+        ),
+        value: numberFromVisualCell(cell),
+        formattedValue: formattedVisualCell(cell),
+        citationId: citationFromVisualCell(cell),
+      };
+    })
+    .filter((row) => row.value !== null)
+    .sort((left, right) => (right.value || 0) - (left.value || 0));
+
+  if (!rows.length) return { winners: [], losers: [] };
+
+  const winner = rows[0];
+  const loser = rows.length > 1 ? rows[rows.length - 1] : null;
+  return {
+    winners: [
+      {
+        id: "winner_primary",
+        title: "Winner" as const,
+        detail: `${winner.entity} leads with ${winner.formattedValue} ${metricColumn.label}.`,
+        ...(winner.citationId ? { citationId: winner.citationId } : {}),
+        sourceNoteIds,
+      },
+    ],
+    losers: loser
+      ? [
+          {
+            id: "loser_primary",
+            title: "Loser" as const,
+            detail: `${loser.entity} trails at ${loser.formattedValue} ${metricColumn.label}.`,
+            ...(loser.citationId ? { citationId: loser.citationId } : {}),
+            sourceNoteIds,
+          },
+        ]
+      : [],
+  };
+}
+
+function anomalyInsightsFromFacts(
+  facts: Array<Record<string, unknown>>,
+  sourceNoteIds: string[],
+): AnalysisWorkbenchDashboardInsight[] {
+  return facts
+    .filter((fact) => fact.type === "comparison")
+    .slice(0, 3)
+    .map((fact, index) => {
+      const entity = stringField(fact.entityName) || stringField(fact.label) || "Top row";
+      const delta = stringField(fact.formattedDeltaValue) || stringField(fact.formattedValue);
+      const baselineLabel = stringField(fact.baselineLabel) || "baseline";
+      const baseline = stringField(fact.formattedBaselineValue);
+
+      return {
+        id: `anomaly_${index + 1}`,
+        title: "Anomaly",
+        detail: `${entity} is ${delta || "above baseline"} versus ${baselineLabel}${
+          baseline ? ` of ${baseline}` : ""
+        }.`,
+        ...(stringField(fact.citationId) ? { citationId: stringField(fact.citationId) } : {}),
+        sourceNoteIds,
+      };
+    });
+}
+
+function assumptionMessages(validation: unknown) {
+  if (!validation || typeof validation !== "object" || Array.isArray(validation)) return [];
+  const assumptions = (validation as { assumptions?: unknown }).assumptions;
+  if (!Array.isArray(assumptions)) return [];
+
+  return assumptions.flatMap((assumption) => {
+    if (typeof assumption === "string" && assumption) return [assumption];
+    if (!assumption || typeof assumption !== "object" || Array.isArray(assumption)) return [];
+    const message = (assumption as { message?: unknown }).message;
+    return typeof message === "string" && message ? [message] : [];
+  });
+}
+
+function nextActionsForInsights(
+  insightSummary: AnalysisWorkbenchDashboardPacket["insightSummary"],
+  sourceNoteIds: string[],
+): AnalysisWorkbenchDashboardAction[] {
+  const actions: AnalysisWorkbenchDashboardAction[] = [];
+  const winner = insightSummary.winners[0];
+  const loser = insightSummary.losers[0];
+  const anomaly = insightSummary.anomalies[0];
+
+  if (winner) {
+    actions.push({
+      id: "action_winner",
+      title: "Scale review",
+      detail: `Inspect ${entityFromInsight(winner)} for budget or creative patterns before scaling.`,
+      sourceNoteIds: winner.sourceNoteIds.length ? winner.sourceNoteIds : sourceNoteIds,
+    });
+  }
+  if (loser) {
+    actions.push({
+      id: "action_loser",
+      title: "Efficiency review",
+      detail: `Review ${entityFromInsight(loser)} before keeping spend at the same level.`,
+      sourceNoteIds: loser.sourceNoteIds.length ? loser.sourceNoteIds : sourceNoteIds,
+    });
+  }
+  if (anomaly) {
+    actions.push({
+      id: "action_anomaly",
+      title: "Anomaly check",
+      detail: `Check ${entityFromInsight(anomaly)} against recent changes and source coverage.`,
+      sourceNoteIds: anomaly.sourceNoteIds.length ? anomaly.sourceNoteIds : sourceNoteIds,
+    });
+  }
+
+  [
+    {
+      id: "action_source_notes",
+      title: "Source check",
+      detail: "Confirm date range, filters, and matched rows before sharing.",
+    },
+    {
+      id: "action_follow_up",
+      title: "Follow-up prompt",
+      detail: "Ask a follow-up with the same context if the decision needs more detail.",
+    },
+  ].forEach((fallback) => {
+    if (actions.length < 3) actions.push({ ...fallback, sourceNoteIds });
+  });
+
+  return actions;
+}
+
+function entityFromInsight(insight: AnalysisWorkbenchDashboardInsight) {
+  return insight.detail
+    .replace(/\s+(?:leads|trails|is)\b.*$/i, "")
+    .trim() || "this row";
+}
+
+function numberFromVisualCell(cell: AnalysisWorkbenchVisualCell | undefined) {
+  if (typeof cell === "number") return cell;
+  if (cell && typeof cell === "object" && !Array.isArray(cell)) {
+    return typeof cell.value === "number" ? cell.value : null;
+  }
+  return null;
+}
+
+function formattedVisualCell(cell: AnalysisWorkbenchVisualCell | undefined) {
+  if (cell && typeof cell === "object" && !Array.isArray(cell)) {
+    return cell.formattedValue || String(cell.value ?? "n/a");
+  }
+  return cell === null || cell === undefined ? "n/a" : String(cell);
+}
+
+function citationFromVisualCell(cell: AnalysisWorkbenchVisualCell | undefined) {
+  if (cell && typeof cell === "object" && !Array.isArray(cell)) {
+    return typeof cell.citationId === "string" ? cell.citationId : "";
+  }
+  return "";
+}
+
+function stringField(value: unknown) {
+  return typeof value === "string" && value ? value : "";
 }
 
 function normalizeAnalysisContextSnapshot(value: unknown): AnalysisWorkbenchContextSnapshot | null {

@@ -10,11 +10,14 @@ import {
   type WorkbenchSemanticIssue,
   type WorkbenchSemanticVisualIntent,
 } from "./analysis-workbench-semantic-catalog.ts";
+import { buildAnalysisDashboardPacket } from "./analysis-workbench-contract.ts";
 import type {
   AnalysisOutputMode,
   AnalysisRunStatus,
   AnalysisWorkbenchContextSnapshot,
+  AnalysisWorkbenchDashboardPacket,
   AnalysisWorkbenchVisualCard,
+  JsonValue,
 } from "./analysis-workbench-contract.ts";
 import type {
   MetaInsightAggregateRow,
@@ -116,7 +119,7 @@ export type AnalysisWorkbenchPipelineResult = {
     assumptions: Array<{ code: string; message: string }>;
   };
   visualCards: AnalysisWorkbenchVisualCard[];
-  dashboardPacket: null;
+  dashboardPacket: AnalysisWorkbenchDashboardPacket | null;
 };
 
 type PipelineInput = {
@@ -212,6 +215,16 @@ export async function runAnalysisWorkbenchFactsPipeline(
       })),
     ],
   };
+  const dashboardPacket =
+    planned.outputMode === "full_dashboard" && !groundingIssues.length
+      ? buildAnalysisDashboardPacket({
+          answer,
+          facts,
+          visualCards,
+          sourceNotes: sourceNotes as unknown as JsonValue[],
+          validation,
+        })
+      : null;
 
   return {
     status: groundingIssues.length ? "failed" : "completed",
@@ -228,7 +241,7 @@ export async function runAnalysisWorkbenchFactsPipeline(
     sourceNotes,
     validation,
     visualCards,
-    dashboardPacket: null,
+    dashboardPacket,
   };
 }
 

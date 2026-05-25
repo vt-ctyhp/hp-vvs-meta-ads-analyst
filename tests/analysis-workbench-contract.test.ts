@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildAnalysisContextChips,
+  buildAnalysisDashboardPacket,
   buildAnalysisRunInsert,
   mapAnalysisRunRecord,
   normalizeAnalysisOutputMode,
@@ -92,6 +93,127 @@ test("buildAnalysisRunInsert persists governed answer text, source notes, and vi
     (run.visual_cards as unknown as Array<{ type: string }>)[0]?.type,
     "metric_card",
   );
+});
+
+test("buildAnalysisDashboardPacket promotes a saved answer snapshot into a complete packet", () => {
+  const packet = buildAnalysisDashboardPacket({
+    promotedFromRunId: "run-1",
+    generatedAt: "2026-05-25T14:30:00.000Z",
+    answer: { summary: "Spend was $3,400 [F1].", citations: [] },
+    facts: {
+      status: "computed",
+      items: [
+        {
+          id: "fact_total_primary_results",
+          type: "total",
+          label: "Total Primary KPI",
+          metric: "primary_results",
+          value: 34,
+          formattedValue: "34",
+          citationId: "F2",
+          caveat: "Primary KPI is group-specific and can blend proxy metrics across groups.",
+        },
+        {
+          id: "fact_campaign_umbrella_spend_vs_average",
+          type: "comparison",
+          label: "Campaign group Spend vs average",
+          entityName: "Book Appts US",
+          formattedDeltaValue: "$800",
+          formattedBaselineValue: "$1,700",
+          citationId: "F4",
+        },
+      ],
+    },
+    visualCards: [
+      {
+        id: "table_campaign_umbrella",
+        type: "flat_table",
+        title: "Campaign group evidence",
+        columns: [
+          { key: "entity", label: "Campaign group", kind: "dimension" },
+          { key: "spend", label: "Spend", kind: "metric", metric: "spend" },
+        ],
+        rows: [
+          {
+            entity: "Book Appts US",
+            spend: { value: 2500, formattedValue: "$2,500" },
+          },
+          {
+            entity: "Cash for Gold US",
+            spend: { value: 900, formattedValue: "$900" },
+          },
+        ],
+        sourceNoteIds: ["S1", "S3"],
+        assumptions: ["Relative date range ends at the latest complete synced Meta Ads date."],
+      },
+    ],
+    sourceNotes: [
+      { id: "S1", label: "Data source", value: "Meta Ads daily insights" },
+      { id: "S3", label: "Matched rows", value: "12 matching Meta Ads daily rows" },
+    ],
+    validation: {
+      assumptions: [
+        {
+          code: "relative_date_range",
+          message: "Relative date range ends at the latest complete synced Meta Ads date.",
+        },
+      ],
+    },
+  });
+
+  assert.equal(packet.kind, "analysis_dashboard_packet");
+  assert.equal(packet.promotedFromRunId, "run-1");
+  assert.equal(packet.generatedAt, "2026-05-25T14:30:00.000Z");
+  assert.equal(packet.primaryEvidenceTable?.id, "table_campaign_umbrella");
+  assert.equal(packet.insightSummary.winners[0]?.title, "Winner");
+  assert.match(packet.insightSummary.winners[0]?.detail || "", /Book Appts US/);
+  assert.equal(packet.insightSummary.losers[0]?.title, "Loser");
+  assert.match(packet.insightSummary.losers[0]?.detail || "", /Cash for Gold US/);
+  assert.match(packet.insightSummary.anomalies[0]?.detail || "", /\$800/);
+  assert.ok(packet.nextActions.some((action) => /Book Appts US/.test(action.detail)));
+  assert.deepEqual(packet.assumptions, [
+    "Relative date range ends at the latest complete synced Meta Ads date.",
+  ]);
+  assert.deepEqual(packet.caveats, [
+    "Primary KPI is group-specific and can blend proxy metrics across groups.",
+  ]);
+  assert.equal(packet.sourceNotes.length, 2);
+});
+
+test("buildAnalysisRunInsert persists full-dashboard packet snapshots", () => {
+  const packet = buildAnalysisDashboardPacket({
+    generatedAt: "2026-05-25T14:30:00.000Z",
+    answer: { summary: "Dashboard saved [S1].", citations: [] },
+    facts: { status: "computed", items: [] },
+    visualCards: [],
+    sourceNotes: [{ id: "S1", label: "Data source", value: "Meta Ads daily insights" }],
+    validation: { assumptions: [] },
+  });
+  const run = buildAnalysisRunInsert({
+    prompt: "Build a dashboard.",
+    outputMode: "full_dashboard",
+    now: "2026-05-25T14:31:00.000Z",
+    pipelineResult: {
+      status: "completed",
+      title: "Build a dashboard.",
+      intent: { status: "ready" },
+      queryPlan: {
+        status: "ready",
+        source: "meta_ads",
+        aggregateFunction: "aggregate_meta_daily_insights",
+        requests: [],
+      },
+      facts: { status: "computed", items: [] },
+      answer: { summary: "Dashboard saved [S1].", citations: [] },
+      sourceNotes: [{ id: "S1", label: "Data source", value: "Meta Ads daily insights" }],
+      validation: { status: "ready", blockers: [], warnings: [], assumptions: [] },
+      visualCards: [],
+      dashboardPacket: packet,
+    },
+  });
+
+  assert.equal(run.output_mode, "full_dashboard");
+  assert.deepEqual(run.dashboard_packet, packet);
 });
 
 test("buildAnalysisRunInsert persists follow-up lineage with inherited, changed, and final context", () => {
@@ -223,10 +345,19 @@ test("buildAnalysisRunInsert blocks unsupported source prompts before an answer"
 });
 
 test("mapAnalysisRunRecord exposes persisted runs in client-ready shape", () => {
+  const packet = buildAnalysisDashboardPacket({
+    promotedFromRunId: "run-1",
+    generatedAt: "2026-05-25T14:35:00.000Z",
+    answer: { summary: "Saved packet.", citations: [] },
+    facts: { status: "computed", items: [] },
+    visualCards: [],
+    sourceNotes: [{ id: "S1", label: "Data source", value: "Meta Ads daily insights" }],
+    validation: { assumptions: [] },
+  });
   const mapped = mapAnalysisRunRecord({
     id: "run-1",
     prompt: "Show spend",
-    output_mode: "answer_only",
+    output_mode: "full_dashboard",
     status: "created",
     title: "Show spend",
     intent: { rawPrompt: "Show spend" },
@@ -237,13 +368,15 @@ test("mapAnalysisRunRecord exposes persisted runs in client-ready shape", () => 
     validation: { status: "not_run" },
     lineage: { parentRunId: null },
     answer: { summary: "Created.", citations: [] },
-    dashboard_packet: null,
+    dashboard_packet: packet,
     created_at: "2026-05-25T14:30:00.000Z",
     updated_at: "2026-05-25T14:30:00.000Z",
   });
 
   assert.equal(mapped.id, "run-1");
-  assert.equal(mapped.outputMode, "answer_only");
+  assert.equal(mapped.outputMode, "full_dashboard");
   assert.equal(mapped.createdAt, "2026-05-25T14:30:00.000Z");
   assert.deepEqual(mapped.sourceNotes, [{ label: "Source", value: "Pending" }]);
+  assert.equal(mapped.dashboardPacket?.kind, "analysis_dashboard_packet");
+  assert.equal(mapped.dashboardPacket?.promotedFromRunId, "run-1");
 });
