@@ -151,6 +151,102 @@ describe("Meta inbox raw normalization", () => {
     assert.equal(batch.firstTouchSources[0].sourcePermalink, "https://instagram.com/p/media-1");
   });
 
+  it("normalizes public comment replies under the root comment conversation", () => {
+    const batch = buildMetaInboxNormalizationBatch({
+      now: new Date("2026-05-24T00:00:00.000Z"),
+      comments: [
+        {
+          id: "row-root",
+          platform: "facebook",
+          comment_id: "comment-root",
+          parent_comment_id: null,
+          page_id: "page-1",
+          content_id: "post-1",
+          content_permalink: "https://facebook.com/post-1",
+          author_id: "customer-root",
+          author_name: "Root Customer",
+          body: "Is this ring available?",
+          created_time: "2026-05-23T10:00:00.000Z",
+          raw_json: { permalink_url: "https://facebook.com/comment-root" },
+        },
+        {
+          id: "row-reply-1",
+          platform: "facebook",
+          comment_id: "comment-reply-1",
+          parent_comment_id: "comment-root",
+          page_id: "page-1",
+          content_id: "post-1",
+          content_permalink: "https://facebook.com/comment-reply-1",
+          author_id: "customer-reply",
+          author_name: "Reply Customer",
+          body: "Following up on this.",
+          created_time: "2026-05-23T10:02:00.000Z",
+          raw_json: { permalink_url: "https://facebook.com/comment-reply-1" },
+        },
+      ],
+    });
+
+    assert.equal(batch.conversations.length, 1);
+    assert.equal(
+      batch.conversations[0].canonicalConversationKey,
+      "facebook:public_comment:comment-root",
+    );
+    assert.equal(batch.conversations[0].sourceId, "comment-root");
+    assert.equal(batch.conversations[0].rawCommentId, "row-root");
+    assert.equal(batch.conversations[0].firstInboundAt, "2026-05-23T10:00:00.000Z");
+    assert.equal(batch.conversations[0].latestInboundAt, "2026-05-23T10:02:00.000Z");
+    assert.equal(batch.conversations[0].lastActivityAt, "2026-05-23T10:02:00.000Z");
+    assert.equal(batch.firstTouchSources.length, 1);
+    assert.equal(batch.firstTouchSources[0].sourceCommentId, "comment-root");
+    assert.equal(batch.firstTouchSources[0].sourcePermalink, "https://facebook.com/post-1");
+  });
+
+  it("keeps orphan public comment replies visible in a review fallback conversation", () => {
+    const batch = buildMetaInboxNormalizationBatch({
+      now: new Date("2026-05-24T00:00:00.000Z"),
+      comments: [
+        {
+          id: "row-orphan-1",
+          platform: "facebook",
+          comment_id: "comment-reply-1",
+          parent_comment_id: "missing-root",
+          page_id: "page-1",
+          content_id: "post-1",
+          author_id: "customer-1",
+          author_name: "First Reply",
+          body: "Can you help?",
+          created_time: "2026-05-23T10:01:00.000Z",
+          raw_json: {},
+        },
+        {
+          id: "row-orphan-2",
+          platform: "facebook",
+          comment_id: "comment-reply-2",
+          parent_comment_id: "missing-root",
+          page_id: "page-1",
+          content_id: "post-1",
+          author_id: "customer-2",
+          author_name: "Second Reply",
+          body: "I need the details too.",
+          created_time: "2026-05-23T10:03:00.000Z",
+          raw_json: {},
+        },
+      ],
+    });
+
+    assert.equal(batch.conversations.length, 1);
+    assert.equal(
+      batch.conversations[0].canonicalConversationKey,
+      "facebook:public_comment:missing-root",
+    );
+    assert.equal(batch.conversations[0].sourceId, "missing-root");
+    assert.equal(batch.conversations[0].firstInboundAt, "2026-05-23T10:01:00.000Z");
+    assert.equal(batch.conversations[0].latestInboundAt, "2026-05-23T10:03:00.000Z");
+    assert.equal(batch.conversations[0].queueCategoryKey, "uncategorized_needs_review");
+    assert.equal(batch.conversations[0].routingExplanation, "Root comment missing; needs human review.");
+    assert.equal(batch.firstTouchSources[0].sourceCommentId, "missing-root");
+  });
+
   it("marks old conversations expired when no reply window remains", () => {
     const batch = buildMetaInboxNormalizationBatch({
       now: new Date("2026-06-01T00:00:00.000Z"),

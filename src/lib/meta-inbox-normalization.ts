@@ -208,51 +208,69 @@ export function buildMetaInboxNormalizationBatch(
     firstTouchSources.set(canonicalKey, firstTouch);
   }
 
-  for (const comment of input.comments || []) {
-    const platform = platformField(comment.platform);
-    const commentId = stringField(comment.comment_id);
-    if (!commentId) continue;
+  for (const group of publicCommentGroups(input.comments || [])) {
+    const primaryComment = group.rootComment || group.comments[0];
+    if (!primaryComment) continue;
 
-    const participantId = stringField(comment.author_id) || `comment-author:${commentId}`;
-    const raw = recordField(comment.raw_json);
-    const profile = customerProfile({
-      platform,
-      pageId: stringField(comment.page_id),
-      igUserId: stringField(comment.ig_user_id),
-      participantId,
-      displayName: stringField(comment.author_name) || firstString(raw, ["from.name", "sender_name"]),
-      username: firstString(raw, ["from.username", "username", "value.from.username"]),
-      raw,
-    });
-    profiles.set(profile.profileKey, profile);
+    let primaryProfileKey: string | null = null;
+    for (const comment of group.comments) {
+      const commentId = stringField(comment.comment_id);
+      if (!commentId) continue;
 
-    const canonicalKey = canonicalCommentKey(platform, commentId);
-    const createdAt = stringField(comment.created_time);
-    const firstTouch = firstTouchFromComment(canonicalKey, comment);
-    const routing = inferQueueCategory(firstTouch, [
-      stringField(comment.body),
-      stringField(comment.content_permalink),
-    ]);
-    const replyWindow = replyWindowState(createdAt, now);
+      const participantId = stringField(comment.author_id) || `comment-author:${commentId}`;
+      const raw = recordField(comment.raw_json);
+      const profile = customerProfile({
+        platform: group.platform,
+        pageId: stringField(comment.page_id),
+        igUserId: stringField(comment.ig_user_id),
+        participantId,
+        displayName:
+          stringField(comment.author_name) || firstString(raw, ["from.name", "sender_name"]),
+        username: firstString(raw, ["from.username", "username", "value.from.username"]),
+        raw,
+      });
+      profiles.set(profile.profileKey, profile);
+      if (comment === primaryComment) primaryProfileKey = profile.profileKey;
+    }
+
+    const commentTimes = group.comments
+      .map((comment) => stringField(comment.created_time))
+      .filter(isPresent)
+      .sort();
+    const canonicalKey = canonicalCommentKey(group.platform, group.rootCommentId);
+    const firstInboundAt = commentTimes[0] || null;
+    const latestInboundAt = commentTimes[commentTimes.length - 1] || null;
+    const firstTouch = firstTouchFromComment(canonicalKey, primaryComment, group.rootCommentId);
+    const routing = group.rootComment
+      ? inferQueueCategory(firstTouch, [
+          ...group.comments.map((comment) => stringField(comment.body)),
+          ...group.comments.map((comment) => stringField(comment.content_permalink)),
+        ])
+      : orphanCommentRouting();
+    const replyWindow = replyWindowState(latestInboundAt, now);
+    const primaryCommentId = stringField(primaryComment.comment_id) || group.rootCommentId;
+    const participantId =
+      stringField(primaryComment.author_id) || `comment-author:${primaryCommentId}`;
 
     conversations.set(canonicalKey, {
       canonicalConversationKey: canonicalKey,
-      customerProfileKey: profile.profileKey,
-      sourceChannel: platform === "facebook" ? "facebook_public_comment" : "instagram_public_comment",
+      customerProfileKey: primaryProfileKey,
+      sourceChannel:
+        group.platform === "facebook" ? "facebook_public_comment" : "instagram_public_comment",
       sourceType: "public_comment",
-      platform,
+      platform: group.platform,
       rawThreadId: null,
-      rawCommentId: stringField(comment.id),
-      pageId: stringField(comment.page_id),
-      igUserId: stringField(comment.ig_user_id),
+      rawCommentId: stringField(primaryComment.id),
+      pageId: stringField(primaryComment.page_id),
+      igUserId: stringField(primaryComment.ig_user_id),
       participantId,
       platformThreadId: null,
-      parentContentId: stringField(comment.content_id),
-      sourceId: commentId,
-      firstInboundAt: createdAt,
-      latestInboundAt: createdAt,
+      parentContentId: stringField(primaryComment.content_id),
+      sourceId: group.rootCommentId,
+      firstInboundAt,
+      latestInboundAt,
       latestOutboundAt: null,
-      lastActivityAt: createdAt,
+      lastActivityAt: latestInboundAt,
       needsReply: true,
       replyWindowExpiresAt: replyWindow.replyWindowExpiresAt,
       humanAgentWindowExpiresAt: replyWindow.humanAgentWindowExpiresAt,
@@ -444,10 +462,12 @@ function firstTouchFromMessage(
 function firstTouchFromComment(
   canonicalConversationKey: string,
   comment: MetaInboxRawRecord,
+  sourceCommentIdOverride?: string | null,
 ): MetaInboxFirstTouchCandidate {
   const rawPayload = recordField(comment.raw_json);
   const adId = firstString(rawPayload, ["ad_id", "value.ad_id", "ads_context_data.ad_id"]);
   const adsContext = firstRecord(rawPayload, ["ads_context_data", "value.ads_context_data"]);
+  const sourceCommentId = sourceCommentIdOverride || stringField(comment.comment_id);
 
   return {
     canonicalConversationKey,
@@ -459,7 +479,7 @@ function firstTouchFromComment(
     ref: firstString(rawPayload, ["ref", "value.ref"]),
     sourcePostId: stringField(comment.content_id) || firstString(rawPayload, ["post_id", "value.post_id"]),
     sourceMediaId: firstString(rawPayload, ["media_id", "value.media_id"]),
-    sourceCommentId: stringField(comment.comment_id),
+    sourceCommentId,
     sourceProductId: firstString(rawPayload, ["product_id", "value.product_id"]),
     sourcePermalink: stringField(comment.content_permalink) || firstString(rawPayload, ["permalink_url", "value.permalink_url"]),
     campaignUmbrellaId: null,
@@ -469,6 +489,67 @@ function firstTouchFromComment(
     attributionMethod: adId ? "source_payload" : Object.keys(adsContext).length ? "ads_context_data" : "none",
     attributionConfidence: adId ? 0.8 : Object.keys(adsContext).length ? 0.65 : 0,
     rawPayloadJson: rawPayload,
+  };
+}
+
+function publicCommentGroups(comments: readonly MetaInboxRawRecord[]) {
+  const groups = new Map<
+    string,
+    {
+      platform: "facebook" | "instagram";
+      rootCommentId: string;
+      comments: MetaInboxRawRecord[];
+      rootComment: MetaInboxRawRecord | null;
+    }
+  >();
+
+  for (const comment of comments) {
+    const platform = platformField(comment.platform);
+    const commentId = stringField(comment.comment_id);
+    if (!commentId) continue;
+
+    const rootCommentId = rootCommentIdFor(comment);
+    const key = `${platform}:${rootCommentId}`;
+    const group = groups.get(key) || {
+      platform,
+      rootCommentId,
+      comments: [],
+      rootComment: null,
+    };
+
+    group.comments.push(comment);
+    if (commentId === rootCommentId) group.rootComment = comment;
+    groups.set(key, group);
+  }
+
+  return [...groups.values()].map((group) => ({
+    ...group,
+    comments: [...group.comments].sort(
+      (a, b) =>
+        String(stringField(a.created_time) || "").localeCompare(
+          String(stringField(b.created_time) || ""),
+        ) ||
+        String(stringField(a.comment_id) || "").localeCompare(
+          String(stringField(b.comment_id) || ""),
+        ),
+    ),
+  }));
+}
+
+function rootCommentIdFor(comment: MetaInboxRawRecord) {
+  const commentId = stringField(comment.comment_id);
+  const parentCommentId = stringField(comment.parent_comment_id);
+  const parentContentId = stringField(comment.content_id);
+  if (parentCommentId && parentCommentId !== parentContentId) return parentCommentId;
+  return commentId || "";
+}
+
+function orphanCommentRouting() {
+  return {
+    queueCategoryKey: "uncategorized_needs_review" as const,
+    routingSource: "fallback" as const,
+    routingConfidence: 0.15,
+    routingExplanation: "Root comment missing; needs human review.",
   };
 }
 

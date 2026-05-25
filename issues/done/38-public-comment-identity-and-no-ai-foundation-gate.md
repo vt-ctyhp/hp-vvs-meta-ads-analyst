@@ -37,3 +37,14 @@ Known unrelated failures from handoff/current branch:
 - `npm test` fails at `tests/website-analytics.test.ts:140`.
 
 Do not chase those failures unless this issue changes them.
+
+## Ralph status - 2026-05-25
+
+Completed. Public comment replies now normalize under the root comment conversation, orphan replies route to human review, and the suggest-reply route returns a disabled foundation response without importing or calling the AI provider.
+
+Verification:
+
+- `node --test --experimental-strip-types tests/meta-inbox-normalization.test.ts tests/meta-inbox-history.test.ts tests/social-reply-foundation-gate.test.ts tests/social-inbox-ui-contract.test.ts` passes.
+- `npm run test` still fails at known unrelated `tests/website-analytics.test.ts:140`.
+- `npm run typecheck` cannot run because `package.json` has no `typecheck` script.
+- `npx tsc --noEmit --pretty false` still fails at known unrelated `tests/meta-ads-e2e-truth.test.ts:286`.
