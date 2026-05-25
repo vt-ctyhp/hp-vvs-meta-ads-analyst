@@ -636,18 +636,18 @@ async function fetchCustomerJourneyLedgerDataUncached(
     });
   }
 
-  const [rangeConversions, appointmentEvents] = await Promise.all([
-    fetchRowsByAcuityAppointmentIds<CustomerJourneyLedgerConversionRow>(
-      appointmentIds,
-      (batch) =>
-        client
-          .from("website_conversions")
-          .select(CONVERSION_COLUMNS)
-          .in("acuity_appointment_id", batch)
-          .order("occurred_at", { ascending: false })
-          .limit(MAX_RELATED_ROWS),
-      "occurred_at",
-    ),
+  // Fetch all Schedule conversions in window (matching the funnel's
+  // fetchAllScheduleConversionsInWindow), not just those with a matching
+  // valid Acuity appointment. Orphan conversions become conversion-anchored
+  // rows below so /convert and the funnel agree on paid-Meta booking counts.
+  const [conversionsInWindowResult, appointmentEvents] = await Promise.all([
+    client
+      .from("website_conversions")
+      .select(CONVERSION_COLUMNS)
+      .gte("occurred_at", startIso)
+      .lte("occurred_at", endIso)
+      .order("occurred_at", { ascending: false })
+      .limit(MAX_RELATED_ROWS),
     fetchRowsByAcuityAppointmentIds<CustomerJourneyLedgerEventRow>(
       appointmentIds,
       (batch) =>
@@ -660,6 +660,8 @@ async function fetchCustomerJourneyLedgerDataUncached(
       "occurred_at",
     ),
   ]);
+  if (conversionsInWindowResult.error) throw conversionsInWindowResult.error;
+  const rangeConversions = (conversionsInWindowResult.data || []) as CustomerJourneyLedgerConversionRow[];
 
   const visitorIdsFromAppointments = uniqueStrings([
     ...rangeConversions
@@ -1375,52 +1377,26 @@ export function buildCustomerJourneyLedgerRows(input: {
   const conversionsByAcuityId = latestConversionByAcuityAppointmentId(input.conversions);
 
   const anchoredRows: CustomerJourneyLedgerRow[] = [];
+  const consumedConversions = new Set<CustomerJourneyLedgerConversionRow>();
 
-  if (appointments.length) {
-    for (const appointment of appointments) {
-      const acuityAppointmentId = appointmentAcuityId(appointment);
-      const conversion = conversionsByAcuityId.get(acuityAppointmentId) || null;
-      const appointmentEvents = eventsByAcuityId.get(acuityAppointmentId) || [];
-      const visitorId =
-        conversion?.visitor_id ||
-        appointmentEvents.find((event) => event.visitor_id)?.visitor_id ||
-        null;
-      const visitor = visitorId ? visitorsById.get(visitorId) || null : null;
-      const visitorEvents = visitorId ? eventsByVisitor.get(visitorId) || [] : [];
-      const events = uniqueEvents([...appointmentEvents, ...visitorEvents]);
+  for (const appointment of appointments) {
+    const acuityAppointmentId = appointmentAcuityId(appointment);
+    const conversion = conversionsByAcuityId.get(acuityAppointmentId) || null;
+    const appointmentEvents = eventsByAcuityId.get(acuityAppointmentId) || [];
+    const visitorId =
+      conversion?.visitor_id ||
+      appointmentEvents.find((event) => event.visitor_id)?.visitor_id ||
+      null;
+    const visitor = visitorId ? visitorsById.get(visitorId) || null : null;
+    const visitorEvents = visitorId ? eventsByVisitor.get(visitorId) || [] : [];
+    const events = uniqueEvents([...appointmentEvents, ...visitorEvents]);
 
-      if (conversion) {
-        if (!visitor) {
-          anchoredRows.push(withAppointmentFields(
-            conversionOnlyLedgerRow(conversion, events, input.conversions),
-            appointment,
-          ));
-          continue;
-        }
-
-        const session = selectSessionForConversion({
-          conversion,
-          latestSession: sessionsByVisitor.get(visitor.visitor_id) || null,
-          sessionsById: sessionsByVisitorAndId.get(visitor.visitor_id),
-        });
-        anchoredRows.push(withAppointmentFields(
-          conversionLedgerRow({ allConversions: input.conversions, conversion, events, session, visitor }),
-          appointment,
-        ));
-        continue;
-      }
-
-      const latestSession = visitor ? sessionsByVisitor.get(visitor.visitor_id) || null : null;
-      anchoredRows.push(appointmentLedgerRow({ appointment, events, session: latestSession, visitor }));
-    }
-  } else {
-    for (const conversion of input.conversions) {
-      const visitor = conversion.visitor_id ? visitorsById.get(conversion.visitor_id) || null : null;
+    if (conversion) {
+      consumedConversions.add(conversion);
       if (!visitor) {
-        anchoredRows.push(conversionOnlyLedgerRow(
-          conversion,
-          conversion.visitor_id ? eventsByVisitor.get(conversion.visitor_id) || [] : [],
-          input.conversions,
+        anchoredRows.push(withAppointmentFields(
+          conversionOnlyLedgerRow(conversion, events, input.conversions),
+          appointment,
         ));
         continue;
       }
@@ -1430,9 +1406,40 @@ export function buildCustomerJourneyLedgerRows(input: {
         latestSession: sessionsByVisitor.get(visitor.visitor_id) || null,
         sessionsById: sessionsByVisitorAndId.get(visitor.visitor_id),
       });
-      const visitorEvents = eventsByVisitor.get(visitor.visitor_id) || [];
-      anchoredRows.push(conversionLedgerRow({ allConversions: input.conversions, conversion, events: visitorEvents, session, visitor }));
+      anchoredRows.push(withAppointmentFields(
+        conversionLedgerRow({ allConversions: input.conversions, conversion, events, session, visitor }),
+        appointment,
+      ));
+      continue;
     }
+
+    const latestSession = visitor ? sessionsByVisitor.get(visitor.visitor_id) || null : null;
+    anchoredRows.push(appointmentLedgerRow({ appointment, events, session: latestSession, visitor }));
+  }
+
+  // Emit conversion-anchored rows for any Schedule conversion not consumed
+  // by an appointment row above. Mirrors the funnel's conversion-grain count
+  // so orphan conversions (canceled / rescheduled / future / no-appt-row)
+  // still surface in the ledger.
+  for (const conversion of input.conversions) {
+    if (consumedConversions.has(conversion)) continue;
+    const visitor = conversion.visitor_id ? visitorsById.get(conversion.visitor_id) || null : null;
+    if (!visitor) {
+      anchoredRows.push(conversionOnlyLedgerRow(
+        conversion,
+        conversion.visitor_id ? eventsByVisitor.get(conversion.visitor_id) || [] : [],
+        input.conversions,
+      ));
+      continue;
+    }
+
+    const session = selectSessionForConversion({
+      conversion,
+      latestSession: sessionsByVisitor.get(visitor.visitor_id) || null,
+      sessionsById: sessionsByVisitorAndId.get(visitor.visitor_id),
+    });
+    const visitorEvents = eventsByVisitor.get(visitor.visitor_id) || [];
+    anchoredRows.push(conversionLedgerRow({ allConversions: input.conversions, conversion, events: visitorEvents, session, visitor }));
   }
 
   // Phase 2 (v3 plan): emit visitor-only rows for any visitor that wasn't

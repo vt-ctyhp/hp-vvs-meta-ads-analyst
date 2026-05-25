@@ -224,7 +224,9 @@ describe("attribution ledger row merging", () => {
     assert.equal(inFilters.filter((filter) => filter.table === "website_visitors").length, 3);
     assert.equal(inFilters.filter((filter) => filter.table === "website_sessions").length, 3);
     assert.equal(inFilters.filter((filter) => filter.table === "website_events").length, 6);
-    assert.equal(inFilters.filter((filter) => filter.table === "website_conversions").length, 6);
+    // Conversions are now fetched via a single window query (no .in() batching),
+    // so only the per-visitor-id fan-out fetch produces .in() filters here.
+    assert.equal(inFilters.filter((filter) => filter.table === "website_conversions").length, 3);
     assert.ok(inFilters.every((filter) => filter.values.length <= 100));
   });
 
