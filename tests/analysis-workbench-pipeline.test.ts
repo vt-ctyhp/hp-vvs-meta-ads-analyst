@@ -444,6 +444,106 @@ test("follow-up prompts inherit visible date, filters, metrics, and grouping con
   assert.match(result.answer.summary, /Book Appts US/);
 });
 
+test("controlled rerun edits override governed context and add source-note provenance", async () => {
+  const requests: AnalysisWorkbenchPipelineAggregateRequest[] = [];
+  const result = await runAnalysisWorkbenchFactsPipeline({
+    prompt: "Show spend by campaign group for the last 7 days.",
+    outputMode: "full_dashboard",
+    latestSyncedInsightDate: "2026-05-24",
+    controlledEdit: {
+      dateRange: {
+        start: "2026-05-01",
+        end: "2026-05-24",
+        days: 24,
+        label: "2026-05-01 to 2026-05-24",
+      },
+      filters: [{ field: "brand", operator: "equals", value: "HP" }],
+      metrics: ["cpl"],
+      dimensions: ["campaign"],
+      sort: { field: "cpl", direction: "asc" },
+      limit: 3,
+      visual: { type: "bar_chart", metrics: ["cpl"], dimensions: ["campaign"] },
+      objectTitles: { bar_campaign_cpl: "Edited CPL by campaign" },
+      insightVisibility: { winner_primary: { pinned: true } },
+    },
+    executeAggregate: async (request) => {
+      requests.push(request);
+      if (request.dimensions.includes("date")) return [];
+      return request.dimensions.length
+        ? [
+            aggregateRow({
+              campaign: "Campaign A",
+              cpl: 20,
+              source_rows: 3,
+            }),
+            aggregateRow({
+              campaign: "Campaign B",
+              cpl: 45,
+              source_rows: 2,
+            }),
+          ]
+        : [aggregateRow({ cpl: 25, source_rows: 5 })];
+    },
+  });
+
+  assert.equal(result.status, "completed");
+  assert.deepEqual(result.intent.metrics, ["cpl"]);
+  assert.deepEqual(result.intent.dimensions, ["campaign"]);
+  assert.deepEqual(result.intent.filters, [{ field: "brand", operator: "equals", value: "HP" }]);
+  assert.deepEqual(result.intent.sort, { field: "cpl", direction: "asc" });
+  assert.equal(result.intent.limit, 3);
+  assert.deepEqual(
+    requests.map((request) => ({
+      start: request.start,
+      end: request.end,
+      dimensions: request.dimensions,
+      metrics: request.metrics,
+      filters: request.filters,
+      sortField: request.sortField,
+      sortDirection: request.sortDirection,
+      limit: request.limit,
+    })),
+    [
+      {
+        start: "2026-05-01",
+        end: "2026-05-24",
+        dimensions: ["campaign"],
+        metrics: ["cpl"],
+        filters: [{ field: "brand", operator: "equals", value: "HP" }],
+        sortField: "cpl",
+        sortDirection: "asc",
+        limit: 3,
+      },
+      {
+        start: "2026-05-01",
+        end: "2026-05-24",
+        dimensions: [],
+        metrics: ["cpl"],
+        filters: [{ field: "brand", operator: "equals", value: "HP" }],
+        sortField: "cpl",
+        sortDirection: "asc",
+        limit: 1,
+      },
+      {
+        start: "2026-05-01",
+        end: "2026-05-24",
+        dimensions: ["date"],
+        metrics: ["cpl"],
+        filters: [{ field: "brand", operator: "equals", value: "HP" }],
+        sortField: "date",
+        sortDirection: "asc",
+        limit: 24,
+      },
+    ],
+  );
+  assert.ok(result.sourceNotes.some((note) => note.label === "Controlled edits"));
+  assert.equal(
+    result.visualCards.find((card) => card.id === "bar_campaign_cpl")?.title,
+    "Edited CPL by campaign",
+  );
+  assert.equal(result.dashboardPacket?.insightSummary.winners[0]?.pinned, true);
+});
+
 test("removed follow-up context chips are not applied to the next run", async () => {
   const requests: AnalysisWorkbenchPipelineAggregateRequest[] = [];
   const result = await runAnalysisWorkbenchFactsPipeline({

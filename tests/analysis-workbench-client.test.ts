@@ -362,6 +362,117 @@ test("run detail exposes promotion and renders saved dashboard packet sections",
   assert.doesNotMatch(packetMarkup, /Promote to dashboard/);
 });
 
+test("run detail exposes rerun and controlled edit controls without SQL or formula fields", () => {
+  const { RunDetail } = loadModule("src/components/analysis-workbench-client.tsx");
+
+  const markup = renderToStaticMarkup(
+    React.createElement(RunDetail, {
+      run: {
+        id: "run-1",
+        status: "completed",
+        prompt: "Show spend by campaign group.",
+        outputMode: "full_dashboard",
+        title: "Show spend by campaign group.",
+        answer: { summary: "Spend was $3,400 [F1].", citations: [] },
+        facts: { status: "computed" },
+        sourceNotes: [],
+        visualCards: [
+          {
+            id: "bar_campaign_umbrella_spend",
+            type: "bar_chart",
+            title: "Spend by campaign group",
+            metric: "spend",
+            dimension: "campaign_umbrella",
+            bars: [{ label: "Book Appts US", value: 2500, formattedValue: "$2,500" }],
+            sourceNoteIds: ["S1"],
+          },
+        ],
+        validation: { status: "ready" },
+        lineage: { parentRunId: null },
+        dashboardPacket: null,
+        createdAt: "2026-05-25T14:30:00.000Z",
+        updatedAt: "2026-05-25T14:30:00.000Z",
+      },
+      onRerun: () => undefined,
+      onApplyEdits: () => undefined,
+      rerunning: false,
+    }),
+  );
+
+  assert.match(markup, /Rerun latest data/);
+  assert.match(markup, /Controlled Edits/);
+  assert.match(markup, /Date range/);
+  assert.match(markup, /Metric/);
+  assert.match(markup, /Chart type/);
+  assert.match(markup, /Apply edits/);
+  assert.doesNotMatch(markup, /SQL/i);
+  assert.doesNotMatch(markup, /formula/i);
+});
+
+test("dashboard packet insight controls render pinned insights and hide hidden insights", () => {
+  const { RunDetail } = loadModule("src/components/analysis-workbench-client.tsx");
+
+  const markup = renderToStaticMarkup(
+    React.createElement(RunDetail, {
+      run: {
+        id: "run-2",
+        status: "completed",
+        prompt: "Build dashboard",
+        outputMode: "full_dashboard",
+        title: "Build dashboard",
+        answer: { summary: "Dashboard saved [S1].", citations: [] },
+        facts: { status: "computed" },
+        sourceNotes: [{ id: "S1", label: "Data source", value: "Meta Ads daily insights" }],
+        visualCards: [],
+        validation: { status: "ready" },
+        lineage: { parentRunId: null },
+        dashboardPacket: {
+          kind: "analysis_dashboard_packet",
+          version: 1,
+          generatedAt: "2026-05-25T14:35:00.000Z",
+          promotedFromRunId: "run-1",
+          directAnswer: { summary: "Dashboard saved [S1].", citations: [] },
+          primaryEvidenceTable: null,
+          visualObjects: [],
+          insightSummary: {
+            winners: [
+              {
+                id: "winner_primary",
+                title: "Winner",
+                detail: "Book Appts US leads with $2,500 Spend.",
+                sourceNoteIds: ["S1"],
+                pinned: true,
+              },
+            ],
+            losers: [
+              {
+                id: "loser_primary",
+                title: "Loser",
+                detail: "Cash for Gold US trails at $900 Spend.",
+                sourceNoteIds: ["S1"],
+                hidden: true,
+              },
+            ],
+            anomalies: [],
+          },
+          nextActions: [],
+          assumptions: [],
+          caveats: [],
+          sourceNotes: [{ id: "S1", label: "Data source", value: "Meta Ads daily insights" }],
+        },
+        createdAt: "2026-05-25T14:30:00.000Z",
+        updatedAt: "2026-05-25T14:35:00.000Z",
+      },
+      onApplyEdits: () => undefined,
+    }),
+  );
+
+  assert.match(markup, /Pinned/);
+  assert.match(markup, /Hide insight/);
+  assert.match(markup, /Pin insight/);
+  assert.doesNotMatch(markup, /Cash for Gold US trails/);
+});
+
 test("workbench status and visual regions render loading, empty, and error states", () => {
   const { EmptyRunDetail, StatusNotice, VisualCardGrid } = loadModule(
     "src/components/analysis-workbench-client.tsx",

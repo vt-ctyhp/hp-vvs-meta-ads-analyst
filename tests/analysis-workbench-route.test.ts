@@ -112,6 +112,83 @@ test("analysis-runs PATCH promotes an existing answer run into a full dashboard 
   ]);
 });
 
+test("analysis-runs PATCH reruns a saved run with controlled governed edits", async () => {
+  const calls: Array<{ name: string; args: unknown[] }> = [];
+  const route = loadRoute(calls);
+
+  const response = await route.PATCH(
+    jsonRequest("http://localhost/api/analysis-runs", {
+      action: "rerun",
+      runId: "run-1",
+      edits: {
+        metrics: ["spend"],
+        dimensions: ["campaign_umbrella"],
+        limit: 5,
+      },
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    run: {
+      id: "run-rerun",
+      prompt: "Saved",
+      outputMode: "full_dashboard",
+      lineage: { parentRunId: "run-1" },
+    },
+  });
+  assert.deepEqual(serializable(calls), [
+    { name: "requirePermissionFromRequest", args: ["view_ai_analysis"] },
+    {
+      name: "rerunAnalysisWorkbenchRun",
+      args: [
+        "run-1",
+        {
+          metrics: ["spend"],
+          dimensions: ["campaign_umbrella"],
+          limit: 5,
+        },
+      ],
+    },
+  ]);
+});
+
+test("analysis-runs PATCH blocks custom SQL and formulas before rerun work", async () => {
+  const calls: Array<{ name: string; args: unknown[] }> = [];
+  const route = loadRoute(calls);
+
+  const response = await route.PATCH(
+    jsonRequest("http://localhost/api/analysis-runs", {
+      action: "rerun",
+      runId: "run-1",
+      edits: {
+        customSql: "select * from meta_daily_insights",
+        formula: "revenue / spend",
+      },
+    }),
+  );
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    error: "Unsupported custom SQL, formulas, or calculated fields in controlled dashboard edits.",
+    blockers: [
+      {
+        code: "unsupported_custom_logic",
+        field: "customSql",
+        message: "Custom SQL, formulas, and calculated fields are not supported in governed dashboard edits.",
+      },
+      {
+        code: "unsupported_custom_logic",
+        field: "formula",
+        message: "Custom SQL, formulas, and calculated fields are not supported in governed dashboard edits.",
+      },
+    ],
+  });
+  assert.deepEqual(calls, [
+    { name: "requirePermissionFromRequest", args: ["view_ai_analysis"] },
+  ]);
+});
+
 test("analysis-runs PATCH rejects unsupported dashboard actions", async () => {
   const calls: Array<{ name: string; args: unknown[] }> = [];
   const route = loadRoute(calls);
@@ -181,6 +258,25 @@ function loadRoute(calls: Array<{ name: string; args: unknown[] }>) {
         if (value === "answer_only" || value === "full_dashboard") return value;
         return "answer_visuals";
       },
+      normalizeAnalysisWorkbenchControlledEdits(value: unknown) {
+        const candidate = value as Record<string, unknown>;
+        const blockers = ["customSql", "formula"].flatMap((field) =>
+          Object.hasOwn(candidate || {}, field)
+            ? [
+                {
+                  code: "unsupported_custom_logic",
+                  field,
+                  message:
+                    "Custom SQL, formulas, and calculated fields are not supported in governed dashboard edits.",
+                },
+              ]
+            : [],
+        );
+        if (blockers.length) {
+          return { status: "blocked", edit: null, blockers, warnings: [], assumptions: [] };
+        }
+        return { status: "ready", edit: value, blockers: [], warnings: [], assumptions: [] };
+      },
     },
     "@/lib/analysis-workbench-runs": {
       async createAnalysisWorkbenchRun(...args: unknown[]) {
@@ -207,6 +303,15 @@ function loadRoute(calls: Array<{ name: string; args: unknown[] }>) {
           prompt: "Saved",
           outputMode: "full_dashboard",
           dashboardPacket: { kind: "analysis_dashboard_packet" },
+        };
+      },
+      async rerunAnalysisWorkbenchRun(...args: unknown[]) {
+        calls.push({ name: "rerunAnalysisWorkbenchRun", args });
+        return {
+          id: "run-rerun",
+          prompt: "Saved",
+          outputMode: "full_dashboard",
+          lineage: { parentRunId: args[0] },
         };
       },
     },

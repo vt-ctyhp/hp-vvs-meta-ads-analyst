@@ -1,11 +1,14 @@
 import {
   buildAnalysisDashboardPacket,
   buildAnalysisRunInsert,
+  applyAnalysisWorkbenchControlledEditsToContext,
   mapAnalysisRunRecord,
   normalizeAnalysisOutputMode,
   removeAnalysisContextChips,
   resolveAnalysisRunContext,
   type AnalysisOutputMode,
+  type AnalysisWorkbenchControlledEdit,
+  type AnalysisWorkbenchContextSnapshot,
   type AnalysisRunRecord,
   type AnalysisWorkbenchRun,
   type JsonValue,
@@ -135,6 +138,85 @@ export async function promoteAnalysisWorkbenchRunToDashboard(
 
   if (response.error) throw response.error;
   return mapAnalysisRunRecord(response.data as AnalysisRunRecord);
+}
+
+export async function rerunAnalysisWorkbenchRun(
+  runId: string,
+  controlledEdit?: AnalysisWorkbenchControlledEdit | null,
+): Promise<AnalysisWorkbenchRun> {
+  const missing = getMissingDashboardEnv();
+  if (missing.length) {
+    throw new ConfigurationError("Analysis run storage is not configured.", missing);
+  }
+
+  const sourceRun = await getAnalysisWorkbenchRun(runId);
+  const latestSyncedInsightDate = await fetchLatestSyncedInsightDate();
+  const inheritedContext = resolveAnalysisRunContext(sourceRun);
+  const rerunContext =
+    controlledEdit && Object.hasOwn(controlledEdit, "dateRange")
+      ? inheritedContext
+      : refreshAnalysisContextDateRange(inheritedContext, latestSyncedInsightDate);
+  const editedContext = applyAnalysisWorkbenchControlledEditsToContext(
+    rerunContext,
+    controlledEdit || null,
+  );
+  const outputMode = normalizeAnalysisOutputMode(sourceRun.outputMode);
+  const pipelineResult = await runAnalysisWorkbenchFactsPipeline({
+    prompt: sourceRun.prompt,
+    outputMode,
+    latestSyncedInsightDate,
+    inheritedContext: editedContext,
+    controlledEdit: controlledEdit || null,
+    executeAggregate: async (request) =>
+      aggregateMetaInsights({
+        start: request.start,
+        end: request.end,
+        dimensions: request.dimensions,
+        filters: request.filters,
+        sortField: request.sortField,
+        sortDirection: request.sortDirection,
+        limit: request.limit,
+      }),
+  });
+  const run = buildAnalysisRunInsert({
+    prompt: sourceRun.prompt,
+    outputMode,
+    parentRunId: sourceRun.id,
+    inheritedContext,
+    pipelineResult,
+  });
+
+  const supabase = createAdsAnalystClient("web");
+  const response = await supabase
+    .from("ai_analysis_workbench_runs")
+    .insert(withAdsAnalystEnvironment(run))
+    .select(RUN_COLUMNS)
+    .single();
+
+  if (response.error) throw response.error;
+  return mapAnalysisRunRecord(response.data as AnalysisRunRecord);
+}
+
+function refreshAnalysisContextDateRange(
+  context: AnalysisWorkbenchContextSnapshot | null,
+  latestSyncedInsightDate: string | null,
+): AnalysisWorkbenchContextSnapshot | null {
+  if (!context?.dateRange || !latestSyncedInsightDate) return context;
+
+  const endTime = Date.parse(`${latestSyncedInsightDate}T00:00:00.000Z`);
+  if (!Number.isFinite(endTime)) return context;
+  const start = new Date(endTime - (context.dateRange.days - 1) * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+
+  return {
+    ...context,
+    dateRange: {
+      ...context.dateRange,
+      start,
+      end: latestSyncedInsightDate,
+    },
+  };
 }
 
 async function fetchLatestSyncedInsightDate() {

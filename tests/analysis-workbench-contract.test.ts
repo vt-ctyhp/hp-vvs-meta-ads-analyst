@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  applyAnalysisWorkbenchControlledEditsToDashboardPacket,
+  applyAnalysisWorkbenchControlledEditsToVisualCards,
   buildAnalysisContextChips,
   buildAnalysisDashboardPacket,
   buildAnalysisRunInsert,
   mapAnalysisRunRecord,
   normalizeAnalysisOutputMode,
+  normalizeAnalysisWorkbenchControlledEdits,
   resolveAnalysisRunContext,
 } from "../src/lib/analysis-workbench-contract.ts";
 
@@ -178,6 +181,130 @@ test("buildAnalysisDashboardPacket promotes a saved answer snapshot into a compl
     "Primary KPI is group-specific and can blend proxy metrics across groups.",
   ]);
   assert.equal(packet.sourceNotes.length, 2);
+});
+
+test("normalizeAnalysisWorkbenchControlledEdits accepts only governed edit fields", () => {
+  const validation = normalizeAnalysisWorkbenchControlledEdits({
+    dateRange: { start: "2026-05-01", end: "2026-05-24" },
+    filters: [{ field: "campaign_umbrella", operator: "equals", value: "book appointments" }],
+    metrics: ["spend", "cpl"],
+    dimensions: ["campaign_umbrella"],
+    sort: { field: "cpl", direction: "asc" },
+    limit: 8,
+    visual: { type: "bar_chart", metrics: ["spend"], dimensions: ["campaign_umbrella"] },
+    objectTitles: { bar_campaign_umbrella_spend: "Edited spend by group" },
+    insightVisibility: { winner_primary: { pinned: true }, loser_primary: { hidden: true } },
+  });
+
+  assert.equal(validation.status, "ready");
+  assert.deepEqual(validation.edit, {
+    dateRange: {
+      start: "2026-05-01",
+      end: "2026-05-24",
+      days: 24,
+      label: "2026-05-01 to 2026-05-24",
+    },
+    filters: [
+      { field: "campaign_umbrella", operator: "equals", value: "Book Appts US" },
+    ],
+    metrics: ["spend", "cpl"],
+    dimensions: ["campaign_umbrella"],
+    sort: { field: "cpl", direction: "asc" },
+    limit: 8,
+    visual: { type: "bar_chart", metrics: ["spend"], dimensions: ["campaign_umbrella"] },
+    objectTitles: { bar_campaign_umbrella_spend: "Edited spend by group" },
+    insightVisibility: {
+      winner_primary: { pinned: true },
+      loser_primary: { hidden: true },
+    },
+  });
+  assert.deepEqual(validation.blockers, []);
+});
+
+test("normalizeAnalysisWorkbenchControlledEdits blocks unsupported custom SQL and formulas", () => {
+  const validation = normalizeAnalysisWorkbenchControlledEdits({
+    metrics: ["spend"],
+    customSql: "select * from meta_daily_insights",
+    formulas: [{ name: "ROAS", expression: "revenue / spend" }],
+  });
+
+  assert.equal(validation.status, "blocked");
+  assert.deepEqual(
+    validation.blockers.map((blocker) => blocker.code),
+    ["unsupported_custom_logic", "unsupported_custom_logic"],
+  );
+});
+
+test("normalizeAnalysisWorkbenchControlledEdits blocks invalid fields through the semantic catalog", () => {
+  const validation = normalizeAnalysisWorkbenchControlledEdits({
+    metrics: ["revenue"],
+    dimensions: ["sales_rep"],
+    filters: [{ field: "region", operator: "equals", value: "California" }],
+    visual: { type: "waterfall_chart", metrics: ["spend"], dimensions: ["campaign"] },
+  });
+
+  assert.equal(validation.status, "blocked");
+  assert.deepEqual(
+    validation.blockers.map((blocker) => blocker.code),
+    ["invalid_metric", "invalid_dimension", "invalid_filter_field", "invalid_chart_type"],
+  );
+});
+
+test("controlled dashboard edits rename governed objects and pin or hide insights", () => {
+  const packet = buildAnalysisDashboardPacket({
+    generatedAt: "2026-05-25T14:30:00.000Z",
+    answer: { summary: "Spend was $3,400 [F1].", citations: [] },
+    facts: { status: "computed", items: [] },
+    visualCards: [
+      {
+        id: "bar_campaign_umbrella_spend",
+        type: "bar_chart",
+        title: "Spend by campaign group",
+        metric: "spend",
+        dimension: "campaign_umbrella",
+        bars: [
+          { label: "Book Appts US", value: 2500, formattedValue: "$2,500" },
+          { label: "Cash for Gold US", value: 900, formattedValue: "$900" },
+        ],
+        sourceNoteIds: ["S1"],
+      },
+      {
+        id: "table_campaign_umbrella",
+        type: "flat_table",
+        title: "Campaign group evidence",
+        columns: [
+          { key: "entity", label: "Campaign group", kind: "dimension" },
+          { key: "spend", label: "Spend", kind: "metric", metric: "spend" },
+        ],
+        rows: [
+          { entity: "Book Appts US", spend: { value: 2500, formattedValue: "$2,500" } },
+          { entity: "Cash for Gold US", spend: { value: 900, formattedValue: "$900" } },
+        ],
+        sourceNoteIds: ["S1"],
+      },
+    ],
+    sourceNotes: [{ id: "S1", label: "Data source", value: "Meta Ads daily insights" }],
+    validation: { assumptions: [] },
+  });
+  const edit = normalizeAnalysisWorkbenchControlledEdits({
+    objectTitles: { bar_campaign_umbrella_spend: "Edited spend by group" },
+    insightVisibility: { winner_primary: { pinned: true }, loser_primary: { hidden: true } },
+  }).edit;
+
+  assert.ok(edit);
+  const visualCards = applyAnalysisWorkbenchControlledEditsToVisualCards(
+    packet.visualObjects,
+    edit,
+  );
+  const editedPacket = applyAnalysisWorkbenchControlledEditsToDashboardPacket(
+    { ...packet, visualObjects: visualCards },
+    edit,
+  );
+
+  assert.ok(editedPacket);
+  assert.equal(editedPacket.visualObjects[0]?.title, "Edited spend by group");
+  assert.equal(editedPacket.insightSummary.winners[0]?.pinned, true);
+  assert.equal(editedPacket.insightSummary.losers[0]?.hidden, true);
 });
 
 test("buildAnalysisRunInsert persists full-dashboard packet snapshots", () => {

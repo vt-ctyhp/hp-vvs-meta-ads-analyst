@@ -10,10 +10,15 @@ import {
   type WorkbenchSemanticIssue,
   type WorkbenchSemanticVisualIntent,
 } from "./analysis-workbench-semantic-catalog.ts";
-import { buildAnalysisDashboardPacket } from "./analysis-workbench-contract.ts";
+import {
+  applyAnalysisWorkbenchControlledEditsToDashboardPacket,
+  applyAnalysisWorkbenchControlledEditsToVisualCards,
+  buildAnalysisDashboardPacket,
+} from "./analysis-workbench-contract.ts";
 import type {
   AnalysisOutputMode,
   AnalysisRunStatus,
+  AnalysisWorkbenchControlledEdit,
   AnalysisWorkbenchContextSnapshot,
   AnalysisWorkbenchDashboardPacket,
   AnalysisWorkbenchVisualCard,
@@ -127,6 +132,7 @@ type PipelineInput = {
   outputMode: AnalysisOutputMode;
   latestSyncedInsightDate?: string | null;
   inheritedContext?: AnalysisWorkbenchContextSnapshot | null;
+  controlledEdit?: AnalysisWorkbenchControlledEdit | null;
   executeAggregate: (
     request: AnalysisWorkbenchPipelineAggregateRequest,
   ) => Promise<MetaInsightAggregateRow[]>;
@@ -167,13 +173,14 @@ export async function runAnalysisWorkbenchFactsPipeline(
     outputMode: input.outputMode,
     latestSyncedInsightDate: input.latestSyncedInsightDate,
     inheritedContext: input.inheritedContext || null,
+    controlledEdit: input.controlledEdit || null,
   });
 
   if (planned.semanticValidation.status === "blocked") {
     return blockedResult({ prompt, title, outputMode: input.outputMode, planned });
   }
 
-  const groupedRequest = aggregateRequest(planned, planned.dimensions, MAX_GROUP_ROWS);
+  const groupedRequest = aggregateRequest(planned, planned.dimensions, planned.limit);
   const totalRequest = aggregateRequest(planned, [], 1);
   const trendRequest = shouldBuildVisualCards(planned.outputMode)
     ? trendAggregateRequest(planned)
@@ -181,10 +188,18 @@ export async function runAnalysisWorkbenchFactsPipeline(
   const groupedRows = await input.executeAggregate(groupedRequest);
   const totalRows = await input.executeAggregate(totalRequest);
   const trendRows = trendRequest ? await input.executeAggregate(trendRequest) : [];
-  const sourceNotes = sourceNotesFor(planned, groupedRows, totalRows);
+  const sourceNotes = sourceNotesFor(
+    planned,
+    groupedRows,
+    totalRows,
+    input.controlledEdit || null,
+  );
   const facts = computeFacts(planned, groupedRows, totalRows, sourceNotes);
   const answer = composeAnswer(planned, facts.items, sourceNotes);
-  const visualCards = buildVisualCards(planned, facts.items, groupedRows, trendRows);
+  const visualCards = applyAnalysisWorkbenchControlledEditsToVisualCards(
+    buildVisualCards(planned, facts.items, groupedRows, trendRows),
+    input.controlledEdit,
+  );
   const groundingIssues = validateAnalysisWorkbenchNarrativeGrounding(
     answer.summary,
     answer.citations,
@@ -217,13 +232,16 @@ export async function runAnalysisWorkbenchFactsPipeline(
   };
   const dashboardPacket =
     planned.outputMode === "full_dashboard" && !groundingIssues.length
-      ? buildAnalysisDashboardPacket({
-          answer,
-          facts,
-          visualCards,
-          sourceNotes: sourceNotes as unknown as JsonValue[],
-          validation,
-        })
+      ? applyAnalysisWorkbenchControlledEditsToDashboardPacket(
+          buildAnalysisDashboardPacket({
+            answer,
+            facts,
+            visualCards,
+            sourceNotes: sourceNotes as unknown as JsonValue[],
+            validation,
+          }),
+          input.controlledEdit,
+        )
       : null;
 
   return {
@@ -283,30 +301,42 @@ function planAnalysisWorkbenchIntent(input: {
   outputMode: AnalysisOutputMode;
   latestSyncedInsightDate?: string | null;
   inheritedContext?: AnalysisWorkbenchContextSnapshot | null;
+  controlledEdit?: AnalysisWorkbenchControlledEdit | null;
 }): PlannedIntent {
   const inheritedContext = input.inheritedContext || null;
+  const controlledEdit = input.controlledEdit || null;
   const explicitMetrics = detectMetrics(input.prompt, false);
   const explicitDimensions = detectDimensions(input.prompt, false);
-  const metrics = explicitMetrics.length
+  const metrics = controlledEdit?.metrics?.length
+    ? controlledEdit.metrics
+    : explicitMetrics.length
     ? explicitMetrics
     : inheritedContext?.metrics.length
       ? inheritedContext.metrics
       : DEFAULT_METRICS;
-  const dimensions = explicitDimensions.length
+  const dimensions = controlledEdit?.dimensions?.length
+    ? controlledEdit.dimensions
+    : explicitDimensions.length
     ? explicitDimensions
     : inheritedContext?.dimensions.length
       ? inheritedContext.dimensions
       : DEFAULT_DIMENSIONS;
-  const filters = uniqueFilters([
-    ...(inheritedContext?.filters || []),
-    ...detectFilters(input.prompt),
-  ]);
-  const visual = detectVisualIntent(input.prompt, metrics, dimensions);
-  const dateRange = resolvePromptDateRange(
-    input.prompt,
-    input.latestSyncedInsightDate,
-    inheritedContext?.dateRange || null,
-  );
+  const filters = controlledEdit && Object.hasOwn(controlledEdit, "filters")
+    ? controlledEdit.filters || []
+    : uniqueFilters([
+        ...(inheritedContext?.filters || []),
+        ...detectFilters(input.prompt),
+      ]);
+  const visual = controlledEdit && Object.hasOwn(controlledEdit, "visual")
+    ? controlledEdit.visual || null
+    : detectVisualIntent(input.prompt, metrics, dimensions);
+  const dateRange =
+    controlledEdit?.dateRange ||
+    resolvePromptDateRange(
+      input.prompt,
+      input.latestSyncedInsightDate,
+      inheritedContext?.dateRange || null,
+    );
   const dateGrain = dateGrainForDimensions(dimensions);
   const semanticValidation = validateAnalysisWorkbenchSemanticIntent({
     prompt: input.prompt,
@@ -317,7 +347,7 @@ function planAnalysisWorkbenchIntent(input: {
     ...(visual ? { visual } : {}),
   });
   const repairedFilters = semanticValidation.repairedIntent.filters as MetaInsightFilter[];
-  const sortField = metrics[0] || "spend";
+  const sortField = controlledEdit?.sort?.field || metrics[0] || "spend";
   const repairedVisual = semanticValidation.repairedIntent.visual;
   const repairedDimensions = dimensionsForVisual(dimensions, repairedVisual);
 
@@ -331,9 +361,9 @@ function planAnalysisWorkbenchIntent(input: {
     dateRange,
     sort: {
       field: sortField,
-      direction: "desc",
+      direction: controlledEdit?.sort?.direction || "desc",
     },
-    limit: MAX_GROUP_ROWS,
+    limit: controlledEdit?.limit || MAX_GROUP_ROWS,
     visual: repairedVisual,
     semanticValidation,
   };
@@ -495,6 +525,7 @@ function sourceNotesFor(
   planned: PlannedIntent,
   groupedRows: MetaInsightAggregateRow[],
   totalRows: MetaInsightAggregateRow[],
+  controlledEdit: AnalysisWorkbenchControlledEdit | null,
 ): AnalysisWorkbenchSourceNote[] {
   return [
     {
@@ -524,6 +555,15 @@ function sourceNotesFor(
         ? planned.filters.map((filter) => `${filter.field} ${filter.operator} ${filter.value}`).join("; ")
         : "No filters",
     },
+    ...(controlledEdit && Object.keys(controlledEdit).length
+      ? [
+          {
+            id: "S6",
+            label: "Controlled edits",
+            value: controlledEditSourceNote(controlledEdit),
+          },
+        ]
+      : []),
   ];
 }
 
@@ -783,6 +823,30 @@ function visualAssumptions(planned: PlannedIntent) {
     "Relative date range ends at the latest complete synced Meta Ads date.",
     ...planned.semanticValidation.assumptions.map((assumption) => assumption.message),
   ];
+}
+
+function controlledEditSourceNote(edit: AnalysisWorkbenchControlledEdit) {
+  const parts = [
+    edit.dateRange ? `date ${edit.dateRange.start} to ${edit.dateRange.end}` : "",
+    edit.filters ? `${edit.filters.length} filter edits` : "",
+    edit.metrics ? `metrics ${edit.metrics.map(metricLabel).join(", ") || "cleared"}` : "",
+    edit.dimensions
+      ? `grouping ${edit.dimensions.map(dimensionLabel).join(", ") || "cleared"}`
+      : "",
+    edit.sort ? `sort ${controlledEditFieldLabel(edit.sort.field)} ${edit.sort.direction}` : "",
+    edit.limit ? `limit ${edit.limit}` : "",
+    edit.visual ? `visual ${sentenceCase(edit.visual.type.replace(/_/g, " "))}` : "",
+    edit.objectTitles ? "object titles edited" : "",
+    edit.insightVisibility ? "insight visibility edited" : "",
+  ].filter(Boolean);
+
+  return parts.length
+    ? `Applied governed dashboard edits: ${parts.join("; ")}.`
+    : "Applied governed dashboard edits.";
+}
+
+function controlledEditFieldLabel(field: WorkbenchMetric | WorkbenchDimension) {
+  return isWorkbenchMetric(field) ? metricLabel(field) : dimensionLabel(field);
 }
 
 function totalFact(

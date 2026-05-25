@@ -9,6 +9,7 @@ import type {
   WorkbenchDimension,
   WorkbenchFilterField,
   WorkbenchMetric,
+  WorkbenchSemanticIssue,
   WorkbenchSemanticVisualIntent,
 } from "./analysis-workbench-semantic-catalog.ts";
 import type { AnalysisWorkbenchPipelineResult } from "./analysis-workbench-pipeline.ts";
@@ -57,6 +58,29 @@ export type AnalysisWorkbenchContextSnapshot = {
 };
 
 export type AnalysisWorkbenchContextChanges = Partial<AnalysisWorkbenchContextSnapshot>;
+
+export type AnalysisWorkbenchControlledEdit = {
+  dateRange?: AnalysisWorkbenchContextDateRange;
+  filters?: AnalysisWorkbenchContextFilter[];
+  metrics?: WorkbenchMetric[];
+  dimensions?: WorkbenchDimension[];
+  sort?: {
+    field: WorkbenchMetric | WorkbenchDimension;
+    direction: "asc" | "desc";
+  };
+  limit?: number;
+  visual?: WorkbenchSemanticVisualIntent | null;
+  objectTitles?: Record<string, string>;
+  insightVisibility?: Record<string, { pinned?: boolean; hidden?: boolean }>;
+};
+
+export type AnalysisWorkbenchControlledEditValidation = {
+  status: "ready" | "blocked";
+  edit: AnalysisWorkbenchControlledEdit | null;
+  blockers: WorkbenchSemanticIssue[];
+  warnings: WorkbenchSemanticIssue[];
+  assumptions: Array<{ code: string; message: string }>;
+};
 
 export type AnalysisWorkbenchLineage = {
   parentRunId: string | null;
@@ -203,6 +227,8 @@ export type AnalysisWorkbenchDashboardInsight = {
   detail: string;
   citationId?: string;
   sourceNoteIds: string[];
+  pinned?: boolean;
+  hidden?: boolean;
 };
 
 export type AnalysisWorkbenchDashboardAction = {
@@ -449,6 +475,154 @@ export function buildAnalysisDashboardPacket(input: {
   };
 }
 
+export function normalizeAnalysisWorkbenchControlledEdits(
+  value: unknown,
+): AnalysisWorkbenchControlledEditValidation {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {
+      status: "ready",
+      edit: {},
+      blockers: [],
+      warnings: [],
+      assumptions: [],
+    };
+  }
+
+  const candidate = value as Record<string, unknown>;
+  const blockers: WorkbenchSemanticIssue[] = unsupportedControlledEditIssues(candidate);
+  const dateRange = hasOwn(candidate, "dateRange")
+    ? normalizeControlledEditDateRange(candidate.dateRange, blockers)
+    : undefined;
+  const rawFilters = hasOwn(candidate, "filters")
+    ? normalizeControlledEditFilters(candidate.filters, blockers)
+    : undefined;
+  const rawMetrics = hasOwn(candidate, "metrics")
+    ? uniqueStrings(arrayStrings(candidate.metrics)).slice(0, 4)
+    : undefined;
+  const rawDimensions = hasOwn(candidate, "dimensions")
+    ? uniqueStrings(arrayStrings(candidate.dimensions)).slice(0, 3)
+    : undefined;
+  const visual = hasOwn(candidate, "visual")
+    ? normalizeControlledEditVisual(candidate.visual, blockers)
+    : undefined;
+  const sort = hasOwn(candidate, "sort") ? normalizeControlledEditSort(candidate.sort, blockers) : undefined;
+  const limit = hasOwn(candidate, "limit") ? normalizeControlledEditLimit(candidate.limit, blockers) : undefined;
+  const objectTitles = hasOwn(candidate, "objectTitles")
+    ? normalizeControlledEditTitles(candidate.objectTitles)
+    : undefined;
+  const insightVisibility = hasOwn(candidate, "insightVisibility")
+    ? normalizeControlledEditInsightVisibility(candidate.insightVisibility)
+    : undefined;
+  const semanticValidation = validateAnalysisWorkbenchSemanticIntent({
+    metrics: rawMetrics,
+    dimensions: rawDimensions,
+    filters: rawFilters,
+    ...(visual !== undefined && visual !== null ? { visual } : {}),
+    dateGrain: dateGrainForControlledDimensions(rawDimensions) || null,
+  });
+  blockers.push(...semanticValidation.blockers);
+
+  if (blockers.length) {
+    return {
+      status: "blocked",
+      edit: null,
+      blockers,
+      warnings: semanticValidation.warnings,
+      assumptions: semanticValidation.assumptions.map((assumption) => ({
+        code: assumption.code,
+        message: assumption.message,
+      })),
+    };
+  }
+
+  const edit: AnalysisWorkbenchControlledEdit = {
+    ...(dateRange ? { dateRange } : {}),
+    ...(rawFilters !== undefined
+      ? { filters: normalizeContextFilters(semanticValidation.repairedIntent.filters) }
+      : {}),
+    ...(rawMetrics !== undefined
+      ? { metrics: uniqueStrings(rawMetrics).filter(isWorkbenchMetric) }
+      : {}),
+    ...(rawDimensions !== undefined
+      ? { dimensions: uniqueStrings(rawDimensions).filter(isWorkbenchDimension) }
+      : {}),
+    ...(sort ? { sort } : {}),
+    ...(limit !== undefined ? { limit } : {}),
+    ...(visual !== undefined ? { visual: semanticValidation.repairedIntent.visual } : {}),
+    ...(objectTitles && Object.keys(objectTitles).length ? { objectTitles } : {}),
+    ...(insightVisibility && Object.keys(insightVisibility).length ? { insightVisibility } : {}),
+  };
+
+  return {
+    status: "ready",
+    edit,
+    blockers: [],
+    warnings: semanticValidation.warnings,
+    assumptions: semanticValidation.assumptions.map((assumption) => ({
+      code: assumption.code,
+      message: assumption.message,
+    })),
+  };
+}
+
+export function applyAnalysisWorkbenchControlledEditsToContext(
+  context: AnalysisWorkbenchContextSnapshot | null,
+  edit: AnalysisWorkbenchControlledEdit | null | undefined,
+): AnalysisWorkbenchContextSnapshot | null {
+  if (!edit) return context;
+
+  return normalizeAnalysisContextSnapshot({
+    ...(context || { filters: [], metrics: [], dimensions: [], visual: null }),
+    ...(hasOwn(edit, "dateRange") ? { dateRange: edit.dateRange } : {}),
+    ...(hasOwn(edit, "filters") ? { filters: edit.filters || [] } : {}),
+    ...(hasOwn(edit, "metrics") ? { metrics: edit.metrics || [] } : {}),
+    ...(hasOwn(edit, "dimensions") ? { dimensions: edit.dimensions || [] } : {}),
+    ...(hasOwn(edit, "visual") ? { visual: edit.visual || null } : {}),
+  });
+}
+
+export function applyAnalysisWorkbenchControlledEditsToVisualCards(
+  cards: AnalysisWorkbenchVisualCard[],
+  edit: AnalysisWorkbenchControlledEdit | null | undefined,
+): AnalysisWorkbenchVisualCard[] {
+  if (!edit?.objectTitles) return cards;
+
+  return cards.map((card) => {
+    const title = edit.objectTitles?.[card.id] || edit.objectTitles?.[card.type];
+    return title ? ({ ...card, title } as AnalysisWorkbenchVisualCard) : card;
+  });
+}
+
+export function applyAnalysisWorkbenchControlledEditsToDashboardPacket(
+  packet: AnalysisWorkbenchDashboardPacket | null,
+  edit: AnalysisWorkbenchControlledEdit | null | undefined,
+): AnalysisWorkbenchDashboardPacket | null {
+  if (!packet || !edit) return packet;
+  const visualObjects = applyAnalysisWorkbenchControlledEditsToVisualCards(
+    packet.visualObjects,
+    edit,
+  );
+  const primaryEvidenceTable =
+    packet.primaryEvidenceTable &&
+    (visualObjects.find(
+      (card): card is AnalysisWorkbenchTableVisualCard =>
+        card.type === "flat_table" && card.id === packet.primaryEvidenceTable?.id,
+    ) ||
+      packet.primaryEvidenceTable);
+
+  return {
+    ...packet,
+    primaryEvidenceTable: primaryEvidenceTable || null,
+    visualObjects,
+    insightSummary: {
+      winners: applyControlledInsightVisibility(packet.insightSummary.winners, edit),
+      losers: applyControlledInsightVisibility(packet.insightSummary.losers, edit),
+      anomalies: applyControlledInsightVisibility(packet.insightSummary.anomalies, edit),
+    },
+    nextActions: filterControlledInsightActions(packet.nextActions, edit),
+  };
+}
+
 export function resolveAnalysisRunContext(input: {
   intent?: unknown;
   lineage?: unknown;
@@ -646,6 +820,8 @@ function normalizeDashboardInsights(
         sourceNoteIds: uniqueStrings(
           Array.isArray(candidate.sourceNoteIds) ? candidate.sourceNoteIds : [],
         ),
+        ...(candidate.pinned === true ? { pinned: true } : {}),
+        ...(candidate.hidden === true ? { hidden: true } : {}),
       },
     ];
   });
@@ -855,6 +1031,291 @@ function stringField(value: unknown) {
   return typeof value === "string" && value ? value : "";
 }
 
+function unsupportedControlledEditIssues(candidate: Record<string, unknown>) {
+  const unsupportedFields = [
+    "customSql",
+    "customSQL",
+    "sql",
+    "query",
+    "formula",
+    "formulas",
+    "customFormula",
+    "calculatedField",
+    "calculatedFields",
+  ];
+
+  return unsupportedFields.flatMap((field) =>
+    hasOwn(candidate, field)
+      ? [
+          {
+            code: "unsupported_custom_logic",
+            field,
+            message:
+              "Custom SQL, formulas, and calculated fields are not supported in governed dashboard edits.",
+          },
+        ]
+      : [],
+  );
+}
+
+function normalizeControlledEditDateRange(
+  value: unknown,
+  blockers: WorkbenchSemanticIssue[],
+): AnalysisWorkbenchContextDateRange | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    blockers.push({
+      code: "invalid_date_range",
+      field: "dateRange",
+      message: "Controlled date edits require start and end dates.",
+    });
+    return undefined;
+  }
+
+  const candidate = value as { start?: unknown; end?: unknown; label?: unknown };
+  if (!isDateString(candidate.start) || !isDateString(candidate.end)) {
+    blockers.push({
+      code: "invalid_date_range",
+      field: "dateRange",
+      message: "Controlled date edits require YYYY-MM-DD start and end dates.",
+    });
+    return undefined;
+  }
+
+  const days = inclusiveDateDays(candidate.start, candidate.end);
+  if (days < 1) {
+    blockers.push({
+      code: "invalid_date_range",
+      field: "dateRange",
+      message: "Controlled date edits require an end date on or after the start date.",
+    });
+    return undefined;
+  }
+
+  return {
+    start: candidate.start,
+    end: candidate.end,
+    days,
+    label:
+      typeof candidate.label === "string" && candidate.label.trim()
+        ? sanitizeControlledTitle(candidate.label)
+        : `${candidate.start} to ${candidate.end}`,
+  };
+}
+
+function normalizeControlledEditFilters(
+  value: unknown,
+  blockers: WorkbenchSemanticIssue[],
+): Array<{ field: string; operator: string; value: string }> {
+  if (!Array.isArray(value)) {
+    blockers.push({
+      code: "invalid_filters",
+      field: "filters",
+      message: "Controlled filter edits must be an array of governed filters.",
+    });
+    return [];
+  }
+
+  return value.flatMap((filter) => {
+    if (!filter || typeof filter !== "object" || Array.isArray(filter)) return [];
+    const candidate = filter as { field?: unknown; operator?: unknown; value?: unknown };
+    if (typeof candidate.field !== "string" || typeof candidate.value !== "string") {
+      blockers.push({
+        code: "invalid_filter",
+        field: "filters",
+        message: "Controlled filter edits require string field and value.",
+      });
+      return [];
+    }
+    return [
+      {
+        field: candidate.field,
+        operator: candidate.operator === "contains" ? "contains" : "equals",
+        value: candidate.value,
+      },
+    ];
+  });
+}
+
+function normalizeControlledEditVisual(
+  value: unknown,
+  blockers: WorkbenchSemanticIssue[],
+): WorkbenchSemanticVisualIntent | null {
+  if (value === null) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    blockers.push({
+      code: "invalid_visual",
+      field: "visual",
+      message: "Controlled visual edits require a governed visual object.",
+    });
+    return null;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.type !== "string") {
+    blockers.push({
+      code: "invalid_visual",
+      field: "visual.type",
+      message: "Controlled visual edits require a governed visual type.",
+    });
+    return null;
+  }
+
+  return {
+    type: candidate.type,
+    metrics: arrayStrings(candidate.metrics),
+    dimensions: arrayStrings(candidate.dimensions),
+    ...(typeof candidate.rowDimension === "string"
+      ? { rowDimension: candidate.rowDimension }
+      : {}),
+    ...(typeof candidate.columnDimension === "string"
+      ? { columnDimension: candidate.columnDimension }
+      : {}),
+    ...(typeof candidate.x === "string" ? { x: candidate.x } : {}),
+    ...(typeof candidate.y === "string" ? { y: candidate.y } : {}),
+  };
+}
+
+function normalizeControlledEditSort(
+  value: unknown,
+  blockers: WorkbenchSemanticIssue[],
+): AnalysisWorkbenchControlledEdit["sort"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    blockers.push({
+      code: "invalid_sort",
+      field: "sort",
+      message: "Controlled sort edits require a field and direction.",
+    });
+    return undefined;
+  }
+
+  const candidate = value as { field?: unknown; direction?: unknown };
+  const field = typeof candidate.field === "string" ? candidate.field : "";
+  if (!isWorkbenchMetric(field) && !isWorkbenchDimension(field)) {
+    blockers.push({
+      code: "invalid_sort_field",
+      field: "sort.field",
+      value: field,
+      message: `Sort field "${field}" is not approved for Meta Ads workbench analysis.`,
+    });
+    return undefined;
+  }
+
+  return {
+    field,
+    direction: candidate.direction === "asc" ? "asc" : "desc",
+  };
+}
+
+function normalizeControlledEditLimit(
+  value: unknown,
+  blockers: WorkbenchSemanticIssue[],
+): number | undefined {
+  const limit = typeof value === "number" ? Math.trunc(value) : Number(value);
+  if (!Number.isFinite(limit) || limit < 1 || limit > 100) {
+    blockers.push({
+      code: "invalid_limit",
+      field: "limit",
+      message: "Controlled limit edits must be a number from 1 to 100.",
+    });
+    return undefined;
+  }
+
+  return Math.trunc(limit);
+}
+
+function normalizeControlledEditTitles(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).flatMap(([key, title]) => {
+      if (typeof title !== "string") return [];
+      const cleanKey = key.trim();
+      const cleanTitle = sanitizeControlledTitle(title);
+      return cleanKey && cleanTitle ? [[cleanKey, cleanTitle]] : [];
+    }),
+  );
+}
+
+function normalizeControlledEditInsightVisibility(
+  value: unknown,
+): NonNullable<AnalysisWorkbenchControlledEdit["insightVisibility"]> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).flatMap(([key, visibility]) => {
+      if (!visibility || typeof visibility !== "object" || Array.isArray(visibility)) return [];
+      const candidate = visibility as { pinned?: unknown; hidden?: unknown };
+      const cleanKey = key.trim();
+      if (!cleanKey) return [];
+      return [
+        [
+          cleanKey,
+          {
+            ...(candidate.pinned === true ? { pinned: true } : {}),
+            ...(candidate.hidden === true ? { hidden: true } : {}),
+          },
+        ],
+      ];
+    }),
+  );
+}
+
+function applyControlledInsightVisibility<
+  T extends AnalysisWorkbenchDashboardInsight,
+>(insights: T[], edit: AnalysisWorkbenchControlledEdit): T[] {
+  if (!edit.insightVisibility) return insights;
+
+  return insights.map((insight) => {
+    const visibility = edit.insightVisibility?.[insight.id];
+    return visibility ? ({ ...insight, ...visibility } as T) : insight;
+  });
+}
+
+function filterControlledInsightActions(
+  actions: AnalysisWorkbenchDashboardAction[],
+  edit: AnalysisWorkbenchControlledEdit,
+) {
+  const hiddenInsightIds = Object.entries(edit.insightVisibility || {})
+    .filter(([, visibility]) => visibility.hidden)
+    .map(([id]) => id);
+  if (!hiddenInsightIds.length) return actions;
+
+  const hiddenActionIds = new Set(
+    hiddenInsightIds.flatMap((id) => {
+      if (id.startsWith("winner")) return ["action_winner"];
+      if (id.startsWith("loser")) return ["action_loser"];
+      if (id.startsWith("anomaly")) return ["action_anomaly"];
+      return [];
+    }),
+  );
+
+  return actions.filter((action) => !hiddenActionIds.has(action.id));
+}
+
+function dateGrainForControlledDimensions(dimensions: string[] | undefined) {
+  if (!dimensions) return null;
+  if (dimensions.includes("date")) return "day";
+  if (dimensions.includes("week")) return "week";
+  if (dimensions.includes("month")) return "month";
+  if (dimensions.includes("quarter")) return "quarter";
+  return null;
+}
+
+function arrayStrings(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function sanitizeControlledTitle(value: string) {
+  return value.trim().replace(/\s+/g, " ").slice(0, 90);
+}
+
+function inclusiveDateDays(start: string, end: string) {
+  const startTime = Date.parse(`${start}T00:00:00.000Z`);
+  const endTime = Date.parse(`${end}T00:00:00.000Z`);
+  if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) return 0;
+  return Math.floor((endTime - startTime) / 86_400_000) + 1;
+}
+
 function normalizeAnalysisContextSnapshot(value: unknown): AnalysisWorkbenchContextSnapshot | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const candidate = value as {
@@ -993,4 +1454,8 @@ function isDateString(value: unknown): value is string {
 
 function sameJson(left: unknown, right: unknown) {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function hasOwn(object: object, key: string) {
+  return Object.prototype.hasOwnProperty.call(object, key);
 }

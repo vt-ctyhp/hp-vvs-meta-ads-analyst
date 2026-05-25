@@ -4,15 +4,19 @@ import {
   AlertTriangle,
   BarChart3,
   Clock3,
+  EyeOff,
   FileText,
   Info,
   LayoutDashboard,
   Loader2,
+  Pin,
+  RefreshCw,
   Send,
+  Settings2,
   Table2,
   X,
 } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 
 import {
   buildAnalysisContextChips,
@@ -21,6 +25,7 @@ import {
   type AnalysisOutputMode,
   type AnalysisWorkbenchDashboardPacket,
   type AnalysisWorkbenchContextChip,
+  type AnalysisWorkbenchControlledEdit,
   type AnalysisRunStatus,
   type AnalysisWorkbenchVisualCard,
   type AnalysisWorkbenchVisualCell,
@@ -46,6 +51,12 @@ const OUTPUT_MODE_HELP: Record<AnalysisOutputMode, string> = {
 
 const OUTPUT_MODES: AnalysisOutputMode[] = ["answer_only", "answer_visuals", "full_dashboard"];
 type StatusKind = "idle" | "success" | "error";
+type ControlledEditDraft = AnalysisWorkbenchControlledEdit;
+
+const EDIT_METRIC_OPTIONS = ["spend", "primary_results", "cpl", "ctr"] as const;
+const EDIT_DIMENSION_OPTIONS = ["campaign_umbrella", "campaign", "ad_set", "creative"] as const;
+const EDIT_FILTER_OPTIONS = ["brand", "campaign_umbrella", "delivery_status"] as const;
+const EDIT_CHART_OPTIONS = ["bar_chart", "line_chart", "flat_table", "pivot_table", "scatter_chart"] as const;
 
 export function AnalysisWorkbenchClient({ initialRuns }: Props) {
   const [runs, setRuns] = useState(initialRuns);
@@ -56,6 +67,7 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
   const [outputMode, setOutputMode] = useState<AnalysisOutputMode>("answer_visuals");
   const [loading, setLoading] = useState(false);
   const [promoting, setPromoting] = useState(false);
+  const [rerunning, setRerunning] = useState(false);
   const [status, setStatus] = useState("");
   const [statusKind, setStatusKind] = useState<StatusKind>("idle");
   const [removedContextKeys, setRemovedContextKeys] = useState<string[]>([]);
@@ -167,6 +179,40 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
     }
   }
 
+  async function rerunSelectedRun(edits?: ControlledEditDraft) {
+    if (!selectedRun) return;
+
+    setRerunning(true);
+    setStatus("");
+    setStatusKind("idle");
+
+    try {
+      const response = await fetch("/api/analysis-runs", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "rerun",
+          runId: selectedRun.id,
+          ...(edits && Object.keys(edits).length ? { edits } : {}),
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Run rerun failed");
+      const run = payload.run as AnalysisWorkbenchRun;
+      setSelectedRun(run);
+      setRuns((current) => [run, ...current.filter((item) => item.id !== run.id)].slice(0, 12));
+      setOutputMode(normalizeAnalysisOutputMode(run.outputMode));
+      setRemovedContextKeys([]);
+      setStatus(edits && Object.keys(edits).length ? "Edited run created." : "Run refreshed.");
+      setStatusKind("success");
+    } catch (error) {
+      setStatus(translateError(error));
+      setStatusKind("error");
+    } finally {
+      setRerunning(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-hp-foundation px-4 py-6 text-hp-body md:px-8">
       <div className="mx-auto max-w-7xl">
@@ -254,6 +300,9 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
                 run={selectedRun}
                 onPromote={promoteSelectedRun}
                 promoting={promoting}
+                onRerun={() => rerunSelectedRun()}
+                onApplyEdits={rerunSelectedRun}
+                rerunning={rerunning}
               />
             ) : (
               <EmptyRunDetail />
@@ -393,11 +442,17 @@ export function StatusNotice({
 export function RunDetail({
   run,
   onPromote,
+  onRerun,
+  onApplyEdits,
   promoting = false,
+  rerunning = false,
 }: {
   run: AnalysisWorkbenchRun;
   onPromote?: () => void;
+  onRerun?: () => void;
+  onApplyEdits?: (edits: ControlledEditDraft) => void;
   promoting?: boolean;
+  rerunning?: boolean;
 }) {
   const canPromote = run.status === "completed" && run.outputMode !== "full_dashboard" && onPromote;
 
@@ -412,6 +467,21 @@ export function RunDetail({
           <p className="mt-2 max-w-3xl text-sm leading-6 text-hp-body">{run.prompt}</p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          {onRerun ? (
+            <button
+              type="button"
+              onClick={onRerun}
+              disabled={rerunning}
+              className="inline-flex h-10 items-center justify-center gap-2 border border-hp-rule bg-hp-card px-3 text-[11px] uppercase tracking-[0.14em] text-hp-body transition-colors hover:border-hp-ink hover:bg-hp-inset disabled:hover:border-hp-rule disabled:hover:bg-hp-card"
+            >
+              {rerunning ? (
+                <Loader2 size={14} className="animate-spin" aria-hidden />
+              ) : (
+                <RefreshCw size={14} aria-hidden />
+              )}
+              Rerun latest data
+            </button>
+          ) : null}
           {canPromote ? (
             <button
               type="button"
@@ -439,6 +509,10 @@ export function RunDetail({
         <RunField label="Run ID" value={run.id} />
       </div>
 
+      {onApplyEdits ? (
+        <ControlledEditPanel run={run} onApply={onApplyEdits} disabled={rerunning} />
+      ) : null}
+
       <section className="border-b border-hp-rule py-5">
         <div className="mb-3 flex items-center gap-2 text-hp-ink">
           <FileText size={17} />
@@ -447,7 +521,9 @@ export function RunDetail({
         <p className="max-w-3xl text-sm leading-6 text-hp-body">{run.answer.summary}</p>
       </section>
 
-      {run.dashboardPacket ? <DashboardPacketView packet={run.dashboardPacket} /> : null}
+      {run.dashboardPacket ? (
+        <DashboardPacketView packet={run.dashboardPacket} onApplyEdits={onApplyEdits} />
+      ) : null}
 
       <SourceNotes notes={run.sourceNotes} />
 
@@ -503,6 +579,205 @@ export function VisualCardGrid({
   );
 }
 
+function ControlledEditPanel({
+  run,
+  onApply,
+  disabled,
+}: {
+  run: AnalysisWorkbenchRun;
+  onApply: (edits: ControlledEditDraft) => void;
+  disabled?: boolean;
+}) {
+  const context = resolveAnalysisRunContext(run);
+  const firstCard = run.visualCards[0] || run.dashboardPacket?.visualObjects[0] || null;
+  const [start, setStart] = useState(context?.dateRange?.start || "");
+  const [end, setEnd] = useState(context?.dateRange?.end || "");
+  const [filterField, setFilterField] =
+    useState<(typeof EDIT_FILTER_OPTIONS)[number]>("campaign_umbrella");
+  const [filterValue, setFilterValue] = useState(context?.filters?.[0]?.value || "");
+  const [metric, setMetric] = useState<(typeof EDIT_METRIC_OPTIONS)[number]>(
+    (context?.metrics?.[0] as (typeof EDIT_METRIC_OPTIONS)[number]) || "spend",
+  );
+  const [dimension, setDimension] = useState<(typeof EDIT_DIMENSION_OPTIONS)[number]>(
+    (context?.dimensions?.[0] as (typeof EDIT_DIMENSION_OPTIONS)[number]) || "campaign_umbrella",
+  );
+  const [chartType, setChartType] = useState<(typeof EDIT_CHART_OPTIONS)[number]>(
+    (firstCard?.type as (typeof EDIT_CHART_OPTIONS)[number]) || "bar_chart",
+  );
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const [limit, setLimit] = useState("10");
+  const [objectTitle, setObjectTitle] = useState(firstCard?.title || "");
+
+  function submitEdits(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const nextLimit = Number(limit);
+    const edits: ControlledEditDraft = {
+      ...(start && end ? { dateRange: { start, end, days: 1, label: `${start} to ${end}` } } : {}),
+      ...(filterValue.trim()
+        ? {
+            filters: [
+              { field: filterField, operator: "equals" as const, value: filterValue.trim() },
+            ],
+          }
+        : {}),
+      metrics: [metric],
+      dimensions: [dimension],
+      sort: { field: metric, direction: sortDirection },
+      ...(Number.isFinite(nextLimit) && nextLimit > 0 ? { limit: nextLimit } : {}),
+      visual: { type: chartType, metrics: [metric], dimensions: [dimension] },
+      ...(firstCard && objectTitle.trim()
+        ? { objectTitles: { [firstCard.id]: objectTitle.trim() } }
+        : {}),
+    };
+
+    onApply(edits);
+  }
+
+  return (
+    <section className="border-b border-hp-rule py-5">
+      <div className="mb-4 flex items-center gap-2 text-hp-ink">
+        <Settings2 size={17} aria-hidden />
+        <span className="text-[11px] uppercase tracking-[0.14em]">Controlled Edits</span>
+      </div>
+      <form onSubmit={submitEdits} className="grid gap-3 lg:grid-cols-3">
+        <label className="grid gap-1 text-sm text-hp-body">
+          <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+            Date range
+          </span>
+          <span className="grid grid-cols-2 gap-2">
+            <input
+              type="date"
+              value={start}
+              onChange={(event) => setStart(event.target.value)}
+              className="h-10 border border-hp-rule bg-hp-foundation px-2 text-sm text-hp-ink outline-none focus:border-hp-ink"
+            />
+            <input
+              type="date"
+              value={end}
+              onChange={(event) => setEnd(event.target.value)}
+              className="h-10 border border-hp-rule bg-hp-foundation px-2 text-sm text-hp-ink outline-none focus:border-hp-ink"
+            />
+          </span>
+        </label>
+        <label className="grid gap-1 text-sm text-hp-body">
+          <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Filter</span>
+          <span className="grid grid-cols-[0.9fr_1.1fr] gap-2">
+            <select
+              value={filterField}
+              onChange={(event) =>
+                setFilterField(event.target.value as (typeof EDIT_FILTER_OPTIONS)[number])
+              }
+              className="h-10 border border-hp-rule bg-hp-foundation px-2 text-sm text-hp-ink outline-none focus:border-hp-ink"
+            >
+              {EDIT_FILTER_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {editLabel(option)}
+                </option>
+              ))}
+            </select>
+            <input
+              value={filterValue}
+              onChange={(event) => setFilterValue(event.target.value)}
+              placeholder="Book Appts US"
+              className="h-10 border border-hp-rule bg-hp-foundation px-2 text-sm text-hp-ink outline-none placeholder:text-hp-muted focus:border-hp-ink"
+            />
+          </span>
+        </label>
+        <label className="grid gap-1 text-sm text-hp-body">
+          <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Metric</span>
+          <select
+            value={metric}
+            onChange={(event) => setMetric(event.target.value as (typeof EDIT_METRIC_OPTIONS)[number])}
+            className="h-10 border border-hp-rule bg-hp-foundation px-2 text-sm text-hp-ink outline-none focus:border-hp-ink"
+          >
+            {EDIT_METRIC_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {editLabel(option)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="grid gap-1 text-sm text-hp-body">
+          <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Grouping</span>
+          <select
+            value={dimension}
+            onChange={(event) =>
+              setDimension(event.target.value as (typeof EDIT_DIMENSION_OPTIONS)[number])
+            }
+            className="h-10 border border-hp-rule bg-hp-foundation px-2 text-sm text-hp-ink outline-none focus:border-hp-ink"
+          >
+            {EDIT_DIMENSION_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {editLabel(option)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="grid gap-1 text-sm text-hp-body">
+          <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+            Chart type
+          </span>
+          <select
+            value={chartType}
+            onChange={(event) =>
+              setChartType(event.target.value as (typeof EDIT_CHART_OPTIONS)[number])
+            }
+            className="h-10 border border-hp-rule bg-hp-foundation px-2 text-sm text-hp-ink outline-none focus:border-hp-ink"
+          >
+            {EDIT_CHART_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {editLabel(option)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="grid gap-1 text-sm text-hp-body">
+          <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Sort</span>
+          <span className="grid grid-cols-[1fr_72px] gap-2">
+            <select
+              value={sortDirection}
+              onChange={(event) => setSortDirection(event.target.value === "asc" ? "asc" : "desc")}
+              className="h-10 border border-hp-rule bg-hp-foundation px-2 text-sm text-hp-ink outline-none focus:border-hp-ink"
+            >
+              <option value="desc">High first</option>
+              <option value="asc">Low first</option>
+            </select>
+            <input
+              type="number"
+              min={1}
+              max={100}
+              value={limit}
+              onChange={(event) => setLimit(event.target.value)}
+              aria-label="Limit"
+              className="h-10 border border-hp-rule bg-hp-foundation px-2 text-sm text-hp-ink outline-none focus:border-hp-ink"
+            />
+          </span>
+        </label>
+        <label className="grid gap-1 text-sm text-hp-body lg:col-span-2">
+          <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+            Object title
+          </span>
+          <input
+            value={objectTitle}
+            onChange={(event) => setObjectTitle(event.target.value)}
+            className="h-10 border border-hp-rule bg-hp-foundation px-2 text-sm text-hp-ink outline-none focus:border-hp-ink"
+          />
+        </label>
+        <div className="flex items-end">
+          <button
+            type="submit"
+            disabled={disabled}
+            className="inline-flex h-10 w-full items-center justify-center gap-2 bg-hp-ink px-4 text-[11px] uppercase tracking-[0.14em] text-hp-foundation transition-colors hover:bg-hp-body disabled:hover:bg-hp-ink"
+          >
+            {disabled ? <Loader2 size={14} className="animate-spin" aria-hidden /> : null}
+            Apply edits
+          </button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
 export function EmptyRunDetail() {
   return (
     <div className="flex min-h-96 items-center justify-center border border-dashed border-hp-rule bg-hp-foundation p-6 text-center">
@@ -511,7 +786,13 @@ export function EmptyRunDetail() {
   );
 }
 
-function DashboardPacketView({ packet }: { packet: AnalysisWorkbenchDashboardPacket }) {
+function DashboardPacketView({
+  packet,
+  onApplyEdits,
+}: {
+  packet: AnalysisWorkbenchDashboardPacket;
+  onApplyEdits?: (edits: ControlledEditDraft) => void;
+}) {
   const sourceNotes = packet.sourceNotes.map(normalizeSourceNote).filter(Boolean) as Array<{
     id: string;
     label: string;
@@ -548,9 +829,21 @@ function DashboardPacketView({ packet }: { packet: AnalysisWorkbenchDashboardPac
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-3">
-        <PacketInsightGroup title="Winners" insights={packet.insightSummary.winners} />
-        <PacketInsightGroup title="Losers" insights={packet.insightSummary.losers} />
-        <PacketInsightGroup title="Anomalies" insights={packet.insightSummary.anomalies} />
+        <PacketInsightGroup
+          title="Winners"
+          insights={packet.insightSummary.winners}
+          onApplyEdits={onApplyEdits}
+        />
+        <PacketInsightGroup
+          title="Losers"
+          insights={packet.insightSummary.losers}
+          onApplyEdits={onApplyEdits}
+        />
+        <PacketInsightGroup
+          title="Anomalies"
+          insights={packet.insightSummary.anomalies}
+          onApplyEdits={onApplyEdits}
+        />
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-3">
@@ -588,19 +881,60 @@ function PacketStat({ label, value }: { label: string; value: string }) {
 function PacketInsightGroup({
   title,
   insights,
+  onApplyEdits,
 }: {
   title: string;
   insights: AnalysisWorkbenchDashboardPacket["insightSummary"]["winners"];
+  onApplyEdits?: (edits: ControlledEditDraft) => void;
 }) {
+  const visibleInsights = insights.filter((insight) => !insight.hidden);
+
   return (
     <div className="border border-hp-rule bg-hp-foundation p-3">
       <h4 className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{title}</h4>
-      {insights.length ? (
+      {visibleInsights.length ? (
         <ul className="mt-2 space-y-2">
-          {insights.map((insight) => (
+          {visibleInsights.map((insight) => (
             <li key={insight.id} className="text-sm leading-5 text-hp-body">
-              <span className="font-bold text-hp-ink">{insight.title}: </span>
-              {insight.detail}
+              <div>
+                <span className="font-bold text-hp-ink">{insight.title}: </span>
+                {insight.detail}
+                {insight.pinned ? (
+                  <span className="ml-2 border border-hp-rule px-1.5 py-0.5 text-[9px] uppercase tracking-[0.14em] text-hp-muted">
+                    Pinned
+                  </span>
+                ) : null}
+              </div>
+              {onApplyEdits ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    aria-label={`Pin insight ${insight.id}`}
+                    onClick={() =>
+                      onApplyEdits({
+                        insightVisibility: { [insight.id]: { pinned: true } },
+                      })
+                    }
+                    className="inline-flex h-8 items-center gap-1 border border-hp-rule bg-hp-card px-2 text-[10px] uppercase tracking-[0.14em] text-hp-body hover:border-hp-ink hover:text-hp-ink"
+                  >
+                    <Pin size={12} aria-hidden />
+                    {insight.pinned ? "Pinned" : "Pin"}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Hide insight ${insight.id}`}
+                    onClick={() =>
+                      onApplyEdits({
+                        insightVisibility: { [insight.id]: { hidden: true } },
+                      })
+                    }
+                    className="inline-flex h-8 items-center gap-1 border border-hp-rule bg-hp-card px-2 text-[10px] uppercase tracking-[0.14em] text-hp-body hover:border-hp-ink hover:text-hp-ink"
+                  >
+                    <EyeOff size={12} aria-hidden />
+                    Hide insight
+                  </button>
+                </div>
+              ) : null}
             </li>
           ))}
         </ul>
@@ -964,6 +1298,22 @@ function formatVisualCell(cell: AnalysisWorkbenchVisualCell | undefined) {
   if (cell === null || cell === undefined || cell === "") return "n/a";
   if (typeof cell === "object") return cell.formattedValue || String(cell.value ?? "n/a");
   return String(cell);
+}
+
+function editLabel(value: string) {
+  if (value === "campaign_umbrella") return "Campaign group";
+  if (value === "primary_results") return "Primary KPI";
+  if (value === "ad_set") return "Ad set";
+  if (value === "bar_chart") return "Bar chart";
+  if (value === "line_chart") return "Line chart";
+  if (value === "flat_table") return "Flat table";
+  if (value === "pivot_table") return "Pivot table";
+  if (value === "scatter_chart") return "Scatter chart";
+  if (value === "cpl") return "CPL";
+  if (value === "ctr") return "CTR";
+  return value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function lineChartPoints(points: Array<{ value: number }>) {
