@@ -1395,7 +1395,7 @@ export function buildCustomerJourneyLedgerRows(input: {
       consumedConversions.add(conversion);
       if (!visitor) {
         anchoredRows.push(withAppointmentFields(
-          conversionOnlyLedgerRow(conversion, events, input.conversions),
+          conversionOnlyLedgerRow(conversion, events, input.conversions, true),
           appointment,
         ));
         continue;
@@ -1407,7 +1407,7 @@ export function buildCustomerJourneyLedgerRows(input: {
         sessionsById: sessionsByVisitorAndId.get(visitor.visitor_id),
       });
       anchoredRows.push(withAppointmentFields(
-        conversionLedgerRow({ allConversions: input.conversions, conversion, events, session, visitor }),
+        conversionLedgerRow({ allConversions: input.conversions, conversion, events, session, visitor, isAppointmentAnchored: true }),
         appointment,
       ));
       continue;
@@ -1429,6 +1429,7 @@ export function buildCustomerJourneyLedgerRows(input: {
         conversion,
         conversion.visitor_id ? eventsByVisitor.get(conversion.visitor_id) || [] : [],
         input.conversions,
+        false,
       ));
       continue;
     }
@@ -1439,7 +1440,7 @@ export function buildCustomerJourneyLedgerRows(input: {
       sessionsById: sessionsByVisitorAndId.get(visitor.visitor_id),
     });
     const visitorEvents = eventsByVisitor.get(visitor.visitor_id) || [];
-    anchoredRows.push(conversionLedgerRow({ allConversions: input.conversions, conversion, events: visitorEvents, session, visitor }));
+    anchoredRows.push(conversionLedgerRow({ allConversions: input.conversions, conversion, events: visitorEvents, session, visitor, isAppointmentAnchored: false }));
   }
 
   // Phase 2 (v3 plan): emit visitor-only rows for any visitor that wasn't
@@ -1545,8 +1546,9 @@ function conversionLedgerRow(input: {
   events: CustomerJourneyLedgerEventRow[];
   session: CustomerJourneyLedgerSessionRow | null;
   visitor: CustomerJourneyLedgerVisitorRow;
+  isAppointmentAnchored: boolean;
 }): CustomerJourneyLedgerRow {
-  const { allConversions, conversion, events, session, visitor } = input;
+  const { allConversions, conversion, events, session, visitor, isAppointmentAnchored } = input;
   const eventTouches = events.flatMap(eventAttributionTouches);
   const paidTouch = selectPaidTouchForConversion(
     conversion,
@@ -1616,7 +1618,7 @@ function conversionLedgerRow(input: {
     osName,
     placement,
     sessionId: conversion.session_id || session?.session_id || null,
-    stageKeys: stageKeysForConversion({ conversion, events, paidTouch }),
+    stageKeys: stageKeysForConversion({ conversion, events, paidTouch, isAppointmentAnchored }),
     visitorId: visitor.visitor_id,
   };
 }
@@ -1625,6 +1627,7 @@ function conversionOnlyLedgerRow(
   conversion: CustomerJourneyLedgerConversionRow,
   events: CustomerJourneyLedgerEventRow[],
   allConversions: CustomerJourneyLedgerConversionRow[] = [conversion],
+  isAppointmentAnchored = false,
 ): CustomerJourneyLedgerRow {
   const eventTouches = events.flatMap(eventAttributionTouches);
   const paidTouch = selectPaidTouchForConversion(
@@ -1683,7 +1686,7 @@ function conversionOnlyLedgerRow(
     osName,
     placement,
     sessionId: conversion.session_id || null,
-    stageKeys: stageKeysForConversion({ conversion, events, paidTouch }),
+    stageKeys: stageKeysForConversion({ conversion, events, paidTouch, isAppointmentAnchored }),
     visitorId: conversion.visitor_id || null,
   };
 }
@@ -1843,8 +1846,15 @@ function stageKeysForConversion(input: {
   conversion: CustomerJourneyLedgerConversionRow;
   events: CustomerJourneyLedgerEventRow[];
   paidTouch: AttributionTouch | null;
+  isAppointmentAnchored: boolean;
 }) {
-  const keys = new Set<string>(["confirmed_website_bookings"]);
+  // Only tag "confirmed_website_bookings" when the conversion is actually
+  // anchored to a valid Acuity appointment. Orphan conversions (no matching
+  // appt row, or appt canceled / rescheduled / outside window) still surface
+  // in the ledger and keep their paid_meta_bookings tag if applicable, but
+  // they aren't "confirmed bookings" by the funnel's definition.
+  const keys = new Set<string>();
+  if (input.isAppointmentAnchored) keys.add("confirmed_website_bookings");
   const conversionAt = timestampValue(input.conversion.occurred_at);
   const sessionId = input.conversion.session_id;
   const relevantEvents = input.events.filter((event) => {
