@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   BarChart3,
   Clock3,
+  Download,
   EyeOff,
   FileText,
   Info,
@@ -31,6 +32,15 @@ import {
   type AnalysisWorkbenchVisualCell,
   type AnalysisWorkbenchRun,
 } from "@/lib/analysis-workbench-contract";
+import {
+  buildAnalysisWorkbenchChartPngExportSource,
+  buildAnalysisWorkbenchPdfReportExport,
+  buildAnalysisWorkbenchTableCsvExport,
+  isAnalysisWorkbenchChartCard,
+  isAnalysisWorkbenchTableCard,
+  type AnalysisWorkbenchChartExportCard,
+  type AnalysisWorkbenchTableExportCard,
+} from "@/lib/analysis-workbench-export";
 import { translateError } from "@/lib/glossary";
 
 type Props = {
@@ -522,12 +532,21 @@ export function RunDetail({
       </section>
 
       {run.dashboardPacket ? (
-        <DashboardPacketView packet={run.dashboardPacket} onApplyEdits={onApplyEdits} />
+        <DashboardPacketView
+          packet={run.dashboardPacket}
+          runId={run.id}
+          onApplyEdits={onApplyEdits}
+        />
       ) : null}
 
       <SourceNotes notes={run.sourceNotes} />
 
-      <VisualCardGrid cards={run.visualCards} runStatus={run.status} />
+      <VisualCardGrid
+        cards={run.visualCards}
+        runStatus={run.status}
+        runId={run.id}
+        sourceNotes={run.sourceNotes}
+      />
 
       <section className="grid gap-4 py-5 md:grid-cols-2">
         <StructuredStatus icon={<Table2 size={17} />} label="Facts" value={statusFromJson(run.facts)} />
@@ -544,9 +563,13 @@ export function RunDetail({
 export function VisualCardGrid({
   cards,
   runStatus,
+  runId,
+  sourceNotes = [],
 }: {
   cards: AnalysisWorkbenchVisualCard[];
   runStatus: AnalysisRunStatus;
+  runId?: string;
+  sourceNotes?: AnalysisWorkbenchRun["sourceNotes"];
 }) {
   if (!cards.length) {
     return (
@@ -572,7 +595,7 @@ export function VisualCardGrid({
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
         {cards.map((card) => (
-          <VisualCard key={card.id} card={card} />
+          <VisualCard key={card.id} card={card} runId={runId} sourceNotes={sourceNotes} />
         ))}
       </div>
     </section>
@@ -788,9 +811,11 @@ export function EmptyRunDetail() {
 
 function DashboardPacketView({
   packet,
+  runId,
   onApplyEdits,
 }: {
   packet: AnalysisWorkbenchDashboardPacket;
+  runId: string;
   onApplyEdits?: (edits: ControlledEditDraft) => void;
 }) {
   const sourceNotes = packet.sourceNotes.map(normalizeSourceNote).filter(Boolean) as Array<{
@@ -814,8 +839,15 @@ function DashboardPacketView({
             {packet.directAnswer.summary}
           </p>
         </div>
-        <div className="border border-hp-rule bg-hp-foundation px-3 py-2 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-          {formatDateTime(packet.generatedAt)}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center md:flex-col md:items-end">
+          <ExportButton
+            label="Export PDF"
+            ariaLabel="Export dashboard packet PDF"
+            onClick={() => downloadDashboardPacketPdf(runId, packet)}
+          />
+          <div className="border border-hp-rule bg-hp-foundation px-3 py-2 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+            {formatDateTime(packet.generatedAt)}
+          </div>
         </div>
       </div>
 
@@ -995,13 +1027,29 @@ function SourceNotes({ notes }: { notes: unknown[] }) {
   );
 }
 
-function VisualCard({ card }: { card: AnalysisWorkbenchVisualCard }) {
+function VisualCard({
+  card,
+  runId,
+  sourceNotes,
+}: {
+  card: AnalysisWorkbenchVisualCard;
+  runId?: string;
+  sourceNotes: AnalysisWorkbenchRun["sourceNotes"];
+}) {
   if (card.type === "metric_card") return <MetricVisualCard card={card} />;
-  if (card.type === "flat_table") return <TableVisualCard card={card} />;
-  if (card.type === "bar_chart") return <BarVisualCard card={card} />;
-  if (card.type === "pivot_table") return <PivotVisualCard card={card} />;
-  if (card.type === "scatter_chart") return <ScatterVisualCard card={card} />;
-  return <LineVisualCard card={card} />;
+  if (card.type === "flat_table") {
+    return <TableVisualCard card={card} runId={runId} sourceNotes={sourceNotes} />;
+  }
+  if (card.type === "bar_chart") {
+    return <BarVisualCard card={card} runId={runId} sourceNotes={sourceNotes} />;
+  }
+  if (card.type === "pivot_table") {
+    return <PivotVisualCard card={card} runId={runId} sourceNotes={sourceNotes} />;
+  }
+  if (card.type === "scatter_chart") {
+    return <ScatterVisualCard card={card} runId={runId} sourceNotes={sourceNotes} />;
+  }
+  return <LineVisualCard card={card} runId={runId} sourceNotes={sourceNotes} />;
 }
 
 function MetricVisualCard({ card }: { card: Extract<AnalysisWorkbenchVisualCard, { type: "metric_card" }> }) {
@@ -1015,12 +1063,25 @@ function MetricVisualCard({ card }: { card: Extract<AnalysisWorkbenchVisualCard,
   );
 }
 
-function TableVisualCard({ card }: { card: Extract<AnalysisWorkbenchVisualCard, { type: "flat_table" }> }) {
+function TableVisualCard({
+  card,
+  runId,
+  sourceNotes,
+}: {
+  card: Extract<AnalysisWorkbenchVisualCard, { type: "flat_table" }>;
+  runId?: string;
+  sourceNotes: AnalysisWorkbenchRun["sourceNotes"];
+}) {
   return (
     <section className="overflow-hidden border border-hp-rule bg-hp-foundation">
       <div className="border-b border-hp-rule p-4">
-        <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Flat table</p>
-        <h3 className="mt-2 font-title text-2xl leading-tight text-hp-ink">{card.title}</h3>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Flat table</p>
+            <h3 className="mt-2 font-title text-2xl leading-tight text-hp-ink">{card.title}</h3>
+          </div>
+          <TableExportAction card={card} runId={runId} sourceNotes={sourceNotes} />
+        </div>
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full border-collapse text-sm">
@@ -1067,13 +1128,26 @@ function TableVisualCard({ card }: { card: Extract<AnalysisWorkbenchVisualCard, 
   );
 }
 
-function BarVisualCard({ card }: { card: Extract<AnalysisWorkbenchVisualCard, { type: "bar_chart" }> }) {
+function BarVisualCard({
+  card,
+  runId,
+  sourceNotes,
+}: {
+  card: Extract<AnalysisWorkbenchVisualCard, { type: "bar_chart" }>;
+  runId?: string;
+  sourceNotes: AnalysisWorkbenchRun["sourceNotes"];
+}) {
   const maxValue = Math.max(1, ...card.bars.map((bar) => bar.value));
 
   return (
     <section className="border border-hp-rule bg-hp-foundation p-4">
-      <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Bar chart</p>
-      <h3 className="mt-2 font-title text-2xl leading-tight text-hp-ink">{card.title}</h3>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Bar chart</p>
+          <h3 className="mt-2 font-title text-2xl leading-tight text-hp-ink">{card.title}</h3>
+        </div>
+        <ChartExportAction card={card} runId={runId} sourceNotes={sourceNotes} />
+      </div>
       <div className="mt-4 space-y-3">
         {card.bars.map((bar) => (
           <div key={bar.label} className="grid grid-cols-[minmax(90px,0.8fr)_minmax(120px,1.2fr)_auto] items-center gap-3">
@@ -1093,13 +1167,26 @@ function BarVisualCard({ card }: { card: Extract<AnalysisWorkbenchVisualCard, { 
   );
 }
 
-function LineVisualCard({ card }: { card: Extract<AnalysisWorkbenchVisualCard, { type: "line_chart" }> }) {
+function LineVisualCard({
+  card,
+  runId,
+  sourceNotes,
+}: {
+  card: Extract<AnalysisWorkbenchVisualCard, { type: "line_chart" }>;
+  runId?: string;
+  sourceNotes: AnalysisWorkbenchRun["sourceNotes"];
+}) {
   const polyline = lineChartPoints(card.points);
 
   return (
     <section className="border border-hp-rule bg-hp-foundation p-4">
-      <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Line chart</p>
-      <h3 className="mt-2 font-title text-2xl leading-tight text-hp-ink">{card.title}</h3>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Line chart</p>
+          <h3 className="mt-2 font-title text-2xl leading-tight text-hp-ink">{card.title}</h3>
+        </div>
+        <ChartExportAction card={card} runId={runId} sourceNotes={sourceNotes} />
+      </div>
       <div className="mt-4 border border-hp-rule bg-hp-card p-3">
         {card.points.length ? (
           <>
@@ -1131,12 +1218,25 @@ function LineVisualCard({ card }: { card: Extract<AnalysisWorkbenchVisualCard, {
   );
 }
 
-function PivotVisualCard({ card }: { card: Extract<AnalysisWorkbenchVisualCard, { type: "pivot_table" }> }) {
+function PivotVisualCard({
+  card,
+  runId,
+  sourceNotes,
+}: {
+  card: Extract<AnalysisWorkbenchVisualCard, { type: "pivot_table" }>;
+  runId?: string;
+  sourceNotes: AnalysisWorkbenchRun["sourceNotes"];
+}) {
   return (
     <section className="overflow-hidden border border-hp-rule bg-hp-foundation">
       <div className="border-b border-hp-rule p-4">
-        <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Pivot table</p>
-        <h3 className="mt-2 font-title text-2xl leading-tight text-hp-ink">{card.title}</h3>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Pivot table</p>
+            <h3 className="mt-2 font-title text-2xl leading-tight text-hp-ink">{card.title}</h3>
+          </div>
+          <TableExportAction card={card} runId={runId} sourceNotes={sourceNotes} />
+        </div>
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full border-collapse text-sm">
@@ -1182,13 +1282,26 @@ function PivotVisualCard({ card }: { card: Extract<AnalysisWorkbenchVisualCard, 
   );
 }
 
-function ScatterVisualCard({ card }: { card: Extract<AnalysisWorkbenchVisualCard, { type: "scatter_chart" }> }) {
+function ScatterVisualCard({
+  card,
+  runId,
+  sourceNotes,
+}: {
+  card: Extract<AnalysisWorkbenchVisualCard, { type: "scatter_chart" }>;
+  runId?: string;
+  sourceNotes: AnalysisWorkbenchRun["sourceNotes"];
+}) {
   const points = scatterChartPoints(card.points);
 
   return (
     <section className="border border-hp-rule bg-hp-foundation p-4">
-      <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Scatter chart</p>
-      <h3 className="mt-2 font-title text-2xl leading-tight text-hp-ink">{card.title}</h3>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Scatter chart</p>
+          <h3 className="mt-2 font-title text-2xl leading-tight text-hp-ink">{card.title}</h3>
+        </div>
+        <ChartExportAction card={card} runId={runId} sourceNotes={sourceNotes} />
+      </div>
       <div className="mt-4 border border-hp-rule bg-hp-card p-3">
         {card.points.length ? (
           <>
@@ -1221,6 +1334,136 @@ function ScatterVisualCard({ card }: { card: Extract<AnalysisWorkbenchVisualCard
       <VisualCardMeta card={card} />
     </section>
   );
+}
+
+function TableExportAction({
+  card,
+  runId,
+  sourceNotes,
+}: {
+  card: AnalysisWorkbenchVisualCard;
+  runId?: string;
+  sourceNotes: AnalysisWorkbenchRun["sourceNotes"];
+}) {
+  if (!runId || !isAnalysisWorkbenchTableCard(card)) return null;
+
+  return (
+    <ExportButton
+      label="Export CSV"
+      ariaLabel={`Export ${card.title} CSV`}
+      onClick={() => downloadTableCsv(runId, card, sourceNotes)}
+    />
+  );
+}
+
+function ChartExportAction({
+  card,
+  runId,
+  sourceNotes,
+}: {
+  card: AnalysisWorkbenchVisualCard;
+  runId?: string;
+  sourceNotes: AnalysisWorkbenchRun["sourceNotes"];
+}) {
+  if (!runId || !isAnalysisWorkbenchChartCard(card)) return null;
+
+  return (
+    <ExportButton
+      label="Export PNG"
+      ariaLabel={`Export ${card.title} PNG`}
+      onClick={() => void downloadChartPng(runId, card, sourceNotes)}
+    />
+  );
+}
+
+function ExportButton({
+  label,
+  ariaLabel,
+  onClick,
+}: {
+  label: string;
+  ariaLabel: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={ariaLabel}
+      onClick={onClick}
+      className="inline-flex h-9 shrink-0 items-center justify-center gap-2 border border-hp-rule bg-hp-card px-3 text-[10px] uppercase tracking-[0.14em] text-hp-body transition-colors hover:border-hp-ink hover:bg-hp-inset hover:text-hp-ink"
+    >
+      <Download size={13} aria-hidden />
+      {label}
+    </button>
+  );
+}
+
+function downloadDashboardPacketPdf(runId: string, packet: AnalysisWorkbenchDashboardPacket) {
+  const pdf = buildAnalysisWorkbenchPdfReportExport({ runId, packet });
+  downloadFile(pdf.fileName, pdf.content, pdf.mimeType);
+}
+
+function downloadTableCsv(
+  runId: string,
+  card: AnalysisWorkbenchTableExportCard,
+  sourceNotes: AnalysisWorkbenchRun["sourceNotes"],
+) {
+  const csv = buildAnalysisWorkbenchTableCsvExport({ runId, card, sourceNotes });
+  downloadFile(csv.fileName, csv.content, csv.mimeType);
+}
+
+async function downloadChartPng(
+  runId: string,
+  card: AnalysisWorkbenchChartExportCard,
+  sourceNotes: AnalysisWorkbenchRun["sourceNotes"],
+) {
+  try {
+    const png = buildAnalysisWorkbenchChartPngExportSource({ runId, card, sourceNotes });
+    const svgBlob = new Blob([png.svg], { type: "image/svg+xml;charset=utf-8" });
+    const svgUrl = URL.createObjectURL(svgBlob);
+
+    try {
+      const image = await loadImage(svgUrl);
+      const canvas = document.createElement("canvas");
+      canvas.width = png.width;
+      canvas.height = png.height;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Canvas export is unavailable.");
+      context.drawImage(image, 0, 0, png.width, png.height);
+      const blob = await canvasToBlob(canvas);
+      if (!blob) throw new Error("PNG export is unavailable.");
+      downloadFile(png.fileName, blob, png.mimeType);
+    } finally {
+      URL.revokeObjectURL(svgUrl);
+    }
+  } catch {
+    window.alert("Chart PNG export could not be prepared in this browser.");
+  }
+}
+
+function downloadFile(fileName: string, content: BlobPart | Blob, mimeType: string) {
+  const blob = content instanceof Blob ? content : new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function loadImage(url: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Chart image export failed."));
+    image.src = url;
+  });
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement) {
+  return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
 }
 
 function VisualCardMeta({ card }: { card: AnalysisWorkbenchVisualCard }) {

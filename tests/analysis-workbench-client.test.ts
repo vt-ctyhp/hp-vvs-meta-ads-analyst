@@ -242,6 +242,8 @@ test("run detail renders answer, source notes, and structured visual cards", () 
   assert.match(markup, /Book Appts US/);
   assert.match(markup, /Spend by campaign group/);
   assert.match(markup, /Cash for Gold US/);
+  assert.match(markup, /Export CSV/);
+  assert.match(markup, /Export PNG/);
   assert.match(markup, /Spend trend/);
   assert.match(markup, /2026-05-18/);
   assert.match(markup, /Pivot table/);
@@ -354,6 +356,7 @@ test("run detail exposes promotion and renders saved dashboard packet sections",
   );
 
   assert.match(packetMarkup, /Dashboard Packet/);
+  assert.match(packetMarkup, /Export PDF/);
   assert.match(packetMarkup, /Campaign group evidence/);
   assert.match(packetMarkup, /Winner/);
   assert.match(packetMarkup, /Cash for Gold US trails/);
@@ -559,6 +562,35 @@ function loadModule(filePath: string) {
           },
           resolveAnalysisRunContext(run: { intent?: unknown }) {
             return run.intent || null;
+          },
+        };
+      }
+      if (id === "@/lib/analysis-workbench-export") {
+        return {
+          buildAnalysisWorkbenchChartPngExportSource() {
+            return {
+              fileName: "chart.png",
+              mimeType: "image/png",
+              svg: "<svg />",
+              width: 960,
+              height: 540,
+            };
+          },
+          buildAnalysisWorkbenchPdfReportExport() {
+            return { fileName: "packet.pdf", mimeType: "application/pdf", content: "%PDF-1.4" };
+          },
+          buildAnalysisWorkbenchTableCsvExport() {
+            return { fileName: "table.csv", mimeType: "text/csv;charset=utf-8", content: "Run ID" };
+          },
+          isAnalysisWorkbenchChartCard(card: { type?: string }) {
+            return (
+              card.type === "bar_chart" ||
+              card.type === "line_chart" ||
+              card.type === "scatter_chart"
+            );
+          },
+          isAnalysisWorkbenchTableCard(card: { type?: string }) {
+            return card.type === "flat_table" || card.type === "pivot_table";
           },
         };
       }

@@ -351,6 +351,35 @@ function loadClientModule(filePath: string) {
           },
         };
       }
+      if (id === "@/lib/analysis-workbench-export") {
+        return {
+          buildAnalysisWorkbenchChartPngExportSource() {
+            return {
+              fileName: "chart.png",
+              mimeType: "image/png",
+              svg: "<svg />",
+              width: 960,
+              height: 540,
+            };
+          },
+          buildAnalysisWorkbenchPdfReportExport() {
+            return { fileName: "packet.pdf", mimeType: "application/pdf", content: "%PDF-1.4" };
+          },
+          buildAnalysisWorkbenchTableCsvExport() {
+            return { fileName: "table.csv", mimeType: "text/csv;charset=utf-8", content: "Run ID" };
+          },
+          isAnalysisWorkbenchChartCard(card: { type?: string }) {
+            return (
+              card.type === "bar_chart" ||
+              card.type === "line_chart" ||
+              card.type === "scatter_chart"
+            );
+          },
+          isAnalysisWorkbenchTableCard(card: { type?: string }) {
+            return card.type === "flat_table" || card.type === "pivot_table";
+          },
+        };
+      }
       if (id === "@/lib/glossary") {
         return {
           translateError(error: unknown) {
