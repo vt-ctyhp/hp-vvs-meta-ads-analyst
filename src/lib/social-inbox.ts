@@ -2644,7 +2644,7 @@ async function syncConversations({ page, platform, params = {} }: ConversationSy
     `${page.pageId}/conversations`,
     {
       ...params,
-      fields: "id,updated_time,message_count,unread_count",
+      fields: "id,updated_time,message_count,unread_count,participants",
       limit: String(getPositiveIntegerEnv("META_SOCIAL_SYNC_CONVERSATION_LIMIT", 25)),
     },
     {
@@ -2660,12 +2660,15 @@ async function syncConversations({ page, platform, params = {} }: ConversationSy
       .map((conversation) => {
         const threadId = stringField(conversation.id);
         if (!threadId) return null;
+        const customer = pickCustomerParticipant(conversation.participants, page.pageId);
         return {
           platform,
           thread_id: threadId,
           page_id: page.pageId,
           ig_user_id: platform === "instagram" ? page.igUserId : null,
           thread_type: "message",
+          participant_id: customer.id,
+          participant_name: customer.name,
           message_count: numberField(conversation.message_count) || 0,
           unread_count: numberField(conversation.unread_count) || 0,
           last_message_at: stringField(conversation.updated_time),
@@ -2678,7 +2681,7 @@ async function syncConversations({ page, platform, params = {} }: ConversationSy
   );
 
   const threadById = new Map(threadRows.map((thread) => [String(thread.thread_id), thread]));
-  const maxThreads = getPositiveIntegerEnv("META_SOCIAL_SYNC_MESSAGE_THREAD_LIMIT", 10);
+  const maxThreads = getPositiveIntegerEnv("META_SOCIAL_SYNC_MESSAGE_THREAD_LIMIT", 1000);
   let messageCount = 0;
   const errors: string[] = [];
 
@@ -3958,6 +3961,20 @@ function firstRecord(value: unknown): JsonRecord {
   const data = recordField(value).data;
   const first = Array.isArray(data) ? data[0] : null;
   return isRecord(first) ? first : {};
+}
+
+function pickCustomerParticipant(
+  participants: unknown,
+  pageId: string,
+): { id: string | null; name: string | null } {
+  const participantList = arrayField(recordField(participants).data).filter(isRecord);
+  for (const candidate of participantList) {
+    const id = stringField(candidate.id);
+    if (id && id !== pageId) {
+      return { id, name: stringField(candidate.name) };
+    }
+  }
+  return { id: null, name: null };
 }
 
 function recordField(value: unknown): JsonRecord {
