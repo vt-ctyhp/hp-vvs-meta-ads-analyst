@@ -283,7 +283,7 @@ async function fetchRawInsightRows(
       .range(from, from + pageSize - 1);
 
     if (response.error) throw response.error;
-    const page = (response.data || []) as RawInsightRow[];
+    const page = (response.data || []) as unknown as RawInsightRow[];
     rows.push(...page);
     if (page.length < pageSize) return rows;
   }

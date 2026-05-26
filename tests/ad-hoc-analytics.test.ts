@@ -2,11 +2,99 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  buildComparisonAnswer,
+  buildComparisonFactPack,
+  buildDiagnosisAnswer,
+  buildDiagnosisFactPack,
+  buildRecommendationAnswer,
+  buildRecommendationFactPack,
+  buildAnalysisPlanFromPlannerOutputForPrompt,
   buildAnalysisPlanForPrompt,
+  buildAnalysisRunPreview,
   normalizeAnalysisSpecForPrompt,
+  resolveAnalysisDateRangeForPrompt,
+  validateComparisonNumericGrounding,
+  validateDiagnosisNumericGrounding,
+  validateRecommendationNumericGrounding,
 } from "../src/lib/ad-hoc-analytics.ts";
 
 describe("ad-hoc analytics prompt normalization", () => {
+  it("resolves last month to the previous complete calendar month", () => {
+    const range = resolveAnalysisDateRangeForPrompt(
+      "Show spend by campaign last month",
+      "2026-05-25",
+    );
+
+    assert.deepEqual(range, { start: "2026-04-01", end: "2026-04-30", days: 30 });
+  });
+
+  it("resolves last week and last quarter to previous complete calendar periods", () => {
+    assert.deepEqual(
+      resolveAnalysisDateRangeForPrompt("Show spend last week", "2026-05-27"),
+      { start: "2026-05-18", end: "2026-05-24", days: 7 },
+    );
+    assert.deepEqual(
+      resolveAnalysisDateRangeForPrompt("Show spend last quarter", "2026-05-27"),
+      { start: "2026-01-01", end: "2026-03-31", days: 90 },
+    );
+  });
+
+  it("resolves named months to full calendar months", () => {
+    assert.deepEqual(
+      resolveAnalysisDateRangeForPrompt("Show April spend by campaign group", "2026-05-25"),
+      { start: "2026-04-01", end: "2026-04-30", days: 30 },
+    );
+    assert.deepEqual(
+      resolveAnalysisDateRangeForPrompt("Show April 2026 spend by campaign group", "2026-05-25"),
+      { start: "2026-04-01", end: "2026-04-30", days: 30 },
+    );
+  });
+
+  it("resolves past, recent, and trailing month to rolling 30-day windows", () => {
+    const expected = { start: "2026-04-26", end: "2026-05-25", days: 30 };
+
+    assert.deepEqual(resolveAnalysisDateRangeForPrompt("Show spend past month", "2026-05-25"), expected);
+    assert.deepEqual(resolveAnalysisDateRangeForPrompt("Show spend recent month", "2026-05-25"), expected);
+    assert.deepEqual(resolveAnalysisDateRangeForPrompt("Show spend trailing month", "2026-05-25"), expected);
+  });
+
+  it("resolves since and from month-day dates through latest synced date", () => {
+    const expected = { start: "2026-05-01", end: "2026-05-25", days: 25 };
+
+    assert.deepEqual(resolveAnalysisDateRangeForPrompt("Show spend since May 1", "2026-05-25"), expected);
+    assert.deepEqual(resolveAnalysisDateRangeForPrompt("Show spend from May 1", "2026-05-25"), expected);
+  });
+
+  it("resolves explicit quarter phrases to full calendar quarters", () => {
+    assert.deepEqual(
+      resolveAnalysisDateRangeForPrompt("Show performance for Q1 2026", "2026-05-25"),
+      { start: "2026-01-01", end: "2026-03-31", days: 90 },
+    );
+  });
+
+  it("resolves month-to-date and week-to-date through latest synced date", () => {
+    assert.deepEqual(
+      resolveAnalysisDateRangeForPrompt("Show month-to-date spend", "2026-05-27"),
+      { start: "2026-05-01", end: "2026-05-27", days: 27 },
+    );
+    assert.deepEqual(
+      resolveAnalysisDateRangeForPrompt("Show week-to-date spend", "2026-05-27"),
+      { start: "2026-05-25", end: "2026-05-27", days: 3 },
+    );
+  });
+
+  it("keeps inferred calendar dates ready with explicit assumptions", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "Show spend by campaign last month");
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.clarificationQuestions, []);
+    assert.ok(
+      plan.assumptions.some((assumption) =>
+        assumption.includes("complete calendar period"),
+      ),
+    );
+  });
+
   it("repairs saved specs for cash-for-gold message spend tables", () => {
     const spec = normalizeAnalysisSpecForPrompt(
       {
@@ -144,6 +232,106 @@ describe("ad-hoc analytics prompt normalization", () => {
     ]);
   });
 
+  it("normalizes quoted campaign containing language to a governed contains filter", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Show campaigns containing 'Mother's Day' by spend",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.filters, [
+      { field: "campaign", operator: "contains", value: "Mother's Day" },
+    ]);
+  });
+
+  it("normalizes quoted creative named language to a governed contains filter", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Creative named 'Appointment offer video'",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.filters, [
+      { field: "creative", operator: "contains", value: "Appointment offer video" },
+    ]);
+  });
+
+  it("normalizes explicit unquoted include language without swallowing grouping words", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Show ad sets that include Prospecting Broad by day",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.filters, [
+      { field: "ad_set", operator: "contains", value: "Prospecting Broad" },
+    ]);
+  });
+
+  it("uses known campaign group aliases without inventing creative name filters", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "What creative should we scale for book appointment ads?",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.filters, [
+      { field: "campaign_umbrella", operator: "equals", value: "Book Appts US" },
+    ]);
+    assert.equal(plan.spec.filters.some((filter) => filter.field === "creative"), false);
+  });
+
+  it("does not guess generic unquoted phrases into entity filters", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Show spend by campaign for Mother's Day",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.filters, []);
+  });
+
+  it("normalizes quoted entity names near fields without requiring extra cue words", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Show spend for campaign 'Mother's Day' by day",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.filters, [
+      { field: "campaign", operator: "contains", value: "Mother's Day" },
+    ]);
+  });
+
+  it("removes model-guessed entity filters from generic unquoted phrases", () => {
+    const plan = buildAnalysisPlanFromPlannerOutputForPrompt(
+      {
+        questionType: "recommendation",
+        title: "Creative scale candidates",
+        dateIntent: {
+          phrase: null,
+          dateRange: { preset: "last_30_days" },
+          assumptions: [],
+        },
+        grain: "summary",
+        dimensions: ["creative"],
+        filters: [{ field: "creative", operator: "contains", value: "book appointment ads" }],
+        metrics: ["spend", "leads", "cpl"],
+        sort: { field: "leads", direction: "desc" },
+        limit: 20,
+        visualIntent: { widgets: ["table"], tableLayout: null },
+        assumptions: [],
+        clarificationNeeds: [],
+      },
+      "What creative should we scale for book appointment ads?",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.filters, [
+      { field: "campaign_umbrella", operator: "equals", value: "Book Appts US" },
+    ]);
+  });
+
   it("normalizes creative scaling decisions to creative-level evidence", () => {
     const plan = buildAnalysisPlanForPrompt(
       {},
@@ -162,6 +350,678 @@ describe("ad-hoc analytics prompt normalization", () => {
     ]);
     assert.deepEqual(plan.spec.sort, { field: "leads", direction: "desc" });
     assert.equal(plan.spec.limit, 20);
+  });
+
+  it("plans wasting-money prompts as governed recommendations", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "Which campaigns are wasting money?");
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.equal(plan.questionType, "recommendation");
+    assert.equal(plan.plannerIntent.questionType, "recommendation");
+    assert.deepEqual(plan.spec.dimensions, ["campaign"]);
+    assert.deepEqual(plan.spec.metrics, [
+      "spend",
+      "primary_results",
+      "cpl",
+      "ctr",
+      "frequency",
+    ]);
+    assert.notDeepEqual(plan.spec.metrics, ["spend"]);
+  });
+
+  it("plans trend prompts with metric, date grain, filter, and date intent", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Show bookings by day for book appointment ads this week",
+    );
+
+    assert.equal(plan.questionType, "trend");
+    assert.deepEqual(plan.spec.dateRange, { preset: "week_to_date" });
+    assert.deepEqual(plan.spec.metrics, ["bookings"]);
+    assert.deepEqual(plan.spec.dimensions, ["date"]);
+    assert.deepEqual(plan.spec.filters, [
+      { field: "campaign_umbrella", operator: "equals", value: "Book Appts US" },
+    ]);
+    assert.equal(plan.plannerIntent.dateIntent.phrase, "this week");
+  });
+
+  it("plans all first-wave governed question types", () => {
+    const cases = [
+      ["Show top 10 campaigns by spend", "leaderboard"],
+      ["Compare HP vs VVS by CPL", "comparison"],
+      ["Why did performance drop?", "diagnosis"],
+      ["What should I pause this week?", "recommendation"],
+    ] as const;
+
+    for (const [prompt, questionType] of cases) {
+      const plan = buildAnalysisPlanForPrompt({}, prompt);
+
+      assert.equal(plan.questionType, questionType, prompt);
+      assert.equal(plan.plannerIntent.questionType, questionType, prompt);
+    }
+  });
+
+  it("keeps natural-language persona QA prompts covered across the release gate", () => {
+    const cases = [
+      {
+        persona: "marketing operator leaderboard",
+        prompt: "Show top 10 campaigns by spend",
+        questionType: "leaderboard",
+        validationStatus: "ready",
+      },
+      {
+        persona: "marketing operator trend",
+        prompt: "Show bookings by day for book appointment ads this week",
+        questionType: "trend",
+        validationStatus: "ready",
+      },
+      {
+        persona: "manager comparison",
+        prompt: "Compare HP vs VVS by CPL",
+        questionType: "comparison",
+        validationStatus: "ready",
+      },
+      {
+        persona: "analyst diagnosis",
+        prompt: "Why did performance drop?",
+        questionType: "diagnosis",
+        validationStatus: "ready",
+      },
+      {
+        persona: "marketing operator recommendation",
+        prompt: "What should I pause this week?",
+        questionType: "recommendation",
+        validationStatus: "ready",
+      },
+      {
+        persona: "edge unsupported mixed request",
+        prompt: "Which campaign has best ROAS and spend?",
+        questionType: "leaderboard",
+        validationStatus: "unsupported",
+      },
+      {
+        persona: "edge date semantics",
+        prompt: "Show April 2026 spend by campaign group",
+        questionType: "leaderboard",
+        validationStatus: "ready",
+        dateRange: { preset: "custom", calendar: { unit: "month", month: 4, year: 2026 } },
+        resolvedDateRange: { start: "2026-04-01", end: "2026-04-30", days: 30 },
+      },
+    ] as const;
+
+    for (const entry of cases) {
+      const plan = buildAnalysisPlanForPrompt({}, entry.prompt);
+
+      assert.equal(plan.questionType, entry.questionType, entry.persona);
+      assert.equal(plan.validationStatus, entry.validationStatus, entry.persona);
+      if ("dateRange" in entry) {
+        assert.deepEqual(plan.spec.dateRange, entry.dateRange);
+        assert.deepEqual(
+          resolveAnalysisDateRangeForPrompt(entry.prompt, "2026-05-25"),
+          entry.resolvedDateRange,
+        );
+        assert.ok(
+          plan.assumptions.some((assumption) =>
+            assumption.includes("complete calendar period"),
+          ),
+          entry.persona,
+        );
+      }
+    }
+  });
+
+  it("plans diagnosis prompts with governed entity grain and performance bundle", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "Why did performance drop?");
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.equal(plan.questionType, "diagnosis");
+    assert.deepEqual(plan.spec.dimensions, ["campaign_umbrella"]);
+    assert.deepEqual(plan.spec.metrics, ["primary_results", "spend", "cpl"]);
+    assert.deepEqual(plan.spec.sort, { field: "primary_results", direction: "asc" });
+
+    const weeklyPlan = buildAnalysisPlanForPrompt({}, "What changed this week?");
+    assert.equal(weeklyPlan.questionType, "diagnosis");
+    assert.deepEqual(weeklyPlan.spec.dateRange, { preset: "week_to_date" });
+    assert.deepEqual(weeklyPlan.spec.dimensions, ["campaign_umbrella"]);
+  });
+
+  it("plans brand comparisons as explicit labeled scopes with required side-by-side facts", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "Compare HP vs VVS by CPL");
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.equal(plan.questionType, "comparison");
+    assert.deepEqual(plan.spec.metrics, ["cpl", "spend", "primary_results"]);
+    assert.deepEqual(
+      plan.plannerIntent.comparisonScopes?.map((scope) => ({
+        label: scope.label,
+        scopeType: scope.scopeType,
+        filters: scope.filters,
+        dateRange: scope.dateRange,
+      })),
+      [
+        {
+          label: "HP",
+          scopeType: "entity",
+          filters: [{ field: "brand", operator: "equals", value: "HP" }],
+          dateRange: { preset: "last_30_days" },
+        },
+        {
+          label: "VVS",
+          scopeType: "entity",
+          filters: [{ field: "brand", operator: "equals", value: "VVS" }],
+          dateRange: { preset: "last_30_days" },
+        },
+      ],
+    );
+  });
+
+  it("plans campaign-group comparisons without flattening groups into one impossible filter", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "Cash for Gold vs Book Appointment ads");
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.filters, []);
+    assert.deepEqual(plan.spec.dimensions, ["campaign_umbrella"]);
+    assert.deepEqual(plan.spec.metrics, ["spend", "primary_results", "cpl"]);
+    assert.deepEqual(
+      plan.plannerIntent.comparisonScopes?.map((scope) => ({
+        label: scope.label,
+        scopeType: scope.scopeType,
+        filters: scope.filters,
+      })),
+      [
+        {
+          label: "Cash For Gold",
+          scopeType: "entity",
+          filters: [{ field: "campaign_umbrella", operator: "equals", value: "Cash for Gold US" }],
+        },
+        {
+          label: "Book Appointments",
+          scopeType: "entity",
+          filters: [{ field: "campaign_umbrella", operator: "equals", value: "Book Appts US" }],
+        },
+      ],
+    );
+  });
+
+  it("plans period comparisons as explicit labeled date scopes", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "This week vs last week");
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(
+      plan.plannerIntent.comparisonScopes?.map((scope) => ({
+        label: scope.label,
+        scopeType: scope.scopeType,
+        dateRange: scope.dateRange,
+        filters: scope.filters,
+      })),
+      [
+        {
+          label: "This week",
+          scopeType: "period",
+          dateRange: { preset: "week_to_date" },
+          filters: [],
+        },
+        {
+          label: "Last week",
+          scopeType: "period",
+          dateRange: { preset: "last_complete_week" },
+          filters: [],
+        },
+      ],
+    );
+  });
+
+  it("builds governed comparison facts with winners, deltas, and source notes", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "Compare HP vs VVS by CPL");
+    const scopes = plan.plannerIntent.comparisonScopes || [];
+    const factPack = buildComparisonFactPack({
+      metrics: plan.spec.metrics,
+      scopes,
+      scopeResults: [
+        {
+          scopeId: "brand-hp",
+          timeRange: { start: "2026-04-26", end: "2026-05-25", days: 30 },
+          rows: [aggregateRow({ spend: 1000, leads: 50, primary_results: 50, cpl: 20, source_rows: 10 })],
+        },
+        {
+          scopeId: "brand-vvs",
+          timeRange: { start: "2026-04-26", end: "2026-05-25", days: 30 },
+          rows: [aggregateRow({ spend: 1250, leads: 40, primary_results: 40, cpl: 31.25, source_rows: 8 })],
+        },
+      ],
+    });
+
+    assert.equal(factPack.primaryMetric, "cpl");
+    assert.deepEqual(
+      factPack.sourceNotes.map((note) => ({
+        label: note.label,
+        timeRange: note.timeRange,
+        filters: note.filters,
+        sourceRows: note.sourceRows,
+      })),
+      [
+        {
+          label: "HP",
+          timeRange: { start: "2026-04-26", end: "2026-05-25", days: 30 },
+          filters: [{ field: "brand", operator: "equals", value: "HP" }],
+          sourceRows: 10,
+        },
+        {
+          label: "VVS",
+          timeRange: { start: "2026-04-26", end: "2026-05-25", days: 30 },
+          filters: [{ field: "brand", operator: "equals", value: "VVS" }],
+          sourceRows: 8,
+        },
+      ],
+    );
+    assert.deepEqual(factPack.deltas.find((delta) => delta.metric === "cpl"), {
+      metric: "cpl",
+      fromScopeId: "brand-vvs",
+      toScopeId: "brand-hp",
+      delta: -11.25,
+      percentDelta: -36,
+      winnerScopeId: "brand-hp",
+      winnerLabel: "HP",
+    });
+
+    const answer = buildComparisonAnswer(factPack);
+    assert.match(answer, /Winner on CPL: HP/);
+    assert.equal(validateComparisonNumericGrounding(answer, factPack), true);
+    assert.equal(validateComparisonNumericGrounding(`${answer} Uncited 999.`, factPack), false);
+  });
+
+  it("builds period comparison deltas and empty-scope caveats", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "This week vs last week");
+    const scopes = plan.plannerIntent.comparisonScopes || [];
+    const factPack = buildComparisonFactPack({
+      metrics: plan.spec.metrics,
+      scopes,
+      scopeResults: [
+        {
+          scopeId: "period-this-week",
+          timeRange: { start: "2026-05-25", end: "2026-05-25", days: 1 },
+          rows: [aggregateRow({ spend: 200, primary_results: 10, leads: 10, cpl: 20, source_rows: 4 })],
+        },
+        {
+          scopeId: "period-last-week",
+          timeRange: { start: "2026-05-18", end: "2026-05-24", days: 7 },
+          rows: [],
+        },
+      ],
+    });
+
+    assert.equal(factPack.scopes[1]?.empty, true);
+    assert.ok(factPack.caveats.some((caveat) => caveat.includes("Last week had no matching rows")));
+    assert.ok(factPack.caveats.some((caveat) => caveat.includes("different day counts")));
+    assert.equal(factPack.deltas.find((delta) => delta.metric === "spend")?.percentDelta, null);
+    assert.equal(validateComparisonNumericGrounding(buildComparisonAnswer(factPack), factPack), true);
+  });
+
+  it("builds diagnosis facts for performance drops with likely driver language and grounding", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "Why did performance drop?");
+    const factPack = buildDiagnosisFactPack({
+      metrics: plan.spec.metrics,
+      dimension: plan.spec.dimensions[0],
+      filters: plan.spec.filters,
+      assumptions: plan.assumptions,
+      current: {
+        label: "Current period",
+        timeRange: { start: "2026-04-26", end: "2026-05-25", days: 30 },
+        rows: [
+          aggregateRow({
+            campaign_umbrella: "Book Appts US",
+            spend: 900,
+            leads: 30,
+            primary_results: 30,
+            cpl: 30,
+            source_rows: 6,
+          }),
+          aggregateRow({
+            campaign_umbrella: "Cash for Gold US",
+            spend: 500,
+            leads: 25,
+            primary_results: 25,
+            cpl: 20,
+            source_rows: 4,
+          }),
+        ],
+      },
+      baseline: {
+        label: "Baseline period",
+        timeRange: { start: "2026-03-27", end: "2026-04-25", days: 30 },
+        rows: [
+          aggregateRow({
+            campaign_umbrella: "Book Appts US",
+            spend: 800,
+            leads: 50,
+            primary_results: 50,
+            cpl: 16,
+            source_rows: 5,
+          }),
+          aggregateRow({
+            campaign_umbrella: "Cash for Gold US",
+            spend: 450,
+            leads: 20,
+            primary_results: 20,
+            cpl: 22.5,
+            source_rows: 3,
+          }),
+        ],
+      },
+    });
+
+    assert.equal(factPack.primaryMetric, "primary_results");
+    assert.equal(factPack.baseline.timeRange.start, "2026-03-27");
+    assert.equal(factPack.topNegativeDriver?.label, "Book Appts US");
+    assert.equal(factPack.topNegativeDriver?.metricDeltas.primary_results.delta, -20);
+    assert.equal(factPack.topPositiveDriver?.label, "Cash for Gold US");
+    assert.ok(factPack.coMovingMetrics.some((metric) => metric.metric === "spend" && metric.direction === "up"));
+    assert.ok(factPack.caveats.some((caveat) => caveat.includes("different primary KPI definitions")));
+
+    const answer = buildDiagnosisAnswer(factPack);
+    assert.match(answer, /likely driver|signal/i);
+    assert.doesNotMatch(answer, /\bcaused\b/i);
+    assert.match(answer, /Baseline period: 2026-03-27 to 2026-04-25/);
+    assert.match(answer, /Source notes:/);
+    assert.match(answer, /Assumptions:/);
+    assert.match(answer, /source rows 10/);
+    assert.equal(validateDiagnosisNumericGrounding(answer, factPack), true);
+    assert.equal(validateDiagnosisNumericGrounding(`${answer} Uncited 999.`, factPack), false);
+  });
+
+  it("builds diagnosis facts for improvements with positive driver signals", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "Why did HP improve?");
+    const factPack = buildDiagnosisFactPack({
+      metrics: plan.spec.metrics,
+      dimension: plan.spec.dimensions[0],
+      filters: plan.spec.filters,
+      current: {
+        label: "Current period",
+        timeRange: { start: "2026-04-26", end: "2026-05-25", days: 30 },
+        rows: [
+          aggregateRow({ brand: "HP", spend: 1200, leads: 80, primary_results: 80, cpl: 15, source_rows: 8 }),
+          aggregateRow({ brand: "VVS", spend: 700, leads: 20, primary_results: 20, cpl: 35, source_rows: 4 }),
+        ],
+      },
+      baseline: {
+        label: "Baseline period",
+        timeRange: { start: "2026-03-27", end: "2026-04-25", days: 30 },
+        rows: [
+          aggregateRow({ brand: "HP", spend: 1000, leads: 50, primary_results: 50, cpl: 20, source_rows: 7 }),
+          aggregateRow({ brand: "VVS", spend: 700, leads: 20, primary_results: 20, cpl: 35, source_rows: 4 }),
+        ],
+      },
+    });
+
+    assert.equal(plan.spec.dimensions[0], "brand");
+    assert.equal(factPack.topPositiveDriver?.label, "HP");
+    assert.equal(factPack.topPositiveDriver?.metricDeltas.primary_results.delta, 30);
+
+    const answer = buildDiagnosisAnswer(factPack);
+    assert.match(answer, /Top likely improvement signal: HP/);
+    assert.equal(validateDiagnosisNumericGrounding(answer, factPack), true);
+  });
+
+  it("builds diagnosis facts for no-change periods without inventing drivers", () => {
+    const factPack = buildDiagnosisFactPack({
+      metrics: ["primary_results", "spend", "cpl"],
+      dimension: "campaign_umbrella",
+      current: {
+        label: "Current period",
+        timeRange: { start: "2026-04-26", end: "2026-05-25", days: 30 },
+        rows: [
+          aggregateRow({ campaign_umbrella: "Book Appts US", spend: 500, leads: 25, primary_results: 25, cpl: 20, source_rows: 5 }),
+        ],
+      },
+      baseline: {
+        label: "Baseline period",
+        timeRange: { start: "2026-03-27", end: "2026-04-25", days: 30 },
+        rows: [
+          aggregateRow({ campaign_umbrella: "Book Appts US", spend: 500, leads: 25, primary_results: 25, cpl: 20, source_rows: 5 }),
+        ],
+      },
+    });
+
+    assert.equal(factPack.totalDeltas.primary_results.delta, 0);
+    assert.equal(factPack.topNegativeDriver, null);
+    assert.equal(factPack.topPositiveDriver, null);
+
+    const answer = buildDiagnosisAnswer(factPack);
+    assert.match(answer, /primary metric was flat/i);
+    assert.equal(validateDiagnosisNumericGrounding(answer, factPack), true);
+  });
+
+  it("builds diagnosis facts with empty-row caveats", () => {
+    const factPack = buildDiagnosisFactPack({
+      metrics: ["primary_results", "spend", "cpl"],
+      dimension: "campaign_umbrella",
+      current: {
+        label: "Current period",
+        timeRange: { start: "2026-04-26", end: "2026-05-25", days: 30 },
+        rows: [],
+      },
+      baseline: {
+        label: "Baseline period",
+        timeRange: { start: "2026-03-27", end: "2026-04-25", days: 30 },
+        rows: [
+          aggregateRow({ campaign_umbrella: "Book Appts US", spend: 500, leads: 25, primary_results: 25, cpl: 20, source_rows: 5 }),
+        ],
+      },
+    });
+
+    assert.equal(factPack.current.empty, true);
+    assert.ok(factPack.caveats.some((caveat) => caveat.includes("Current period had no matching rows")));
+    assert.equal(factPack.topNegativeDriver?.label, "Book Appts US");
+
+    const answer = buildDiagnosisAnswer(factPack);
+    assert.match(answer, /Current period had no matching rows/);
+    assert.equal(validateDiagnosisNumericGrounding(answer, factPack), true);
+  });
+
+  it("builds pause and waste recommendation facts with advisory grounded prose", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "What should I pause this week?");
+    const factPack = buildRecommendationFactPack({
+      goal: "pause",
+      metrics: plan.spec.metrics,
+      dimension: plan.spec.dimensions[0],
+      filters: plan.spec.filters,
+      assumptions: plan.assumptions,
+      current: {
+        label: "Current period",
+        timeRange: { start: "2026-05-25", end: "2026-05-25", days: 1 },
+        rows: [
+          aggregateRow({
+            campaign_umbrella: "Book Appts US",
+            spend: 1200,
+            leads: 12,
+            primary_results: 12,
+            cpl: 100,
+            ctr: 0.7,
+            frequency: 2.4,
+            source_rows: 8,
+          }),
+          aggregateRow({
+            campaign_umbrella: "Cash for Gold US",
+            spend: 500,
+            leads: 50,
+            primary_results: 50,
+            cpl: 10,
+            ctr: 2.1,
+            frequency: 1.4,
+            source_rows: 5,
+          }),
+        ],
+      },
+      baseline: {
+        label: "Baseline period",
+        timeRange: { start: "2026-05-18", end: "2026-05-24", days: 7 },
+        rows: [],
+      },
+    });
+
+    assert.equal(factPack.goal, "pause");
+    assert.equal(factPack.topRecommendations[0]?.label, "Book Appts US");
+    assert.equal(factPack.topRecommendations[0]?.action, "review_or_pause");
+    assert.ok(factPack.topRecommendations[0]?.signals.some((signal) => signal.kind === "high_spend"));
+    assert.ok(factPack.topRecommendations[0]?.signals.some((signal) => signal.kind === "weak_primary_results"));
+    assert.ok(factPack.sourceNotes.some((note) => note.sourceRows === 13));
+
+    const answer = buildRecommendationAnswer(factPack);
+    assert.match(answer, /Advisory only/i);
+    assert.match(answer, /Review\/pause candidate: Book Appts US/);
+    assert.match(answer, /2026-05-25 to 2026-05-25/);
+    assert.match(answer, /Spend \$1,200/);
+    assert.match(answer, /source rows 13/);
+    assert.doesNotMatch(answer, /\b(paused|edited|created|duplicated|mutated)\b/i);
+    assert.equal(validateRecommendationNumericGrounding(answer, factPack), true);
+    assert.equal(validateRecommendationNumericGrounding(`${answer} Uncited 999.`, factPack), false);
+  });
+
+  it("builds scale recommendation facts from strong primary KPI and efficiency evidence", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "What should I scale?");
+    const factPack = buildRecommendationFactPack({
+      goal: "scale",
+      metrics: plan.spec.metrics,
+      dimension: plan.spec.dimensions[0],
+      current: {
+        label: "Current period",
+        timeRange: { start: "2026-04-26", end: "2026-05-25", days: 30 },
+        rows: [
+          aggregateRow({
+            creative: "Appointment offer video",
+            spend: 300,
+            leads: 45,
+            primary_results: 45,
+            cpl: 6.67,
+            ctr: 2.8,
+            frequency: 1.6,
+            source_rows: 6,
+          }),
+          aggregateRow({
+            creative: "Generic reminder image",
+            spend: 950,
+            leads: 20,
+            primary_results: 20,
+            cpl: 47.5,
+            ctr: 0.9,
+            frequency: 2.9,
+            source_rows: 9,
+          }),
+        ],
+      },
+      baseline: {
+        label: "Baseline period",
+        timeRange: { start: "2026-03-27", end: "2026-04-25", days: 30 },
+        rows: [],
+      },
+    });
+
+    assert.equal(factPack.goal, "scale");
+    assert.equal(factPack.topRecommendations[0]?.label, "Appointment offer video");
+    assert.equal(factPack.topRecommendations[0]?.action, "scale_candidate");
+    assert.ok(factPack.topRecommendations[0]?.signals.some((signal) => signal.kind === "strong_primary_results"));
+    assert.ok(factPack.topRecommendations[0]?.signals.some((signal) => signal.kind === "efficient_cost"));
+
+    const answer = buildRecommendationAnswer(factPack);
+    assert.match(answer, /Scale candidate: Appointment offer video/);
+    assert.match(answer, /Primary Results 45/);
+    assert.match(answer, /CPL \$6.67/);
+    assert.doesNotMatch(answer, /\b(will|I will|automatically)\s+(pause|edit|create|duplicate|mutate|scale)\b/i);
+    assert.equal(validateRecommendationNumericGrounding(answer, factPack), true);
+  });
+
+  it("builds fatigue recommendation facts from governed proxy signals", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "Which ads show fatigue?");
+    const factPack = buildRecommendationFactPack({
+      goal: "fatigue",
+      metrics: plan.spec.metrics,
+      dimension: plan.spec.dimensions[0],
+      current: {
+        label: "Current period",
+        timeRange: { start: "2026-04-26", end: "2026-05-25", days: 30 },
+        rows: [
+          aggregateRow({
+            ad: "Retargeting clip",
+            spend: 800,
+            impressions: 10000,
+            reach: 2381,
+            clicks: 80,
+            leads: 10,
+            primary_results: 10,
+            cpc: 10,
+            cpl: 80,
+            ctr: 0.8,
+            frequency: 4.2,
+            source_rows: 10,
+          }),
+        ],
+      },
+      baseline: {
+        label: "Baseline period",
+        timeRange: { start: "2026-03-27", end: "2026-04-25", days: 30 },
+        rows: [
+          aggregateRow({
+            ad: "Retargeting clip",
+            spend: 700,
+            impressions: 8750,
+            reach: 4167,
+            clicks: 140,
+            leads: 28,
+            primary_results: 28,
+            cpc: 5,
+            cpl: 25,
+            ctr: 1.6,
+            frequency: 2.1,
+            source_rows: 8,
+          }),
+        ],
+      },
+    });
+
+    assert.equal(plan.questionType, "recommendation");
+    assert.deepEqual(plan.spec.dimensions, ["ad"]);
+    assert.ok(plan.spec.metrics.includes("frequency"));
+    assert.ok(plan.spec.metrics.includes("cpc"));
+    assert.equal(factPack.topRecommendations[0]?.action, "fatigue_review");
+    assert.ok(factPack.topRecommendations[0]?.signals.some((signal) => signal.kind === "rising_frequency"));
+    assert.ok(factPack.topRecommendations[0]?.signals.some((signal) => signal.kind === "rising_cpc"));
+    assert.ok(factPack.topRecommendations[0]?.signals.some((signal) => signal.kind === "falling_ctr"));
+    assert.ok(factPack.topRecommendations[0]?.signals.some((signal) => signal.kind === "falling_primary_results"));
+
+    const answer = buildRecommendationAnswer(factPack);
+    assert.match(answer, /Fatigue review: Retargeting clip/);
+    assert.match(answer, /Frequency 4\.20/);
+    assert.match(answer, /Baseline period: 2026-03-27 to 2026-04-25/);
+    assert.equal(validateRecommendationNumericGrounding(answer, factPack), true);
+  });
+
+  it("blocks revenue-based scaling with supported Meta Ads rewrite guidance", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "What should I scale based on ROAS and revenue?");
+
+    assert.equal(plan.validationStatus, "unsupported");
+    assert.ok(plan.unsupportedReasons.some((reason) => reason.includes("ROAS")));
+    assert.ok(plan.unsupportedReasons.some((reason) => reason.includes("revenue")));
+    assert.ok(plan.unsupportedReasons.some((reason) => reason.includes("Try:")));
+  });
+
+  it("falls back to deterministic planning for malformed model planner output", () => {
+    const plan = buildAnalysisPlanFromPlannerOutputForPrompt(
+      {
+        questionType: "sql",
+        metrics: ["roas"],
+        dimensions: ["campaign"],
+        filters: [],
+        dateIntent: { dateRange: { preset: "last_30_days" } },
+        visualIntent: { widgets: ["table"] },
+      },
+      "Show top campaigns by CPL",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.equal(plan.plannerIntent.dateIntent.source, "fallback");
+    assert.equal(plan.questionType, "leaderboard");
+    assert.deepEqual(plan.spec.metrics, ["cpl"]);
+    assert.deepEqual(plan.spec.dimensions, ["campaign"]);
   });
 
   it("normalizes unqualified results to primary results for weekly umbrella tables", () => {
@@ -502,6 +1362,86 @@ describe("ad-hoc analytics prompt normalization", () => {
     assert.ok(plan.unsupportedReasons.some((reason) => reason.includes("landing-page conversion rate")));
   });
 
+  it("marks unsupported mixed metric requests unsupported as a whole", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Which campaign has best ROAS and spend?",
+    );
+
+    assert.equal(plan.validationStatus, "unsupported");
+    assert.ok(plan.unsupportedReasons.some((reason) => reason.includes("ROAS")));
+    assert.ok(plan.unsupportedReasons.some((reason) => reason.includes("Try:")));
+  });
+
+  it("builds saved run previews with QA replay metadata", () => {
+    const sourceNotes = {
+      timeRange: { start: "2026-04-01", end: "2026-04-30", days: 30 },
+      adAccountsAnalyzed: ["HP Ads"],
+      recordCounts: { matched_insights: 42 },
+      dataSource: "meta_ads",
+      sourceTable: "meta_daily_insights",
+      sourceFunction: "aggregate_meta_daily_insights",
+      latestSyncedInsightDate: "2026-05-22",
+      filters: [],
+      comparisonScopes: [
+        {
+          label: "HP",
+          timeRange: { start: "2026-04-01", end: "2026-04-30", days: 30 },
+          filters: [{ field: "brand", operator: "equals", value: "HP" }],
+          sourceRows: 21,
+          dataSource: "meta_ads",
+          sourceTable: "meta_daily_insights",
+          sourceFunction: "aggregate_meta_daily_insights",
+        },
+      ],
+    };
+    const comparison = {
+      scopeType: "entity",
+      primaryMetric: "cpl",
+      metrics: ["cpl", "spend", "primary_results"],
+      scopes: [],
+      deltas: [],
+      sourceNotes: sourceNotes.comparisonScopes,
+      caveats: [],
+      groundingValues: [],
+    };
+    const preview = buildAnalysisRunPreview({
+      title: "HP vs VVS",
+      answer: "HP won on CPL.",
+      questionType: "comparison",
+      validationStatus: "ready",
+      table: { rows: [{ brand: "HP", cpl: 12 }] },
+      widgets: [{ type: "table", title: "Comparison table", metrics: ["cpl"] }],
+      warnings: ["Date range ended at latest complete synced Meta insight date (2026-05-22)."],
+      unsupportedReasons: [],
+      clarificationQuestions: [],
+      plannerIntent: { assumptions: ["Calendar date phrase resolved to a complete calendar period."] },
+      analystDebug: { assumptions: ["Latest synced date governed the range."] },
+      sourceTransparency: sourceNotes,
+      totals: { spend: 1200 },
+      comparison,
+      diagnosis: null,
+      recommendation: null,
+    } as unknown as Parameters<typeof buildAnalysisRunPreview>[0]);
+
+    assert.equal(preview.answer, "HP won on CPL.");
+    assert.equal(preview.questionType, "comparison");
+    assert.equal(preview.validationStatus, "ready");
+    assert.deepEqual(preview.warnings, [
+      "Date range ended at latest complete synced Meta insight date (2026-05-22).",
+    ]);
+    assert.ok(preview.assumptions.includes("Calendar date phrase resolved to a complete calendar period."));
+    assert.ok(preview.assumptions.includes("Latest synced date governed the range."));
+    assert.deepEqual(preview.sourceNotes, sourceNotes);
+    assert.deepEqual(preview.keyFacts, {
+      totals: { spend: 1200 },
+      firstRows: [{ brand: "HP", cpl: 12 }],
+      comparison,
+      diagnosis: null,
+      recommendation: null,
+    });
+  });
+
   it("does not treat sales-team action wording as CRM revenue data", () => {
     const plan = buildAnalysisPlanForPrompt(
       {},
@@ -627,3 +1567,42 @@ describe("ad-hoc analytics table and chart capability matrix", () => {
     assert.deepEqual(plan.spec.metrics, ["spend", "primary_results"]);
   });
 });
+
+function aggregateRow(overrides: Record<string, string | number | null>) {
+  return {
+    date: null,
+    week: null,
+    month: null,
+    quarter: null,
+    brand: null,
+    campaign_umbrella: null,
+    campaign: null,
+    campaign_id: null,
+    ad_set: null,
+    ad_set_id: null,
+    ad: null,
+    ad_id: null,
+    creative: null,
+    creative_id: null,
+    spend: 0,
+    monthly_budget: 0,
+    impressions: 0,
+    reach: 0,
+    clicks: 0,
+    leads: 0,
+    bookings: 0,
+    conversions: 0,
+    website_bookings: 0,
+    messaging_contacts: 0,
+    new_messaging_contacts: 0,
+    primary_results: 0,
+    secondary_results: 0,
+    ctr: 0,
+    cpm: 0,
+    cpc: 0,
+    cpl: null,
+    frequency: 0,
+    source_rows: 0,
+    ...overrides,
+  };
+}

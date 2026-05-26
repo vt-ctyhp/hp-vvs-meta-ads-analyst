@@ -168,6 +168,131 @@ test("analysis output shows API cost even when diagnostics are hidden", () => {
   assert.doesNotMatch(markup, /Plan Model/);
 });
 
+test("analysis output renders natural-language assumptions and advisory state when diagnostics are hidden", () => {
+  const { AnalysisOutput } = loadModule("src/components/analysis-client.tsx", {
+    "@/lib/glossary": {
+      translateError(error: unknown) {
+        return error instanceof Error ? error.message : "Something went wrong.";
+      },
+    },
+  });
+
+  const result = minimalAnalysisResult({
+    title: "Pause Candidates",
+    answer: "Review pause candidates before changing Meta campaigns.",
+    questionType: "recommendation",
+    metrics: ["spend", "primary_results", "cpl"],
+    dimensions: ["campaign_umbrella"],
+    assumptions: [
+      "No date phrase was supplied; using the latest synced window.",
+      "Performance uses primary results, spend, and CPL.",
+    ],
+    latestSyncedInsightDate: "2026-05-22",
+  });
+
+  const markup = renderToStaticMarkup(
+    React.createElement(AnalysisOutput, {
+      result,
+      hideDiagnostics: true,
+    }),
+  );
+
+  assert.match(markup, /Advisory only/);
+  assert.match(markup, /No Meta campaign changes were made/);
+  assert.match(markup, /Run transparency/);
+  assert.match(markup, /Question type/);
+  assert.match(markup, /Recommendation/);
+  assert.match(markup, /Date basis/);
+  assert.match(markup, /2026-04-23 to 2026-05-22/);
+  assert.match(markup, /Metric bundle/);
+  assert.match(markup, /Spend, Primary Results, CPL/);
+  assert.match(markup, /Grouping/);
+  assert.match(markup, /Campaign Umbrella/);
+  assert.match(markup, /Latest sync/);
+  assert.match(markup, /2026-05-22/);
+  assert.match(markup, /No date phrase was supplied/);
+  assert.doesNotMatch(markup, /Analyst Debug/);
+});
+
+test("analysis output renders clarification choices, unsupported rewrites, and comparison source notes", () => {
+  const { AnalysisOutput } = loadModule("src/components/analysis-client.tsx", {
+    "@/lib/glossary": {
+      translateError(error: unknown) {
+        return error instanceof Error ? error.message : "Something went wrong.";
+      },
+    },
+  });
+
+  const clarificationMarkup = renderToStaticMarkup(
+    React.createElement(AnalysisOutput, {
+      result: minimalAnalysisResult({
+        validationStatus: "needs_clarification",
+        clarificationQuestions: ["Which campaign umbrella should I filter to?"],
+      }),
+      hideDiagnostics: true,
+    }),
+  );
+
+  assert.match(clarificationMarkup, /Needs clarification/);
+  assert.match(clarificationMarkup, /Which campaign umbrella should I filter to/);
+  assert.match(clarificationMarkup, /Suggested choices/);
+  assert.match(clarificationMarkup, /Book Appts US/);
+
+  const unsupportedMarkup = renderToStaticMarkup(
+    React.createElement(AnalysisOutput, {
+      result: minimalAnalysisResult({
+        validationStatus: "unsupported",
+        unsupportedReasons: [
+          'Metric "ROAS" is not available in the Meta Ads catalog.',
+          "Try: ask for scale or pause candidates using Meta Ads spend, primary results, CPL, CTR, CPC, or frequency by campaign.",
+        ],
+      }),
+      hideDiagnostics: true,
+    }),
+  );
+
+  assert.match(unsupportedMarkup, /Unsupported boundary/);
+  assert.match(unsupportedMarkup, /Why blocked/);
+  assert.match(unsupportedMarkup, /Metric &quot;ROAS&quot; is not available/);
+  assert.match(unsupportedMarkup, /Supported rewrites/);
+  assert.match(unsupportedMarkup, /scale or pause candidates/);
+
+  const comparisonMarkup = renderToStaticMarkup(
+    React.createElement(AnalysisOutput, {
+      result: minimalAnalysisResult({
+        questionType: "comparison",
+        comparisonScopes: [
+          {
+            label: "HP",
+            timeRange: { start: "2026-04-01", end: "2026-04-30", days: 30 },
+            filters: [{ field: "brand", operator: "equals", value: "HP" }],
+            sourceRows: 120,
+            dataSource: "meta_ads",
+            sourceTable: "meta_daily_insights",
+            sourceFunction: "aggregate_meta_daily_insights",
+          },
+          {
+            label: "VVS",
+            timeRange: { start: "2026-04-01", end: "2026-04-30", days: 30 },
+            filters: [{ field: "brand", operator: "equals", value: "VVS" }],
+            sourceRows: 98,
+            dataSource: "meta_ads",
+            sourceTable: "meta_daily_insights",
+            sourceFunction: "aggregate_meta_daily_insights",
+          },
+        ],
+      }),
+      hideDiagnostics: true,
+    }),
+  );
+
+  assert.match(comparisonMarkup, /Comparison scopes/);
+  assert.match(comparisonMarkup, /HP: 2026-04-01 to 2026-04-30/);
+  assert.match(comparisonMarkup, /Brand equals HP/);
+  assert.match(comparisonMarkup, /source rows 120/);
+  assert.match(comparisonMarkup, /VVS: 2026-04-01 to 2026-04-30/);
+});
+
 test("analysis POST applies Optimize defaults only to new dashboard builds", async () => {
   const calls: Array<{ name: string; args: unknown[] }> = [];
   const route = loadAnalysisRoute(calls);
@@ -308,14 +433,36 @@ function jsonRequest(body: unknown) {
   });
 }
 
-function minimalAnalysisResult() {
+function minimalAnalysisResult(
+  overrides: {
+    title?: string;
+    answer?: string;
+    questionType?: string;
+    metrics?: string[];
+    dimensions?: string[];
+    assumptions?: string[];
+    latestSyncedInsightDate?: string | null;
+    validationStatus?: string;
+    unsupportedReasons?: string[];
+    clarificationQuestions?: string[];
+    comparisonScopes?: Array<{
+      label: string;
+      timeRange: { start: string; end: string; days: number };
+      filters: Array<{ field: string; operator: "equals" | "contains"; value: string }>;
+      sourceRows: number;
+      dataSource: "meta_ads";
+      sourceTable: "meta_daily_insights";
+      sourceFunction: "aggregate_meta_daily_insights";
+    }>;
+  } = {},
+) {
   const spec = {
-    title: "API Cost Check",
+    title: overrides.title || "API Cost Check",
     dateRange: { preset: "last_30_days" },
     grain: "summary",
-    dimensions: ["campaign_umbrella"],
+    dimensions: overrides.dimensions || ["campaign_umbrella"],
     filters: [],
-    metrics: ["spend"],
+    metrics: overrides.metrics || ["spend"],
     sort: null,
     limit: 10,
     tableLayout: null,
@@ -323,13 +470,32 @@ function minimalAnalysisResult() {
   };
 
   return {
-    status: "ready",
-    validationStatus: "ready",
+    status: overrides.validationStatus || "ready",
+    validationStatus: overrides.validationStatus || "ready",
     dashboardId: "dashboard-1",
     prompt: "Show spend",
     mode: "deep",
-    title: "API Cost Check",
-    answer: "Built.",
+    title: overrides.title || "API Cost Check",
+    answer: overrides.answer || "Built.",
+    questionType: overrides.questionType || "leaderboard",
+    plannerIntent: {
+      questionType: overrides.questionType || "leaderboard",
+      title: overrides.title || "API Cost Check",
+      grain: "summary",
+      metrics: overrides.metrics || ["spend"],
+      dimensions: overrides.dimensions || ["campaign_umbrella"],
+      filters: [],
+      dateIntent: {
+        dateRange: { preset: "last_30_days" },
+        source: "deterministic",
+        phrase: null,
+      },
+      sort: null,
+      limit: 10,
+      visualIntent: { widgets: [] },
+      assumptions: overrides.assumptions || [],
+      clarificationNeeds: [],
+    },
     spec,
     resolvedSpec: spec,
     table: { columns: [], rows: [] },
@@ -339,26 +505,33 @@ function minimalAnalysisResult() {
       timeRange: { start: "2026-04-23", end: "2026-05-22", days: 30 },
       adAccountsAnalyzed: [],
       recordCounts: {},
+      dataSource: "meta_ads",
+      sourceTable: "meta_daily_insights",
+      sourceFunction: "aggregate_meta_daily_insights",
+      latestSyncedInsightDate: overrides.latestSyncedInsightDate ?? "2026-05-22",
+      filters: [],
+      comparisonScopes: overrides.comparisonScopes,
     },
     analystDebug: {
-      validationStatus: "ready",
+      validationStatus: overrides.validationStatus || "ready",
+      questionType: overrides.questionType || "leaderboard",
       dataSource: "meta_ads",
       sourceTable: "meta_daily_insights",
       sourceFunction: null,
       resolvedDateRange: { start: "2026-04-23", end: "2026-05-22", days: 30 },
-      latestSyncedInsightDate: "2026-05-22",
+      latestSyncedInsightDate: overrides.latestSyncedInsightDate ?? "2026-05-22",
       filters: [],
-      metrics: ["spend"],
-      dimensions: ["campaign_umbrella"],
-      assumptions: [],
+      metrics: overrides.metrics || ["spend"],
+      dimensions: overrides.dimensions || ["campaign_umbrella"],
+      assumptions: overrides.assumptions || [],
       warnings: [],
-      unsupportedReasons: [],
+      unsupportedReasons: overrides.unsupportedReasons || [],
       recordCounts: {},
       repairedSpec: false,
     },
     warnings: [],
-    unsupportedReasons: [],
-    clarificationQuestions: [],
+    unsupportedReasons: overrides.unsupportedReasons || [],
+    clarificationQuestions: overrides.clarificationQuestions || [],
     modelUsed: { plan: "gpt-5.4", analysis: "gpt-5.5" },
     tokenEstimate: {
       planInputTokens: 1000,
