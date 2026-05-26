@@ -231,6 +231,106 @@ describe("ad-hoc analytics prompt normalization", () => {
     ]);
   });
 
+  it("normalizes quoted campaign containing language to a governed contains filter", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Show campaigns containing 'Mother's Day' by spend",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.filters, [
+      { field: "campaign", operator: "contains", value: "Mother's Day" },
+    ]);
+  });
+
+  it("normalizes quoted creative named language to a governed contains filter", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Creative named 'Appointment offer video'",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.filters, [
+      { field: "creative", operator: "contains", value: "Appointment offer video" },
+    ]);
+  });
+
+  it("normalizes explicit unquoted include language without swallowing grouping words", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Show ad sets that include Prospecting Broad by day",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.filters, [
+      { field: "ad_set", operator: "contains", value: "Prospecting Broad" },
+    ]);
+  });
+
+  it("uses known campaign group aliases without inventing creative name filters", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "What creative should we scale for book appointment ads?",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.filters, [
+      { field: "campaign_umbrella", operator: "equals", value: "Book Appts US" },
+    ]);
+    assert.equal(plan.spec.filters.some((filter) => filter.field === "creative"), false);
+  });
+
+  it("does not guess generic unquoted phrases into entity filters", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Show spend by campaign for Mother's Day",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.filters, []);
+  });
+
+  it("normalizes quoted entity names near fields without requiring extra cue words", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Show spend for campaign 'Mother's Day' by day",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.filters, [
+      { field: "campaign", operator: "contains", value: "Mother's Day" },
+    ]);
+  });
+
+  it("removes model-guessed entity filters from generic unquoted phrases", () => {
+    const plan = buildAnalysisPlanFromPlannerOutputForPrompt(
+      {
+        questionType: "recommendation",
+        title: "Creative scale candidates",
+        dateIntent: {
+          phrase: null,
+          dateRange: { preset: "last_30_days" },
+          assumptions: [],
+        },
+        grain: "summary",
+        dimensions: ["creative"],
+        filters: [{ field: "creative", operator: "contains", value: "book appointment ads" }],
+        metrics: ["spend", "leads", "cpl"],
+        sort: { field: "leads", direction: "desc" },
+        limit: 20,
+        visualIntent: { widgets: ["table"], tableLayout: null },
+        assumptions: [],
+        clarificationNeeds: [],
+      },
+      "What creative should we scale for book appointment ads?",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.filters, [
+      { field: "campaign_umbrella", operator: "equals", value: "Book Appts US" },
+    ]);
+  });
+
   it("normalizes creative scaling decisions to creative-level evidence", () => {
     const plan = buildAnalysisPlanForPrompt(
       {},
@@ -1200,6 +1300,7 @@ describe("ad-hoc analytics prompt normalization", () => {
 
     assert.equal(plan.validationStatus, "unsupported");
     assert.ok(plan.unsupportedReasons.some((reason) => reason.includes("ROAS")));
+    assert.ok(plan.unsupportedReasons.some((reason) => reason.includes("Try:")));
   });
 
   it("does not treat sales-team action wording as CRM revenue data", () => {

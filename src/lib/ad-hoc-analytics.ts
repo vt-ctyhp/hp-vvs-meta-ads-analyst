@@ -1349,6 +1349,7 @@ async function createSpecWithAI(prompt: string, model: string) {
               "Metric/dimension/filter values must be exact catalog values.",
               "Map campaign umbrella, internal campaign umbrella, or umbrella to campaign_umbrella.",
               "Use exact campaign_umbrella filters for known campaign concepts: cash for gold => Cash for Gold US, book appointments => Book Appts US.",
+              "Only create campaign, ad_set, ad, or creative contains filters when the user quotes a name or uses explicit named, called, containing, include, includes, or including language. Do not guess generic unquoted phrases into entity-name filters.",
               "Advisory prompts like waste, pause, scale, fix first, and fatigue should be recommendation questionType with evidence metrics, not generic spend leaderboards.",
               "Why, drop, improve, and what changed prompts should be diagnosis questionType with primary KPI, spend, and efficiency metrics.",
               "Trend prompts need a time dimension and line or table visual intent.",
@@ -1429,6 +1430,7 @@ async function editSpecWithAI(input: {
             "If the user asks to compare by campaign, ad set, ad, creative, brand, or umbrella, adjust dimensions accordingly.",
             "Map campaign umbrella, internal campaign umbrella, or umbrella to campaign_umbrella, not to a search filter.",
             "Use exact campaign_umbrella filters for known campaign concepts: cash for gold => Cash for Gold US, book appointments => Book Appts US.",
+            "Only create campaign, ad_set, ad, or creative contains filters when the user quotes a name or uses explicit named, called, containing, include, includes, or including language. Do not guess generic unquoted phrases into entity-name filters.",
             "If the user asks for website, social inbox, CRM, employee, landing page, or response-time data, keep the closest spec minimal; validation will mark the request unsupported. Do not substitute Meta spend/click/lead tables.",
             "For month by month, monthly, or by month, use grain monthly and include the month dimension.",
             "For since/from/starting a specific date, use preset custom with start as YYYY-MM-DD and omit end unless the user gives one.",
@@ -3518,6 +3520,10 @@ function validateAnalysisSpec(
     assumptions.push("Campaign glossary resolved named campaign concept to an exact campaign_umbrella filter.");
   }
 
+  if (spec.filters.some((filter) => filter.operator === "contains" && filter.field !== "search")) {
+    assumptions.push("Quoted or explicit named entity language resolved to a governed contains filter.");
+  }
+
   const status: AnalysisValidationStatus = unsupportedReasons.length
     ? "unsupported"
     : clarificationQuestions.length
@@ -4526,9 +4532,11 @@ function inferPromptIntent(prompt: string): PromptIntent {
   const dateRange = inferDateRangeFromPromptSegments(segments, prompt);
   const grain = inferGrainFromPrompt(latestPrompt) || inferGrainFromPrompt(prompt);
   const glossaryFilters = campaignGlossaryFilters(prompt);
+  const explicitEntityFilters = namedEntityFilters(prompt);
   const searchTerm = inferSearchTerm(prompt);
   const filters = [
     ...glossaryFilters,
+    ...explicitEntityFilters,
     ...(searchTerm ? [{ field: "search" as const, operator: "contains" as const, value: searchTerm }] : []),
   ];
   const tableOnly =
@@ -4598,9 +4606,10 @@ function inferPromptIntent(prompt: string): PromptIntent {
 }
 
 function applyPromptIntent(spec: AnalysisSpec, intent: PromptIntent): AnalysisSpec {
+  const safeSpecFilters = removeUnsafeInferredEntityFilters(spec.filters, intent.filters || []);
   const filteredSpecFilters = intent.stripCashForGoldFilter
-    ? spec.filters.filter((filter) => !isGlossaryFilter(filter))
-    : spec.filters;
+    ? safeSpecFilters.filter((filter) => !isGlossaryFilter(filter))
+    : safeSpecFilters;
 
   return {
     ...spec,
@@ -4615,6 +4624,30 @@ function applyPromptIntent(spec: AnalysisSpec, intent: PromptIntent): AnalysisSp
     tableLayout: intent.tableLayout || spec.tableLayout,
     widgets: intent.widgets || spec.widgets,
   };
+}
+
+function removeUnsafeInferredEntityFilters(
+  baseFilters: AnalysisFilter[],
+  intendedFilters: AnalysisFilter[],
+) {
+  const allowedNamedEntityFilters = new Set(
+    intendedFilters
+      .filter((filter) => isNamedEntityFilterField(filter.field) && filter.operator === "contains")
+      .map(filterKey),
+  );
+
+  return baseFilters.filter((filter) => {
+    if (!isNamedEntityFilterField(filter.field)) return true;
+    return allowedNamedEntityFilters.has(filterKey(filter));
+  });
+}
+
+function isNamedEntityFilterField(field: AnalysisFilterField) {
+  return field === "campaign" || field === "ad_set" || field === "ad" || field === "creative";
+}
+
+function filterKey(filter: AnalysisFilter) {
+  return `${filter.field}\0${filter.operator}\0${filter.value.trim().toLowerCase()}`;
 }
 
 function shouldAddFollowUpMetrics(lower: string) {
@@ -4692,6 +4725,83 @@ function campaignGlossaryFilters(prompt: string): AnalysisFilter[] {
     operator: "equals" as const,
     value: entry.value,
   }));
+}
+
+const NAMED_ENTITY_FILTER_FIELDS: Array<{ field: AnalysisFilterField; pattern: string }> = [
+  { field: "ad_set", pattern: String.raw`ad\s+sets?` },
+  { field: "creative", pattern: String.raw`(?:ad\s+)?creatives?` },
+  { field: "campaign", pattern: String.raw`campaigns?(?![-\s]?umbrellas?)` },
+  { field: "ad", pattern: String.raw`ads?(?!\s+sets?)` },
+];
+
+function namedEntityFilters(prompt: string): AnalysisFilter[] {
+  const filters: AnalysisFilter[] = [];
+  const cue = String.raw`(?:contain(?:s|ing)?|includ(?:e|es|ing)|named|called)`;
+  const quotedValue = String.raw`(["'\u2018\u201C][^.\n?!]+)`;
+
+  NAMED_ENTITY_FILTER_FIELDS.forEach((entry) => {
+    const fieldFirstPattern = new RegExp(
+      String.raw`\b${entry.pattern}\b\s+(?:that\s+)?(?:are\s+)?${cue}\s+([^.\n?!]+)`,
+      "gi",
+    );
+    for (const match of prompt.matchAll(fieldFirstPattern)) {
+      const value = namedEntityFilterValue(match[1] || "");
+      if (value) filters.push({ field: entry.field, operator: "contains", value });
+    }
+
+    const fieldThenQuotedPattern = new RegExp(
+      String.raw`\b${entry.pattern}\b\s+${quotedValue}`,
+      "gi",
+    );
+    for (const match of prompt.matchAll(fieldThenQuotedPattern)) {
+      const value = namedEntityFilterValue(match[1] || "");
+      if (value) filters.push({ field: entry.field, operator: "contains", value });
+    }
+
+    const quotedThenFieldPattern = new RegExp(
+      String.raw`${quotedValue}\s+\b${entry.pattern}\b`,
+      "gi",
+    );
+    for (const match of prompt.matchAll(quotedThenFieldPattern)) {
+      const value = namedEntityFilterValue(match[1] || "");
+      if (value) filters.push({ field: entry.field, operator: "contains", value });
+    }
+  });
+
+  return mergeFilters([], filters);
+}
+
+function namedEntityFilterValue(rawTail: string) {
+  let tail = rawTail.trim().replace(/^[([{]\s*/, "");
+  const quoted = quotedFilterValue(tail);
+  if (quoted) return quoted;
+
+  const boundaryIndex = tail.search(
+    /\b(?:by|over|last|past|previous|prior|this|since|from|between|where|with|using|grouped|sorted|show|compare)\b/i,
+  );
+  if (boundaryIndex > 0) tail = tail.slice(0, boundaryIndex);
+
+  return tail
+    .replace(/[,;:)\]}]+$/g, "")
+    .replace(/^(?:the|a|an)\s+/i, "")
+    .trim()
+    .slice(0, 120);
+}
+
+function quotedFilterValue(tail: string) {
+  const pairs: Record<string, string> = {
+    "'": "'",
+    '"': '"',
+    "\u2018": "\u2019",
+    "\u201C": "\u201D",
+  };
+  const opening = tail[0];
+  const closing = pairs[opening || ""];
+  if (!closing) return "";
+
+  const end = tail.lastIndexOf(closing);
+  if (end <= 0) return "";
+  return tail.slice(1, end).trim();
 }
 
 function inferComparisonScopes(prompt: string, spec: AnalysisSpec): AnalysisComparisonScope[] {
