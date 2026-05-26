@@ -13,6 +13,7 @@ import type {
   WorkbenchSemanticVisualIntent,
 } from "./analysis-workbench-semantic-catalog.ts";
 import type { AnalysisWorkbenchPipelineResult } from "./analysis-workbench-pipeline.ts";
+import type { OpenAICostBreakdown } from "./openai-cost.ts";
 
 export type JsonValue =
   | string
@@ -34,6 +35,7 @@ export type AnalysisRunStatus = "created" | "running" | "completed" | "failed";
 export type AnalysisRunAnswer = {
   summary: string;
   citations: JsonValue[];
+  apiCost?: OpenAICostBreakdown;
 };
 
 export type AnalysisWorkbenchContextDateRange = {
@@ -738,13 +740,15 @@ function normalizeRunStatus(status: string): AnalysisRunStatus {
 
 function normalizeAnswer(answer: JsonValue): AnalysisRunAnswer {
   if (answer && typeof answer === "object" && !Array.isArray(answer)) {
-    const candidate = answer as { summary?: JsonValue; citations?: JsonValue };
+    const candidate = answer as { summary?: JsonValue; citations?: JsonValue; apiCost?: unknown };
+    const apiCost = normalizeAnswerApiCost(candidate.apiCost);
     return {
       summary:
         typeof candidate.summary === "string"
           ? candidate.summary
           : "Run created. Governed facts, citations, and visuals have not run yet.",
       citations: Array.isArray(candidate.citations) ? candidate.citations : [],
+      ...(apiCost ? { apiCost } : {}),
     };
   }
 
@@ -752,6 +756,41 @@ function normalizeAnswer(answer: JsonValue): AnalysisRunAnswer {
     summary: "Run created. Governed facts, citations, and visuals have not run yet.",
     citations: [],
   };
+}
+
+function normalizeAnswerApiCost(value: unknown): OpenAICostBreakdown | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as {
+    model?: unknown;
+    inputTokens?: unknown;
+    outputTokens?: unknown;
+    totalTokens?: unknown;
+    estimatedCostUsd?: unknown;
+  };
+  const model = typeof candidate.model === "string" && candidate.model.trim()
+    ? candidate.model
+    : "unknown";
+  const inputTokens = positiveInteger(candidate.inputTokens);
+  const outputTokens = positiveInteger(candidate.outputTokens);
+  const totalTokens = positiveInteger(candidate.totalTokens) || inputTokens + outputTokens;
+  const estimatedCostUsd =
+    typeof candidate.estimatedCostUsd === "number" && Number.isFinite(candidate.estimatedCostUsd)
+      ? Math.max(0, candidate.estimatedCostUsd)
+      : 0;
+
+  return {
+    model,
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    estimatedCostUsd,
+  };
+}
+
+function positiveInteger(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : 0;
 }
 
 function normalizeDashboardPacket(value: JsonValue | null): AnalysisWorkbenchDashboardPacket | null {

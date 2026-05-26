@@ -51,11 +51,9 @@ export function isAnalysisWorkbenchChartCard(
 
 export function buildAnalysisWorkbenchTableCsvExport({
   card,
-  runId,
   sourceNotes = [],
 }: ExportInput<AnalysisWorkbenchTableExportCard>): AnalysisWorkbenchTextExport {
   const rows = [
-    ["Run ID", runId],
     ["Visual ID", card.id],
     ["Title", card.title],
     ["Source notes", sourceSummary(card.sourceNoteIds, sourceNotes)],
@@ -64,7 +62,7 @@ export function buildAnalysisWorkbenchTableCsvExport({
   ];
 
   return {
-    fileName: `${fileSlug(runId)}-${fileSlug(card.title)}.csv`,
+    fileName: `${fileSlug(card.title)}.csv`,
     mimeType: "text/csv;charset=utf-8",
     content: rows.map(csvRow).join("\n"),
   };
@@ -72,20 +70,19 @@ export function buildAnalysisWorkbenchTableCsvExport({
 
 export function buildAnalysisWorkbenchChartPngExportSource({
   card,
-  runId,
   sourceNotes = [],
 }: ExportInput<AnalysisWorkbenchChartExportCard>): AnalysisWorkbenchPngExportSource {
   const width = 960;
   const height = 540;
   const svg =
     card.type === "bar_chart"
-      ? barChartSvg(card, runId, sourceNotes, width, height)
+      ? barChartSvg(card, sourceNotes, width, height)
       : card.type === "line_chart"
-        ? lineChartSvg(card, runId, sourceNotes, width, height)
-        : scatterChartSvg(card, runId, sourceNotes, width, height);
+        ? lineChartSvg(card, sourceNotes, width, height)
+        : scatterChartSvg(card, sourceNotes, width, height);
 
   return {
-    fileName: `${fileSlug(runId)}-${fileSlug(card.title)}.png`,
+    fileName: `${fileSlug(card.title)}.png`,
     mimeType: "image/png",
     svg,
     width,
@@ -95,15 +92,14 @@ export function buildAnalysisWorkbenchChartPngExportSource({
 
 export function buildAnalysisWorkbenchPdfReportExport({
   packet,
-  runId,
 }: {
   packet: AnalysisWorkbenchDashboardPacket;
   runId: string;
 }): AnalysisWorkbenchTextExport {
   return {
-    fileName: `${fileSlug(runId)}-dashboard-packet.pdf`,
+    fileName: `${fileSlug(packet.generatedAt)}-dashboard-packet.pdf`,
     mimeType: "application/pdf",
-    content: buildPdf(reportLines(packet, runId)),
+    content: buildPdf(reportLines(packet)),
   };
 }
 
@@ -127,13 +123,11 @@ function tableRows(card: AnalysisWorkbenchTableExportCard): string[][] {
   ];
 }
 
-function reportLines(packet: AnalysisWorkbenchDashboardPacket, runId: string): string[] {
+function reportLines(packet: AnalysisWorkbenchDashboardPacket): string[] {
   const visualObjects = uniqueVisualObjects(packet);
   const lines = [
     "HP/VVS Meta Ads Analysis Report",
-    `Run ID: ${runId}`,
     `Generated: ${packet.generatedAt}`,
-    ...(packet.promotedFromRunId ? [`Promoted from run: ${packet.promotedFromRunId}`] : []),
     "",
     "Answer",
     packet.directAnswer.summary,
@@ -214,7 +208,6 @@ function visualReportLines(card: AnalysisWorkbenchVisualCard, sourceNotes: JsonV
 
 function barChartSvg(
   card: Extract<AnalysisWorkbenchVisualCard, { type: "bar_chart" }>,
-  runId: string,
   sourceNotes: JsonValue[],
   width: number,
   height: number,
@@ -238,7 +231,6 @@ function barChartSvg(
     width,
     height,
     title: card.title,
-    runId,
     sourceSummary: sourceSummary(card.sourceNoteIds, sourceNotes),
     body: [
       axisLine(chartLeft, chartTop - 16, chartLeft, chartTop + rowHeight * card.bars.length),
@@ -249,7 +241,6 @@ function barChartSvg(
 
 function lineChartSvg(
   card: Extract<AnalysisWorkbenchVisualCard, { type: "line_chart" }>,
-  runId: string,
   sourceNotes: JsonValue[],
   width: number,
   height: number,
@@ -269,7 +260,6 @@ function lineChartSvg(
     width,
     height,
     title: card.title,
-    runId,
     sourceSummary: sourceSummary(card.sourceNoteIds, sourceNotes),
     body: [
       axisLine(76, height - 128, width - 76, height - 128),
@@ -293,7 +283,6 @@ function lineChartSvg(
 
 function scatterChartSvg(
   card: Extract<AnalysisWorkbenchVisualCard, { type: "scatter_chart" }>,
-  runId: string,
   sourceNotes: JsonValue[],
   width: number,
   height: number,
@@ -315,7 +304,6 @@ function scatterChartSvg(
     width,
     height,
     title: card.title,
-    runId,
     sourceSummary: sourceSummary(card.sourceNoteIds, sourceNotes),
     body: [
       axisLine(76, height - 128, width - 76, height - 128),
@@ -333,14 +321,12 @@ function svgDocument({
   width,
   height,
   title,
-  runId,
   sourceSummary,
   body,
 }: {
   width: number;
   height: number;
   title: string;
-  runId: string;
   sourceSummary: string;
   body: string;
 }) {
@@ -350,7 +336,7 @@ function svgDocument({
 <text x="48" y="98" font-family="Georgia, Times New Roman, serif" font-size="34" fill="#2a2725">${escapeXml(title)}</text>
 ${body}
 <line x1="48" y1="${height - 62}" x2="${width - 48}" y2="${height - 62}" stroke="#d4cfc4"/>
-<text x="48" y="${height - 32}" font-family="Georgia, Times New Roman, serif" font-size="17" fill="#4a4540">Run ID: ${escapeXml(runId)} | Sources: ${escapeXml(sourceSummary)}</text>
+<text x="48" y="${height - 32}" font-family="Georgia, Times New Roman, serif" font-size="17" fill="#4a4540">Sources: ${escapeXml(sourceSummary)}</text>
 </svg>`;
 }
 

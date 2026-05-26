@@ -29,6 +29,7 @@ import type {
   MetaInsightDimension,
   MetaInsightFilter,
 } from "./meta-insight-aggregates.ts";
+import type { OpenAICostBreakdown } from "./openai-cost.ts";
 
 export type AnalysisWorkbenchCitation = {
   id: string;
@@ -115,6 +116,7 @@ export type AnalysisWorkbenchPipelineResult = {
   answer: {
     summary: string;
     citations: AnalysisWorkbenchCitation[];
+    apiCost?: OpenAICostBreakdown;
   };
   sourceNotes: AnalysisWorkbenchSourceNote[];
   validation: {
@@ -225,7 +227,7 @@ export async function runAnalysisWorkbenchFactsPipeline(
     input.controlledEdit || null,
   );
   const facts = computeFacts(planned, groupedRows, totalRows, sourceNotes);
-  const answer = composeAnswer(planned, facts.items, sourceNotes);
+  const answer = withWorkbenchAnswerApiCost(composeAnswer(planned, facts.items, sourceNotes));
   const visualCards = applyAnalysisWorkbenchControlledEditsToVisualCards(
     buildVisualCards(planned, facts.items, groupedRows, trendRows),
     input.controlledEdit,
@@ -426,6 +428,7 @@ function blockedResult(input: {
     answer: {
       summary: "Request blocked. This analysis asks for data outside the governed Meta Ads catalog.",
       citations: [],
+      apiCost: workbenchLocalApiCost(),
     },
     sourceNotes: [
       {
@@ -581,6 +584,25 @@ function composeAnswer(
       .filter(Boolean)
       .join(" "),
     citations: [...numericFacts.map(citationForFact), sourceCitation],
+  };
+}
+
+function withWorkbenchAnswerApiCost<T extends { summary: string; citations: AnalysisWorkbenchCitation[] }>(
+  answer: T,
+) {
+  return {
+    ...answer,
+    apiCost: workbenchLocalApiCost(),
+  };
+}
+
+function workbenchLocalApiCost(): OpenAICostBreakdown {
+  return {
+    model: "governed-local",
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    estimatedCostUsd: 0,
   };
 }
 
@@ -1432,8 +1454,10 @@ function inclusiveDateDays(start: string, end: string) {
 }
 
 function stripSemanticValidation(planned: PlannedIntent): AnalysisWorkbenchPipelineIntent {
-  const { semanticValidation: _semanticValidation, filterScopes: _filterScopes, ...intent } = planned;
-  return intent;
+  const intent: Partial<PlannedIntent> = { ...planned };
+  delete intent.semanticValidation;
+  delete intent.filterScopes;
+  return intent as AnalysisWorkbenchPipelineIntent;
 }
 
 function sourceRowCount(groupedRows: MetaInsightAggregateRow[], totalRows: MetaInsightAggregateRow[]) {

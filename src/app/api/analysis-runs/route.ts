@@ -72,7 +72,7 @@ export async function PATCH(request: Request) {
     };
 
     if (typeof body.runId !== "string" || !body.runId.trim()) {
-      return Response.json({ error: "Run ID is required" }, { status: 400 });
+      return Response.json({ error: "Run selection is required" }, { status: 400 });
     }
     const runId = body.runId.trim();
 

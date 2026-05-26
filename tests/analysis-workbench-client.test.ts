@@ -117,7 +117,17 @@ test("run detail renders answer, source notes, and structured visual cards", () 
         prompt: "Which groups moved?",
         outputMode: "answer_visuals",
         title: "Which groups moved?",
-        answer: { summary: "Spend was $3,400 [F1].", citations: [] },
+        answer: {
+          summary: "Spend was $3,400 [F1].",
+          citations: [],
+          apiCost: {
+            model: "gpt-5.4",
+            inputTokens: 1200,
+            outputTokens: 300,
+            totalTokens: 1500,
+            estimatedCostUsd: 0.003,
+          },
+        },
         facts: { status: "computed" },
         sourceNotes: [
           { id: "S1", label: "Data source", value: "Meta Ads daily insights" },
@@ -234,6 +244,10 @@ test("run detail renders answer, source notes, and structured visual cards", () 
 
   assert.match(markup, /Answer/);
   assert.match(markup, /Spend was \$3,400/);
+  assert.match(markup, /Est\. API cost/);
+  assert.match(markup, /\$0\.00300/);
+  assert.match(markup, /gpt-5\.4 · 1,500 tokens/);
+  assert.doesNotMatch(markup, /Run ID/);
   assert.match(markup, /Source Notes/);
   assert.match(markup, /12 matching Meta Ads daily rows/);
   assert.match(markup, /Total Spend/);
@@ -445,11 +459,57 @@ test("run detail exposes rerun and controlled edit controls without SQL or formu
   assert.match(markup, /Rerun latest data/);
   assert.match(markup, /Controlled Edits/);
   assert.match(markup, /Date range/);
+  assert.match(markup, /<option value="brand">Brand<\/option>/);
+  assert.match(markup, /<option value="delivery_status">Delivery Status<\/option>/);
+  assert.match(markup, /<option value="Book Appts US">Book Appts US<\/option>/);
   assert.match(markup, /Metric/);
   assert.match(markup, /Chart type/);
   assert.match(markup, /Apply edits/);
+  assert.doesNotMatch(markup, /placeholder="Book Appts US"/);
   assert.doesNotMatch(markup, /SQL/i);
   assert.doesNotMatch(markup, /formula/i);
+});
+
+test("controlled edit filter value dropdown uses governed brand and delivery options", () => {
+  const { RunDetail } = loadModule("src/components/analysis-workbench-client.tsx");
+
+  function renderFilterMarkup(filter: { field: string; value: string }) {
+    return renderToStaticMarkup(
+      React.createElement(RunDetail, {
+        run: {
+          id: `run-${filter.field}`,
+          status: "completed",
+          prompt: "Show spend.",
+          outputMode: "full_dashboard",
+          title: "Show spend.",
+          intent: {
+            filters: [filter],
+            metrics: ["spend"],
+            dimensions: ["campaign_umbrella"],
+            visual: null,
+          },
+          answer: { summary: "Spend was $3,400 [F1].", citations: [] },
+          facts: { status: "computed" },
+          sourceNotes: [],
+          visualCards: [],
+          validation: { status: "ready" },
+          lineage: { parentRunId: null },
+          dashboardPacket: null,
+          createdAt: "2026-05-25T14:30:00.000Z",
+          updatedAt: "2026-05-25T14:30:00.000Z",
+        },
+        onApplyEdits: () => undefined,
+      }),
+    );
+  }
+
+  const brandMarkup = renderFilterMarkup({ field: "brand", value: "HP" });
+  assert.match(brandMarkup, /<option value="HP" selected="">HP<\/option>/);
+  assert.match(brandMarkup, /<option value="VVS">VVS<\/option>/);
+
+  const deliveryMarkup = renderFilterMarkup({ field: "delivery_status", value: "paused" });
+  assert.match(deliveryMarkup, /<option value="live">Live<\/option>/);
+  assert.match(deliveryMarkup, /<option value="paused" selected="">Paused<\/option>/);
 });
 
 test("dashboard packet insight controls render pinned insights and hide hidden insights", () => {
@@ -620,7 +680,7 @@ function loadModule(filePath: string) {
             return { fileName: "packet.pdf", mimeType: "application/pdf", content: "%PDF-1.4" };
           },
           buildAnalysisWorkbenchTableCsvExport() {
-            return { fileName: "table.csv", mimeType: "text/csv;charset=utf-8", content: "Run ID" };
+            return { fileName: "table.csv", mimeType: "text/csv;charset=utf-8", content: "Table" };
           },
           isAnalysisWorkbenchChartCard(card: { type?: string }) {
             return (
@@ -632,6 +692,20 @@ function loadModule(filePath: string) {
           isAnalysisWorkbenchTableCard(card: { type?: string }) {
             return card.type === "flat_table" || card.type === "pivot_table";
           },
+        };
+      }
+      if (id === "@/lib/campaign-umbrellas") {
+        return {
+          CAMPAIGN_UMBRELLAS: [
+            "Facebook US Product",
+            "Book Appts US",
+            "US Promotions (WKDS / OOAK)",
+            "Cash for Gold US",
+            "Facebook VN Product",
+            "VN Promotions (WKDS / OOAK)",
+            "Excluded / Non-umbrella",
+            "Needs review",
+          ],
         };
       }
       if (id === "@/lib/glossary") {

@@ -16,7 +16,7 @@ const sourceNotes = [
   { id: "S3", label: "Matched rows", value: "12 matching Meta Ads daily rows" },
 ];
 
-test("table CSV export uses displayed labels, displayed values, run identity, and source notes", () => {
+test("table CSV export uses displayed labels, displayed values, and source notes", () => {
   const table: Extract<AnalysisWorkbenchVisualCard, { type: "flat_table" }> = {
     id: "table_campaign_umbrella",
     type: "flat_table",
@@ -37,8 +37,8 @@ test("table CSV export uses displayed labels, displayed values, run identity, an
   const csv = buildAnalysisWorkbenchTableCsvExport({ card: table, runId: "run-1", sourceNotes });
 
   assert.equal(csv.mimeType, "text/csv;charset=utf-8");
-  assert.match(csv.fileName, /run-1-campaign-group-evidence\.csv$/);
-  assert.match(csv.content, /"Run ID","run-1"/);
+  assert.match(csv.fileName, /campaign-group-evidence\.csv$/);
+  assert.doesNotMatch(csv.content, /Run ID/);
   assert.match(
     csv.content,
     /"Source notes","S1 Data source: Meta Ads daily insights; S3 Matched rows: 12 matching Meta Ads daily rows"/,
@@ -99,18 +99,18 @@ test("chart PNG export source renders readable chart SVG without app chrome", ()
   });
 
   assert.equal(png.mimeType, "image/png");
-  assert.match(png.fileName, /run-1-spend-by-campaign-group\.png$/);
+  assert.match(png.fileName, /spend-by-campaign-group\.png$/);
   assert.match(png.svg, /<svg/);
   assert.match(png.svg, /Spend by campaign group/);
   assert.match(png.svg, /Book Appts US/);
   assert.match(png.svg, /\$2,500/);
-  assert.match(png.svg, /Run ID: run-1/);
+  assert.doesNotMatch(png.svg, /Run ID/);
   assert.match(png.svg, /S1 Data source: Meta Ads daily insights/);
   assert.doesNotMatch(png.svg, /Export PNG/);
   assert.doesNotMatch(png.svg, /<button/);
 });
 
-test("dashboard packet PDF export contains answer, visuals, notes, assumptions, caveats, and run trace", () => {
+test("dashboard packet PDF export contains answer, visuals, notes, assumptions, and caveats", () => {
   const table: Extract<AnalysisWorkbenchVisualCard, { type: "flat_table" }> = {
     id: "table_campaign_umbrella",
     type: "flat_table",
@@ -147,11 +147,11 @@ test("dashboard packet PDF export contains answer, visuals, notes, assumptions, 
   const pdf = buildAnalysisWorkbenchPdfReportExport({ packet, runId: "run-1" });
 
   assert.equal(pdf.mimeType, "application/pdf");
-  assert.match(pdf.fileName, /run-1-dashboard-packet\.pdf$/);
+  assert.match(pdf.fileName, /2026-05-25t14-35-00-000z-dashboard-packet\.pdf$/);
   assert.match(pdf.content, /^%PDF-1\.4/);
   assert.match(pdf.content, /HP\/VVS Meta Ads Analysis Report/);
-  assert.match(pdf.content, /Run ID: run-1/);
-  assert.match(pdf.content, /Promoted from run: run-parent/);
+  assert.doesNotMatch(pdf.content, /Run ID/);
+  assert.doesNotMatch(pdf.content, /Promoted from run/);
   assert.match(pdf.content, /Dashboard saved \[S1\]/);
   assert.match(pdf.content, /Campaign group evidence/);
   assert.match(pdf.content, /Scale review: Inspect Book Appts US before changing budgets/);
