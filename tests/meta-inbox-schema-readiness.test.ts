@@ -103,7 +103,7 @@ describe("Meta inbox schema readiness", () => {
   it("keeps webhook raw ingestion non-blocking while normalized inbox schema is absent", () => {
     assert.match(
       socialInboxSource,
-      /normalizeMetaInboxRowsWhenSchemaReady\(\{ threads, messages \}, "ingest"\)/,
+      /normalizeMetaInboxRowsWhenSchemaReady\(\s*\{ threads, messages \},\s*"ingest"/,
     );
     assert.match(
       socialInboxSource,
