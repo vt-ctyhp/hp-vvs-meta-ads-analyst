@@ -164,6 +164,66 @@ export type Database = {
           },
         ]
       }
+      ai_analysis_workbench_runs: {
+        Row: {
+          answer: Json
+          created_at: string
+          dashboard_packet: Json | null
+          environment: string
+          facts: Json
+          id: string
+          intent: Json
+          lineage: Json
+          output_mode: string
+          prompt: string
+          query_plan: Json
+          source_notes: Json
+          status: string
+          title: string
+          updated_at: string
+          validation: Json
+          visual_cards: Json
+        }
+        Insert: {
+          answer?: Json
+          created_at?: string
+          dashboard_packet?: Json | null
+          environment?: string
+          facts?: Json
+          id?: string
+          intent?: Json
+          lineage?: Json
+          output_mode?: string
+          prompt: string
+          query_plan?: Json
+          source_notes?: Json
+          status?: string
+          title: string
+          updated_at?: string
+          validation?: Json
+          visual_cards?: Json
+        }
+        Update: {
+          answer?: Json
+          created_at?: string
+          dashboard_packet?: Json | null
+          environment?: string
+          facts?: Json
+          id?: string
+          intent?: Json
+          lineage?: Json
+          output_mode?: string
+          prompt?: string
+          query_plan?: Json
+          source_notes?: Json
+          status?: string
+          title?: string
+          updated_at?: string
+          validation?: Json
+          visual_cards?: Json
+        }
+        Relationships: []
+      }
       ai_chat_messages: {
         Row: {
           content: string

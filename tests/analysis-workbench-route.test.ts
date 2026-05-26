@@ -1,0 +1,380 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import test from "node:test";
+import { runInNewContext } from "node:vm";
+
+import * as ts from "typescript";
+
+const require = createRequire(import.meta.url);
+
+test("analysis-runs POST creates a workbench run behind the AI analysis permission", async () => {
+  const calls: Array<{ name: string; args: unknown[] }> = [];
+  const route = loadRoute(calls);
+
+  const response = await route.POST(
+    jsonRequest("http://localhost/api/analysis-runs", {
+      prompt: "Show spend by group",
+      outputMode: "answer_only",
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    run: { id: "run-1", prompt: "Show spend by group", outputMode: "answer_only" },
+  });
+  assert.deepEqual(serializable(calls), [
+    { name: "requirePermissionFromRequest", args: ["view_ai_analysis"] },
+    {
+      name: "createAnalysisWorkbenchRun",
+      args: [{ prompt: "Show spend by group", outputMode: "answer_only" }],
+    },
+  ]);
+});
+
+test("analysis-runs POST passes parent lineage and removed context chip keys", async () => {
+  const calls: Array<{ name: string; args: unknown[] }> = [];
+  const route = loadRoute(calls);
+
+  const response = await route.POST(
+    jsonRequest("http://localhost/api/analysis-runs", {
+      prompt: "What changed?",
+      outputMode: "answer_visuals",
+      parentRunId: "run-parent",
+      removedContextKeys: ["metric:spend", "filter:brand:HP"],
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(serializable(calls), [
+    { name: "requirePermissionFromRequest", args: ["view_ai_analysis"] },
+    {
+      name: "createAnalysisWorkbenchRun",
+      args: [
+        {
+          prompt: "What changed?",
+          outputMode: "answer_visuals",
+          parentRunId: "run-parent",
+          removedContextKeys: ["metric:spend", "filter:brand:HP"],
+        },
+      ],
+    },
+  ]);
+});
+
+test("analysis-runs POST ignores invalid removed context chip payloads", async () => {
+  const calls: Array<{ name: string; args: unknown[] }> = [];
+  const route = loadRoute(calls);
+
+  const response = await route.POST(
+    jsonRequest("http://localhost/api/analysis-runs", {
+      prompt: "What changed?",
+      removedContextKeys: ["dateRange", 7, null],
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(serializable(calls.at(-1)), {
+    name: "createAnalysisWorkbenchRun",
+    args: [
+      {
+        prompt: "What changed?",
+        outputMode: "answer_visuals",
+        removedContextKeys: ["dateRange"],
+      },
+    ],
+  });
+});
+
+test("analysis-runs PATCH promotes an existing answer run into a full dashboard packet", async () => {
+  const calls: Array<{ name: string; args: unknown[] }> = [];
+  const route = loadRoute(calls);
+
+  const response = await route.PATCH(
+    jsonRequest("http://localhost/api/analysis-runs", {
+      action: "promote_dashboard",
+      runId: "run-1",
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    run: {
+      id: "run-1",
+      prompt: "Saved",
+      outputMode: "full_dashboard",
+      dashboardPacket: { kind: "analysis_dashboard_packet" },
+    },
+  });
+  assert.deepEqual(serializable(calls), [
+    { name: "requirePermissionFromRequest", args: ["view_ai_analysis"] },
+    { name: "promoteAnalysisWorkbenchRunToDashboard", args: ["run-1"] },
+  ]);
+});
+
+test("analysis-runs PATCH reruns a saved run with controlled governed edits", async () => {
+  const calls: Array<{ name: string; args: unknown[] }> = [];
+  const route = loadRoute(calls);
+
+  const response = await route.PATCH(
+    jsonRequest("http://localhost/api/analysis-runs", {
+      action: "rerun",
+      runId: "run-1",
+      edits: {
+        metrics: ["spend"],
+        dimensions: ["campaign_umbrella"],
+        limit: 5,
+      },
+    }),
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    run: {
+      id: "run-rerun",
+      prompt: "Saved",
+      outputMode: "full_dashboard",
+      lineage: { parentRunId: "run-1" },
+    },
+  });
+  assert.deepEqual(serializable(calls), [
+    { name: "requirePermissionFromRequest", args: ["view_ai_analysis"] },
+    {
+      name: "rerunAnalysisWorkbenchRun",
+      args: [
+        "run-1",
+        {
+          metrics: ["spend"],
+          dimensions: ["campaign_umbrella"],
+          limit: 5,
+        },
+      ],
+    },
+  ]);
+});
+
+test("analysis-runs PATCH blocks custom SQL and formulas before rerun work", async () => {
+  const calls: Array<{ name: string; args: unknown[] }> = [];
+  const route = loadRoute(calls);
+
+  const response = await route.PATCH(
+    jsonRequest("http://localhost/api/analysis-runs", {
+      action: "rerun",
+      runId: "run-1",
+      edits: {
+        customSql: "select * from meta_daily_insights",
+        formula: "revenue / spend",
+      },
+    }),
+  );
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    error: "Unsupported custom SQL, formulas, or calculated fields in controlled dashboard edits.",
+    blockers: [
+      {
+        code: "unsupported_custom_logic",
+        field: "customSql",
+        message: "Custom SQL, formulas, and calculated fields are not supported in governed dashboard edits.",
+      },
+      {
+        code: "unsupported_custom_logic",
+        field: "formula",
+        message: "Custom SQL, formulas, and calculated fields are not supported in governed dashboard edits.",
+      },
+    ],
+  });
+  assert.deepEqual(calls, [
+    { name: "requirePermissionFromRequest", args: ["view_ai_analysis"] },
+  ]);
+});
+
+test("analysis-runs PATCH rejects unsupported dashboard actions", async () => {
+  const calls: Array<{ name: string; args: unknown[] }> = [];
+  const route = loadRoute(calls);
+
+  const response = await route.PATCH(
+    jsonRequest("http://localhost/api/analysis-runs", {
+      action: "delete_legacy",
+      runId: "run-1",
+    }),
+  );
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: "Unsupported analysis run action" });
+  assert.deepEqual(calls, [
+    { name: "requirePermissionFromRequest", args: ["view_ai_analysis"] },
+  ]);
+});
+
+test("analysis-runs POST rejects an empty prompt before repository work", async () => {
+  const calls: Array<{ name: string; args: unknown[] }> = [];
+  const route = loadRoute(calls);
+
+  const response = await route.POST(
+    jsonRequest("http://localhost/api/analysis-runs", { prompt: "   " }),
+  );
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: "Prompt is required" });
+  assert.deepEqual(calls, [
+    { name: "requirePermissionFromRequest", args: ["view_ai_analysis"] },
+  ]);
+});
+
+test("analysis-runs GET lists recent runs or reopens one saved run", async () => {
+  const calls: Array<{ name: string; args: unknown[] }> = [];
+  const route = loadRoute(calls);
+
+  const listResponse = await route.GET(new Request("http://localhost/api/analysis-runs"));
+  assert.deepEqual(await listResponse.json(), {
+    runs: [{ id: "run-1", prompt: "Recent", outputMode: "answer_visuals" }],
+  });
+
+  const reopenResponse = await route.GET(
+    new Request("http://localhost/api/analysis-runs?runId=run-7"),
+  );
+  assert.deepEqual(await reopenResponse.json(), {
+    run: {
+      id: "run-7",
+      prompt: "Saved",
+      outputMode: "full_dashboard",
+      dashboardPacket: { kind: "analysis_dashboard_packet" },
+    },
+  });
+
+  assert.deepEqual(calls, [
+    { name: "requirePermissionFromRequest", args: ["view_ai_analysis"] },
+    { name: "listAnalysisWorkbenchRuns", args: [] },
+    { name: "requirePermissionFromRequest", args: ["view_ai_analysis"] },
+    { name: "getAnalysisWorkbenchRun", args: ["run-7"] },
+  ]);
+});
+
+function loadRoute(calls: Array<{ name: string; args: unknown[] }>) {
+  return loadModule("src/app/api/analysis-runs/route.ts", {
+    "@/lib/analysis-workbench-contract": {
+      normalizeAnalysisOutputMode(value: unknown) {
+        if (value === "answer_only" || value === "full_dashboard") return value;
+        return "answer_visuals";
+      },
+      normalizeAnalysisWorkbenchControlledEdits(value: unknown) {
+        const candidate = value as Record<string, unknown>;
+        const blockers = ["customSql", "formula"].flatMap((field) =>
+          Object.hasOwn(candidate || {}, field)
+            ? [
+                {
+                  code: "unsupported_custom_logic",
+                  field,
+                  message:
+                    "Custom SQL, formulas, and calculated fields are not supported in governed dashboard edits.",
+                },
+              ]
+            : [],
+        );
+        if (blockers.length) {
+          return { status: "blocked", edit: null, blockers, warnings: [], assumptions: [] };
+        }
+        return { status: "ready", edit: value, blockers: [], warnings: [], assumptions: [] };
+      },
+    },
+    "@/lib/analysis-workbench-runs": {
+      async createAnalysisWorkbenchRun(...args: unknown[]) {
+        calls.push({ name: "createAnalysisWorkbenchRun", args });
+        return { id: "run-1", prompt: "Show spend by group", outputMode: "answer_only" };
+      },
+      async getAnalysisWorkbenchRun(...args: unknown[]) {
+        calls.push({ name: "getAnalysisWorkbenchRun", args });
+        return {
+          id: args[0],
+          prompt: "Saved",
+          outputMode: "full_dashboard",
+          dashboardPacket: { kind: "analysis_dashboard_packet" },
+        };
+      },
+      async listAnalysisWorkbenchRuns(...args: unknown[]) {
+        calls.push({ name: "listAnalysisWorkbenchRuns", args });
+        return [{ id: "run-1", prompt: "Recent", outputMode: "answer_visuals" }];
+      },
+      async promoteAnalysisWorkbenchRunToDashboard(...args: unknown[]) {
+        calls.push({ name: "promoteAnalysisWorkbenchRunToDashboard", args });
+        return {
+          id: args[0],
+          prompt: "Saved",
+          outputMode: "full_dashboard",
+          dashboardPacket: { kind: "analysis_dashboard_packet" },
+        };
+      },
+      async rerunAnalysisWorkbenchRun(...args: unknown[]) {
+        calls.push({ name: "rerunAnalysisWorkbenchRun", args });
+        return {
+          id: "run-rerun",
+          prompt: "Saved",
+          outputMode: "full_dashboard",
+          lineage: { parentRunId: args[0] },
+        };
+      },
+    },
+    "@/lib/app-auth": {
+      async requirePermissionFromRequest(_request: Request, permission: string) {
+        calls.push({ name: "requirePermissionFromRequest", args: [permission] });
+      },
+    },
+    "@/lib/http": {
+      jsonError(error: unknown) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : "Unexpected error" },
+          { status: 500 },
+        );
+      },
+    },
+  }) as {
+    GET(request: Request): Promise<Response>;
+    POST(request: Request): Promise<Response>;
+    PATCH(request: Request): Promise<Response>;
+  };
+}
+
+function jsonRequest(url: string, body: unknown) {
+  return new Request(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+function serializable(value: unknown) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function loadModule(filePath: string, stubs: Record<string, unknown>) {
+  const output = ts.transpileModule(readFileSync(filePath, "utf8"), {
+    compilerOptions: {
+      esModuleInterop: true,
+      jsx: ts.JsxEmit.ReactJSX,
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+    },
+    fileName: filePath,
+  }).outputText;
+  const commonJsModule = { exports: {} as Record<string, unknown> };
+
+  runInNewContext(output, {
+    Request,
+    Response,
+    URL,
+    clearTimeout,
+    console,
+    exports: commonJsModule.exports,
+    module: commonJsModule,
+    process,
+    require(id: string) {
+      if (Object.hasOwn(stubs, id)) return stubs[id];
+      if (id.startsWith("@/")) throw new Error(`Unstubbed module import: ${id}`);
+      return require(id);
+    },
+    setTimeout,
+  });
+
+  return commonJsModule.exports;
+}
