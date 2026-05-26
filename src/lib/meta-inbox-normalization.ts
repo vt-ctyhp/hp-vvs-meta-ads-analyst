@@ -1,3 +1,4 @@
+import { classifyCampaignUmbrella } from "./campaign-umbrellas.ts";
 import type {
   MetaInboxQueueCategoryKey,
   MetaInboxSourceChannelKey,
@@ -90,6 +91,41 @@ export type MetaInboxNormalizationBatch = {
   firstTouchSources: MetaInboxFirstTouchCandidate[];
 };
 
+export type MetaAdsLookupRow = {
+  ad_id: string;
+  campaign_id: string | null;
+  ad_set_id: string | null;
+  creative_id: string | null;
+  campaign_name: string | null;
+  ad_set_name: string | null;
+};
+
+/**
+ * Enrich a first-touch source captured from a click-to-Messenger referral
+ * (which only carries `ad_id`) with the campaign/adset/creative chain we
+ * already sync locally in `meta_ads`. Pure — caller does the supabase lookup
+ * and hands the row (or null) to this function.
+ */
+export function enrichFirstTouchSourceWithAd(
+  source: MetaInboxFirstTouchCandidate,
+  adRow: MetaAdsLookupRow | null,
+): MetaInboxFirstTouchCandidate {
+  if (!adRow) return source;
+  const umbrella = classifyCampaignUmbrella({
+    campaignName: adRow.campaign_name,
+    adSetName: adRow.ad_set_name,
+  });
+  const umbrellaLabel =
+    umbrella.umbrella && umbrella.umbrella !== "Needs review" ? umbrella.umbrella : null;
+  return {
+    ...source,
+    campaignId: source.campaignId || adRow.campaign_id,
+    adsetId: source.adsetId || adRow.ad_set_id,
+    creativeId: source.creativeId || adRow.creative_id,
+    campaignUmbrellaId: source.campaignUmbrellaId || umbrellaLabel,
+  };
+}
+
 export type MetaInboxThreadHistoryLoader = (
   platform: string,
   threadId: string,
@@ -172,9 +208,12 @@ export function buildMetaInboxNormalizationBatch(
     const timeline = messageTimeline(threadMessages, stringField(thread.last_message_at));
     const firstMessage = firstInboundMessage(threadMessages) || threadMessages[0] || null;
     const firstTouch = firstTouchFromMessage(canonicalKey, firstMessage, thread);
+    const inboundBodies = threadMessages
+      .filter((message) => stringField(message.direction) !== "outbound")
+      .map((message) => stringField(message.body));
     const routing = inferQueueCategory(firstTouch, [
       stringField(thread.snippet),
-      ...threadMessages.map((message) => stringField(message.body)),
+      ...inboundBodies,
     ]);
     const replyWindow = replyWindowState(timeline.latestInboundAt, now);
     const needsReply = Boolean(
@@ -663,7 +702,7 @@ function inferQueueCategory(
     routingSource: "fallback" as const,
     routingConfidence: messageText.trim() ? 0.35 : 0.15,
     routingExplanation: messageText.trim()
-      ? "No locked routing keyword matched; routed to General Inquiry."
+      ? "No ad referral captured; no locked routing keyword in customer text — routed to General Inquiry."
       : "Missing source and message routing signals; needs human review.",
   };
 }
