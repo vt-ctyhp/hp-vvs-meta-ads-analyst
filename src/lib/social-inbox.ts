@@ -14,6 +14,9 @@ import {
 import {
   buildMetaInboxNormalizationBatch,
   buildMetaInboxNormalizationBatchWithThreadHistory,
+  enrichFirstTouchSourceWithAd,
+  type MetaAdsLookupRow,
+  type MetaInboxFirstTouchCandidate,
   type MetaInboxNormalizationInput,
   type MetaInboxThreadHistoryLoader,
 } from "./meta-inbox-normalization.ts";
@@ -58,8 +61,8 @@ import {
   isMissingMetaInboxSchemaError,
   normalizeMetaInboxSchemaError,
 } from "./meta-inbox-schema.ts";
-import { webhookMessageRow as shapeWebhookMessageRow } from "./meta-webhook-shape.ts";
-export { webhookMessageRow } from "./meta-webhook-shape.ts";
+import { webhookMessageRow as shapeWebhookMessageRow, webhookReferralRow as shapeWebhookReferralRow } from "./meta-webhook-shape.ts";
+export { webhookMessageRow, webhookReferralRow } from "./meta-webhook-shape.ts";
 import {
   buildMetaInboxCommentActionDraft,
   buildMetaInboxQueueCommentActionUpdate,
@@ -149,7 +152,7 @@ type DynamicMaybeSingleResult = {
   error: Error | null;
 };
 
-type DynamicQuery = {
+type DynamicQuery = PromiseLike<DynamicQueryResult> & {
   eq: (column: string, value: string | boolean | number) => DynamicQuery;
   in: (column: string, values: string[]) => DynamicQuery;
   order: (
@@ -459,6 +462,7 @@ export type SocialInboxSyncResult = {
 export type MetaWebhookIngestResult = {
   messages: number;
   comments: number;
+  referrals: number;
 };
 
 export type { SocialInboxConversationHistory };
@@ -2261,6 +2265,7 @@ export async function ingestMetaWebhookPayload(payload: JsonRecord): Promise<Met
   const result: MetaWebhookIngestResult = {
     messages: 0,
     comments: 0,
+    referrals: 0,
   };
 
   for (const entry of entries) {
@@ -2269,6 +2274,22 @@ export async function ingestMetaWebhookPayload(payload: JsonRecord): Promise<Met
       ...arrayField(entry.standby).filter(isRecord),
     ];
     for (const event of messagingEvents) {
+      const referralRow = shapeWebhookReferralRow(object, entry, event);
+      if (referralRow) {
+        const threads = await upsertMany(
+          "meta_social_threads",
+          [referralRow.thread],
+          "platform,thread_id",
+          "ingest",
+        );
+        await normalizeMetaInboxRowsWhenSchemaReady(
+          { threads },
+          "ingest",
+          { loadFullThreadHistory: true },
+        );
+        result.referrals += 1;
+      }
+
       const row = shapeWebhookMessageRow(object, entry, event);
       if (!row) continue;
       const threads = await upsertMany(
@@ -2307,7 +2328,7 @@ export async function ingestMetaWebhookPayload(payload: JsonRecord): Promise<Met
     }
   }
 
-  if (result.messages || result.comments) {
+  if (result.messages || result.comments || result.referrals) {
     const supabase = dynamicSupabase("ingest");
     const { error } = await supabase.from("meta_social_sync_runs").insert(withActiveMetaInboxEnvironment({
       trigger: "webhook",
@@ -2315,9 +2336,10 @@ export async function ingestMetaWebhookPayload(payload: JsonRecord): Promise<Met
       completed_at: new Date().toISOString(),
       metrics: {
         pages: 0,
-        threads: result.messages,
+        threads: result.messages + result.referrals,
         messages: result.messages,
         comments: result.comments,
+        referrals: result.referrals,
       },
       errors: [],
     })).select("id").single();
@@ -3075,6 +3097,94 @@ async function upsertMany(
   return results;
 }
 
+async function loadMetaAdsForFirstTouchSources(
+  sources: readonly MetaInboxFirstTouchCandidate[],
+  role: "worker" | "ingest",
+): Promise<Map<string, MetaAdsLookupRow>> {
+  const lookup = new Map<string, MetaAdsLookupRow>();
+  const adIds = Array.from(
+    new Set(
+      sources
+        .map((source) => source.adId)
+        .filter((id): id is string => Boolean(id && id.trim())),
+    ),
+  );
+  if (!adIds.length) return lookup;
+
+  const supabase = dynamicSupabase(role);
+  const { data: adData, error: adError } = await supabase
+    .from("meta_ads")
+    .select("ad_id,campaign_id,ad_set_id,creative_id,campaign_ref_id,ad_set_ref_id")
+    .in("ad_id", adIds);
+
+  if (adError) {
+    if (isMissingMetaInboxSchemaError(adError)) return lookup;
+    throw normalizeMetaInboxSchemaError(adError);
+  }
+
+  const adRows = rowsFrom(adData);
+  if (!adRows.length) return lookup;
+
+  const campaignRefIds = Array.from(
+    new Set(
+      adRows
+        .map((row) => stringField(row.campaign_ref_id))
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+  const adSetRefIds = Array.from(
+    new Set(
+      adRows
+        .map((row) => stringField(row.ad_set_ref_id))
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+
+  const campaignNameById = new Map<string, string | null>();
+  if (campaignRefIds.length) {
+    const { data: campaignData, error: campaignError } = await supabase
+      .from("meta_campaigns")
+      .select("id,name")
+      .in("id", campaignRefIds);
+    if (campaignError && !isMissingMetaInboxSchemaError(campaignError)) {
+      throw normalizeMetaInboxSchemaError(campaignError);
+    }
+    for (const row of rowsFrom(campaignData)) {
+      campaignNameById.set(String(row.id), stringField(row.name));
+    }
+  }
+
+  const adSetNameById = new Map<string, string | null>();
+  if (adSetRefIds.length) {
+    const { data: adSetData, error: adSetError } = await supabase
+      .from("meta_ad_sets")
+      .select("id,name")
+      .in("id", adSetRefIds);
+    if (adSetError && !isMissingMetaInboxSchemaError(adSetError)) {
+      throw normalizeMetaInboxSchemaError(adSetError);
+    }
+    for (const row of rowsFrom(adSetData)) {
+      adSetNameById.set(String(row.id), stringField(row.name));
+    }
+  }
+
+  for (const row of adRows) {
+    const adId = stringField(row.ad_id);
+    if (!adId) continue;
+    const campaignRefId = stringField(row.campaign_ref_id);
+    const adSetRefId = stringField(row.ad_set_ref_id);
+    lookup.set(adId, {
+      ad_id: adId,
+      campaign_id: stringField(row.campaign_id),
+      ad_set_id: stringField(row.ad_set_id),
+      creative_id: stringField(row.creative_id),
+      campaign_name: campaignRefId ? campaignNameById.get(campaignRefId) || null : null,
+      ad_set_name: adSetRefId ? adSetNameById.get(adSetRefId) || null : null,
+    });
+  }
+  return lookup;
+}
+
 async function normalizeMetaInboxRows(
   input: MetaInboxNormalizationInput,
   role: "worker" | "ingest" = "worker",
@@ -3174,9 +3284,14 @@ async function normalizeMetaInboxRows(
     ]),
   );
 
+  const adLookup = await loadMetaAdsForFirstTouchSources(batch.firstTouchSources, role);
+  const enrichedFirstTouchSources = batch.firstTouchSources.map((source) =>
+    source.adId ? enrichFirstTouchSourceWithAd(source, adLookup.get(source.adId) || null) : source,
+  );
+
   await upsertMetaInboxMany(
     "meta_inbox_first_touch_sources",
-    batch.firstTouchSources
+    enrichedFirstTouchSources
       .map((source) => {
         const conversationId = conversationIdByKey.get(source.canonicalConversationKey);
         if (!conversationId) return null;

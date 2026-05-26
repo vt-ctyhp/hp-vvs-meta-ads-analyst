@@ -175,13 +175,13 @@ function CustomerSection({
           <div className="space-y-2">
             <InfoLine
               label="Source"
-              value={metaInboxVocabularyLabel(META_INBOX_SOURCE_CHANNELS, item.sourceChannel)}
+              value={firstTouchSourceLabel(item.sourceChannel, firstTouch)}
             />
-            <InfoLine label="Umbrella" value={firstTouch?.campaign_umbrella_id || null} />
-            <InfoLine label="Campaign" value={firstTouch?.campaign_id || null} />
-            <InfoLine label="Ad set" value={firstTouch?.adset_id || null} />
+            <InfoLine label="Umbrella" value={firstTouchFieldLabel(firstTouch?.campaign_umbrella_id, firstTouch?.attribution_method)} />
+            <InfoLine label="Campaign" value={firstTouchFieldLabel(firstTouch?.campaign_id, firstTouch?.attribution_method)} />
+            <InfoLine label="Ad set" value={firstTouchFieldLabel(firstTouch?.adset_id, firstTouch?.attribution_method)} />
             <InfoLine label="Ad" value={firstTouch?.ad_id || null} />
-            <InfoLine label="Creative" value={firstTouch?.creative_id || null} />
+            <InfoLine label="Creative" value={firstTouchFieldLabel(firstTouch?.creative_id, firstTouch?.attribution_method)} />
             <InfoLine
               label="Source post"
               value={firstTouch?.source_permalink ? "Open source post →" : null}
@@ -192,6 +192,27 @@ function CustomerSection({
       </div>
     </DrawerSection>
   );
+}
+
+function firstTouchSourceLabel(
+  sourceChannel: string,
+  firstTouch: Record<string, unknown> | null | undefined,
+): string {
+  const base = metaInboxVocabularyLabel(META_INBOX_SOURCE_CHANNELS, sourceChannel);
+  if (!firstTouch || firstTouch.attribution_method === "none") {
+    const platform = sourceChannel?.startsWith("instagram") ? "Instagram" : "Facebook";
+    return `${platform} Message — no ad referral`;
+  }
+  return base;
+}
+
+function firstTouchFieldLabel(
+  value: unknown,
+  attributionMethod: unknown,
+): string | null {
+  if (typeof value === "string" && value.trim()) return value;
+  if (attributionMethod === "meta_referral") return "Ad linked, campaign resolving…";
+  return null;
 }
 
 function ContactMethods({
