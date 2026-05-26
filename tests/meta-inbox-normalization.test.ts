@@ -81,7 +81,7 @@ describe("Meta inbox raw normalization", () => {
 
     assert.equal(batch.conversations.length, 1);
     assert.deepEqual(batch.conversations[0], {
-      canonicalConversationKey: "facebook:message_thread:facebook:webhook:page-1:customer-1",
+      canonicalConversationKey: "facebook:message_thread:page-1:customer-1",
       customerProfileKey: "facebook:page-1::customer-1",
       sourceChannel: "ad_referral",
       sourceType: "ad_referral",
@@ -245,6 +245,134 @@ describe("Meta inbox raw normalization", () => {
     assert.equal(batch.conversations[0].queueCategoryKey, "uncategorized_needs_review");
     assert.equal(batch.conversations[0].routingExplanation, "Root comment missing; needs human review.");
     assert.equal(batch.firstTouchSources[0].sourceCommentId, "missing-root");
+  });
+
+  it("derives the same canonical key for webhook and polled inputs of the same participant", () => {
+    const webhookBatch = buildMetaInboxNormalizationBatch({
+      now: new Date("2026-05-23T01:00:00.000Z"),
+      threads: [
+        {
+          id: "thread-row-webhook",
+          platform: "facebook",
+          thread_id: "facebook:webhook:page-1:customer-1",
+          page_id: "page-1",
+          participant_id: "customer-1",
+          last_message_at: "2026-05-23T00:00:00.000Z",
+        },
+      ],
+      messages: [
+        {
+          id: "message-row-webhook",
+          platform: "facebook",
+          thread_id: "facebook:webhook:page-1:customer-1",
+          message_id: "mid.1",
+          direction: "inbound",
+          sender_id: "customer-1",
+          sender_name: "Viv Customer",
+          body: "hello",
+          sent_at: "2026-05-23T00:00:00.000Z",
+        },
+      ],
+    });
+    const polledBatch = buildMetaInboxNormalizationBatch({
+      now: new Date("2026-05-23T01:00:00.000Z"),
+      threads: [
+        {
+          id: "thread-row-polled",
+          platform: "facebook",
+          thread_id: "t_1814121942489626",
+          page_id: "page-1",
+          participant_id: "customer-1",
+          participant_name: "Viv Customer",
+          last_message_at: "2026-05-23T00:00:00.000Z",
+        },
+      ],
+      messages: [
+        {
+          id: "message-row-polled",
+          platform: "facebook",
+          thread_id: "t_1814121942489626",
+          message_id: "mid.1",
+          direction: "inbound",
+          sender_id: "customer-1",
+          sender_name: "Viv Customer",
+          body: "hello",
+          sent_at: "2026-05-23T00:00:00.000Z",
+        },
+      ],
+    });
+    assert.equal(
+      webhookBatch.conversations[0].canonicalConversationKey,
+      "facebook:message_thread:page-1:customer-1",
+    );
+    assert.equal(
+      polledBatch.conversations[0].canonicalConversationKey,
+      webhookBatch.conversations[0].canonicalConversationKey,
+    );
+    assert.equal(
+      webhookBatch.conversations[0].platformThreadId,
+      "facebook:webhook:page-1:customer-1",
+    );
+    assert.equal(polledBatch.conversations[0].platformThreadId, "t_1814121942489626");
+  });
+
+  it("uses ig_user_id as the business identity for Instagram message threads", () => {
+    const batch = buildMetaInboxNormalizationBatch({
+      now: new Date("2026-05-23T01:00:00.000Z"),
+      threads: [
+        {
+          id: "thread-row-ig",
+          platform: "instagram",
+          thread_id: "ig-thread-arbitrary",
+          ig_user_id: "ig-1",
+          participant_id: "ig-customer-1",
+          last_message_at: "2026-05-23T00:00:00.000Z",
+        },
+      ],
+      messages: [
+        {
+          id: "message-row-ig",
+          platform: "instagram",
+          thread_id: "ig-thread-arbitrary",
+          direction: "inbound",
+          sender_id: "ig-customer-1",
+          body: "hello",
+          sent_at: "2026-05-23T00:00:00.000Z",
+        },
+      ],
+    });
+    assert.equal(
+      batch.conversations[0].canonicalConversationKey,
+      "instagram:message_thread:ig-1:ig-customer-1",
+    );
+  });
+
+  it("falls back to the thread id when business identity is missing", () => {
+    const batch = buildMetaInboxNormalizationBatch({
+      now: new Date("2026-05-23T01:00:00.000Z"),
+      threads: [
+        {
+          id: "thread-row-orphan",
+          platform: "facebook",
+          thread_id: "t_orphan",
+          last_message_at: "2026-05-23T00:00:00.000Z",
+        },
+      ],
+      messages: [
+        {
+          id: "message-row-orphan",
+          platform: "facebook",
+          thread_id: "t_orphan",
+          direction: "inbound",
+          body: "hello",
+          sent_at: "2026-05-23T00:00:00.000Z",
+        },
+      ],
+    });
+    assert.equal(
+      batch.conversations[0].canonicalConversationKey,
+      "facebook:message_thread:t_orphan",
+    );
   });
 
   it("marks old conversations expired when no reply window remains", () => {

@@ -160,7 +160,15 @@ export function buildMetaInboxNormalizationBatch(
 
     if (profile) profiles.set(profile.profileKey, profile);
 
-    const canonicalKey = canonicalThreadKey(platform, threadId);
+    const canonicalKey = canonicalThreadKey(
+      platform,
+      {
+        pageId: stringField(thread.page_id),
+        igUserId: stringField(thread.ig_user_id),
+        participantId: participant.participantId,
+      },
+      threadId,
+    );
     const timeline = messageTimeline(threadMessages, stringField(thread.last_message_at));
     const firstMessage = firstInboundMessage(threadMessages) || threadMessages[0] || null;
     const firstTouch = firstTouchFromMessage(canonicalKey, firstMessage, thread);
@@ -701,7 +709,19 @@ function replyWindowState(latestInboundAt: string | null, now: Date) {
   };
 }
 
-function canonicalThreadKey(platform: string, threadId: string) {
+// Identity-based canonical key keeps webhook (synthetic thread id) and polling
+// (real `t_…` id) on the same conversation row when they describe the same
+// participant on the same page. Falls back to the thread id when identity is
+// not available.
+function canonicalThreadKey(
+  platform: string,
+  identity: { pageId: string | null; igUserId: string | null; participantId: string | null },
+  threadId: string,
+) {
+  const businessId = identity.pageId || identity.igUserId;
+  if (businessId && identity.participantId) {
+    return `${platform}:message_thread:${businessId}:${identity.participantId}`;
+  }
   return `${platform}:message_thread:${threadId}`;
 }
 
