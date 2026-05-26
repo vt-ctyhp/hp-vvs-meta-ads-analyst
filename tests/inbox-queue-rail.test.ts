@@ -121,6 +121,61 @@ test("QueueRow exposes needs-reply, over-SLA, active, and default visual modes",
   assert.match(resolved, /data-over-sla="false"/);
   assert.match(resolved, /data-label-tone="none"/);
   assert.doesNotMatch(resolved, /Needs reply|Over SLA/);
+
+  const unread = renderToStaticMarkup(
+    React.createElement(QueueRow, {
+      item: itemFixture({
+        id: "unread",
+        sender: "Uma Unread",
+        status: "Unread",
+        conversationStatus: "new_inquiry",
+        timestamp: "2026-05-25T10:00:00.000Z",
+      }),
+      active: false,
+      now,
+      onSelect: () => {},
+    }),
+  );
+  assert.match(unread, /data-visual-mode="needs-reply"/);
+  assert.match(unread, /data-label-tone="pink"/);
+  assert.match(unread, />Needs reply</);
+
+  const unreadOverSla = renderToStaticMarkup(
+    React.createElement(QueueRow, {
+      item: itemFixture({
+        id: "unread-sla",
+        sender: "Sal Slow",
+        status: "Unread",
+        conversationStatus: "new_inquiry",
+        timestamp: "2026-05-24T08:00:00.000Z",
+      }),
+      active: false,
+      now,
+      onSelect: () => {},
+    }),
+  );
+  assert.match(unreadOverSla, /data-visual-mode="needs-reply"/);
+  assert.match(unreadOverSla, /data-over-sla="true"/);
+  assert.match(unreadOverSla, /data-label-tone="warning"/);
+  assert.match(unreadOverSla, />↑ Over SLA</);
+  assert.doesNotMatch(unreadOverSla, />Needs reply</);
+
+  const unreadActive = renderToStaticMarkup(
+    React.createElement(QueueRow, {
+      item: itemFixture({
+        id: "unread-active",
+        sender: "Ava Active",
+        status: "Unread",
+        conversationStatus: "new_inquiry",
+        timestamp: "2026-05-25T10:00:00.000Z",
+      }),
+      active: true,
+      now,
+      onSelect: () => {},
+    }),
+  );
+  assert.match(unreadActive, /data-visual-mode="active"/);
+  assert.match(unreadActive, /data-active="true"/);
 });
 
 test("QueueRail renders admin and team-scoped category options", () => {

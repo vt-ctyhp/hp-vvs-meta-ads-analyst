@@ -150,7 +150,15 @@ export function queueItemIsOverSla(
 }
 
 function isNeedsReply(item: MetaInboxQueueDisplayItem) {
-  return item.conversationStatus === "needs_reply" || item.status === "Needs reply";
+  // Treat both workflow-flagged ("Needs reply") and not-yet-opened ("Unread")
+  // conversations as needing attention. Both contribute to the warning-toned
+  // `inboxHighlights` at the top of the page, so the row treatment must
+  // mirror the status sentence.
+  return (
+    item.conversationStatus === "needs_reply" ||
+    item.status === "Needs reply" ||
+    item.status === "Unread"
+  );
 }
 
 function senderInitials(sender: string) {
