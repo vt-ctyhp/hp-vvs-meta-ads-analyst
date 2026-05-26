@@ -173,6 +173,62 @@ export type AnalysisSpec = {
 
 export type AnalysisQuestionType = (typeof QUESTION_TYPES)[number];
 
+export type AnalysisComparisonScope = {
+  id: string;
+  label: string;
+  scopeType: "entity" | "period";
+  dateRange: AnalysisSpec["dateRange"];
+  filters: AnalysisFilter[];
+};
+
+export type AnalysisComparisonScopeResult = {
+  scopeId: string;
+  timeRange: { start: string; end: string; days: number };
+  rows: MetaInsightAggregateRow[];
+};
+
+export type AnalysisComparisonScopeFact = {
+  id: string;
+  label: string;
+  scopeType: AnalysisComparisonScope["scopeType"];
+  timeRange: { start: string; end: string; days: number };
+  filters: AnalysisFilter[];
+  metrics: Record<AnalysisMetric, number | null>;
+  sourceRows: number;
+  empty: boolean;
+};
+
+export type AnalysisComparisonDelta = {
+  metric: AnalysisMetric;
+  fromScopeId: string;
+  toScopeId: string;
+  delta: number | null;
+  percentDelta: number | null;
+  winnerScopeId: string | null;
+  winnerLabel: string | null;
+};
+
+export type AnalysisComparisonSourceNote = {
+  label: string;
+  timeRange: { start: string; end: string; days: number };
+  filters: AnalysisFilter[];
+  sourceRows: number;
+  dataSource: "meta_ads";
+  sourceTable: "meta_daily_insights";
+  sourceFunction: "aggregate_meta_daily_insights";
+};
+
+export type AnalysisComparisonFactPack = {
+  scopeType: AnalysisComparisonScope["scopeType"];
+  primaryMetric: AnalysisMetric;
+  metrics: AnalysisMetric[];
+  scopes: AnalysisComparisonScopeFact[];
+  deltas: AnalysisComparisonDelta[];
+  sourceNotes: AnalysisComparisonSourceNote[];
+  caveats: string[];
+  groundingValues: string[];
+};
+
 export type AnalysisPlannerIntent = {
   questionType: AnalysisQuestionType;
   title: string;
@@ -193,6 +249,7 @@ export type AnalysisPlannerIntent = {
   };
   assumptions: string[];
   clarificationNeeds: string[];
+  comparisonScopes?: AnalysisComparisonScope[];
 };
 
 export type AnalysisRuntimeContext = {
@@ -214,6 +271,7 @@ export type AnalysisAnalystDebug = {
   validationStatus: AnalysisValidationStatus;
   questionType?: AnalysisQuestionType;
   plannerIntent?: AnalysisPlannerIntent;
+  comparison?: AnalysisComparisonFactPack | null;
   dataSource: "meta_ads";
   sourceTable: "meta_daily_insights";
   sourceFunction: "aggregate_meta_daily_insights" | null;
@@ -256,7 +314,9 @@ export type AnalysisResult = {
     sourceFunction?: "aggregate_meta_daily_insights" | null;
     latestSyncedInsightDate?: string | null;
     filters?: AnalysisFilter[];
+    comparisonScopes?: AnalysisComparisonSourceNote[];
   };
+  comparison?: AnalysisComparisonFactPack | null;
   analystDebug: AnalysisAnalystDebug;
   warnings: string[];
   unsupportedReasons: string[];
@@ -804,7 +864,7 @@ export async function runSavedAdHocAnalysis(
     });
   }
 
-  const aggregated = await aggregateSpec(resolvedSpec, validation, repairedSpec);
+  const aggregated = await aggregateSpec(resolvedSpec, validation, repairedSpec, plannerIntent);
 
   return {
     ...baseResult({
@@ -821,9 +881,11 @@ export async function runSavedAdHocAnalysis(
       validation,
       repairedSpec,
     }),
-    answer: repairedSpec
-      ? "Loaded saved dashboard spec, repaired it from the original prompt, and refreshed the data directly from Supabase."
-      : "Loaded saved dashboard spec and refreshed the data directly from Supabase.",
+    answer: aggregated.comparison
+      ? buildComparisonAnswer(aggregated.comparison)
+      : repairedSpec
+        ? "Loaded saved dashboard spec, repaired it from the original prompt, and refreshed the data directly from Supabase."
+        : "Loaded saved dashboard spec and refreshed the data directly from Supabase.",
   };
 }
 
@@ -939,10 +1001,10 @@ export async function createAdHocAnalysis(input: {
     });
   }
 
-  const aggregated = await aggregateSpec(resolvedSpec, validation, false);
+  const aggregated = await aggregateSpec(resolvedSpec, validation, false, plannerIntent);
 
   const analysis =
-    input.mode === "deep"
+    input.mode === "deep" && !aggregated.comparison
       ? await generateDeepAnalysis(prompt, resolvedSpec, aggregated, getOpenAIAnalysisModel("deep"))
       : null;
 
@@ -971,7 +1033,9 @@ export async function createAdHocAnalysis(input: {
 
   const result = {
     ...resultBeforeSave,
-    answer: analysis?.answer || buildDeterministicAnswer(resolvedSpec, aggregated),
+    answer: aggregated.comparison
+      ? buildComparisonAnswer(aggregated.comparison)
+      : analysis?.answer || buildDeterministicAnswer(resolvedSpec, aggregated),
   };
 
   const persistence = await persistAnalysis(result, usedPlanModel, analysis?.model || null);
@@ -1050,10 +1114,10 @@ export async function editAdHocAnalysis(input: {
     });
   }
 
-  const aggregated = await aggregateSpec(resolvedSpec, validation, false);
+  const aggregated = await aggregateSpec(resolvedSpec, validation, false, plannerIntent);
 
   const analysis =
-    input.mode === "deep"
+    input.mode === "deep" && !aggregated.comparison
       ? await generateDeepAnalysis(prompt, resolvedSpec, aggregated, getOpenAIAnalysisModel("deep"))
       : null;
 
@@ -1082,7 +1146,9 @@ export async function editAdHocAnalysis(input: {
 
   const result = {
     ...resultBeforeSave,
-    answer: analysis?.answer || buildDeterministicAnswer(resolvedSpec, aggregated),
+    answer: aggregated.comparison
+      ? buildComparisonAnswer(aggregated.comparison)
+      : analysis?.answer || buildDeterministicAnswer(resolvedSpec, aggregated),
   };
 
   const persistence = await persistAnalysis(result, planModel, analysis?.model || null, dashboard?.id || null);
@@ -1317,6 +1383,7 @@ async function aggregateSpec(
   spec: AnalysisSpec,
   validation: ValidationResult = readyValidation(),
   repairedSpec = false,
+  plannerIntent?: AnalysisPlannerIntent,
 ) {
   const latestSyncedInsightDate = await fetchLatestSyncedInsightDate();
   const range = resolveDateRange(spec.dateRange, latestSyncedInsightDate);
@@ -1425,6 +1492,13 @@ async function aggregateSpec(
     ),
   };
   const matchedRows = totalRows[0]?.source_rows || 0;
+  const comparison = plannerIntent?.comparisonScopes?.length
+    ? await aggregateComparisonScopes({
+        metrics: spec.metrics,
+        scopes: plannerIntent.comparisonScopes,
+        latestSyncedInsightDate,
+      })
+    : null;
 
   const sourceTransparency = {
     timeRange: range,
@@ -1440,6 +1514,7 @@ async function aggregateSpec(
     sourceFunction: "aggregate_meta_daily_insights" as const,
     latestSyncedInsightDate,
     filters: spec.filters,
+    ...(comparison ? { comparisonScopes: comparison.sourceNotes } : {}),
   };
   const analystDebug = buildAnalystDebug({
     validation,
@@ -1450,6 +1525,7 @@ async function aggregateSpec(
     recordCounts: sourceTransparency.recordCounts,
     repairedSpec,
     warnings,
+    comparison,
   });
 
   return {
@@ -1461,7 +1537,264 @@ async function aggregateSpec(
     totals,
     sourceTransparency,
     analystDebug,
+    comparison,
   };
+}
+
+async function aggregateComparisonScopes(input: {
+  metrics: AnalysisMetric[];
+  scopes: AnalysisComparisonScope[];
+  latestSyncedInsightDate: string | null;
+}) {
+  const scopeResults = await Promise.all(
+    input.scopes.map(async (scope) => {
+      const timeRange = resolveDateRange(scope.dateRange, input.latestSyncedInsightDate);
+      return {
+        scopeId: scope.id,
+        timeRange,
+        rows: await aggregateMetaInsights({
+          start: timeRange.start,
+          end: timeRange.end,
+          dimensions: [],
+          filters: scope.filters,
+          sortField: "spend",
+          sortDirection: "desc",
+          limit: 1,
+        }),
+      };
+    }),
+  );
+
+  return buildComparisonFactPack({
+    metrics: input.metrics,
+    scopes: input.scopes,
+    scopeResults,
+  });
+}
+
+export function buildComparisonFactPack(input: {
+  metrics: AnalysisMetric[];
+  scopes: AnalysisComparisonScope[];
+  scopeResults: AnalysisComparisonScopeResult[];
+}): AnalysisComparisonFactPack {
+  const metrics = uniqueAllowed(input.metrics, ANALYSIS_METRICS, ["spend", "primary_results", "cpl"]);
+  const primaryMetric = comparisonPrimaryMetric(metrics);
+  const resultByScopeId = new Map(input.scopeResults.map((result) => [result.scopeId, result]));
+  const scopes = input.scopes.map((scope) => {
+    const result = resultByScopeId.get(scope.id);
+    const totalRow = sumAggregateRows(result?.rows || [])[0];
+    const totals = aggregateMetrics(totalRow);
+    const sourceRows = totalRow?.source_rows || 0;
+
+    return {
+      id: scope.id,
+      label: scope.label,
+      scopeType: scope.scopeType,
+      timeRange: result?.timeRange || resolveDateRange(scope.dateRange, null),
+      filters: scope.filters,
+      metrics: Object.fromEntries(metrics.map((metric) => [metric, totals[metric]])) as Record<
+        AnalysisMetric,
+        number | null
+      >,
+      sourceRows,
+      empty: sourceRows === 0,
+    };
+  });
+  const sourceNotes = scopes.map((scope) => ({
+    label: scope.label,
+    timeRange: scope.timeRange,
+    filters: scope.filters,
+    sourceRows: scope.sourceRows,
+    dataSource: "meta_ads" as const,
+    sourceTable: "meta_daily_insights" as const,
+    sourceFunction: "aggregate_meta_daily_insights" as const,
+  }));
+  const deltas = metrics.map((metric) => comparisonDelta(metric, scopes));
+  const caveats = comparisonCaveats(scopes);
+  const groundingValues = comparisonGroundingValues({ scopes, deltas });
+
+  return {
+    scopeType: scopes[0]?.scopeType || "entity",
+    primaryMetric,
+    metrics,
+    scopes,
+    deltas,
+    sourceNotes,
+    caveats,
+    groundingValues,
+  };
+}
+
+export function buildComparisonAnswer(factPack: AnalysisComparisonFactPack) {
+  if (!factPack.scopes.length) {
+    return "No comparison scopes were available for this request.";
+  }
+
+  const labels = factPack.scopes.map((scope) => scope.label).join(" vs ");
+  const primaryDelta = factPack.deltas.find((delta) => delta.metric === factPack.primaryMetric);
+  const scopeFacts = factPack.scopes
+    .map((scope) => {
+      const metrics = factPack.metrics
+        .map((metric) => `${labelFor(metric)} ${formatMetricForAnswer(scope.metrics[metric], metric)} [${scope.label}]`)
+        .join(", ");
+      return `${scope.label}: ${metrics}; source rows ${formatNumber(scope.sourceRows)} [${scope.label}]`;
+    })
+    .join(". ");
+  const winningScope = factPack.scopes.find((scope) => scope.id === primaryDelta?.winnerScopeId);
+  const winner = primaryDelta?.winnerLabel
+    ? `Winner on ${labelFor(factPack.primaryMetric)}: ${primaryDelta.winnerLabel} at ${formatMetricForAnswer(
+        winningScope?.metrics[factPack.primaryMetric] ?? null,
+        factPack.primaryMetric,
+      )} [${primaryDelta.winnerLabel}].`
+    : `Winner on ${labelFor(factPack.primaryMetric)}: none; comparison metric is unavailable or tied.`;
+  const deltaSummary = factPack.deltas
+    .map((delta) => {
+      const toScope = factPack.scopes.find((scope) => scope.id === delta.toScopeId);
+      const fromScope = factPack.scopes.find((scope) => scope.id === delta.fromScopeId);
+      return `${labelFor(delta.metric)} ${formatDelta(delta.delta, delta.metric)} (${formatPercentDelta(
+        delta.percentDelta,
+      )}) from ${fromScope?.label || "baseline"} to ${toScope?.label || "comparison"}`;
+    })
+    .join("; ");
+  const sourceNotes = factPack.sourceNotes
+    .map((note) =>
+      `${note.label}: ${note.timeRange.start} to ${note.timeRange.end}, filters ${formatFiltersForAnswer(
+        note.filters,
+      )}, source rows ${formatNumber(note.sourceRows)}`,
+    )
+    .join("; ");
+  const caveats = factPack.caveats.length ? ` Caveats: ${factPack.caveats.join(" ")}` : "";
+
+  return `Compared ${labels}. ${scopeFacts}. ${winner} Deltas: ${deltaSummary}. Source notes: ${sourceNotes}.${caveats}`;
+}
+
+export function validateComparisonNumericGrounding(
+  answer: string,
+  factPack: AnalysisComparisonFactPack,
+) {
+  const allowed = new Set(factPack.groundingValues.map(normalizeGroundingNumber).filter(Boolean));
+  return extractNumericClaims(answer).every((claim) => allowed.has(claim));
+}
+
+function comparisonPrimaryMetric(metrics: AnalysisMetric[]) {
+  return metrics.find((metric) => metric !== "spend" && metric !== "primary_results") || metrics[0] || "spend";
+}
+
+function comparisonDelta(
+  metric: AnalysisMetric,
+  scopes: AnalysisComparisonScopeFact[],
+): AnalysisComparisonDelta {
+  const toScope = scopes[0];
+  const fromScope = scopes[1];
+  const toValue = toScope?.metrics[metric];
+  const fromValue = fromScope?.metrics[metric];
+  const hasComparableValues = typeof toValue === "number" && typeof fromValue === "number";
+  const delta = hasComparableValues ? round(toValue - fromValue) : null;
+  const percentDelta = hasComparableValues && fromValue !== 0
+    ? round(((toValue - fromValue) / Math.abs(fromValue)) * 100, 1)
+    : null;
+  const winner = winningComparisonScope(metric, scopes);
+
+  return {
+    metric,
+    fromScopeId: fromScope?.id || "",
+    toScopeId: toScope?.id || "",
+    delta,
+    percentDelta,
+    winnerScopeId: winner?.id || null,
+    winnerLabel: winner?.label || null,
+  };
+}
+
+function winningComparisonScope(metric: AnalysisMetric, scopes: AnalysisComparisonScopeFact[]) {
+  const valued = scopes.filter((scope) => typeof scope.metrics[metric] === "number");
+  if (!valued.length) return null;
+
+  const direction = lowerIsBetterMetric(metric) ? -1 : 1;
+  const sorted = [...valued].sort((a, b) => {
+    const aValue = Number(a.metrics[metric]);
+    const bValue = Number(b.metrics[metric]);
+    return (bValue - aValue) * direction;
+  });
+  const best = sorted[0];
+  const next = sorted[1];
+  if (next && Number(best.metrics[metric]) === Number(next.metrics[metric])) return null;
+  return best;
+}
+
+function lowerIsBetterMetric(metric: AnalysisMetric) {
+  return metric === "cpc" || metric === "cpl" || metric === "cpm" || metric === "frequency";
+}
+
+function comparisonCaveats(scopes: AnalysisComparisonScopeFact[]) {
+  const caveats = scopes
+    .filter((scope) => scope.empty)
+    .map((scope) => `${scope.label} had no matching rows, so its metric values are zero or unavailable.`);
+  const dayCounts = new Set(scopes.map((scope) => scope.timeRange.days));
+  if (dayCounts.size > 1) {
+    caveats.push("Compared scopes use different day counts; interpret deltas as directional, not equal-length pacing.");
+  }
+  return caveats;
+}
+
+function comparisonGroundingValues(input: {
+  scopes: AnalysisComparisonScopeFact[];
+  deltas: AnalysisComparisonDelta[];
+}) {
+  const values: string[] = [];
+  const add = (value: number | null | string | undefined) => {
+    if (value === null || value === undefined) return;
+    values.push(String(value));
+  };
+
+  input.scopes.forEach((scope) => {
+    add(scope.sourceRows);
+    add(scope.timeRange.days);
+    Object.entries(scope.metrics).forEach(([metric, value]) => {
+      add(value);
+      if (typeof value === "number") add(formatMetricForAnswer(value, metric as AnalysisMetric));
+    });
+  });
+  input.deltas.forEach((delta) => {
+    add(delta.delta);
+    add(delta.percentDelta);
+    if (typeof delta.delta === "number") add(formatDelta(delta.delta, delta.metric));
+    if (typeof delta.percentDelta === "number") add(formatPercentDelta(delta.percentDelta));
+  });
+
+  return uniqueStrings(values);
+}
+
+function formatDelta(value: number | null, metric: AnalysisMetric) {
+  if (value === null) return "n/a";
+  const formatted = formatMetricForAnswer(Math.abs(value), metric);
+  if (value > 0) return `+${formatted}`;
+  if (value < 0) return `-${formatted}`;
+  return formatted;
+}
+
+function formatPercentDelta(value: number | null) {
+  if (value === null) return "n/a";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(1)}%`;
+}
+
+function formatFiltersForAnswer(filters: AnalysisFilter[]) {
+  if (!filters.length) return "none";
+  return filters.map((filter) => `${filter.field} ${filter.operator} ${filter.value}`).join(", ");
+}
+
+function extractNumericClaims(answer: string) {
+  const withoutDates = answer.replace(/\b20\d{2}-\d{2}-\d{2}\b/g, " ");
+  return Array.from(withoutDates.matchAll(/[-+]?\$?\d[\d,]*(?:\.\d+)?%?/g))
+    .map((match) => normalizeGroundingNumber(match[0]))
+    .filter(Boolean);
+}
+
+function normalizeGroundingNumber(value: string) {
+  const cleaned = value.replace(/[$,%]/g, "").replace(/,/g, "");
+  const numeric = Number(cleaned);
+  return Number.isFinite(numeric) ? String(round(numeric, 4)) : "";
 }
 
 async function fetchLatestSyncedInsightDate() {
@@ -1497,9 +1830,11 @@ function buildAnalystDebug(input: {
   recordCounts: Record<string, number>;
   repairedSpec: boolean;
   warnings?: string[];
+  comparison?: AnalysisComparisonFactPack | null;
 }): AnalysisAnalystDebug {
   return {
     validationStatus: input.validation.status,
+    comparison: input.comparison || null,
     dataSource: "meta_ads",
     sourceTable: "meta_daily_insights",
     sourceFunction: input.sourceFunction,
@@ -1746,6 +2081,8 @@ function buildPlannerIntent(
   source: AnalysisPlannerIntent["dateIntent"]["source"],
   modelIntent?: z.infer<typeof plannerIntentOutputSchema>,
 ): AnalysisPlannerIntent {
+  const comparisonScopes = inferComparisonScopes(prompt, spec);
+
   return {
     questionType: modelIntent?.questionType || inferQuestionType(prompt),
     title: spec.title,
@@ -1773,6 +2110,7 @@ function buildPlannerIntent(
       ...(modelIntent?.clarificationNeeds || []),
       ...validation.clarificationQuestions,
     ]),
+    ...(comparisonScopes.length ? { comparisonScopes } : {}),
   };
 }
 
@@ -2590,6 +2928,7 @@ function baseResult(input: {
     totals: input.aggregated.totals,
     widgets: resolvedSpec.widgets,
     sourceTransparency: input.aggregated.sourceTransparency,
+    comparison: input.aggregated.comparison,
     analystDebug: {
       ...input.aggregated.analystDebug,
       questionType: input.plannerIntent.questionType,
@@ -2667,6 +3006,7 @@ function nonExecutableResult(input: {
     totals: aggregateMetrics(undefined),
     widgets: [],
     sourceTransparency,
+    comparison: null,
     analystDebug: {
       ...analystDebug,
       questionType: input.plannerIntent.questionType,
@@ -2755,6 +3095,7 @@ async function persistAnalysis(
         keyFacts: {
           totals: result.totals,
           firstRows: result.table.rows.slice(0, 3),
+          comparison: result.comparison,
         },
       } as unknown as Json,
     }));
@@ -2859,15 +3200,17 @@ function inferPromptIntent(prompt: string): PromptIntent {
   const latestMetrics = inferMetricsFromPrompt(latestLower);
   const allMentionedMetrics = inferMetricsFromPrompt(lower);
   const additiveFollowUp = hasFollowUp && latestMetrics && shouldAddFollowUpMetrics(latestLower);
-  const metrics = decisionIntent
+  const inferredMetrics = decisionIntent
     ? mergeMetricLists(decisionIntent.metrics, additiveFollowUp ? mergeMetricLists(allMentionedMetrics || [], latestMetrics || []) : latestMetrics || allMentionedMetrics || [])
     : additiveFollowUp
     ? mergeMetricLists(allMentionedMetrics || [], latestMetrics)
     : latestMetrics || allMentionedMetrics;
+  const metrics = hasExplicitComparisonCue(lower) ? comparisonMetricBundle(inferredMetrics) : inferredMetrics;
   const requiredMetrics = metrics;
   const latestDimensions = inferDimensionsFromPrompt(latestLower, metrics);
   const allMentionedDimensions = inferDimensionsFromPrompt(lower, metrics);
-  const dimensions =
+  const scopedComparisonDimension = inferEntityComparisonDimension(prompt);
+  const inferredDimensions =
     decisionIntent
       ? uniqueDimensions([
           ...decisionIntent.dimensions,
@@ -2879,6 +3222,9 @@ function inferPromptIntent(prompt: string): PromptIntent {
     (hasFollowUp && shouldMergeFollowUpDimensions(latestLower, latestDimensions, allMentionedDimensions)
       ? mergeDimensionsForFollowUp(allMentionedDimensions || [], latestDimensions || [])
       : latestDimensions || allMentionedDimensions);
+  const dimensions = scopedComparisonDimension && hasExplicitComparisonCue(lower)
+    ? uniqueDimensions([scopedComparisonDimension, ...(inferredDimensions || []).filter((dimension) => dimension !== scopedComparisonDimension)])
+    : inferredDimensions;
   const dateRange = inferDateRangeFromPromptSegments(segments, prompt);
   const grain = inferGrainFromPrompt(latestPrompt) || inferGrainFromPrompt(prompt);
   const glossaryFilters = campaignGlossaryFilters(prompt);
@@ -2983,6 +3329,21 @@ function mergeMetricLists(base: AnalysisMetric[], additions: AnalysisMetric[]) {
   return includeRequiredMetrics(base, additions, 8);
 }
 
+function comparisonMetricBundle(metrics?: AnalysisMetric[]) {
+  const merged: AnalysisMetric[] = metrics?.length ? [...metrics] : ["spend", "primary_results", "cpl"];
+  (["spend", "primary_results"] as AnalysisMetric[]).forEach((metric) => {
+    if (!merged.includes(metric)) merged.push(metric);
+  });
+  if (!merged.some((metric) => metric === "cpl" || metric === "cpc" || metric === "cpm")) {
+    merged.push("cpl");
+  }
+  return merged.slice(0, 8);
+}
+
+function hasExplicitComparisonCue(lower: string) {
+  return /\b(vs\.?|versus|against)\b/.test(lower);
+}
+
 function includeRequiredMetrics(
   metrics: AnalysisMetric[],
   requiredMetrics: AnalysisMetric[],
@@ -3033,6 +3394,122 @@ function campaignGlossaryFilters(prompt: string): AnalysisFilter[] {
     operator: "equals" as const,
     value: entry.value,
   }));
+}
+
+function inferComparisonScopes(prompt: string, spec: AnalysisSpec): AnalysisComparisonScope[] {
+  if (inferQuestionType(prompt) !== "comparison") return [];
+
+  const periodScopes = inferPeriodComparisonScopes(prompt, spec);
+  if (periodScopes.length) return periodScopes;
+
+  return inferEntityComparisonScopes(prompt, spec);
+}
+
+function inferPeriodComparisonScopes(prompt: string, spec: AnalysisSpec): AnalysisComparisonScope[] {
+  const lower = prompt.toLowerCase();
+  if (!hasExplicitComparisonCue(lower)) return [];
+
+  if (/\bthis\s+week\b/.test(lower) && /\b(?:last|previous|prior)\s+week\b/.test(lower)) {
+    return [
+      {
+        id: "period-this-week",
+        label: "This week",
+        scopeType: "period",
+        dateRange: { preset: "week_to_date" },
+        filters: spec.filters,
+      },
+      {
+        id: "period-last-week",
+        label: "Last week",
+        scopeType: "period",
+        dateRange: { preset: "last_complete_week" },
+        filters: spec.filters,
+      },
+    ];
+  }
+
+  if (/\bthis\s+month\b/.test(lower) && /\b(?:last|previous|prior)\s+month\b/.test(lower)) {
+    return [
+      {
+        id: "period-this-month",
+        label: "This month",
+        scopeType: "period",
+        dateRange: { preset: "month_to_date" },
+        filters: spec.filters,
+      },
+      {
+        id: "period-last-month",
+        label: "Last month",
+        scopeType: "period",
+        dateRange: { preset: "last_complete_month" },
+        filters: spec.filters,
+      },
+    ];
+  }
+
+  return [];
+}
+
+function inferEntityComparisonScopes(prompt: string, spec: AnalysisSpec): AnalysisComparisonScope[] {
+  const unique = matchedEntityComparisonCandidates(prompt);
+  const fields = new Set(unique.map((candidate) => candidate.field));
+  if (unique.length < 2 || fields.size !== 1) return [];
+
+  return unique.map((candidate) => ({
+    id: candidate.id,
+    label: candidate.label,
+    scopeType: "entity" as const,
+    dateRange: spec.dateRange,
+    filters: mergeScopeFilters(spec.filters, [
+      { field: candidate.field, operator: "equals", value: candidate.value },
+    ]),
+  }));
+}
+
+function inferEntityComparisonDimension(prompt: string): AnalysisDimension | undefined {
+  const unique = matchedEntityComparisonCandidates(prompt);
+  const fields = new Set(unique.map((candidate) => candidate.field));
+  if (unique.length < 2 || fields.size !== 1) return undefined;
+  const field = unique[0]?.field;
+  return field === "brand" || field === "campaign_umbrella" || field === "campaign" || field === "ad_set" || field === "ad" || field === "creative"
+    ? field
+    : undefined;
+}
+
+function matchedEntityComparisonCandidates(prompt: string) {
+  const matched = comparisonEntityCandidates().filter((candidate) => candidate.pattern.test(prompt));
+  return matched.filter(
+    (candidate, index) =>
+      matched.findIndex((other) => other.field === candidate.field && other.value === candidate.value) === index,
+  );
+}
+
+function comparisonEntityCandidates(): Array<{
+  id: string;
+  label: string;
+  field: AnalysisFilterField;
+  value: string;
+  pattern: RegExp;
+}> {
+  return [
+    { id: "brand-hp", label: "HP", field: "brand", value: "HP", pattern: /\bhp\b/i },
+    { id: "brand-vvs", label: "VVS", field: "brand", value: "VVS", pattern: /\bvvs\b/i },
+    ...CAMPAIGN_GLOSSARY.map((entry) => ({
+      id: `campaign-${entry.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`,
+      label: titleCase(entry.label),
+      field: "campaign_umbrella" as const,
+      value: entry.value,
+      pattern: entry.pattern,
+    })),
+  ];
+}
+
+function mergeScopeFilters(sharedFilters: AnalysisFilter[], scopeFilters: AnalysisFilter[]) {
+  const scopedFields = new Set(scopeFilters.map((filter) => filter.field));
+  return [
+    ...sharedFilters.filter((filter) => !scopedFields.has(filter.field)),
+    ...scopeFilters,
+  ];
 }
 
 function repairConflictingEqualsFilters(filters: AnalysisFilter[]) {
@@ -3159,7 +3636,7 @@ function inferDimensionsFromPrompt(
 
 function inferMetricsFromPrompt(lower: string): AnalysisMetric[] | undefined {
   const requested: AnalysisMetric[] = [];
-  const metricText = lower.replace(/\bcost\s+per\s+leads?\b/g, "cpl");
+  const metricText = stripCampaignGlossaryLabels(lower).replace(/\bcost\s+per\s+leads?\b/g, "cpl");
   const add = (metric: AnalysisMetric) => {
     if (!requested.includes(metric)) requested.push(metric);
   };
@@ -3216,6 +3693,13 @@ function inferMetricsFromPrompt(lower: string): AnalysisMetric[] | undefined {
   if (/\bfrequency\b/.test(metricText)) add("frequency");
 
   return requested.length ? requested : undefined;
+}
+
+function stripCampaignGlossaryLabels(lower: string) {
+  return CAMPAIGN_GLOSSARY.reduce(
+    (text, entry) => text.replace(new RegExp(entry.pattern.source, "gi"), " "),
+    lower,
+  );
 }
 
 function inferScaleDecisionIntent(lower: string):
@@ -4024,6 +4508,10 @@ function titleFromPrompt(prompt: string) {
   const trimmed = prompt.trim().replace(/\s+/g, " ");
   if (!trimmed) return "Ad-hoc Meta Ads analysis";
   return trimmed.length > 90 ? `${trimmed.slice(0, 87)}...` : trimmed;
+}
+
+function titleCase(value: string) {
+  return value.replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function inferSearchTerm(prompt: string) {

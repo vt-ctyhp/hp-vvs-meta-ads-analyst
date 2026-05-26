@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  buildComparisonAnswer,
+  buildComparisonFactPack,
   buildAnalysisPlanFromPlannerOutputForPrompt,
   buildAnalysisPlanForPrompt,
   normalizeAnalysisSpecForPrompt,
   resolveAnalysisDateRangeForPrompt,
+  validateComparisonNumericGrounding,
 } from "../src/lib/ad-hoc-analytics.ts";
 
 describe("ad-hoc analytics prompt normalization", () => {
@@ -289,6 +292,178 @@ describe("ad-hoc analytics prompt normalization", () => {
       assert.equal(plan.questionType, questionType, prompt);
       assert.equal(plan.plannerIntent.questionType, questionType, prompt);
     }
+  });
+
+  it("plans brand comparisons as explicit labeled scopes with required side-by-side facts", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "Compare HP vs VVS by CPL");
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.equal(plan.questionType, "comparison");
+    assert.deepEqual(plan.spec.metrics, ["cpl", "spend", "primary_results"]);
+    assert.deepEqual(
+      plan.plannerIntent.comparisonScopes?.map((scope) => ({
+        label: scope.label,
+        scopeType: scope.scopeType,
+        filters: scope.filters,
+        dateRange: scope.dateRange,
+      })),
+      [
+        {
+          label: "HP",
+          scopeType: "entity",
+          filters: [{ field: "brand", operator: "equals", value: "HP" }],
+          dateRange: { preset: "last_30_days" },
+        },
+        {
+          label: "VVS",
+          scopeType: "entity",
+          filters: [{ field: "brand", operator: "equals", value: "VVS" }],
+          dateRange: { preset: "last_30_days" },
+        },
+      ],
+    );
+  });
+
+  it("plans campaign-group comparisons without flattening groups into one impossible filter", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "Cash for Gold vs Book Appointment ads");
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.spec.filters, []);
+    assert.deepEqual(plan.spec.dimensions, ["campaign_umbrella"]);
+    assert.deepEqual(plan.spec.metrics, ["spend", "primary_results", "cpl"]);
+    assert.deepEqual(
+      plan.plannerIntent.comparisonScopes?.map((scope) => ({
+        label: scope.label,
+        scopeType: scope.scopeType,
+        filters: scope.filters,
+      })),
+      [
+        {
+          label: "Cash For Gold",
+          scopeType: "entity",
+          filters: [{ field: "campaign_umbrella", operator: "equals", value: "Cash for Gold US" }],
+        },
+        {
+          label: "Book Appointments",
+          scopeType: "entity",
+          filters: [{ field: "campaign_umbrella", operator: "equals", value: "Book Appts US" }],
+        },
+      ],
+    );
+  });
+
+  it("plans period comparisons as explicit labeled date scopes", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "This week vs last week");
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(
+      plan.plannerIntent.comparisonScopes?.map((scope) => ({
+        label: scope.label,
+        scopeType: scope.scopeType,
+        dateRange: scope.dateRange,
+        filters: scope.filters,
+      })),
+      [
+        {
+          label: "This week",
+          scopeType: "period",
+          dateRange: { preset: "week_to_date" },
+          filters: [],
+        },
+        {
+          label: "Last week",
+          scopeType: "period",
+          dateRange: { preset: "last_complete_week" },
+          filters: [],
+        },
+      ],
+    );
+  });
+
+  it("builds governed comparison facts with winners, deltas, and source notes", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "Compare HP vs VVS by CPL");
+    const scopes = plan.plannerIntent.comparisonScopes || [];
+    const factPack = buildComparisonFactPack({
+      metrics: plan.spec.metrics,
+      scopes,
+      scopeResults: [
+        {
+          scopeId: "brand-hp",
+          timeRange: { start: "2026-04-26", end: "2026-05-25", days: 30 },
+          rows: [aggregateRow({ spend: 1000, leads: 50, primary_results: 50, cpl: 20, source_rows: 10 })],
+        },
+        {
+          scopeId: "brand-vvs",
+          timeRange: { start: "2026-04-26", end: "2026-05-25", days: 30 },
+          rows: [aggregateRow({ spend: 1250, leads: 40, primary_results: 40, cpl: 31.25, source_rows: 8 })],
+        },
+      ],
+    });
+
+    assert.equal(factPack.primaryMetric, "cpl");
+    assert.deepEqual(
+      factPack.sourceNotes.map((note) => ({
+        label: note.label,
+        timeRange: note.timeRange,
+        filters: note.filters,
+        sourceRows: note.sourceRows,
+      })),
+      [
+        {
+          label: "HP",
+          timeRange: { start: "2026-04-26", end: "2026-05-25", days: 30 },
+          filters: [{ field: "brand", operator: "equals", value: "HP" }],
+          sourceRows: 10,
+        },
+        {
+          label: "VVS",
+          timeRange: { start: "2026-04-26", end: "2026-05-25", days: 30 },
+          filters: [{ field: "brand", operator: "equals", value: "VVS" }],
+          sourceRows: 8,
+        },
+      ],
+    );
+    assert.deepEqual(factPack.deltas.find((delta) => delta.metric === "cpl"), {
+      metric: "cpl",
+      fromScopeId: "brand-vvs",
+      toScopeId: "brand-hp",
+      delta: -11.25,
+      percentDelta: -36,
+      winnerScopeId: "brand-hp",
+      winnerLabel: "HP",
+    });
+
+    const answer = buildComparisonAnswer(factPack);
+    assert.match(answer, /Winner on CPL: HP/);
+    assert.equal(validateComparisonNumericGrounding(answer, factPack), true);
+    assert.equal(validateComparisonNumericGrounding(`${answer} Uncited 999.`, factPack), false);
+  });
+
+  it("builds period comparison deltas and empty-scope caveats", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "This week vs last week");
+    const scopes = plan.plannerIntent.comparisonScopes || [];
+    const factPack = buildComparisonFactPack({
+      metrics: plan.spec.metrics,
+      scopes,
+      scopeResults: [
+        {
+          scopeId: "period-this-week",
+          timeRange: { start: "2026-05-25", end: "2026-05-25", days: 1 },
+          rows: [aggregateRow({ spend: 200, primary_results: 10, leads: 10, cpl: 20, source_rows: 4 })],
+        },
+        {
+          scopeId: "period-last-week",
+          timeRange: { start: "2026-05-18", end: "2026-05-24", days: 7 },
+          rows: [],
+        },
+      ],
+    });
+
+    assert.equal(factPack.scopes[1]?.empty, true);
+    assert.ok(factPack.caveats.some((caveat) => caveat.includes("Last week had no matching rows")));
+    assert.ok(factPack.caveats.some((caveat) => caveat.includes("different day counts")));
+    assert.equal(factPack.deltas.find((delta) => delta.metric === "spend")?.percentDelta, null);
+    assert.equal(validateComparisonNumericGrounding(buildComparisonAnswer(factPack), factPack), true);
   });
 
   it("falls back to deterministic planning for malformed model planner output", () => {
@@ -784,3 +959,42 @@ describe("ad-hoc analytics table and chart capability matrix", () => {
     assert.deepEqual(plan.spec.metrics, ["spend", "primary_results"]);
   });
 });
+
+function aggregateRow(overrides: Record<string, string | number | null>) {
+  return {
+    date: null,
+    week: null,
+    month: null,
+    quarter: null,
+    brand: null,
+    campaign_umbrella: null,
+    campaign: null,
+    campaign_id: null,
+    ad_set: null,
+    ad_set_id: null,
+    ad: null,
+    ad_id: null,
+    creative: null,
+    creative_id: null,
+    spend: 0,
+    monthly_budget: 0,
+    impressions: 0,
+    reach: 0,
+    clicks: 0,
+    leads: 0,
+    bookings: 0,
+    conversions: 0,
+    website_bookings: 0,
+    messaging_contacts: 0,
+    new_messaging_contacts: 0,
+    primary_results: 0,
+    secondary_results: 0,
+    ctr: 0,
+    cpm: 0,
+    cpc: 0,
+    cpl: null,
+    frequency: 0,
+    source_rows: 0,
+    ...overrides,
+  };
+}
