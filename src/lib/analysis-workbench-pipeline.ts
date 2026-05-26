@@ -140,11 +140,14 @@ type PipelineInput = {
 
 type PlannedIntent = AnalysisWorkbenchPipelineIntent & {
   semanticValidation: ReturnType<typeof validateAnalysisWorkbenchSemanticIntent>;
+  filterScopes: MetaInsightFilter[][];
 };
 
 const DEFAULT_METRICS: WorkbenchMetric[] = ["spend", "primary_results"];
 const DEFAULT_DIMENSIONS: WorkbenchDimension[] = ["campaign_umbrella"];
 const MAX_GROUP_ROWS = 20;
+const NUMBER_PATTERN =
+  "\\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|ninety";
 const MONEY_METRICS = new Set<WorkbenchMetric>([
   "spend",
   "monthly_budget",
@@ -161,6 +164,12 @@ const ENTITY_DIMENSIONS = new Set<WorkbenchDimension>([
   "ad_set",
   "ad",
   "creative",
+]);
+const PRIMARY_KPI_PROXY_METRICS = new Set<WorkbenchMetric>([
+  "bookings",
+  "website_bookings",
+  "messaging_contacts",
+  "new_messaging_contacts",
 ]);
 
 export async function runAnalysisWorkbenchFactsPipeline(
@@ -180,14 +189,35 @@ export async function runAnalysisWorkbenchFactsPipeline(
     return blockedResult({ prompt, title, outputMode: input.outputMode, planned });
   }
 
-  const groupedRequest = aggregateRequest(planned, planned.dimensions, planned.limit);
-  const totalRequest = aggregateRequest(planned, [], 1);
-  const trendRequest = shouldBuildVisualCards(planned.outputMode)
-    ? trendAggregateRequest(planned)
-    : null;
-  const groupedRows = await input.executeAggregate(groupedRequest);
-  const totalRows = await input.executeAggregate(totalRequest);
-  const trendRows = trendRequest ? await input.executeAggregate(trendRequest) : [];
+  const groupedRequests = aggregateRequests(planned, planned.dimensions, planned.limit);
+  const totalRequests = aggregateRequests(planned, [], 1);
+  const trendRequests = shouldBuildVisualCards(planned.outputMode)
+    ? trendAggregateRequests(planned)
+    : [];
+  const groupedRows = await executeAggregateRequests({
+    executeAggregate: input.executeAggregate,
+    requests: groupedRequests,
+    dimensions: planned.dimensions,
+    sortField: planned.sort.field,
+    sortDirection: planned.sort.direction,
+    limit: planned.limit,
+  });
+  const totalRows = await executeAggregateRequests({
+    executeAggregate: input.executeAggregate,
+    requests: totalRequests,
+    dimensions: [],
+    sortField: planned.sort.field,
+    sortDirection: planned.sort.direction,
+    limit: 1,
+  });
+  const trendRows = await executeAggregateRequests({
+    executeAggregate: input.executeAggregate,
+    requests: trendRequests,
+    dimensions: ["date"],
+    sortField: "date",
+    sortDirection: "asc",
+    limit: Math.min(planned.dateRange.days, 120),
+  });
   const sourceNotes = sourceNotesFor(
     planned,
     groupedRows,
@@ -252,7 +282,7 @@ export async function runAnalysisWorkbenchFactsPipeline(
       status: "ready",
       source: "meta_ads",
       aggregateFunction: "aggregate_meta_daily_insights",
-      requests: [groupedRequest, totalRequest, ...(trendRequest ? [trendRequest] : [])],
+      requests: [...groupedRequests, ...totalRequests, ...trendRequests],
     },
     facts,
     answer,
@@ -347,9 +377,12 @@ function planAnalysisWorkbenchIntent(input: {
     ...(visual ? { visual } : {}),
   });
   const repairedFilters = semanticValidation.repairedIntent.filters as MetaInsightFilter[];
+  const filterScopes = buildFilterScopes(repairedFilters);
   const sortField = controlledEdit?.sort?.field || metrics[0] || "spend";
+  const sortDirection = controlledEdit?.sort?.direction || detectSortDirection(input.prompt);
   const repairedVisual = semanticValidation.repairedIntent.visual;
   const repairedDimensions = dimensionsForVisual(dimensions, repairedVisual);
+  const limit = controlledEdit?.limit || detectLimit(input.prompt) || MAX_GROUP_ROWS;
 
   return {
     status: semanticValidation.status === "blocked" ? "blocked" : "ready",
@@ -361,11 +394,12 @@ function planAnalysisWorkbenchIntent(input: {
     dateRange,
     sort: {
       field: sortField,
-      direction: controlledEdit?.sort?.direction || "desc",
+      direction: sortDirection,
     },
-    limit: controlledEdit?.limit || MAX_GROUP_ROWS,
+    limit,
     visual: repairedVisual,
     semanticValidation,
+    filterScopes,
   };
 }
 
@@ -431,12 +465,41 @@ function aggregateRequest(
   };
 }
 
-function trendAggregateRequest(planned: PlannedIntent): AnalysisWorkbenchPipelineAggregateRequest {
-  return {
-    ...aggregateRequest(planned, ["date"], Math.min(planned.dateRange.days, 120)),
+function aggregateRequests(
+  planned: PlannedIntent,
+  dimensions: WorkbenchDimension[],
+  limit: number,
+): AnalysisWorkbenchPipelineAggregateRequest[] {
+  return planned.filterScopes.map((filters) => ({
+    ...aggregateRequest(planned, dimensions, limit),
+    filters,
+  }));
+}
+
+function trendAggregateRequests(planned: PlannedIntent): AnalysisWorkbenchPipelineAggregateRequest[] {
+  return aggregateRequests(planned, ["date"], Math.min(planned.dateRange.days, 120)).map((request) => ({
+    ...request,
     sortField: "date",
     sortDirection: "asc",
-  };
+  }));
+}
+
+async function executeAggregateRequests(input: {
+  executeAggregate: PipelineInput["executeAggregate"];
+  requests: AnalysisWorkbenchPipelineAggregateRequest[];
+  dimensions: WorkbenchDimension[];
+  sortField: WorkbenchMetric | WorkbenchDimension;
+  sortDirection: "asc" | "desc";
+  limit: number;
+}) {
+  if (!input.requests.length) return [];
+  if (input.requests.length === 1) return input.executeAggregate(input.requests[0]);
+  const rows = (await Promise.all(input.requests.map((request) => input.executeAggregate(request)))).flat();
+  return sortAggregateRows(
+    mergeAggregateRowsByDimensions(rows, input.dimensions),
+    input.sortField,
+    input.sortDirection,
+  ).slice(0, input.limit);
 }
 
 function computeFacts(
@@ -551,9 +614,7 @@ function sourceNotesFor(
     {
       id: "S5",
       label: "Filters",
-      value: planned.filters.length
-        ? planned.filters.map((filter) => `${filter.field} ${filter.operator} ${filter.value}`).join("; ")
-        : "No filters",
+      value: filtersSourceNote(planned),
     },
     ...(controlledEdit && Object.keys(controlledEdit).length
       ? [
@@ -565,6 +626,19 @@ function sourceNotesFor(
         ]
       : []),
   ];
+}
+
+function filtersSourceNote(planned: PlannedIntent) {
+  if (planned.filterScopes.length > 1) {
+    return planned.filterScopes
+      .map((scope) => scope.map(formatFilter).join(" and ") || "No filters")
+      .join(" OR ");
+  }
+  return planned.filters.length ? planned.filters.map(formatFilter).join("; ") : "No filters";
+}
+
+function formatFilter(filter: MetaInsightFilter) {
+  return `${filter.field} ${filter.operator} ${filter.value}`;
 }
 
 function buildVisualCards(
@@ -971,8 +1045,30 @@ function detectMetrics(prompt: string, useDefault = true): WorkbenchMetric[] {
     )
     .map((metric) => metric.key);
 
-  const metrics = unique(detected).slice(0, 4);
+  const metrics = refineDetectedMetrics(prompt, unique(detected)).slice(0, 4);
   return metrics.length ? metrics : useDefault ? DEFAULT_METRICS : [];
+}
+
+function refineDetectedMetrics(prompt: string, metrics: WorkbenchMetric[]): WorkbenchMetric[] {
+  const lower = prompt.toLowerCase();
+  if (/\bnew\s+messages?\b|\bnew\s+messaging\s+contacts?\b|\bfirst\s+repl(?:y|ies)\b/.test(lower)) {
+    return metrics.filter((metric) => metric !== "messaging_contacts");
+  }
+  if (primaryKpiRankingRequested(lower) && metrics.includes("primary_results")) {
+    return [
+      "primary_results",
+      ...metrics.filter(
+        (metric) => metric !== "primary_results" && !PRIMARY_KPI_PROXY_METRICS.has(metric),
+      ),
+    ];
+  }
+  return metrics;
+}
+
+function primaryKpiRankingRequested(lower: string) {
+  return /\b(?:in\s+terms\s+of|based\s+on|using|rank(?:ed)?\s+by|sort(?:ed)?\s+by)\s+(?:primary\s+)?kpi\b|\bby\s+primary\s+(?:kpi|results)\b/.test(
+    lower,
+  );
 }
 
 function detectVisualIntent(
@@ -1020,22 +1116,71 @@ function detectVisualIntent(
   return null;
 }
 
+function detectSortDirection(prompt: string): "asc" | "desc" {
+  const lower = prompt.toLowerCase();
+  if (/\blowest\b|\bleast\b|\bcheapest\b|\bsmallest\b|\bminimum\b|\bmin\b|\bbottom\b/.test(lower)) {
+    return "asc";
+  }
+  return "desc";
+}
+
+function detectLimit(prompt: string) {
+  const lower = prompt.toLowerCase();
+  const explicit =
+    lower.match(new RegExp(`\\btop\\s+(${NUMBER_PATTERN})\\b`)) ||
+    lower.match(
+      new RegExp(
+        `\\b(${NUMBER_PATTERN})\\s+(?:top|highest|best|lowest|cheapest|ranked|ranking|leaders?)\\b`,
+      ),
+    );
+  if (!explicit) return null;
+  const limit = wordNumber(explicit[1]);
+  if (!limit) return null;
+  return Math.min(Math.max(limit, 1), MAX_GROUP_ROWS);
+}
+
 function detectDimensions(prompt: string, useDefault = true): WorkbenchDimension[] {
   const lower = prompt.toLowerCase();
   const dimensions: WorkbenchDimension[] = [];
-  if (/\bby\s+(?:day|date)\b|\bdaily\b|\bper\s+day\b/.test(lower)) dimensions.push("date");
-  if (/\bby\s+week\b|\bweekly\b|\bper\s+week\b/.test(lower)) dimensions.push("week");
-  if (/\bby\s+month\b|\bmonthly\b(?!\s+budget)|\bper\s+month\b/.test(lower)) dimensions.push("month");
-  if (/\bby\s+quarter\b|\bquarterly\b|\bper\s+quarter\b/.test(lower)) dimensions.push("quarter");
-  if (/\bby\s+brands?\b|\bbrands?\s+(?:rows?|columns?)\b/.test(lower)) dimensions.push("brand");
-  if (/\bby\s+(?:campaign\s+)?(?:groups?|umbrellas?)\b|\bcampaign\s+umbrella\b|\bcampaign\s+groups?\s+(?:rows?|columns?)?\b/.test(lower)) {
+  if (/\bby\s+(?:day|date)\b|\band\s+(?:day|date)\b|\bdaily\b|\bper\s+day\b|\bevery\s+day\b|\beach\s+day\b|\bday[-\s]?by[-\s]?day\b/.test(lower)) {
+    dimensions.push("date");
+  }
+  if (/\bby\s+week\b|\band\s+week\b|\bweekly\b|\bper\s+week\b|\beach\s+week\b/.test(lower)) dimensions.push("week");
+  if (/\bby\s+month\b|\band\s+month\b|\bmonthly\b(?!\s+budget)|\bper\s+month\b|\beach\s+month\b/.test(lower)) dimensions.push("month");
+  if (/\bby\s+quarter\b|\band\s+quarter\b|\bquarterly\b|\bper\s+quarter\b|\beach\s+quarter\b/.test(lower)) dimensions.push("quarter");
+  if (/\bby\s+brands?\b|\bper\s+brands?\b|\bacross\s+brands?\b|\bwhich\s+brands?\b|\bcompare\s+brands?\b|\bbrands?\s+by\b|\bbrands?\s+(?:rows?|columns?)\b/.test(lower)) {
+    dimensions.push("brand");
+  }
+  const mentionsCampaignGroup =
+    /\bby\s+(?:campaign\s+)?(?:groups?|umbrellas?)\b|\bcampaign\s+umbrella\b|\bcampaign\s+groups?\s+(?:rows?|columns?)?\b/.test(
+      lower,
+    );
+  if (mentionsCampaignGroup) {
     dimensions.push("campaign_umbrella");
-  } else if (/\bby\s+campaigns?\b/.test(lower)) {
+  } else if (
+    /\bby\s+campaigns?\b|\bacross\s+campaigns?\b|\bwhich\s+campaigns?\b|\btop\s+(?:\d+\s+)?(?:ranked\s+)?campaigns?\b|\branked\s+campaigns?\b|\bcampaigns?\s+(?:had|changed|drove|generated|performed|performing)\b/.test(
+      lower,
+    )
+  ) {
     dimensions.push("campaign");
   }
-  if (/\bby\s+ad\s+sets?\b|\bby\s+adsets?\b/.test(lower)) dimensions.push("ad_set");
-  if (/\bby\s+ads?\b/.test(lower)) dimensions.push("ad");
-  if (/\bby\s+(?:ad\s+)?creatives?\b/.test(lower)) dimensions.push("creative");
+  if (/\bby\s+ad\s+sets?\b|\bby\s+adsets?\b|\bwhich\s+ad\s+sets?\b|\btop\s+(?:\d+\s+)?(?:ranked\s+)?ad\s+sets?\b|\branked\s+ad\s+sets?\b|\bad\s+sets?\s+in\b|\badsets?\s+in\b/.test(lower)) {
+    dimensions.push("ad_set");
+  }
+  if (
+    /\bby\s+ads?\b(?!\s+(?:sets?|creatives?))|\bper\s+ads?\b(?!\s+(?:sets?|creatives?))|\bwhich\s+ads?\b(?!\s+(?:sets?|creatives?))|\btop\s+(?:\d+\s+)?(?:ranked\s+)?ads?\b(?!\s+(?:sets?|creatives?))/.test(
+      lower,
+    )
+  ) {
+    dimensions.push("ad");
+  }
+  if (
+    /\bby\s+(?:ad\s+)?creatives?\b|\bwhich\s+(?:ad\s+)?creatives?\b|\btop\s+(?:\d+\s+)?(?:ranked\s+)?(?:ad\s+)?creatives?\b|\branked\s+(?:ad\s+)?creatives?\b|\b(?:ad\s+)?creatives?\s+in\b/.test(
+      lower,
+    )
+  ) {
+    dimensions.push("creative");
+  }
 
   const detected = unique(dimensions).slice(0, 3);
   return detected.length ? detected : useDefault ? DEFAULT_DIMENSIONS : [];
@@ -1129,17 +1274,53 @@ function detectFilters(prompt: string): WorkbenchSemanticFilter[] {
   return uniqueFilters(filters);
 }
 
+function buildFilterScopes(filters: MetaInsightFilter[]) {
+  const exactFiltersByField = new Map<MetaInsightFilter["field"], MetaInsightFilter[]>();
+  filters.forEach((filter) => {
+    if (filter.operator !== "equals") return;
+    const existing = exactFiltersByField.get(filter.field) || [];
+    exactFiltersByField.set(filter.field, [...existing, filter]);
+  });
+
+  const conflictingExactFilterGroups = Array.from(exactFiltersByField.values())
+    .map((group) => uniqueMetaInsightFilters(group))
+    .filter((group) => group.length > 1);
+
+  if (!conflictingExactFilterGroups.length) return [filters];
+
+  const conflictingFields = new Set(
+    conflictingExactFilterGroups.flatMap((group) => group.map((filter) => filter.field)),
+  );
+  const sharedFilters = filters.filter(
+    (filter) => filter.operator !== "equals" || !conflictingFields.has(filter.field),
+  );
+
+  return conflictingExactFilterGroups.reduce<MetaInsightFilter[][]>(
+    (scopes, group) =>
+      scopes.flatMap((scope) =>
+        group.map((filter) => uniqueMetaInsightFilters([...scope, filter])),
+      ),
+    [sharedFilters],
+  );
+}
+
+function uniqueMetaInsightFilters(filters: MetaInsightFilter[]) {
+  return uniqueFilters(filters) as MetaInsightFilter[];
+}
+
 function resolvePromptDateRange(
   prompt: string,
   latestSyncedInsightDate?: string | null,
   inheritedDateRange?: AnalysisWorkbenchContextSnapshot["dateRange"] | null,
 ) {
-  const explicitDays = promptDays(prompt);
-  if (!explicitDays && inheritedDateRange) return inheritedDateRange;
-
   const end = isDateString(latestSyncedInsightDate)
     ? latestSyncedInsightDate
     : format(new Date(), "yyyy-MM-dd");
+  const currentPeriodRange = promptCurrentPeriodDateRange(prompt, end);
+  const explicitDays = promptDays(prompt);
+  if (currentPeriodRange) return currentPeriodRange;
+  if (!explicitDays && inheritedDateRange) return inheritedDateRange;
+
   const days = explicitDays || 30;
   const start = format(subDays(parseISO(end), days - 1), "yyyy-MM-dd");
 
@@ -1151,31 +1332,107 @@ function resolvePromptDateRange(
   };
 }
 
+function promptCurrentPeriodDateRange(prompt: string, end: string) {
+  const lower = prompt.toLowerCase();
+  const endDate = parseISO(end);
+
+  if (/\bthis\s+week\b|\bcurrent\s+week\b|\bweek\s+to\s+date\b|\bwtd\b|\bweek\s+so\s+far\b/.test(lower)) {
+    const daysSinceMonday = (endDate.getDay() + 6) % 7;
+    const days = daysSinceMonday + 1;
+    const start = format(subDays(endDate, daysSinceMonday), "yyyy-MM-dd");
+
+    return {
+      start,
+      end,
+      days,
+      label: "This week",
+    };
+  }
+
+  if (/\bthis\s+month\b|\bcurrent\s+month\b|\bmonth\s+to\s+date\b|\bmtd\b|\bmonth\s+so\s+far\b/.test(lower)) {
+    const start = `${end.slice(0, 8)}01`;
+
+    return {
+      start,
+      end,
+      days: inclusiveDateDays(start, end),
+      label: "This month",
+    };
+  }
+
+  if (/\bthis\s+quarter\b|\bcurrent\s+quarter\b|\bquarter\s+to\s+date\b|\bqtd\b|\bquarter\s+so\s+far\b/.test(lower)) {
+    const month = endDate.getMonth();
+    const quarterStartMonth = Math.floor(month / 3) * 3;
+    const start = format(new Date(Date.UTC(endDate.getFullYear(), quarterStartMonth, 1)), "yyyy-MM-dd");
+
+    return {
+      start,
+      end,
+      days: inclusiveDateDays(start, end),
+      label: "This quarter",
+    };
+  }
+
+  return null;
+}
+
 function promptDays(prompt: string) {
   const lower = prompt.toLowerCase();
-  const numberPattern = "(\\d+|seven|fourteen|thirty|ninety|four|eight|twelve)";
-  const dayMatch = lower.match(new RegExp(`\\b(?:last|past|previous|prior)\\s+${numberPattern}\\s+days?\\b`));
+  const relativeLead = "(?:last|past|previous|prior|recent|trailing)";
+  const dayMatch = lower.match(new RegExp(`\\b${relativeLead}\\s+(${NUMBER_PATTERN})\\s+days?\\b`));
   if (dayMatch) return wordNumber(dayMatch[1]) || 30;
-  const weekMatch = lower.match(new RegExp(`\\b(?:last|past|previous|prior)\\s+${numberPattern}\\s+weeks?\\b`));
+  const weekMatch = lower.match(new RegExp(`\\b${relativeLead}\\s+(${NUMBER_PATTERN})\\s+weeks?\\b`));
   if (weekMatch) return (wordNumber(weekMatch[1]) || 4) * 7;
+  const implicitMatch = lower.match(new RegExp(`\\b${relativeLead}\\s+(day|week|month|quarter)\\b`));
+  if (implicitMatch) {
+    const daysByUnit: Record<string, number> = {
+      day: 1,
+      week: 7,
+      month: 30,
+      quarter: 90,
+    };
+    return daysByUnit[implicitMatch[1]];
+  }
   return null;
 }
 
 function wordNumber(value: string) {
   const words: Record<string, number> = {
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
     seven: 7,
+    eight: 8,
+    nine: 9,
+    ten: 10,
+    eleven: 11,
+    twelve: 12,
+    thirteen: 13,
     fourteen: 14,
+    fifteen: 15,
+    sixteen: 16,
+    seventeen: 17,
+    eighteen: 18,
+    nineteen: 19,
+    twenty: 20,
     thirty: 30,
     ninety: 90,
-    four: 4,
-    eight: 8,
-    twelve: 12,
   };
   return Number.isFinite(Number(value)) ? Number(value) : words[value];
 }
 
+function inclusiveDateDays(start: string, end: string) {
+  const startTime = Date.parse(`${start}T00:00:00.000Z`);
+  const endTime = Date.parse(`${end}T00:00:00.000Z`);
+  if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime < startTime) return 1;
+  return Math.round((endTime - startTime) / 86_400_000) + 1;
+}
+
 function stripSemanticValidation(planned: PlannedIntent): AnalysisWorkbenchPipelineIntent {
-  const { semanticValidation: _semanticValidation, ...intent } = planned;
+  const { semanticValidation: _semanticValidation, filterScopes: _filterScopes, ...intent } = planned;
   return intent;
 }
 
@@ -1208,6 +1465,62 @@ function sumRows(rows: MetaInsightAggregateRow[]) {
     sum.source_rows += row.source_rows;
     return sum;
   }, emptyAggregateRow());
+}
+
+function mergeAggregateRowsByDimensions(
+  rows: MetaInsightAggregateRow[],
+  dimensions: WorkbenchDimension[],
+) {
+  if (!rows.length) return [];
+  if (!dimensions.length) return [sumRows(rows)];
+
+  const groups = new Map<string, MetaInsightAggregateRow[]>();
+  rows.forEach((row) => {
+    const key = dimensions.map((dimension) => dimensionValue(row, dimension)).join("\0");
+    groups.set(key, [...(groups.get(key) || []), row]);
+  });
+
+  return Array.from(groups.values()).map((groupRows) => {
+    const merged = sumRows(groupRows);
+    const first = groupRows[0];
+    dimensions.forEach((dimension) => copyDimensionValue(merged, first, dimension));
+    return merged;
+  });
+}
+
+function copyDimensionValue(
+  target: MetaInsightAggregateRow,
+  source: MetaInsightAggregateRow,
+  dimension: WorkbenchDimension,
+) {
+  target[dimension] = source[dimension];
+  if (dimension === "campaign") target.campaign_id = source.campaign_id;
+  if (dimension === "ad_set") target.ad_set_id = source.ad_set_id;
+  if (dimension === "ad") target.ad_id = source.ad_id;
+  if (dimension === "creative") target.creative_id = source.creative_id;
+}
+
+function sortAggregateRows(
+  rows: MetaInsightAggregateRow[],
+  sortField: WorkbenchMetric | WorkbenchDimension,
+  sortDirection: "asc" | "desc",
+) {
+  return [...rows].sort((a, b) => {
+    const left = aggregateSortValue(a, sortField);
+    const right = aggregateSortValue(b, sortField);
+    const compared =
+      typeof left === "number" && typeof right === "number"
+        ? left - right
+        : String(left).localeCompare(String(right));
+    return sortDirection === "asc" ? compared : -compared;
+  });
+}
+
+function aggregateSortValue(
+  row: MetaInsightAggregateRow,
+  sortField: WorkbenchMetric | WorkbenchDimension,
+) {
+  return isWorkbenchMetric(sortField) ? metricValue(row, sortField) : dimensionValue(row, sortField);
 }
 
 function emptyAggregateRow(): MetaInsightAggregateRow {

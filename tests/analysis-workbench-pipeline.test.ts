@@ -6,6 +6,7 @@ import {
   validateAnalysisWorkbenchNarrativeGrounding,
   type AnalysisWorkbenchCitation,
   type AnalysisWorkbenchPipelineAggregateRequest,
+  type AnalysisWorkbenchPipelineIntent,
 } from "../src/lib/analysis-workbench-pipeline.ts";
 import type { MetaInsightAggregateRow } from "../src/lib/meta-insight-aggregates.ts";
 
@@ -167,6 +168,531 @@ test("answer plus visuals creates structured metric, table, bar, and line visual
   assert.equal(line.title, "Spend trend");
   assert.equal(line.points[0]?.label, "2026-05-18");
   assert.equal(line.points[2]?.formattedValue, "$510");
+});
+
+test("this week prompts resolve to the current ISO week-to-date instead of the default 30 days", async () => {
+  const requests: AnalysisWorkbenchPipelineAggregateRequest[] = [];
+  const result = await runAnalysisWorkbenchFactsPipeline({
+    prompt: "Which campaign groups changed the most this week?",
+    outputMode: "answer_visuals",
+    latestSyncedInsightDate: "2026-05-25",
+    executeAggregate: async (request) => {
+      requests.push(request);
+      return request.dimensions.length
+        ? [
+            aggregateRow({
+              campaign_umbrella: "Book Appts US",
+              spend: 1200,
+              primary_results: 12,
+              source_rows: 1,
+            }),
+          ]
+        : [
+            aggregateRow({
+              spend: 1200,
+              primary_results: 12,
+              source_rows: 1,
+            }),
+          ];
+    },
+  });
+
+  assert.equal(result.status, "completed");
+  const intent = result.intent as AnalysisWorkbenchPipelineIntent;
+  assert.deepEqual(
+    requests.map((request) => ({ start: request.start, end: request.end })),
+    [
+      { start: "2026-05-25", end: "2026-05-25" },
+      { start: "2026-05-25", end: "2026-05-25" },
+      { start: "2026-05-25", end: "2026-05-25" },
+    ],
+  );
+  assert.equal(intent.dateRange.days, 1);
+  assert.equal(intent.dateRange.label, "This week");
+});
+
+test("which ad creative prompts group by creative while book appointment ads stay a filter", async () => {
+  const requests: AnalysisWorkbenchPipelineAggregateRequest[] = [];
+  const result = await runAnalysisWorkbenchFactsPipeline({
+    prompt: "Which ad creative in book appointment ads is doing best the past 7 days?",
+    outputMode: "answer_visuals",
+    latestSyncedInsightDate: "2026-05-25",
+    executeAggregate: async (request) => {
+      requests.push(request);
+      return request.dimensions.length
+        ? [
+            aggregateRow({
+              creative: "Diamond consultation video",
+              creative_id: "creative-1",
+              campaign_umbrella: "Book Appts US",
+              spend: 700,
+              primary_results: 14,
+              source_rows: 4,
+            }),
+            aggregateRow({
+              creative: "Appointment offer static",
+              creative_id: "creative-2",
+              campaign_umbrella: "Book Appts US",
+              spend: 450,
+              primary_results: 9,
+              source_rows: 3,
+            }),
+          ]
+        : [
+            aggregateRow({
+              spend: 1150,
+              primary_results: 23,
+              source_rows: 7,
+            }),
+          ];
+    },
+  });
+
+  assert.equal(result.status, "completed");
+  const intent = result.intent as AnalysisWorkbenchPipelineIntent;
+  assert.deepEqual(intent.metrics, ["bookings"]);
+  assert.deepEqual(intent.dimensions, ["creative"]);
+  assert.deepEqual(intent.filters, [
+    { field: "campaign_umbrella", operator: "equals", value: "Book Appts US" },
+  ]);
+  assert.deepEqual(requests[0]?.dimensions, ["creative"]);
+  assert.equal(requests[0]?.sortField, "bookings");
+  assert.deepEqual(requests[0]?.filters, [
+    { field: "campaign_umbrella", operator: "equals", value: "Book Appts US" },
+  ]);
+  assert.equal(intent.dateRange.start, "2026-05-19");
+  assert.equal(intent.dateRange.end, "2026-05-25");
+});
+
+test("top ranked creatives across multiple campaign groups use primary KPI and scoped filters", async () => {
+  const requests: AnalysisWorkbenchPipelineAggregateRequest[] = [];
+  const result = await runAnalysisWorkbenchFactsPipeline({
+    prompt: "What's the top 3 ranked ad creatives across cash for gold and book appointment ads in terms of primary KPI?",
+    outputMode: "answer_visuals",
+    latestSyncedInsightDate: "2026-05-25",
+    executeAggregate: async (request) => {
+      requests.push(request);
+      const umbrellaFilter = request.filters.find((filter) => filter.field === "campaign_umbrella");
+      if (request.dimensions.includes("creative")) {
+        if (umbrellaFilter?.value === "Cash for Gold US") {
+          return [
+            aggregateRow({
+              creative: "Gold test static",
+              creative_id: "cash-creative-1",
+              campaign_umbrella: "Cash for Gold US",
+              primary_results: 18,
+              messaging_contacts: 18,
+              spend: 500,
+              source_rows: 4,
+            }),
+            aggregateRow({
+              creative: "Gold testimonial reel",
+              creative_id: "cash-creative-2",
+              campaign_umbrella: "Cash for Gold US",
+              primary_results: 6,
+              messaging_contacts: 6,
+              spend: 250,
+              source_rows: 2,
+            }),
+          ];
+        }
+        if (umbrellaFilter?.value === "Book Appts US") {
+          return [
+            aggregateRow({
+              creative: "Appointment offer video",
+              creative_id: "book-creative-1",
+              campaign_umbrella: "Book Appts US",
+              primary_results: 24,
+              website_bookings: 24,
+              bookings: 24,
+              spend: 700,
+              source_rows: 5,
+            }),
+            aggregateRow({
+              creative: "Appointment reminder static",
+              creative_id: "book-creative-2",
+              campaign_umbrella: "Book Appts US",
+              primary_results: 11,
+              website_bookings: 11,
+              bookings: 11,
+              spend: 300,
+              source_rows: 3,
+            }),
+          ];
+        }
+      }
+
+      if (umbrellaFilter?.value === "Cash for Gold US") {
+        return [aggregateRow({ primary_results: 24, messaging_contacts: 24, spend: 750, source_rows: 6 })];
+      }
+      if (umbrellaFilter?.value === "Book Appts US") {
+        return [
+          aggregateRow({
+            primary_results: 35,
+            website_bookings: 35,
+            bookings: 35,
+            spend: 1000,
+            source_rows: 8,
+          }),
+        ];
+      }
+      return [];
+    },
+  });
+
+  assert.equal(result.status, "completed");
+  const intent = result.intent as AnalysisWorkbenchPipelineIntent;
+  assert.deepEqual(intent.metrics, ["primary_results"]);
+  assert.deepEqual(intent.dimensions, ["creative"]);
+  assert.equal(intent.sort.field, "primary_results");
+  assert.equal(intent.sort.direction, "desc");
+  assert.equal(intent.limit, 3);
+
+  const groupedRequests = requests.filter((request) => request.dimensions.includes("creative"));
+  assert.equal(groupedRequests.length, 2);
+  assert.deepEqual(
+    groupedRequests.map((request) => request.filters),
+    [
+      [{ field: "campaign_umbrella", operator: "equals", value: "Cash for Gold US" }],
+      [{ field: "campaign_umbrella", operator: "equals", value: "Book Appts US" }],
+    ],
+  );
+  assert.ok(
+    result.visualCards.some(
+      (card) =>
+        card.type === "bar_chart" &&
+        card.metric === "primary_results" &&
+        card.bars?.[0]?.label === "Appointment offer video",
+    ),
+  );
+});
+
+test("natural language prompt grammar resolves governed query intent across common structures", async () => {
+  const cases: Array<{
+    name: string;
+    prompt: string;
+    expected: {
+      metrics?: string[];
+      dimensions?: string[];
+      filters?: Array<{ field: string; operator: string; value: string }>;
+      start?: string;
+      end?: string;
+      days?: number;
+      label?: string;
+      sortField?: string;
+      sortDirection?: "asc" | "desc";
+      visualType?: string | null;
+    };
+  }> = [
+    {
+      name: "subject-form campaign question with brand filter and number-word weeks",
+      prompt: "Which campaign had the highest spend in VVS over the last two weeks?",
+      expected: {
+        metrics: ["spend"],
+        dimensions: ["campaign"],
+        filters: [{ field: "brand", operator: "equals", value: "VVS" }],
+        start: "2026-05-12",
+        end: "2026-05-25",
+        days: 14,
+        sortField: "spend",
+        sortDirection: "desc",
+      },
+    },
+    {
+      name: "break-down phrasing with ad-set grouping and previous-week date",
+      prompt: "Can you break down messages by ad set for cash for gold during the previous week?",
+      expected: {
+        metrics: ["messaging_contacts"],
+        dimensions: ["ad_set"],
+        filters: [{ field: "campaign_umbrella", operator: "equals", value: "Cash for Gold US" }],
+        start: "2026-05-19",
+        end: "2026-05-25",
+        days: 7,
+      },
+    },
+    {
+      name: "this-week booking trend keeps appointment ads as a filter",
+      prompt: "Show bookings by day for book appointment ads this week.",
+      expected: {
+        metrics: ["bookings"],
+        dimensions: ["date"],
+        filters: [{ field: "campaign_umbrella", operator: "equals", value: "Book Appts US" }],
+        start: "2026-05-25",
+        end: "2026-05-25",
+        days: 1,
+        label: "This week",
+      },
+    },
+    {
+      name: "top ads phrasing maps subject to ad grain",
+      prompt: "What are the top ads for Facebook US Product by CTR in the last 14 days?",
+      expected: {
+        metrics: ["ctr"],
+        dimensions: ["ad"],
+        filters: [{ field: "campaign_umbrella", operator: "equals", value: "Facebook US Product" }],
+        start: "2026-05-12",
+        end: "2026-05-25",
+        days: 14,
+        sortField: "ctr",
+      },
+    },
+    {
+      name: "across-campaign phrasing and implicit last-month date",
+      prompt: "Compare CPC across campaigns for VVS last month.",
+      expected: {
+        metrics: ["cpc"],
+        dimensions: ["campaign"],
+        filters: [{ field: "brand", operator: "equals", value: "VVS" }],
+        start: "2026-04-26",
+        end: "2026-05-25",
+        days: 30,
+      },
+    },
+    {
+      name: "per-brand phrasing and month-to-date date",
+      prompt: "Show spend per brand month to date.",
+      expected: {
+        metrics: ["spend"],
+        dimensions: ["brand"],
+        start: "2026-05-01",
+        end: "2026-05-25",
+        days: 25,
+        label: "This month",
+      },
+    },
+    {
+      name: "daily trend phrasing sets date grain, line visual, and brand filter",
+      prompt: "Daily trend of leads for HP, past week.",
+      expected: {
+        metrics: ["leads"],
+        dimensions: ["date"],
+        filters: [{ field: "brand", operator: "equals", value: "HP" }],
+        start: "2026-05-19",
+        end: "2026-05-25",
+        days: 7,
+        visualType: "line_chart",
+      },
+    },
+    {
+      name: "lowest phrasing sorts ascending for cost metrics",
+      prompt: "Give me lowest CPL ad sets in Cash for Gold over past fourteen days.",
+      expected: {
+        metrics: ["cpl"],
+        dimensions: ["ad_set"],
+        filters: [{ field: "campaign_umbrella", operator: "equals", value: "Cash for Gold US" }],
+        start: "2026-05-12",
+        end: "2026-05-25",
+        days: 14,
+        sortField: "cpl",
+        sortDirection: "asc",
+      },
+    },
+    {
+      name: "week-to-date phrase works without explicit this-week words",
+      prompt: "Which campaigns changed most week to date?",
+      expected: {
+        metrics: ["spend", "primary_results"],
+        dimensions: ["campaign"],
+        start: "2026-05-25",
+        end: "2026-05-25",
+        days: 1,
+        label: "This week",
+      },
+    },
+    {
+      name: "pivot phrasing keeps campaign group and week dimensions",
+      prompt: "Pivot spend by campaign group and week for past 4 weeks.",
+      expected: {
+        metrics: ["spend"],
+        dimensions: ["week", "campaign_umbrella"],
+        start: "2026-04-28",
+        end: "2026-05-25",
+        days: 28,
+        visualType: "pivot_table",
+      },
+    },
+    {
+      name: "scatter phrasing recognizes spend versus CPL",
+      prompt: "Scatter spend vs CPL by campaign group last seven days.",
+      expected: {
+        metrics: ["spend", "cpl"],
+        dimensions: ["campaign_umbrella"],
+        start: "2026-05-19",
+        end: "2026-05-25",
+        days: 7,
+        visualType: "scatter_chart",
+      },
+    },
+    {
+      name: "trailing days and new-message phrase prefer new messaging contacts",
+      prompt: "How are new messages performing by creative for Facebook US product over trailing 10 days?",
+      expected: {
+        metrics: ["new_messaging_contacts"],
+        dimensions: ["creative"],
+        filters: [{ field: "campaign_umbrella", operator: "equals", value: "Facebook US Product" }],
+        start: "2026-05-16",
+        end: "2026-05-25",
+        days: 10,
+      },
+    },
+    {
+      name: "recent-month phrase maps to the 30 day default month window",
+      prompt: "Compare brands by impressions for the recent month.",
+      expected: {
+        metrics: ["impressions"],
+        dimensions: ["brand"],
+        start: "2026-04-26",
+        end: "2026-05-25",
+        days: 30,
+      },
+    },
+    {
+      name: "per-ad every-day phrasing sets both entity and date grains",
+      prompt: "Show click volume per ad every day for cash for gold for the last 7 days.",
+      expected: {
+        metrics: ["clicks"],
+        dimensions: ["date", "ad"],
+        filters: [{ field: "campaign_umbrella", operator: "equals", value: "Cash for Gold US" }],
+        start: "2026-05-19",
+        end: "2026-05-25",
+        days: 7,
+      },
+    },
+  ];
+
+  for (const testCase of cases) {
+    const requests: AnalysisWorkbenchPipelineAggregateRequest[] = [];
+    const result = await runAnalysisWorkbenchFactsPipeline({
+      prompt: testCase.prompt,
+      outputMode: "answer_visuals",
+      latestSyncedInsightDate: "2026-05-25",
+      executeAggregate: async (request) => {
+        requests.push(request);
+        return request.dimensions.length
+          ? [
+              aggregateRow({
+                date: "2026-05-25",
+                week: "2026-W22",
+                month: "2026-05",
+                quarter: "2026-Q2",
+                brand: "HP",
+                campaign_umbrella: "Book Appts US",
+                campaign: "Campaign A",
+                campaign_id: "campaign-a",
+                ad_set: "Ad Set A",
+                ad_set_id: "ad-set-a",
+                ad: "Ad A",
+                ad_id: "ad-a",
+                creative: "Creative A",
+                creative_id: "creative-a",
+                spend: 1000,
+                clicks: 50,
+                leads: 10,
+                bookings: 5,
+                messaging_contacts: 12,
+                new_messaging_contacts: 7,
+                primary_results: 5,
+                ctr: 2.5,
+                cpc: 20,
+                cpl: 100,
+                source_rows: 4,
+              }),
+              aggregateRow({
+                date: "2026-05-24",
+                week: "2026-W21",
+                month: "2026-05",
+                quarter: "2026-Q2",
+                brand: "VVS",
+                campaign_umbrella: "Cash for Gold US",
+                campaign: "Campaign B",
+                campaign_id: "campaign-b",
+                ad_set: "Ad Set B",
+                ad_set_id: "ad-set-b",
+                ad: "Ad B",
+                ad_id: "ad-b",
+                creative: "Creative B",
+                creative_id: "creative-b",
+                spend: 500,
+                clicks: 20,
+                leads: 8,
+                bookings: 2,
+                messaging_contacts: 9,
+                new_messaging_contacts: 4,
+                primary_results: 2,
+                ctr: 1.5,
+                cpc: 25,
+                cpl: 62.5,
+                source_rows: 3,
+              }),
+            ]
+          : [
+              aggregateRow({
+                spend: 1500,
+                clicks: 70,
+                leads: 18,
+                bookings: 7,
+                messaging_contacts: 21,
+                new_messaging_contacts: 11,
+                primary_results: 7,
+                ctr: 2,
+                cpc: 21.43,
+                cpl: 83.33,
+                source_rows: 7,
+              }),
+            ];
+      },
+    });
+
+    assert.equal(result.status, "completed", testCase.name);
+    const intent = result.intent as AnalysisWorkbenchPipelineIntent;
+    const groupedRequest = requests[0];
+    assert.ok(groupedRequest, testCase.name);
+    if (testCase.expected.metrics) {
+      assert.deepEqual(intent.metrics, testCase.expected.metrics, `${testCase.name}: metrics`);
+      assert.deepEqual(groupedRequest.metrics, testCase.expected.metrics, `${testCase.name}: query metrics`);
+    }
+    if (testCase.expected.dimensions) {
+      assert.deepEqual(intent.dimensions, testCase.expected.dimensions, `${testCase.name}: dimensions`);
+      assert.deepEqual(
+        groupedRequest.dimensions,
+        testCase.expected.dimensions,
+        `${testCase.name}: query dimensions`,
+      );
+    }
+    if (testCase.expected.filters) {
+      assert.deepEqual(intent.filters, testCase.expected.filters, `${testCase.name}: filters`);
+      assert.deepEqual(groupedRequest.filters, testCase.expected.filters, `${testCase.name}: query filters`);
+    }
+    if (testCase.expected.start) {
+      assert.equal(intent.dateRange.start, testCase.expected.start, `${testCase.name}: start`);
+      assert.equal(groupedRequest.start, testCase.expected.start, `${testCase.name}: query start`);
+    }
+    if (testCase.expected.end) {
+      assert.equal(intent.dateRange.end, testCase.expected.end, `${testCase.name}: end`);
+      assert.equal(groupedRequest.end, testCase.expected.end, `${testCase.name}: query end`);
+    }
+    if (testCase.expected.days) {
+      assert.equal(intent.dateRange.days, testCase.expected.days, `${testCase.name}: days`);
+    }
+    if (testCase.expected.label) {
+      assert.equal(intent.dateRange.label, testCase.expected.label, `${testCase.name}: label`);
+    }
+    if (testCase.expected.sortField) {
+      assert.equal(intent.sort.field, testCase.expected.sortField, `${testCase.name}: sort field`);
+      assert.equal(groupedRequest.sortField, testCase.expected.sortField, `${testCase.name}: query sort field`);
+    }
+    if (testCase.expected.sortDirection) {
+      assert.equal(intent.sort.direction, testCase.expected.sortDirection, `${testCase.name}: sort direction`);
+      assert.equal(
+        groupedRequest.sortDirection,
+        testCase.expected.sortDirection,
+        `${testCase.name}: query sort direction`,
+      );
+    }
+    if (testCase.expected.visualType !== undefined) {
+      assert.equal(intent.visual?.type || null, testCase.expected.visualType, `${testCase.name}: visual`);
+    }
+  }
 });
 
 test("full dashboard mode creates a durable dashboard packet snapshot", async () => {
