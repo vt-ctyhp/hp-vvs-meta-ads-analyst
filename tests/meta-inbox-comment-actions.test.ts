@@ -20,7 +20,7 @@ import {
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const MIGRATION = join(
   REPO_ROOT,
-  "supabase/migrations/20260524120000_meta_inbox_comment_actions.sql",
+  "supabase/migrations/20260524120500_meta_inbox_comment_actions.sql",
 );
 const migration = readFileSync(MIGRATION, "utf8");
 const route = readFileSync(

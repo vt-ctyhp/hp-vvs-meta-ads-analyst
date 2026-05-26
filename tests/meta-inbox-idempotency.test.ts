@@ -9,7 +9,7 @@ import {
 
 const SOCIAL_INBOX = readFileSync("src/lib/social-inbox.ts", "utf8");
 const COMMENT_ACTION_IDEMPOTENCY_MIGRATION = readFileSync(
-  "supabase/migrations/20260524170000_meta_inbox_comment_action_idempotency_key_scope.sql",
+  "supabase/migrations/20260524170500_meta_inbox_comment_action_idempotency_key_scope.sql",
   "utf8",
 );
 

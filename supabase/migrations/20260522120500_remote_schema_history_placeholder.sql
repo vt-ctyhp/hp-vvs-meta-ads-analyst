@@ -1,0 +1,1 @@
+-- Remote production history placeholder for the sales app payment issued-at migration.

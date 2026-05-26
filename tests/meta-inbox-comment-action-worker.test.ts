@@ -7,7 +7,7 @@ import { deliverQueuedMetaInboxCommentActions } from "../src/lib/meta-inbox-comm
 const WORKER = readFileSync("src/lib/meta-inbox-comment-action-worker.ts", "utf8");
 const ROUTE = readFileSync("src/app/api/cron/meta-inbox-comment-actions/route.ts", "utf8");
 const MIGRATION = readFileSync(
-  "supabase/migrations/20260524120000_meta_inbox_comment_actions.sql",
+  "supabase/migrations/20260524120500_meta_inbox_comment_actions.sql",
   "utf8",
 );
 const ENVIRONMENT = "production";

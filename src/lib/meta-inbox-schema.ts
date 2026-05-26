@@ -5,12 +5,13 @@ export const META_INBOX_REQUIRED_MIGRATIONS = [
   "20260523090000_meta_inbox_foundation.sql",
   "20260524100000_meta_inbox_reply_reliability.sql",
   "20260524110000_meta_inbox_attachments.sql",
-  "20260524120000_meta_inbox_comment_actions.sql",
+  "20260524120500_meta_inbox_comment_actions.sql",
   "20260524130000_meta_inbox_presence.sql",
   "20260524140000_meta_inbox_saved_replies.sql",
   "20260524150000_meta_inbox_notes.sql",
   "20260524160000_meta_inbox_qa_scorecards.sql",
   "20260524170000_meta_inbox_environment_relationships.sql",
+  "20260524170500_meta_inbox_comment_action_idempotency_key_scope.sql",
 ] as const;
 
 export const META_INBOX_REQUIRED_TABLES = [

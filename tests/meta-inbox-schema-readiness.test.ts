@@ -81,7 +81,10 @@ describe("Meta inbox schema readiness", () => {
     const message = metaInboxSchemaReadinessMessage(error);
     assert.match(String(message), /Social inbox database schema is not ready/);
     assert.match(String(message), /public\.meta_inbox_conversations/);
-    assert.match(String(message), /20260524170000_meta_inbox_environment_relationships\.sql/);
+    assert.match(
+      String(message),
+      /20260524170500_meta_inbox_comment_action_idempotency_key_scope\.sql/,
+    );
     assert.doesNotMatch(String(message), /schema cache/);
 
     const normalized = normalizeMetaInboxSchemaError(error);

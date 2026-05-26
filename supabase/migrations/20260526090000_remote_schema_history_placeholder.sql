@@ -1,0 +1,1 @@
+-- Remote production history placeholder for the sales app pg_net extension migration.
