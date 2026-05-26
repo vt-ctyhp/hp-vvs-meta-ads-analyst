@@ -1167,6 +1167,7 @@ export function SocialInboxClient({
           );
         }}
         replyWindowNow={replyWindowNow}
+        preset={drawerState.preset}
       />
     ) : selectedItem && drawerState.drawer === "audit" ? (
       <AuditDrawerPanel item={selectedItem} />
@@ -1291,6 +1292,7 @@ export function SocialInboxClient({
             onOpenAudit={() => drawerState.open("audit")}
             onOpenNotes={() => drawerState.open("notes")}
             onOpenQa={() => drawerState.open("qa")}
+            onCloseConversation={() => drawerState.open("details", "close")}
           />
         }
         drawer={

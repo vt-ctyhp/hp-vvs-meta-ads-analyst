@@ -166,6 +166,61 @@ test("DetailsDrawerPanel renders enabled workflow and contact controls with perm
   assert.doesNotMatch(markup, /Sales and sales lead users can claim, route, label, close/);
 });
 
+test("Details drawer close preset warns, defaults status to closed, and blocks incomplete save", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      DrawerOverlay,
+      {
+        item: itemFixture(),
+        drawer: "details",
+        preset: "close",
+        onClose: () => {},
+      },
+      React.createElement(
+        DetailsDrawerPanel,
+        detailsProps({
+          canManageInboxState: true,
+          preset: "close",
+        }),
+      ),
+    ),
+  );
+
+  assert.match(markup, /Close conversation/);
+  assert.match(markup, /Closing this conversation/);
+  assert.match(markup, /Status is pre-set to Closed/);
+  assert.match(markup, /Lead quality/);
+  assert.match(markup, /reason tag/);
+  assert.match(markup, /Outcome/);
+  assert.match(markup, /<select aria-label="Status"[^>]*data-tone="warning"[^>]*>/);
+  assert.match(markup, /<option value="closed" selected="">Closed<\/option>/);
+  assert.match(markup, /<button type="button" disabled=""[^>]*>Save State<\/button>/);
+});
+
+test("Details drawer without close preset keeps normal status and default border", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      DrawerOverlay,
+      {
+        item: itemFixture(),
+        drawer: "details",
+        onClose: () => {},
+      },
+      React.createElement(
+        DetailsDrawerPanel,
+        detailsProps({
+          canManageInboxState: true,
+        }),
+      ),
+    ),
+  );
+
+  assert.match(markup, /Details · Customer \+ Status/);
+  assert.doesNotMatch(markup, /Closing this conversation/);
+  assert.doesNotMatch(markup, /<select aria-label="Status"[^>]*data-tone="warning"[^>]*>/);
+  assert.match(markup, /<option value="needs_reply" selected="">Needs Reply<\/option>/);
+});
+
 test("AuditDrawerPanel renders six recent events and payload-hiding footer", () => {
   const events = Array.from({ length: 7 }, (_value, index) =>
     eventFixture({

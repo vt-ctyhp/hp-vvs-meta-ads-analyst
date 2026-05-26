@@ -1,3 +1,5 @@
+"use client";
+
 import type { ReactNode } from "react";
 
 import type { MetaInboxQueueDisplayItem } from "../../../lib/meta-inbox-queue-view.ts";
@@ -37,6 +39,11 @@ export function DrawerOverlay({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        tabIndex={-1}
+        autoFocus
+        onKeyDown={(event) => {
+          if (event.key === "Escape") onClose();
+        }}
         className="absolute right-0 top-0 flex h-dvh w-full max-w-[480px] translate-x-0 flex-col overflow-hidden border-l border-hp-rule bg-hp-card shadow-[0_8px_24px_rgba(42,39,37,0.18)] transition-transform"
       >
         <header className="border-b border-hp-rule bg-hp-card px-5 py-4">

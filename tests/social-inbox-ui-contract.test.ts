@@ -71,6 +71,13 @@ describe("social inbox UI contract", () => {
     assert.equal(/snooze/i.test(DESKTOP_INBOX), false);
   });
 
+  it("wires the Close chip to the Details drawer close preset", () => {
+    assert.match(DESKTOP_INBOX, /onCloseConversation=\{\(\) => drawerState\.open\("details", "close"\)\}/);
+    assert.match(DESKTOP_INBOX, /preset=\{drawerState\.preset\}/);
+    assert.match(DETAILS_DRAWER, /preset === "close" \? "closed"/);
+    assert.match(DETAILS_DRAWER, /warning=\{preset === "close"\}/);
+  });
+
   it("initializes workflow drafts from selected conversation values before saving", () => {
     assert.match(DESKTOP_INBOX, /key=\{conversationPanelKey\(selectedItem, "details-drawer"\)\}/);
     assert.match(DETAILS_DRAWER, /useState\(conversation\?\.lead_quality \|\| ""\)/);

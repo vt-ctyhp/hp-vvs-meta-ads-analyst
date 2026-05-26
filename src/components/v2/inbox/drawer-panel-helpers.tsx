@@ -81,6 +81,7 @@ export function FilterSelect({
       </span>
       <select
         aria-label={label}
+        data-tone={warning ? "warning" : undefined}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         disabled={disabled}

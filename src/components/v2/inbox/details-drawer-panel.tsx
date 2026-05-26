@@ -29,6 +29,7 @@ import {
   formatDateTimeLocal,
   InfoLine,
 } from "./drawer-panel-helpers.tsx";
+import type { DispositionPreset } from "./use-drawer-state.ts";
 
 type MutationState = {
   status: "idle" | "saving" | "saved" | "error";
@@ -45,6 +46,7 @@ export function DetailsDrawerPanel({
   onWorkflowUpdate,
   instruction,
   onInstructionChange,
+  preset = null,
 }: {
   item: MetaInboxQueueDisplayItem | null;
   canManageInboxState: boolean;
@@ -60,6 +62,7 @@ export function DetailsDrawerPanel({
   instruction: string;
   onInstructionChange: (value: string) => void;
   replyWindowNow?: number;
+  preset?: DispositionPreset;
 }) {
   if (!item) {
     return (
@@ -71,6 +74,7 @@ export function DetailsDrawerPanel({
 
   return (
     <div data-component="details-drawer-panel">
+      {preset === "close" ? <ClosePresetBanner /> : null}
       <CustomerSection
         item={item}
         canManageInboxState={canManageInboxState}
@@ -78,14 +82,30 @@ export function DetailsDrawerPanel({
         onContactMethodMutation={onContactMethodMutation}
       />
       <WorkflowSection
+        key={`${item.inboxConversation?.id || item.id}:${preset || "normal"}`}
         item={item}
         canManageInboxState={canManageInboxState}
         mutationState={workflowMutationState}
         onWorkflowUpdate={onWorkflowUpdate}
         instruction={instruction}
         onInstructionChange={onInstructionChange}
+        preset={preset}
       />
     </div>
+  );
+}
+
+function ClosePresetBanner() {
+  return (
+    <section className="border-b border-signal-warning bg-signal-warning-bg px-5 py-4">
+      <p className="font-title text-sm normal-case leading-5 text-hp-ink">
+        Closing this conversation
+      </p>
+      <p className="mt-1 text-sm leading-6 text-hp-body">
+        Status is pre-set to Closed. Save state requires Lead quality, ≥1 reason tag, and an
+        Outcome filled in below.
+      </p>
+    </section>
   );
 }
 
@@ -363,6 +383,7 @@ function WorkflowSection({
   onWorkflowUpdate,
   instruction,
   onInstructionChange,
+  preset,
 }: {
   item: MetaInboxQueueDisplayItem;
   canManageInboxState: boolean;
@@ -370,13 +391,14 @@ function WorkflowSection({
   onWorkflowUpdate: (conversationId: string, input: MetaInboxWorkflowPatchInput) => void;
   instruction: string;
   onInstructionChange: (value: string) => void;
+  preset: DispositionPreset;
 }) {
   const conversation = item.inboxConversation;
   const [queueDraft, setQueueDraft] = useState<MetaInboxQueueCategoryKey>(
     item.queueCategoryKey || "uncategorized_needs_review",
   );
   const [statusDraft, setStatusDraft] = useState<SocialInboxConversation["conversation_status"]>(
-    item.conversationStatus || "new_inquiry",
+    preset === "close" ? "closed" : item.conversationStatus || "new_inquiry",
   );
   const [leadQualityDraft, setLeadQualityDraft] = useState(conversation?.lead_quality || "");
   const [reasonTagDrafts, setReasonTagDrafts] = useState<string[]>(
@@ -390,9 +412,20 @@ function WorkflowSection({
   const [changeReasonDraft, setChangeReasonDraft] = useState("");
   const canEditWorkflow = Boolean(conversation && canManageInboxState);
   const isSaving = mutationState.status === "saving";
+  const finalizing =
+    statusDraft === "closed" ||
+    statusDraft === "lost_lead" ||
+    outcomeDraft !== "no_outcome_yet";
+  const missingCloseoutRequirements =
+    finalizing &&
+    (!leadQualityDraft ||
+      reasonTagDrafts.length === 0 ||
+      outcomeDraft === "no_outcome_yet" ||
+      ((statusDraft === "lost_lead" || outcomeDraft === "lost") && !lostReasonDraft));
+  const saveDisabled = !canEditWorkflow || isSaving || missingCloseoutRequirements;
 
   function saveWorkflow() {
-    if (!conversation || !canEditWorkflow) return;
+    if (!conversation || saveDisabled) return;
     onWorkflowUpdate(conversation.id, {
       queueCategoryKey: queueDraft,
       conversationStatus: statusDraft,
@@ -464,6 +497,7 @@ function WorkflowSection({
             setStatusDraft(value as SocialInboxConversation["conversation_status"])
           }
           disabled={!canEditWorkflow || isSaving}
+          warning={preset === "close"}
           options={META_INBOX_CONVERSATION_STATUSES.map((statusOption) => [
             statusOption.key,
             statusOption.label,
@@ -558,6 +592,13 @@ function WorkflowSection({
           </p>
         ) : null}
 
+        {canEditWorkflow && missingCloseoutRequirements ? (
+          <p className="border border-signal-warning bg-signal-warning-bg px-3 py-2 text-xs leading-5 text-hp-body">
+            Fill Lead Quality, at least one reason tag, and Inbox Outcome before saving a close
+            or lost update.
+          </p>
+        ) : null}
+
         <div className="grid gap-2 sm:grid-cols-3">
           <button
             type="button"
@@ -578,7 +619,7 @@ function WorkflowSection({
           <button
             type="button"
             onClick={saveWorkflow}
-            disabled={!canEditWorkflow || isSaving}
+            disabled={saveDisabled}
             className="bg-hp-ink px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-hp-foundation transition hover:opacity-90 disabled:opacity-50"
           >
             Save State
