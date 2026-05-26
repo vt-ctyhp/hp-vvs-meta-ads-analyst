@@ -129,7 +129,7 @@ export function customerLedgerRowsFromJourneys(
       geoTimezone: row.geoTimezone,
       hasConversion: row.hasConversion,
       hasPaidTouch: row.hasPaidTouch,
-      occurredAt: row.appointmentVisitDateTime || row.bookingTime || row.lastSeen,
+      occurredAt: row.lastSeen || row.bookingTime || row.appointmentVisitDateTime || "",
       paidTouchCampaign: row.campaignId,
       paidTouchSource: row.lastPaidSource,
       placement: row.placement,

@@ -17,6 +17,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { fetchCustomerJourneyLedgerData } from "../src/lib/customer-journey-ledger.ts";
+import type { CustomerJourneyLedgerClient } from "../src/lib/customer-journey-ledger.ts";
 import { createAdsAnalystClient } from "../src/lib/ads-analyst-db.ts";
 import { websiteAttributionEnvironment } from "../src/lib/website-analytics.ts";
 
@@ -617,5 +618,70 @@ test(
       0,
       "fetchBookingStageEventsForVisitors should NOT have been called when there are no unanchored visitors",
     );
+  },
+);
+
+test(
+  "appointment enrichment keeps website last activity as lastSeen",
+  async () => {
+    const apptId = "acuity-future-visit";
+    const appointment = makeAppointment({
+      external_booking_id: apptId,
+      visit_date_time: "2026-05-26T21:30:00.000Z",
+    });
+    const visitor = makeVisitor({
+      visitor_id: "v-future-visit",
+      last_seen_at: "2026-05-25T18:20:00.000Z",
+    });
+    const conversion = {
+      event_id: "conv-future-visit",
+      session_id: null,
+      visitor_id: "v-future-visit",
+      occurred_at: "2026-05-25T18:15:00.000Z",
+      received_at: null,
+      source_type: "paid_meta",
+      acuity_appointment_id: apptId,
+      appointment_type: "General Meeting",
+      brand: "hpusa",
+      customer_name: "Ella Goto",
+      customer_email: "ella.goto@gmail.com",
+      customer_phone: null,
+      meta_event_id: null,
+      meta_capi_status: "sent",
+      meta_capi_test_mode: null,
+      fbp: null,
+      fbc: null,
+      geo_country: null,
+      geo_region: null,
+      geo_city: null,
+      geo_timezone: null,
+      user_agent: null,
+      device_category: null,
+      browser_name: null,
+      os_name: null,
+      page_url: null,
+      referrer: null,
+      first_touch: null,
+      last_touch: null,
+      last_paid_touch: null,
+      conversion_touch: null,
+      properties: null,
+      raw_json: null,
+    };
+    const client = makeMockClient({
+      appointment_events: [appointment],
+      website_visitors: [visitor],
+      website_events: [],
+      website_conversions: [conversion],
+      website_sessions: [],
+    });
+
+    const data = await fetchCustomerJourneyLedgerData(
+      { startDate: "2026-05-01", endDate: "2026-05-26" },
+      client as CustomerJourneyLedgerClient,
+    );
+
+    assert.equal(data.rows[0].appointmentVisitDateTime, "2026-05-26T21:30:00.000Z");
+    assert.equal(data.rows[0].lastSeen, "2026-05-25T18:20:00.000Z");
   },
 );

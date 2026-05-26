@@ -58,7 +58,7 @@ describe("Convert customer ledger adapter", () => {
       geoTimezone: "America/Los_Angeles",
       hasConversion: true,
       hasPaidTouch: true,
-      occurredAt: "2026-05-20T23:49:18.756Z",
+      occurredAt: "2026-05-20T23:50:00.000Z",
       paidTouchCampaign: "campaign-1",
       paidTouchSource: "ig",
       placement: "Instagram_Stories",
@@ -93,6 +93,18 @@ describe("Convert customer ledger adapter", () => {
     assert.equal(rows[0].rowId, "visitor-1");
     assert.equal(rows[0].creativePreview, null);
     assert.equal(countCustomerLedgerCapiGaps(rows), 0);
+  });
+
+  it("uses website last activity for Activity instead of appointment time", () => {
+    const rows = customerLedgerRowsFromJourneys([
+      journeyRow({
+        appointmentVisitDateTime: "2026-05-26T21:30:00.000Z",
+        bookingTime: "2026-05-25T18:15:00.000Z",
+        lastSeen: "2026-05-25T18:20:00.000Z",
+      }),
+    ]);
+
+    assert.equal(rows[0].occurredAt, "2026-05-25T18:20:00.000Z");
   });
 
   it("keeps rows without paid touch valid and leaves ad context empty", () => {

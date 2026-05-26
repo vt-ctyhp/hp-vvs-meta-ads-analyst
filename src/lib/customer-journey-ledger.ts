@@ -1677,7 +1677,7 @@ function conversionLedgerRow(input: {
     hasPaidTouch: Boolean(paidTouch),
     lastPaidSource: source,
     lastPaidSourceType: paidTouch?.sourceType || conversion.source_type || null,
-    lastSeen: conversion.occurred_at,
+    lastSeen: latestWebsiteActivityAt({ conversion, events, session, visitor }) || conversion.occurred_at,
     metaEventId: conversion.meta_event_id || null,
     osName,
     placement,
@@ -1745,7 +1745,7 @@ function conversionOnlyLedgerRow(
     hasPaidTouch: Boolean(paidTouch),
     lastPaidSource: source,
     lastPaidSourceType: paidTouch?.sourceType || conversion.source_type || null,
-    lastSeen: conversion.occurred_at,
+    lastSeen: latestWebsiteActivityAt({ conversion, events }) || conversion.occurred_at,
     metaEventId: conversion.meta_event_id || null,
     osName,
     placement,
@@ -1813,7 +1813,7 @@ function appointmentLedgerRow(input: {
     hasPaidTouch: Boolean(paidTouch),
     lastPaidSource: source,
     lastPaidSourceType: paidTouch?.sourceType || null,
-    lastSeen: appointmentTime,
+    lastSeen: latestWebsiteActivityAt({ events, session, visitor }) || appointmentTime,
     metaEventId: null,
     osName,
     placement,
@@ -1834,8 +1834,23 @@ function withAppointmentFields(
     appointmentStatus: appointmentStatus(appointment),
     appointmentType: row.appointmentType || appointment.visit_type || null,
     appointmentVisitDateTime: appointmentVisitDateTime(appointment),
-    lastSeen: appointmentVisitDateTime(appointment) || row.lastSeen,
   };
+}
+
+function latestWebsiteActivityAt(input: {
+  conversion?: CustomerJourneyLedgerConversionRow | null;
+  events?: CustomerJourneyLedgerEventRow[];
+  session?: CustomerJourneyLedgerSessionRow | null;
+  visitor?: CustomerJourneyLedgerVisitorRow | null;
+}) {
+  const candidates = [
+    input.visitor?.last_seen_at,
+    input.session?.last_seen_at,
+    input.conversion?.occurred_at,
+    ...(input.events || []).map((event) => event.occurred_at),
+  ].filter((value): value is string => Boolean(value));
+
+  return candidates.sort((a, b) => timestampValue(b) - timestampValue(a))[0] || null;
 }
 
 function selectPaidTouchForConversion(
