@@ -13,8 +13,11 @@ import {
 } from "./meta-inbox-environment.ts";
 import {
   buildMetaInboxNormalizationBatch,
+  buildMetaInboxNormalizationBatchWithThreadHistory,
   type MetaInboxNormalizationInput,
+  type MetaInboxThreadHistoryLoader,
 } from "./meta-inbox-normalization.ts";
+import { fetchMessengerProfile } from "./meta-messenger-profile.ts";
 import {
   assertMetaInboxConversationMutationAccess,
   assertMetaInboxOperationalWriteAccess,
@@ -54,6 +57,8 @@ import {
   isMissingMetaInboxSchemaError,
   normalizeMetaInboxSchemaError,
 } from "./meta-inbox-schema.ts";
+import { webhookMessageRow as shapeWebhookMessageRow } from "./meta-webhook-shape.ts";
+export { webhookMessageRow } from "./meta-webhook-shape.ts";
 import {
   buildMetaInboxCommentActionDraft,
   buildMetaInboxQueueCommentActionUpdate,
@@ -2263,7 +2268,7 @@ export async function ingestMetaWebhookPayload(payload: JsonRecord): Promise<Met
       ...arrayField(entry.standby).filter(isRecord),
     ];
     for (const event of messagingEvents) {
-      const row = webhookMessageRow(object, entry, event);
+      const row = shapeWebhookMessageRow(object, entry, event);
       if (!row) continue;
       const threads = await upsertMany(
         "meta_social_threads",
@@ -2277,7 +2282,12 @@ export async function ingestMetaWebhookPayload(payload: JsonRecord): Promise<Met
         "platform,message_id",
         "ingest",
       );
-      await normalizeMetaInboxRowsWhenSchemaReady({ threads, messages }, "ingest");
+      await normalizeMetaInboxRowsWhenSchemaReady(
+        { threads, messages },
+        "ingest",
+        { loadFullThreadHistory: true },
+      );
+      await enrichMessengerProfilesForThreads(threads);
       result.messages += messages.length;
     }
 
@@ -2532,57 +2542,6 @@ async function syncConversations({ page, platform, params = {} }: ConversationSy
   };
 }
 
-function webhookMessageRow(object: string | null, entry: JsonRecord, event: JsonRecord) {
-  const message = recordField(event.message);
-  const messageId = stringField(message.mid) || stringField(message.id);
-  if (!messageId) return null;
-
-  const sender = recordField(event.sender);
-  const recipient = recordField(event.recipient);
-  const senderId = stringField(sender.id);
-  const recipientId = stringField(recipient.id);
-  const platform = object === "instagram" ? "instagram" : "facebook";
-  const pageId = platform === "facebook" ? stringField(entry.id) || recipientId : null;
-  const igUserId = platform === "instagram" ? stringField(entry.id) || recipientId : null;
-  const businessId = platform === "instagram" ? igUserId : pageId;
-  const isEcho = Boolean(message.is_echo);
-  const participantId = isEcho ? recipientId : senderId;
-  const threadId = `${platform}:webhook:${businessId || "unknown"}:${participantId || "unknown"}`;
-  const sentAt = timestampToIso(event.timestamp) || new Date().toISOString();
-  const body = stringField(message.text) || stringField(message.quick_reply);
-
-  return {
-    thread: {
-      platform,
-      thread_id: threadId,
-      page_id: pageId,
-      ig_user_id: igUserId,
-      thread_type: "message",
-      participant_id: participantId,
-      participant_name: null,
-      snippet: body,
-      message_count: 1,
-      unread_count: isEcho ? 0 : 1,
-      last_message_at: sentAt,
-      raw_json: event,
-      last_synced_at: new Date().toISOString(),
-    },
-    message: {
-      platform,
-      thread_id: threadId,
-      message_id: messageId,
-      direction: isEcho ? "outbound" : "inbound",
-      sender_id: senderId,
-      sender_name: null,
-      recipient_id: recipientId,
-      recipient_name: null,
-      body,
-      attachments: normalizeMetaInboxAttachments(recordField(message.attachments).data),
-      sent_at: sentAt,
-      raw_json: event,
-    },
-  };
-}
 
 function webhookCommentRow(object: string | null, entry: JsonRecord, change: JsonRecord) {
   const field = stringField(change.field);
@@ -2929,8 +2888,14 @@ async function upsertMany(
 async function normalizeMetaInboxRows(
   input: MetaInboxNormalizationInput,
   role: "worker" | "ingest" = "worker",
+  options: { loadFullThreadHistory?: boolean } = {},
 ) {
-  const batch = buildMetaInboxNormalizationBatch(input);
+  const batch = options.loadFullThreadHistory
+    ? await buildMetaInboxNormalizationBatchWithThreadHistory(
+        input,
+        threadHistoryLoaderFor(role),
+      )
+    : buildMetaInboxNormalizationBatch(input);
   if (
     !batch.customerProfiles.length &&
     !batch.conversations.length &&
@@ -3078,13 +3043,91 @@ async function normalizeMetaInboxRows(
 async function normalizeMetaInboxRowsWhenSchemaReady(
   input: MetaInboxNormalizationInput,
   role: "worker" | "ingest" = "worker",
+  options: { loadFullThreadHistory?: boolean } = {},
 ) {
   try {
-    await normalizeMetaInboxRows(input, role);
+    await normalizeMetaInboxRows(input, role, options);
   } catch (error) {
     if (isMissingMetaInboxSchemaError(error)) return;
     throw error;
   }
+}
+
+async function enrichMessengerProfilesForThreads(threads: JsonRecord[]) {
+  if (!threads.length) return;
+  const supabase = dynamicSupabase("ingest");
+  const pageTokenCache = new Map<string, string | null>();
+
+  for (const thread of threads) {
+    const platform = stringField(thread.platform);
+    if (platform !== "facebook") continue;
+    const pageId = stringField(thread.page_id);
+    const participantId = stringField(thread.participant_id);
+    if (!pageId || !participantId) continue;
+
+    const profileKey = [platform, pageId, "", participantId].join(":");
+    const profileLookup = await selectActiveMetaInboxRows(
+      supabase,
+      "meta_inbox_customer_profiles",
+      "id,display_name,profile_picture_url",
+    )
+      .eq("profile_key", profileKey)
+      .limit(1);
+    if (profileLookup.error) {
+      if (isMissingMetaInboxSchemaError(profileLookup.error)) return;
+      throw normalizeMetaInboxSchemaError(profileLookup.error);
+    }
+    const profileRow = rowsFrom(profileLookup.data)[0];
+    if (!profileRow) continue;
+    if (stringField(profileRow.display_name) && stringField(profileRow.profile_picture_url)) {
+      continue;
+    }
+
+    if (!pageTokenCache.has(pageId)) {
+      const page = await getManagedPage(pageId).catch(() => null);
+      pageTokenCache.set(pageId, page?.accessToken || null);
+    }
+    const pageAccessToken = pageTokenCache.get(pageId);
+    if (!pageAccessToken) continue;
+
+    const fetched = await fetchMessengerProfile(participantId, pageAccessToken);
+    if (!fetched) continue;
+
+    const patch: JsonRecord = { last_profile_synced_at: new Date().toISOString() };
+    if (!stringField(profileRow.display_name) && fetched.displayName) {
+      patch.display_name = fetched.displayName;
+    }
+    if (!stringField(profileRow.profile_picture_url) && fetched.profilePictureUrl) {
+      patch.profile_picture_url = fetched.profilePictureUrl;
+    }
+    if (Object.keys(patch).length === 1) continue;
+
+    const update = await updateActiveMetaInboxRows(
+      supabase,
+      "meta_inbox_customer_profiles",
+      patch,
+    ).eq("id", String(profileRow.id));
+    if (update.error) {
+      if (isMissingMetaInboxSchemaError(update.error)) return;
+      throw normalizeMetaInboxSchemaError(update.error);
+    }
+  }
+}
+
+function threadHistoryLoaderFor(role: "worker" | "ingest"): MetaInboxThreadHistoryLoader {
+  return async (platform, threadId) => {
+    const supabase = dynamicSupabase(role);
+    const result = await selectActiveMetaInboxRows(supabase, "meta_social_messages")
+      .eq("platform", platform)
+      .eq("thread_id", threadId)
+      .order("sent_at", { ascending: true, nullsFirst: true })
+      .limit(500);
+    if (result.error) {
+      if (isMissingMetaInboxSchemaError(result.error)) return [];
+      throw normalizeMetaInboxSchemaError(result.error);
+    }
+    return rowsFrom(result.data);
+  };
 }
 
 async function selectMetaInboxConversationWorkflowState(

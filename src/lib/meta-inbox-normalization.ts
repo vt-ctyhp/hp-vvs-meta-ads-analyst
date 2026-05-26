@@ -90,6 +90,11 @@ export type MetaInboxNormalizationBatch = {
   firstTouchSources: MetaInboxFirstTouchCandidate[];
 };
 
+export type MetaInboxThreadHistoryLoader = (
+  platform: string,
+  threadId: string,
+) => Promise<readonly MetaInboxRawRecord[]>;
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HUMAN_AGENT_WINDOW_MS = 7 * DAY_MS;
 
@@ -289,6 +294,53 @@ export function buildMetaInboxNormalizationBatch(
     conversations: [...conversations.values()],
     firstTouchSources: [...firstTouchSources.values()],
   };
+}
+
+export async function buildMetaInboxNormalizationBatchWithThreadHistory(
+  input: MetaInboxNormalizationInput,
+  loadThreadHistory: MetaInboxThreadHistoryLoader,
+): Promise<MetaInboxNormalizationBatch> {
+  const expanded = await expandMessagesWithThreadHistory(input, loadThreadHistory);
+  return buildMetaInboxNormalizationBatch(expanded);
+}
+
+async function expandMessagesWithThreadHistory(
+  input: MetaInboxNormalizationInput,
+  loadThreadHistory: MetaInboxThreadHistoryLoader,
+): Promise<MetaInboxNormalizationInput> {
+  if (!input.threads?.length) return input;
+
+  const merged = new Map<string, MetaInboxRawRecord>();
+  const fallbackKeyByMessage = new Map<MetaInboxRawRecord, string>();
+
+  const keyFor = (message: MetaInboxRawRecord) => {
+    const platform = stringField(message.platform);
+    const messageId = stringField(message.message_id);
+    if (platform && messageId) return `${platform}:${messageId}`;
+    const fallback = fallbackKeyByMessage.get(message);
+    if (fallback) return fallback;
+    const generated = `unkeyed:${fallbackKeyByMessage.size}`;
+    fallbackKeyByMessage.set(message, generated);
+    return generated;
+  };
+
+  for (const thread of input.threads) {
+    const platform = stringField(thread.platform);
+    const threadId = stringField(thread.thread_id);
+    if (!platform || !threadId) continue;
+    const loaded = await loadThreadHistory(platform, threadId);
+    for (const message of loaded) {
+      const key = keyFor(message);
+      if (!merged.has(key)) merged.set(key, message);
+    }
+  }
+
+  for (const message of input.messages || []) {
+    const key = keyFor(message);
+    merged.set(key, message);
+  }
+
+  return { ...input, messages: [...merged.values()] };
 }
 
 function customerProfile(input: {
