@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   parseMessengerProfileResponse,
+  parseConversationsParticipantResponse,
   fetchMessengerProfile,
   shouldEnrichProfile,
 } from "../src/lib/meta-messenger-profile.ts";
@@ -53,6 +54,62 @@ describe("Messenger profile parser", () => {
   });
 });
 
+describe("Conversations participant parser", () => {
+  const PSID = "27355382180747029";
+  const conversationsResponse = {
+    data: [
+      {
+        participants: {
+          data: [
+            { name: "Maxine Gathwright", email: `${PSID}@facebook.com`, id: PSID },
+            { name: "Hung Phat USA", email: "100615618793615@facebook.com", id: "100615618793615" },
+          ],
+        },
+        id: "t_1306976474238038",
+      },
+    ],
+  };
+
+  it("extracts the matching participant name by PSID", () => {
+    assert.deepEqual(
+      parseConversationsParticipantResponse(conversationsResponse, PSID),
+      { displayName: "Maxine Gathwright", profilePictureUrl: null },
+    );
+  });
+
+  it("falls back to senders.data when participants is missing", () => {
+    const senderOnly = {
+      data: [
+        {
+          senders: { data: [{ name: "Maxine Gathwright", id: PSID }] },
+          id: "t_xyz",
+        },
+      ],
+    };
+    assert.deepEqual(parseConversationsParticipantResponse(senderOnly, PSID), {
+      displayName: "Maxine Gathwright",
+      profilePictureUrl: null,
+    });
+  });
+
+  it("returns null when no participant matches the given PSID", () => {
+    assert.equal(parseConversationsParticipantResponse(conversationsResponse, "999999"), null);
+  });
+
+  it("returns null on error response", () => {
+    assert.equal(
+      parseConversationsParticipantResponse({ error: { message: "denied" } }, PSID),
+      null,
+    );
+  });
+
+  it("returns null on empty / malformed input", () => {
+    assert.equal(parseConversationsParticipantResponse({ data: [] }, PSID), null);
+    assert.equal(parseConversationsParticipantResponse(null, PSID), null);
+    assert.equal(parseConversationsParticipantResponse("oops", PSID), null);
+  });
+});
+
 describe("fetchMessengerProfile", () => {
   it("calls the Graph API with the given access token and parses the response", async () => {
     const calls: string[] = [];
@@ -83,13 +140,57 @@ describe("fetchMessengerProfile", () => {
     assert.equal(url.searchParams.get("access_token"), "page-token-xyz");
   });
 
-  it("returns null when the Graph API returns a non-2xx status", async () => {
+  it("returns null when the Graph API returns a non-2xx status with no fallback", async () => {
     const fakeFetch: typeof fetch = async () =>
       new Response(JSON.stringify({ error: { message: "denied" } }), { status: 400 });
     const result = await fetchMessengerProfile("customer-1", "page-token", {
       fetchFn: fakeFetch,
     });
     assert.equal(result, null);
+  });
+
+  it("falls back to /me/conversations when direct profile lookup fails", async () => {
+    const PSID = "27355382180747029";
+    const calls: string[] = [];
+    const fakeFetch: typeof fetch = async (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      calls.push(url);
+      if (url.includes(`/${PSID}?`) || url.includes(`/${PSID}&`)) {
+        return new Response(
+          JSON.stringify({
+            error: { message: "missing permissions", code: 100, error_subcode: 33 },
+          }),
+          { status: 400 },
+        );
+      }
+      if (url.includes("/me/conversations")) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                participants: {
+                  data: [
+                    { name: "Maxine Gathwright", id: PSID },
+                    { name: "Page", id: "100615618793615" },
+                  ],
+                },
+                id: "t_xyz",
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("{}", { status: 200 });
+    };
+
+    const result = await fetchMessengerProfile(PSID, "page-token", { fetchFn: fakeFetch });
+    assert.deepEqual(result, {
+      displayName: "Maxine Gathwright",
+      profilePictureUrl: null,
+    });
+    assert.equal(calls.length, 2, "should try direct first, then conversations fallback");
+    assert.equal(calls[1].includes(`user_id=${PSID}`), true);
   });
 
   it("returns null when the fetch throws", async () => {
