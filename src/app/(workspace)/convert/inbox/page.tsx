@@ -13,6 +13,7 @@ export const dynamic = "force-dynamic";
 
 export default async function InboxPage() {
   const profile = await requirePagePermission("view_inbox", "/convert/inbox");
+
   const [status, inboxData] = await Promise.all([
     getSocialInboxStatus(),
     getSafeSocialInboxData(profile),

@@ -14,6 +14,11 @@ const MIGRATION = readFileSync(
 );
 const SOCIAL_INBOX_LIB = readFileSync("src/lib/social-inbox.ts", "utf8");
 const DESKTOP_INBOX = readFileSync("src/components/social-inbox-client.tsx", "utf8");
+const INBOX_CLIENT_STATE = readFileSync(
+  "src/components/v2/inbox/inbox-client-state.ts",
+  "utf8",
+);
+const AUDIT_DRAWER = readFileSync("src/components/v2/inbox/audit-drawer-panel.tsx", "utf8");
 
 describe("Meta inbox audit trail visibility", () => {
   it("keeps conversation audit events append-only and manager-visible", () => {
@@ -52,12 +57,12 @@ describe("Meta inbox audit trail visibility", () => {
   });
 
   it("surfaces a compact audit trail panel without raw Meta payload UI", () => {
-    assert.match(DESKTOP_INBOX, /AuditTrailPanel/);
-    assert.match(DESKTOP_INBOX, /Audit Trail/);
-    assert.match(DESKTOP_INBOX, /Sales can see accessible conversation audit history/);
-    assert.match(DESKTOP_INBOX, /Raw Meta payload stays hidden from UI/);
-    assert.match(DESKTOP_INBOX, /mergeConversationEvents/);
-    assert.match(DESKTOP_INBOX, /auditEventSummary/);
+    assert.match(DESKTOP_INBOX, /AuditDrawerPanel/);
+    assert.match(AUDIT_DRAWER, /Audit Trail/);
+    assert.match(AUDIT_DRAWER, /No audit events yet for this conversation/);
+    assert.match(AUDIT_DRAWER, /Raw Meta payload stays hidden by design/);
+    assert.match(INBOX_CLIENT_STATE, /mergeConversationEvents/);
+    assert.match(AUDIT_DRAWER, /auditEventSummary/);
     assert.doesNotMatch(DESKTOP_INBOX, /raw_payload_json/);
   });
 });

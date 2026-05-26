@@ -18,6 +18,14 @@ const ROUTE = readFileSync(
 );
 const SOCIAL_INBOX_LIB = readFileSync("src/lib/social-inbox.ts", "utf8");
 const DESKTOP_INBOX = readFileSync("src/components/social-inbox-client.tsx", "utf8");
+const PRESENCE_COLLISION_BANNER = readFileSync(
+  "src/components/v2/inbox/presence-collision-banner.tsx",
+  "utf8",
+);
+const SELECTED_ITEM_DETAIL = readFileSync(
+  "src/components/v2/inbox/selected-item-detail.tsx",
+  "utf8",
+);
 
 const NOW = "2026-05-24T12:00:00.000Z";
 const CONVERSATION_ID = "33333333-3333-4333-8333-333333333333";
@@ -98,10 +106,10 @@ describe("Meta inbox presence collision prevention", () => {
     assert.match(SOCIAL_INBOX_LIB, /recordSocialInboxPresence/);
     assert.match(SOCIAL_INBOX_LIB, /send_inbox_reply/);
     assert.match(SOCIAL_INBOX_LIB, /meta_inbox_presence/);
-    assert.match(DESKTOP_INBOX, /PresenceCollisionBanner/);
+    assert.match(SELECTED_ITEM_DETAIL, /PresenceCollisionBanner/);
     assert.match(DESKTOP_INBOX, /\/presence/);
-    assert.match(DESKTOP_INBOX, /is replying now/);
-    assert.match(DESKTOP_INBOX, /Advisory collision warning only/);
+    assert.match(PRESENCE_COLLISION_BANNER, /is replying now/);
+    assert.match(PRESENCE_COLLISION_BANNER, /Advisory collision warning only/);
   });
 });
 

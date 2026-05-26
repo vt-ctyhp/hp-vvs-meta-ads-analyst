@@ -11,6 +11,9 @@ import type {
 } from "../src/lib/social-inbox.ts";
 
 const DESKTOP_INBOX = readFileSync("src/components/social-inbox-client.tsx", "utf8");
+const QUEUE_RAIL = readFileSync("src/components/v2/inbox/queue-rail.tsx", "utf8");
+const DETAILS_DRAWER = readFileSync("src/components/v2/inbox/details-drawer-panel.tsx", "utf8");
+const INBOX_FILTERS = readFileSync("src/components/v2/inbox/use-inbox-filters.ts", "utf8");
 
 describe("Meta inbox attribution filters", () => {
   it("rolls manager health up by campaign umbrella, ad, and creative", () => {
@@ -53,17 +56,18 @@ describe("Meta inbox attribution filters", () => {
 
   it("surfaces campaign umbrella, ad, and creative filters in the inbox queue", () => {
     assert.match(DESKTOP_INBOX, /campaignUmbrellaFilter/);
-    assert.match(DESKTOP_INBOX, /adFilter/);
-    assert.match(DESKTOP_INBOX, /creativeFilter/);
-    assert.match(DESKTOP_INBOX, /Campaign Umbrella/);
-    assert.match(DESKTOP_INBOX, /All Campaign Umbrellas/);
-    assert.match(DESKTOP_INBOX, /All Ads/);
-    assert.match(DESKTOP_INBOX, /All Creatives/);
-    assert.match(DESKTOP_INBOX, /buildAttributionFilterOptions/);
-    assert.match(DESKTOP_INBOX, /item\.firstTouch\?\.campaign_umbrella_id/);
-    assert.match(DESKTOP_INBOX, /item\.firstTouch\?\.ad_id/);
-    assert.match(DESKTOP_INBOX, /item\.firstTouch\?\.creative_id/);
-    assert.match(DESKTOP_INBOX, /Attribution/);
+    assert.match(INBOX_FILTERS, /adFilter/);
+    assert.match(INBOX_FILTERS, /creativeFilter/);
+    assert.match(QUEUE_RAIL, /Campaign Umbrella/);
+    assert.match(QUEUE_RAIL, /All Campaign Umbrellas/);
+    assert.doesNotMatch(DESKTOP_INBOX, /All Ads/);
+    assert.doesNotMatch(DESKTOP_INBOX, /All Creatives/);
+    assert.match(INBOX_FILTERS, /buildAttributionFilterOptions/);
+    assert.match(INBOX_FILTERS, /item\.firstTouch\?\.campaign_umbrella_id/);
+    assert.match(INBOX_FILTERS, /item\.firstTouch\?\.ad_id/);
+    assert.match(INBOX_FILTERS, /item\.firstTouch\?\.creative_id/);
+    assert.match(DETAILS_DRAWER, /First Touch/);
+    assert.match(DETAILS_DRAWER, /Umbrella/);
   });
 });
 
