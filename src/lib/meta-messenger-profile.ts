@@ -10,6 +10,13 @@ export type FetchMessengerProfileOptions = {
   timeoutMs?: number;
 };
 
+export function shouldEnrichProfile(row: {
+  display_name: string | null;
+  profile_picture_url: string | null;
+}): boolean {
+  return !isMeaningfulString(row.display_name) || !isMeaningfulString(row.profile_picture_url);
+}
+
 export function parseMessengerProfileResponse(value: unknown): MessengerProfile | null {
   if (!isRecord(value)) return null;
   if ("error" in value) return null;
@@ -60,6 +67,10 @@ export async function fetchMessengerProfile(
 
 function stringField(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function isMeaningfulString(value: string | null): boolean {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

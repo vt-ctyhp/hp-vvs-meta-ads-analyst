@@ -17,7 +17,7 @@ import {
   type MetaInboxNormalizationInput,
   type MetaInboxThreadHistoryLoader,
 } from "./meta-inbox-normalization.ts";
-import { fetchMessengerProfile } from "./meta-messenger-profile.ts";
+import { fetchMessengerProfile, shouldEnrichProfile } from "./meta-messenger-profile.ts";
 import {
   assertMetaInboxConversationMutationAccess,
   assertMetaInboxOperationalWriteAccess,
@@ -2326,6 +2326,188 @@ export async function ingestMetaWebhookPayload(payload: JsonRecord): Promise<Met
   return result;
 }
 
+export type RepairSocialInboxCustomerInfoOptions = {
+  conversationId?: string;
+  limit?: number;
+};
+
+export type RepairSocialInboxCustomerInfoResult = {
+  conversationsConsidered: number;
+  threadsRenormalized: number;
+  profilesEnriched: number;
+  profilesSkipped: number;
+  errors: string[];
+};
+
+/**
+ * Backfill helper: re-runs webhook-style normalization (with full thread
+ * history) and Messenger profile enrichment for existing inbox rows.
+ *
+ * Heals conversations whose `send_eligibility`, `latest_inbound_at`, or
+ * `customer_profiles.display_name`/`profile_picture_url` were corrupted by
+ * the pre-fix webhook path. Safe to run repeatedly.
+ */
+export async function repairSocialInboxCustomerInfo(
+  options: RepairSocialInboxCustomerInfoOptions = {},
+): Promise<RepairSocialInboxCustomerInfoResult> {
+  const supabase = dynamicSupabase("worker");
+  const result: RepairSocialInboxCustomerInfoResult = {
+    conversationsConsidered: 0,
+    threadsRenormalized: 0,
+    profilesEnriched: 0,
+    profilesSkipped: 0,
+    errors: [],
+  };
+
+  let conversationsBuilder = selectActiveMetaInboxRows(
+    supabase,
+    "meta_inbox_conversations",
+    "id,platform,platform_thread_id,source_type",
+  ).eq("source_type", "message_thread");
+  if (options.conversationId) {
+    conversationsBuilder = conversationsBuilder.eq("id", options.conversationId);
+  }
+  const conversationsResult = await conversationsBuilder.limit(
+    Math.min(Math.max(options.limit ?? 500, 1), 5000),
+  );
+  if (conversationsResult.error) {
+    if (isMissingMetaInboxSchemaError(conversationsResult.error)) {
+      return result;
+    }
+    throw normalizeMetaInboxSchemaError(conversationsResult.error);
+  }
+  const conversations = rowsFrom(conversationsResult.data);
+  result.conversationsConsidered = conversations.length;
+
+  const renormalizedThreadKeys = new Set<string>();
+  const enrichedProfileKeys = new Set<string>();
+
+  for (const conversation of conversations) {
+    const platform = stringField(conversation.platform);
+    const threadId = stringField(conversation.platform_thread_id);
+    if (!platform || !threadId) continue;
+
+    const threadKey = `${platform}:${threadId}`;
+    if (renormalizedThreadKeys.has(threadKey)) continue;
+    renormalizedThreadKeys.add(threadKey);
+
+    const threadResult = await selectActiveMetaInboxRows(supabase, "meta_social_threads")
+      .eq("platform", platform)
+      .eq("thread_id", threadId)
+      .limit(1);
+    if (threadResult.error) {
+      if (isMissingMetaInboxSchemaError(threadResult.error)) return result;
+      result.errors.push(`thread lookup ${threadKey}: ${errorToMessage(threadResult.error)}`);
+      continue;
+    }
+    const threadRow = rowsFrom(threadResult.data)[0];
+    if (!threadRow) continue;
+
+    try {
+      await normalizeMetaInboxRowsWhenSchemaReady(
+        { threads: [threadRow], messages: [] },
+        "worker",
+        { loadFullThreadHistory: true },
+      );
+      result.threadsRenormalized += 1;
+    } catch (error) {
+      result.errors.push(`renormalize ${threadKey}: ${errorToMessage(error)}`);
+      continue;
+    }
+
+    const participantId = stringField(threadRow.participant_id);
+    const pageId = stringField(threadRow.page_id);
+    if (platform !== "facebook" || !participantId || !pageId) continue;
+
+    const profileKey = ["facebook", pageId, "", participantId].join(":");
+    if (enrichedProfileKeys.has(profileKey)) {
+      result.profilesSkipped += 1;
+      continue;
+    }
+    enrichedProfileKeys.add(profileKey);
+
+    try {
+      const enrichStats = await enrichMessengerProfilesForThreads([threadRow], "worker");
+      result.profilesEnriched += enrichStats.enriched;
+      result.profilesSkipped += enrichStats.skipped;
+    } catch (error) {
+      result.errors.push(`enrich ${profileKey}: ${errorToMessage(error)}`);
+    }
+  }
+
+  return result;
+}
+
+export type SocialInboxConversationDebug = {
+  conversation: JsonRecord | null;
+  thread: JsonRecord | null;
+  firstInboundMessage: JsonRecord | null;
+  firstTouch: JsonRecord | null;
+  customerProfile: JsonRecord | null;
+};
+
+/**
+ * Diagnostic: dump the inbox conversation + first-inbound raw payload + first-touch
+ * row + customer profile for a single conversation. Used to investigate why ad
+ * attribution / customer info is missing.
+ */
+export async function getSocialInboxConversationDebug(
+  conversationId: string,
+): Promise<SocialInboxConversationDebug> {
+  const supabase = dynamicSupabase("worker");
+  const debug: SocialInboxConversationDebug = {
+    conversation: null,
+    thread: null,
+    firstInboundMessage: null,
+    firstTouch: null,
+    customerProfile: null,
+  };
+
+  const conversationLookup = await selectActiveMetaInboxRows(supabase, "meta_inbox_conversations")
+    .eq("id", conversationId)
+    .limit(1);
+  if (conversationLookup.error) {
+    if (isMissingMetaInboxSchemaError(conversationLookup.error)) return debug;
+    throw normalizeMetaInboxSchemaError(conversationLookup.error);
+  }
+  const conversation = rowsFrom(conversationLookup.data)[0];
+  if (!conversation) return debug;
+  debug.conversation = conversation;
+
+  const platform = stringField(conversation.platform);
+  const threadId = stringField(conversation.platform_thread_id);
+  if (platform && threadId) {
+    const threadLookup = await selectActiveMetaInboxRows(supabase, "meta_social_threads")
+      .eq("platform", platform)
+      .eq("thread_id", threadId)
+      .limit(1);
+    if (!threadLookup.error) debug.thread = rowsFrom(threadLookup.data)[0] || null;
+
+    const inboundLookup = await selectActiveMetaInboxRows(supabase, "meta_social_messages")
+      .eq("platform", platform)
+      .eq("thread_id", threadId)
+      .eq("direction", "inbound")
+      .order("sent_at", { ascending: true, nullsFirst: true })
+      .limit(1);
+    if (!inboundLookup.error) debug.firstInboundMessage = rowsFrom(inboundLookup.data)[0] || null;
+  }
+
+  const firstTouchLookup = await selectActiveMetaInboxRows(supabase, "meta_inbox_first_touch_sources")
+    .eq("conversation_id", conversationId)
+    .limit(1);
+  if (!firstTouchLookup.error) debug.firstTouch = rowsFrom(firstTouchLookup.data)[0] || null;
+
+  const profileId = stringField(conversation.customer_profile_id);
+  if (profileId) {
+    const profileLookup = await selectActiveMetaInboxRows(supabase, "meta_inbox_customer_profiles")
+      .eq("id", profileId)
+      .limit(1);
+    if (!profileLookup.error) debug.customerProfile = rowsFrom(profileLookup.data)[0] || null;
+  }
+
+  return debug;
+}
+
 async function validateSocialInboxPermissions() {
   const health = await getMetaPermissionHealth();
 
@@ -3053,9 +3235,13 @@ async function normalizeMetaInboxRowsWhenSchemaReady(
   }
 }
 
-async function enrichMessengerProfilesForThreads(threads: JsonRecord[]) {
-  if (!threads.length) return;
-  const supabase = dynamicSupabase("ingest");
+async function enrichMessengerProfilesForThreads(
+  threads: JsonRecord[],
+  role: "worker" | "ingest" = "ingest",
+): Promise<{ enriched: number; skipped: number }> {
+  const stats = { enriched: 0, skipped: 0 };
+  if (!threads.length) return stats;
+  const supabase = dynamicSupabase(role);
   const pageTokenCache = new Map<string, string | null>();
 
   for (const thread of threads) {
@@ -3074,12 +3260,18 @@ async function enrichMessengerProfilesForThreads(threads: JsonRecord[]) {
       .eq("profile_key", profileKey)
       .limit(1);
     if (profileLookup.error) {
-      if (isMissingMetaInboxSchemaError(profileLookup.error)) return;
+      if (isMissingMetaInboxSchemaError(profileLookup.error)) return stats;
       throw normalizeMetaInboxSchemaError(profileLookup.error);
     }
     const profileRow = rowsFrom(profileLookup.data)[0];
     if (!profileRow) continue;
-    if (stringField(profileRow.display_name) && stringField(profileRow.profile_picture_url)) {
+    if (
+      !shouldEnrichProfile({
+        display_name: stringField(profileRow.display_name),
+        profile_picture_url: stringField(profileRow.profile_picture_url),
+      })
+    ) {
+      stats.skipped += 1;
       continue;
     }
 
@@ -3088,10 +3280,16 @@ async function enrichMessengerProfilesForThreads(threads: JsonRecord[]) {
       pageTokenCache.set(pageId, page?.accessToken || null);
     }
     const pageAccessToken = pageTokenCache.get(pageId);
-    if (!pageAccessToken) continue;
+    if (!pageAccessToken) {
+      stats.skipped += 1;
+      continue;
+    }
 
     const fetched = await fetchMessengerProfile(participantId, pageAccessToken);
-    if (!fetched) continue;
+    if (!fetched) {
+      stats.skipped += 1;
+      continue;
+    }
 
     const patch: JsonRecord = { last_profile_synced_at: new Date().toISOString() };
     if (!stringField(profileRow.display_name) && fetched.displayName) {
@@ -3100,7 +3298,10 @@ async function enrichMessengerProfilesForThreads(threads: JsonRecord[]) {
     if (!stringField(profileRow.profile_picture_url) && fetched.profilePictureUrl) {
       patch.profile_picture_url = fetched.profilePictureUrl;
     }
-    if (Object.keys(patch).length === 1) continue;
+    if (Object.keys(patch).length === 1) {
+      stats.skipped += 1;
+      continue;
+    }
 
     const update = await updateActiveMetaInboxRows(
       supabase,
@@ -3108,10 +3309,13 @@ async function enrichMessengerProfilesForThreads(threads: JsonRecord[]) {
       patch,
     ).eq("id", String(profileRow.id));
     if (update.error) {
-      if (isMissingMetaInboxSchemaError(update.error)) return;
+      if (isMissingMetaInboxSchemaError(update.error)) return stats;
       throw normalizeMetaInboxSchemaError(update.error);
     }
+    stats.enriched += 1;
   }
+
+  return stats;
 }
 
 function threadHistoryLoaderFor(role: "worker" | "ingest"): MetaInboxThreadHistoryLoader {

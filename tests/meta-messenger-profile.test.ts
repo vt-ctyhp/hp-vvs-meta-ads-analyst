@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   parseMessengerProfileResponse,
   fetchMessengerProfile,
+  shouldEnrichProfile,
 } from "../src/lib/meta-messenger-profile.ts";
 
 describe("Messenger profile parser", () => {
@@ -99,6 +100,17 @@ describe("fetchMessengerProfile", () => {
       fetchFn: fakeFetch,
     });
     assert.equal(result, null);
+  });
+
+  it("flags profiles missing display_name or profile_picture_url for enrichment", () => {
+    assert.equal(shouldEnrichProfile({ display_name: null, profile_picture_url: null }), true);
+    assert.equal(shouldEnrichProfile({ display_name: "Darlene", profile_picture_url: null }), true);
+    assert.equal(shouldEnrichProfile({ display_name: null, profile_picture_url: "https://x" }), true);
+    assert.equal(
+      shouldEnrichProfile({ display_name: "Darlene", profile_picture_url: "https://x" }),
+      false,
+    );
+    assert.equal(shouldEnrichProfile({ display_name: "   ", profile_picture_url: "https://x" }), true);
   });
 
   it("does nothing and returns null when participantId or pageAccessToken is empty", async () => {
