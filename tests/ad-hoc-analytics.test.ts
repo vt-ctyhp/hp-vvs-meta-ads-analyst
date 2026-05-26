@@ -6,12 +6,15 @@ import {
   buildComparisonFactPack,
   buildDiagnosisAnswer,
   buildDiagnosisFactPack,
+  buildRecommendationAnswer,
+  buildRecommendationFactPack,
   buildAnalysisPlanFromPlannerOutputForPrompt,
   buildAnalysisPlanForPrompt,
   normalizeAnalysisSpecForPrompt,
   resolveAnalysisDateRangeForPrompt,
   validateComparisonNumericGrounding,
   validateDiagnosisNumericGrounding,
+  validateRecommendationNumericGrounding,
 } from "../src/lib/ad-hoc-analytics.ts";
 
 describe("ad-hoc analytics prompt normalization", () => {
@@ -643,6 +646,192 @@ describe("ad-hoc analytics prompt normalization", () => {
     const answer = buildDiagnosisAnswer(factPack);
     assert.match(answer, /Current period had no matching rows/);
     assert.equal(validateDiagnosisNumericGrounding(answer, factPack), true);
+  });
+
+  it("builds pause and waste recommendation facts with advisory grounded prose", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "What should I pause this week?");
+    const factPack = buildRecommendationFactPack({
+      goal: "pause",
+      metrics: plan.spec.metrics,
+      dimension: plan.spec.dimensions[0],
+      filters: plan.spec.filters,
+      assumptions: plan.assumptions,
+      current: {
+        label: "Current period",
+        timeRange: { start: "2026-05-25", end: "2026-05-25", days: 1 },
+        rows: [
+          aggregateRow({
+            campaign_umbrella: "Book Appts US",
+            spend: 1200,
+            leads: 12,
+            primary_results: 12,
+            cpl: 100,
+            ctr: 0.7,
+            frequency: 2.4,
+            source_rows: 8,
+          }),
+          aggregateRow({
+            campaign_umbrella: "Cash for Gold US",
+            spend: 500,
+            leads: 50,
+            primary_results: 50,
+            cpl: 10,
+            ctr: 2.1,
+            frequency: 1.4,
+            source_rows: 5,
+          }),
+        ],
+      },
+      baseline: {
+        label: "Baseline period",
+        timeRange: { start: "2026-05-18", end: "2026-05-24", days: 7 },
+        rows: [],
+      },
+    });
+
+    assert.equal(factPack.goal, "pause");
+    assert.equal(factPack.topRecommendations[0]?.label, "Book Appts US");
+    assert.equal(factPack.topRecommendations[0]?.action, "review_or_pause");
+    assert.ok(factPack.topRecommendations[0]?.signals.some((signal) => signal.kind === "high_spend"));
+    assert.ok(factPack.topRecommendations[0]?.signals.some((signal) => signal.kind === "weak_primary_results"));
+    assert.ok(factPack.sourceNotes.some((note) => note.sourceRows === 13));
+
+    const answer = buildRecommendationAnswer(factPack);
+    assert.match(answer, /Advisory only/i);
+    assert.match(answer, /Review\/pause candidate: Book Appts US/);
+    assert.match(answer, /2026-05-25 to 2026-05-25/);
+    assert.match(answer, /Spend \$1,200/);
+    assert.match(answer, /source rows 13/);
+    assert.doesNotMatch(answer, /\b(paused|edited|created|duplicated|mutated)\b/i);
+    assert.equal(validateRecommendationNumericGrounding(answer, factPack), true);
+    assert.equal(validateRecommendationNumericGrounding(`${answer} Uncited 999.`, factPack), false);
+  });
+
+  it("builds scale recommendation facts from strong primary KPI and efficiency evidence", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "What should I scale?");
+    const factPack = buildRecommendationFactPack({
+      goal: "scale",
+      metrics: plan.spec.metrics,
+      dimension: plan.spec.dimensions[0],
+      current: {
+        label: "Current period",
+        timeRange: { start: "2026-04-26", end: "2026-05-25", days: 30 },
+        rows: [
+          aggregateRow({
+            creative: "Appointment offer video",
+            spend: 300,
+            leads: 45,
+            primary_results: 45,
+            cpl: 6.67,
+            ctr: 2.8,
+            frequency: 1.6,
+            source_rows: 6,
+          }),
+          aggregateRow({
+            creative: "Generic reminder image",
+            spend: 950,
+            leads: 20,
+            primary_results: 20,
+            cpl: 47.5,
+            ctr: 0.9,
+            frequency: 2.9,
+            source_rows: 9,
+          }),
+        ],
+      },
+      baseline: {
+        label: "Baseline period",
+        timeRange: { start: "2026-03-27", end: "2026-04-25", days: 30 },
+        rows: [],
+      },
+    });
+
+    assert.equal(factPack.goal, "scale");
+    assert.equal(factPack.topRecommendations[0]?.label, "Appointment offer video");
+    assert.equal(factPack.topRecommendations[0]?.action, "scale_candidate");
+    assert.ok(factPack.topRecommendations[0]?.signals.some((signal) => signal.kind === "strong_primary_results"));
+    assert.ok(factPack.topRecommendations[0]?.signals.some((signal) => signal.kind === "efficient_cost"));
+
+    const answer = buildRecommendationAnswer(factPack);
+    assert.match(answer, /Scale candidate: Appointment offer video/);
+    assert.match(answer, /Primary Results 45/);
+    assert.match(answer, /CPL \$6.67/);
+    assert.doesNotMatch(answer, /\b(will|I will|automatically)\s+(pause|edit|create|duplicate|mutate|scale)\b/i);
+    assert.equal(validateRecommendationNumericGrounding(answer, factPack), true);
+  });
+
+  it("builds fatigue recommendation facts from governed proxy signals", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "Which ads show fatigue?");
+    const factPack = buildRecommendationFactPack({
+      goal: "fatigue",
+      metrics: plan.spec.metrics,
+      dimension: plan.spec.dimensions[0],
+      current: {
+        label: "Current period",
+        timeRange: { start: "2026-04-26", end: "2026-05-25", days: 30 },
+        rows: [
+          aggregateRow({
+            ad: "Retargeting clip",
+            spend: 800,
+            impressions: 10000,
+            reach: 2381,
+            clicks: 80,
+            leads: 10,
+            primary_results: 10,
+            cpc: 10,
+            cpl: 80,
+            ctr: 0.8,
+            frequency: 4.2,
+            source_rows: 10,
+          }),
+        ],
+      },
+      baseline: {
+        label: "Baseline period",
+        timeRange: { start: "2026-03-27", end: "2026-04-25", days: 30 },
+        rows: [
+          aggregateRow({
+            ad: "Retargeting clip",
+            spend: 700,
+            impressions: 8750,
+            reach: 4167,
+            clicks: 140,
+            leads: 28,
+            primary_results: 28,
+            cpc: 5,
+            cpl: 25,
+            ctr: 1.6,
+            frequency: 2.1,
+            source_rows: 8,
+          }),
+        ],
+      },
+    });
+
+    assert.equal(plan.questionType, "recommendation");
+    assert.deepEqual(plan.spec.dimensions, ["ad"]);
+    assert.ok(plan.spec.metrics.includes("frequency"));
+    assert.ok(plan.spec.metrics.includes("cpc"));
+    assert.equal(factPack.topRecommendations[0]?.action, "fatigue_review");
+    assert.ok(factPack.topRecommendations[0]?.signals.some((signal) => signal.kind === "rising_frequency"));
+    assert.ok(factPack.topRecommendations[0]?.signals.some((signal) => signal.kind === "rising_cpc"));
+    assert.ok(factPack.topRecommendations[0]?.signals.some((signal) => signal.kind === "falling_ctr"));
+    assert.ok(factPack.topRecommendations[0]?.signals.some((signal) => signal.kind === "falling_primary_results"));
+
+    const answer = buildRecommendationAnswer(factPack);
+    assert.match(answer, /Fatigue review: Retargeting clip/);
+    assert.match(answer, /Frequency 4\.20/);
+    assert.match(answer, /Baseline period: 2026-03-27 to 2026-04-25/);
+    assert.equal(validateRecommendationNumericGrounding(answer, factPack), true);
+  });
+
+  it("blocks revenue-based scaling with supported Meta Ads rewrite guidance", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "What should I scale based on ROAS and revenue?");
+
+    assert.equal(plan.validationStatus, "unsupported");
+    assert.ok(plan.unsupportedReasons.some((reason) => reason.includes("ROAS")));
+    assert.ok(plan.unsupportedReasons.some((reason) => reason.includes("revenue")));
+    assert.ok(plan.unsupportedReasons.some((reason) => reason.includes("Try:")));
   });
 
   it("falls back to deterministic planning for malformed model planner output", () => {

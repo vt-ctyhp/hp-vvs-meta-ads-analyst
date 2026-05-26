@@ -297,6 +297,75 @@ export type AnalysisDiagnosisFactPack = {
   groundingValues: string[];
 };
 
+export type AnalysisRecommendationGoal = "pause" | "scale" | "waste" | "fatigue" | "fix_first";
+export type AnalysisRecommendationAction =
+  | "review_or_pause"
+  | "scale_candidate"
+  | "waste_review"
+  | "fatigue_review"
+  | "fix_first";
+export type AnalysisRecommendationSignalKind =
+  | "high_spend"
+  | "weak_primary_results"
+  | "inefficient_cost"
+  | "strong_primary_results"
+  | "efficient_cost"
+  | "strong_ctr"
+  | "rising_frequency"
+  | "rising_cpc"
+  | "rising_cpl"
+  | "falling_ctr"
+  | "falling_primary_results";
+
+export type AnalysisRecommendationSignal = {
+  kind: AnalysisRecommendationSignalKind;
+  metric: AnalysisMetric;
+  current: number | null;
+  baseline: number | null;
+  delta: number | null;
+  percentDelta: number | null;
+  note: string;
+};
+
+export type AnalysisRecommendationCandidateFact = {
+  label: string;
+  dimension: AnalysisDimension;
+  action: AnalysisRecommendationAction;
+  score: number;
+  metrics: Record<AnalysisMetric, number | null>;
+  metricDeltas: Record<AnalysisMetric, AnalysisDiagnosisMetricDelta>;
+  signals: AnalysisRecommendationSignal[];
+  sourceRows: number;
+  baselineSourceRows: number;
+};
+
+export type AnalysisRecommendationSourceNote = {
+  label: string;
+  timeRange: { start: string; end: string; days: number };
+  filters: AnalysisFilter[];
+  dimension: AnalysisDimension;
+  sourceRows: number;
+  dataSource: "meta_ads";
+  sourceTable: "meta_daily_insights";
+  sourceFunction: "aggregate_meta_daily_insights";
+};
+
+export type AnalysisRecommendationFactPack = {
+  goal: AnalysisRecommendationGoal;
+  dimension: AnalysisDimension;
+  primaryMetric: AnalysisMetric;
+  efficiencyMetric: AnalysisMetric | null;
+  metrics: AnalysisMetric[];
+  current: AnalysisDiagnosisPeriodFact;
+  baseline: AnalysisDiagnosisPeriodFact;
+  candidates: AnalysisRecommendationCandidateFact[];
+  topRecommendations: AnalysisRecommendationCandidateFact[];
+  sourceNotes: AnalysisRecommendationSourceNote[];
+  assumptions: string[];
+  caveats: string[];
+  groundingValues: string[];
+};
+
 export type AnalysisPlannerIntent = {
   questionType: AnalysisQuestionType;
   title: string;
@@ -341,6 +410,7 @@ export type AnalysisAnalystDebug = {
   plannerIntent?: AnalysisPlannerIntent;
   comparison?: AnalysisComparisonFactPack | null;
   diagnosis?: AnalysisDiagnosisFactPack | null;
+  recommendation?: AnalysisRecommendationFactPack | null;
   dataSource: "meta_ads";
   sourceTable: "meta_daily_insights";
   sourceFunction: "aggregate_meta_daily_insights" | null;
@@ -390,9 +460,16 @@ export type AnalysisResult = {
       assumptions: string[];
       caveats: string[];
     };
+    recommendation?: {
+      baselineTimeRange: { start: string; end: string; days: number };
+      sourceNotes: AnalysisRecommendationSourceNote[];
+      assumptions: string[];
+      caveats: string[];
+    };
   };
   comparison?: AnalysisComparisonFactPack | null;
   diagnosis?: AnalysisDiagnosisFactPack | null;
+  recommendation?: AnalysisRecommendationFactPack | null;
   analystDebug: AnalysisAnalystDebug;
   warnings: string[];
   unsupportedReasons: string[];
@@ -961,6 +1038,8 @@ export async function runSavedAdHocAnalysis(
       ? buildComparisonAnswer(aggregated.comparison)
       : aggregated.diagnosis
         ? buildDiagnosisAnswer(aggregated.diagnosis)
+        : aggregated.recommendation
+          ? buildRecommendationAnswer(aggregated.recommendation)
         : repairedSpec
         ? "Loaded saved dashboard spec, repaired it from the original prompt, and refreshed the data directly from Supabase."
         : "Loaded saved dashboard spec and refreshed the data directly from Supabase.",
@@ -1082,7 +1161,7 @@ export async function createAdHocAnalysis(input: {
   const aggregated = await aggregateSpec(resolvedSpec, validation, false, plannerIntent);
 
   const analysis =
-    input.mode === "deep" && !aggregated.comparison && !aggregated.diagnosis
+    input.mode === "deep" && !aggregated.comparison && !aggregated.diagnosis && !aggregated.recommendation
       ? await generateDeepAnalysis(prompt, resolvedSpec, aggregated, getOpenAIAnalysisModel("deep"))
       : null;
 
@@ -1115,6 +1194,8 @@ export async function createAdHocAnalysis(input: {
       ? buildComparisonAnswer(aggregated.comparison)
       : aggregated.diagnosis
         ? buildDiagnosisAnswer(aggregated.diagnosis)
+        : aggregated.recommendation
+          ? buildRecommendationAnswer(aggregated.recommendation)
         : analysis?.answer || buildDeterministicAnswer(resolvedSpec, aggregated),
   };
 
@@ -1197,7 +1278,7 @@ export async function editAdHocAnalysis(input: {
   const aggregated = await aggregateSpec(resolvedSpec, validation, false, plannerIntent);
 
   const analysis =
-    input.mode === "deep" && !aggregated.comparison && !aggregated.diagnosis
+    input.mode === "deep" && !aggregated.comparison && !aggregated.diagnosis && !aggregated.recommendation
       ? await generateDeepAnalysis(prompt, resolvedSpec, aggregated, getOpenAIAnalysisModel("deep"))
       : null;
 
@@ -1230,6 +1311,8 @@ export async function editAdHocAnalysis(input: {
       ? buildComparisonAnswer(aggregated.comparison)
       : aggregated.diagnosis
         ? buildDiagnosisAnswer(aggregated.diagnosis)
+        : aggregated.recommendation
+          ? buildRecommendationAnswer(aggregated.recommendation)
         : analysis?.answer || buildDeterministicAnswer(resolvedSpec, aggregated),
   };
 
@@ -1588,6 +1671,14 @@ async function aggregateSpec(
         assumptions: validation.assumptions,
       })
     : null;
+  const recommendation = plannerIntent?.questionType === "recommendation"
+    ? await aggregateRecommendation({
+        spec,
+        currentRange: range,
+        assumptions: validation.assumptions,
+        goal: recommendationGoalFromIntent(plannerIntent, spec),
+      })
+    : null;
 
   const sourceTransparency = {
     timeRange: range,
@@ -1614,6 +1705,16 @@ async function aggregateSpec(
           },
         }
       : {}),
+    ...(recommendation
+      ? {
+          recommendation: {
+            baselineTimeRange: recommendation.baseline.timeRange,
+            sourceNotes: recommendation.sourceNotes,
+            assumptions: recommendation.assumptions,
+            caveats: recommendation.caveats,
+          },
+        }
+      : {}),
   };
   const analystDebug = buildAnalystDebug({
     validation,
@@ -1626,6 +1727,7 @@ async function aggregateSpec(
     warnings,
     comparison,
     diagnosis,
+    recommendation,
   });
 
   return {
@@ -1639,6 +1741,7 @@ async function aggregateSpec(
     analystDebug,
     comparison,
     diagnosis,
+    recommendation,
   };
 }
 
@@ -2225,6 +2328,609 @@ function diagnosisGroundingValues(input: {
   return uniqueStrings(values);
 }
 
+async function aggregateRecommendation(input: {
+  spec: AnalysisSpec;
+  currentRange: { start: string; end: string; days: number };
+  assumptions: string[];
+  goal: AnalysisRecommendationGoal;
+}) {
+  const dimension = diagnosisDimension(input.spec.dimensions);
+  const baselineRange = previousComparableRange(input.currentRange);
+  const metrics = recommendationMetricBundle(input.spec.metrics, input.goal);
+  const [currentRows, baselineRows] = await Promise.all([
+    aggregateMetaInsights({
+      start: input.currentRange.start,
+      end: input.currentRange.end,
+      dimensions: [dimension],
+      filters: input.spec.filters,
+      sortField: dimension,
+      sortDirection: "asc",
+      limit: 10000,
+    }),
+    aggregateMetaInsights({
+      start: baselineRange.start,
+      end: baselineRange.end,
+      dimensions: [dimension],
+      filters: input.spec.filters,
+      sortField: dimension,
+      sortDirection: "asc",
+      limit: 10000,
+    }),
+  ]);
+
+  return buildRecommendationFactPack({
+    goal: input.goal,
+    metrics,
+    dimension,
+    filters: input.spec.filters,
+    assumptions: input.assumptions,
+    current: {
+      label: "Current period",
+      timeRange: input.currentRange,
+      rows: currentRows,
+    },
+    baseline: {
+      label: "Baseline period",
+      timeRange: baselineRange,
+      rows: baselineRows,
+    },
+  });
+}
+
+function recommendationGoalFromIntent(
+  plannerIntent: AnalysisPlannerIntent,
+  spec: AnalysisSpec,
+): AnalysisRecommendationGoal {
+  const lower = plannerIntent.title.toLowerCase();
+  if (/\bfatigue|tired|burn(?:ed)?\s*out|wear(?:ing)?\s*out\b/.test(lower)) return "fatigue";
+  if (/\bscale|push|expand|increase\b/.test(lower)) return "scale";
+  if (/\bwast(?:e|ed|ing)\s+money|wasteful\b/.test(lower)) return "waste";
+  if (/\bfix\s+first|prioriti[sz]e\b/.test(lower)) return "fix_first";
+  if (spec.sort?.field === "frequency") return "fatigue";
+  if (spec.sort?.field === "leads" || spec.sort?.field === "primary_results") return "scale";
+  return "pause";
+}
+
+export function buildRecommendationFactPack(input: {
+  goal: AnalysisRecommendationGoal;
+  metrics: AnalysisMetric[];
+  dimension: AnalysisDimension;
+  filters?: AnalysisFilter[];
+  assumptions?: string[];
+  current: AnalysisDiagnosisPeriodResult;
+  baseline: AnalysisDiagnosisPeriodResult;
+}): AnalysisRecommendationFactPack {
+  const metrics = recommendationMetricBundle(input.metrics, input.goal);
+  const primaryMetric = diagnosisPrimaryMetric(metrics);
+  const efficiencyMetric = metrics.find(isCostMetric) || null;
+  const filters = input.filters || [];
+  const current = diagnosisPeriodFact("current", input.current, filters, metrics);
+  const baseline = diagnosisPeriodFact("baseline", input.baseline, filters, metrics);
+  const candidates = recommendationCandidates({
+    goal: input.goal,
+    dimension: input.dimension,
+    metrics,
+    primaryMetric,
+    efficiencyMetric,
+    currentRows: input.current.rows,
+    baselineRows: input.baseline.rows,
+  });
+  const topRecommendations = candidates
+    .filter((candidate) => recommendationCandidateMatchesGoal(input.goal, candidate))
+    .sort((a, b) => b.score - a.score || a.label.localeCompare(b.label, undefined, { numeric: true }))
+    .slice(0, 5);
+  const sourceNotes = [
+    recommendationSourceNote(current, input.dimension),
+    recommendationSourceNote(baseline, input.dimension),
+  ];
+  const caveats = recommendationCaveats({
+    goal: input.goal,
+    current,
+    baseline,
+    metrics,
+    filters,
+    rows: [...input.current.rows, ...input.baseline.rows],
+  });
+  const groundingValues = recommendationGroundingValues({
+    current,
+    baseline,
+    candidates,
+  });
+
+  return {
+    goal: input.goal,
+    dimension: input.dimension,
+    primaryMetric,
+    efficiencyMetric,
+    metrics,
+    current,
+    baseline,
+    candidates,
+    topRecommendations,
+    sourceNotes,
+    assumptions: uniqueStrings(input.assumptions || []),
+    caveats,
+    groundingValues,
+  };
+}
+
+export function buildRecommendationAnswer(factPack: AnalysisRecommendationFactPack) {
+  const recommendationText = factPack.topRecommendations.length
+    ? factPack.topRecommendations
+        .map((candidate) => {
+          const metrics = recommendationMetricsForAnswer(candidate, factPack);
+          const signals = candidate.signals.map((signal) => signal.note).join(", ");
+          return `${recommendationActionLabel(candidate.action)}: ${candidate.label} (${factPack.current.timeRange.start} to ${factPack.current.timeRange.end}): ${metrics}; signals ${signals}; source rows ${formatNumber(candidate.sourceRows)}.`;
+        })
+        .join(" ")
+    : `No ${recommendationGoalLabel(factPack.goal).toLowerCase()} candidates met the governed thresholds for ${factPack.current.timeRange.start} to ${factPack.current.timeRange.end}.`;
+  const sourceNotes = factPack.sourceNotes
+    .map((note) =>
+      `${note.label}: ${note.timeRange.start} to ${note.timeRange.end}, filters ${formatFiltersForAnswer(
+        note.filters,
+      )}, grouping ${labelFor(note.dimension)}, source rows ${formatNumber(note.sourceRows)}`,
+    )
+    .join("; ");
+  const assumptions = factPack.assumptions.length ? ` Assumptions: ${factPack.assumptions.join(" ")}` : "";
+  const caveats = factPack.caveats.length ? ` Caveats: ${factPack.caveats.join(" ")}` : "";
+
+  return [
+    "Advisory only; review in Meta before taking action.",
+    recommendationText,
+    `Baseline period: ${factPack.baseline.timeRange.start} to ${factPack.baseline.timeRange.end}.`,
+    `Source notes: ${sourceNotes}.`,
+    `${assumptions}${caveats}`,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+}
+
+export function validateRecommendationNumericGrounding(
+  answer: string,
+  factPack: AnalysisRecommendationFactPack,
+) {
+  const allowed = new Set(factPack.groundingValues.map(normalizeGroundingNumber).filter(Boolean));
+  return extractNumericClaims(answer).every((claim) => allowed.has(claim));
+}
+
+function recommendationMetricBundle(
+  metrics: AnalysisMetric[],
+  goal: AnalysisRecommendationGoal,
+) {
+  const defaults: AnalysisMetric[] = goal === "scale"
+    ? ["spend", "primary_results", "cpl", "ctr", "frequency"]
+    : goal === "fatigue"
+      ? ["spend", "primary_results", "cpl", "cpc", "ctr", "frequency"]
+      : ["spend", "primary_results", "cpl", "ctr", "frequency"];
+  const base = uniqueAllowed(metrics, ANALYSIS_METRICS, defaults);
+  const required: AnalysisMetric[] = goal === "fatigue"
+    ? ["spend", "primary_results", "cpl", "cpc", "ctr", "frequency"]
+    : ["spend", "primary_results", base.find(isCostMetric) || "cpl", "ctr", "frequency"];
+  return includeRequiredMetrics(base, required, 8);
+}
+
+function recommendationCandidates(input: {
+  goal: AnalysisRecommendationGoal;
+  dimension: AnalysisDimension;
+  metrics: AnalysisMetric[];
+  primaryMetric: AnalysisMetric;
+  efficiencyMetric: AnalysisMetric | null;
+  currentRows: MetaInsightAggregateRow[];
+  baselineRows: MetaInsightAggregateRow[];
+}) {
+  const currentByLabel = diagnosisRowsByLabel(input.currentRows, input.dimension);
+  const baselineByLabel = diagnosisRowsByLabel(input.baselineRows, input.dimension);
+  const labels = Array.from(new Set([...currentByLabel.keys(), ...baselineByLabel.keys()])).sort((a, b) =>
+    a.localeCompare(b, undefined, { numeric: true }),
+  );
+  const baseCandidates = labels.map((label) => {
+    const currentTotalRow = sumAggregateRows(currentByLabel.get(label) || [])[0];
+    const baselineTotalRow = sumAggregateRows(baselineByLabel.get(label) || [])[0];
+    const currentMetrics = aggregateMetrics(currentTotalRow);
+    const baselineMetrics = aggregateMetrics(baselineTotalRow);
+    const metricDeltas = recommendationMetricDeltas({
+      current: currentMetrics,
+      baseline: baselineMetrics,
+      metrics: input.metrics,
+      hasBaseline: Boolean(baselineTotalRow?.source_rows),
+    });
+
+    return {
+      label,
+      dimension: input.dimension,
+      action: recommendationActionForGoal(input.goal),
+      score: 0,
+      metrics: {
+        ...aggregateMetrics(undefined),
+        ...Object.fromEntries(input.metrics.map((metric) => [metric, currentMetrics[metric]])),
+      } as Record<AnalysisMetric, number | null>,
+      metricDeltas,
+      signals: [] as AnalysisRecommendationSignal[],
+      sourceRows: currentTotalRow?.source_rows || 0,
+      baselineSourceRows: baselineTotalRow?.source_rows || 0,
+    };
+  });
+  const benchmarks = recommendationBenchmarks(baseCandidates, input.metrics);
+
+  return baseCandidates.map((candidate) => {
+    const signals = recommendationSignals({
+      goal: input.goal,
+      candidate,
+      primaryMetric: input.primaryMetric,
+      efficiencyMetric: input.efficiencyMetric,
+      benchmarks,
+    });
+
+    return {
+      ...candidate,
+      signals,
+      score: recommendationScore(signals, input.goal, candidate),
+    };
+  });
+}
+
+function recommendationMetricDeltas(input: {
+  current: Record<AnalysisMetric, number | null>;
+  baseline: Record<AnalysisMetric, number | null>;
+  metrics: AnalysisMetric[];
+  hasBaseline: boolean;
+}) {
+  if (!input.hasBaseline) {
+    return Object.fromEntries(
+      ANALYSIS_METRICS.map((metric) => [
+        metric,
+        input.metrics.includes(metric)
+          ? {
+              metric,
+              current: input.current[metric],
+              baseline: null,
+              delta: null,
+              percentDelta: null,
+            }
+          : diagnosisMetricDelta(metric, null, null),
+      ]),
+    ) as Record<AnalysisMetric, AnalysisDiagnosisMetricDelta>;
+  }
+
+  return diagnosisMetricDeltas(input.current, input.baseline, input.metrics);
+}
+
+function recommendationBenchmarks(
+  candidates: AnalysisRecommendationCandidateFact[],
+  metrics: AnalysisMetric[],
+) {
+  return Object.fromEntries(
+    metrics.map((metric) => [metric, medianNumber(candidates.map((candidate) => candidate.metrics[metric]))]),
+  ) as Partial<Record<AnalysisMetric, number>>;
+}
+
+function recommendationSignals(input: {
+  goal: AnalysisRecommendationGoal;
+  candidate: AnalysisRecommendationCandidateFact;
+  primaryMetric: AnalysisMetric;
+  efficiencyMetric: AnalysisMetric | null;
+  benchmarks: Partial<Record<AnalysisMetric, number>>;
+}) {
+  const signals: AnalysisRecommendationSignal[] = [];
+  const spend = input.candidate.metrics.spend;
+  const primary = input.candidate.metrics[input.primaryMetric];
+  const efficiency = input.efficiencyMetric ? input.candidate.metrics[input.efficiencyMetric] : null;
+  const ctr = input.candidate.metrics.ctr;
+  const spendBenchmark = input.benchmarks.spend ?? 0;
+  const primaryBenchmark = input.benchmarks[input.primaryMetric] ?? 0;
+  const efficiencyBenchmark = input.efficiencyMetric ? input.benchmarks[input.efficiencyMetric] : null;
+  const ctrBenchmark = input.benchmarks.ctr ?? 0;
+  const addCurrentSignal = (
+    kind: AnalysisRecommendationSignalKind,
+    metric: AnalysisMetric,
+    note: string,
+  ) => {
+    signals.push({
+      kind,
+      metric,
+      current: input.candidate.metrics[metric],
+      baseline: null,
+      delta: null,
+      percentDelta: null,
+      note,
+    });
+  };
+  const addDeltaSignal = (
+    kind: AnalysisRecommendationSignalKind,
+    metric: AnalysisMetric,
+    note: string,
+  ) => {
+    const delta = input.candidate.metricDeltas[metric];
+    signals.push({
+      kind,
+      metric,
+      current: delta?.current ?? null,
+      baseline: delta?.baseline ?? null,
+      delta: delta?.delta ?? null,
+      percentDelta: delta?.percentDelta ?? null,
+      note,
+    });
+  };
+
+  if (typeof spend === "number" && spend > 0 && spend >= spendBenchmark) {
+    addCurrentSignal("high_spend", "spend", "high spend");
+  }
+  if (typeof primary === "number" && primary <= primaryBenchmark) {
+    addCurrentSignal("weak_primary_results", input.primaryMetric, `weak ${labelFor(input.primaryMetric).toLowerCase()}`);
+  }
+  if (
+    input.efficiencyMetric &&
+    typeof efficiency === "number" &&
+    efficiency > 0 &&
+    typeof efficiencyBenchmark === "number" &&
+    efficiency >= efficiencyBenchmark
+  ) {
+    addCurrentSignal("inefficient_cost", input.efficiencyMetric, `inefficient ${labelFor(input.efficiencyMetric)}`);
+  }
+  if (typeof primary === "number" && primary > 0 && primary >= primaryBenchmark) {
+    addCurrentSignal("strong_primary_results", input.primaryMetric, `strong ${labelFor(input.primaryMetric).toLowerCase()}`);
+  }
+  if (
+    input.efficiencyMetric &&
+    typeof efficiency === "number" &&
+    efficiency > 0 &&
+    typeof efficiencyBenchmark === "number" &&
+    efficiency <= efficiencyBenchmark
+  ) {
+    addCurrentSignal("efficient_cost", input.efficiencyMetric, `efficient ${labelFor(input.efficiencyMetric)}`);
+  }
+  if (typeof ctr === "number" && ctr > 0 && ctr >= ctrBenchmark) {
+    addCurrentSignal("strong_ctr", "ctr", "strong CTR");
+  }
+
+  const frequencyDelta = input.candidate.metricDeltas.frequency;
+  if (typeof frequencyDelta?.delta === "number" && frequencyDelta.delta > 0) {
+    addDeltaSignal("rising_frequency", "frequency", "rising frequency");
+  }
+  const cpcDelta = input.candidate.metricDeltas.cpc;
+  if (typeof cpcDelta?.delta === "number" && cpcDelta.delta > 0) {
+    addDeltaSignal("rising_cpc", "cpc", "rising CPC");
+  }
+  const cplDelta = input.candidate.metricDeltas.cpl;
+  if (typeof cplDelta?.delta === "number" && cplDelta.delta > 0) {
+    addDeltaSignal("rising_cpl", "cpl", "rising CPL");
+  }
+  const ctrDelta = input.candidate.metricDeltas.ctr;
+  if (typeof ctrDelta?.delta === "number" && ctrDelta.delta < 0) {
+    addDeltaSignal("falling_ctr", "ctr", "falling CTR");
+  }
+  const primaryDelta = input.candidate.metricDeltas[input.primaryMetric];
+  if (typeof primaryDelta?.delta === "number" && diagnosisPerformanceScore(primaryDelta.delta, input.primaryMetric) < 0) {
+    addDeltaSignal("falling_primary_results", input.primaryMetric, `falling ${labelFor(input.primaryMetric).toLowerCase()}`);
+  }
+
+  return signals.filter((signal) => recommendationSignalAppliesToGoal(input.goal, signal.kind));
+}
+
+function recommendationSignalAppliesToGoal(
+  goal: AnalysisRecommendationGoal,
+  kind: AnalysisRecommendationSignalKind,
+) {
+  if (goal === "scale") {
+    return kind === "strong_primary_results" || kind === "efficient_cost" || kind === "strong_ctr";
+  }
+  if (goal === "fatigue") return isFatigueSignal(kind);
+  return (
+    kind === "high_spend" ||
+    kind === "weak_primary_results" ||
+    kind === "inefficient_cost" ||
+    isFatigueSignal(kind)
+  );
+}
+
+function recommendationCandidateMatchesGoal(
+  goal: AnalysisRecommendationGoal,
+  candidate: AnalysisRecommendationCandidateFact,
+) {
+  const kinds = new Set(candidate.signals.map((signal) => signal.kind));
+  if (goal === "scale") {
+    return kinds.has("strong_primary_results") || kinds.has("efficient_cost");
+  }
+  if (goal === "fatigue") return candidate.signals.some((signal) => isFatigueSignal(signal.kind));
+  return (
+    kinds.has("high_spend") &&
+    (kinds.has("weak_primary_results") ||
+      kinds.has("inefficient_cost") ||
+      candidate.signals.some((signal) => isFatigueSignal(signal.kind)))
+  );
+}
+
+function recommendationScore(
+  signals: AnalysisRecommendationSignal[],
+  goal: AnalysisRecommendationGoal,
+  candidate: AnalysisRecommendationCandidateFact,
+) {
+  const weights: Record<AnalysisRecommendationSignalKind, number> = {
+    high_spend: 30,
+    weak_primary_results: 25,
+    inefficient_cost: 20,
+    strong_primary_results: 30,
+    efficient_cost: 25,
+    strong_ctr: 10,
+    rising_frequency: 25,
+    rising_cpc: 15,
+    rising_cpl: 15,
+    falling_ctr: 15,
+    falling_primary_results: 25,
+  };
+  const signalScore = signals.reduce((score, signal) => score + weights[signal.kind], 0);
+  const spendScore = Math.min(Number(candidate.metrics.spend || 0) / 1000, 20);
+  if (goal === "scale") return signalScore + Math.min(Number(candidate.metrics.primary_results || 0), 20);
+  return signalScore + spendScore;
+}
+
+function isFatigueSignal(kind: AnalysisRecommendationSignalKind) {
+  return (
+    kind === "rising_frequency" ||
+    kind === "rising_cpc" ||
+    kind === "rising_cpl" ||
+    kind === "falling_ctr" ||
+    kind === "falling_primary_results"
+  );
+}
+
+function recommendationActionForGoal(goal: AnalysisRecommendationGoal): AnalysisRecommendationAction {
+  if (goal === "scale") return "scale_candidate";
+  if (goal === "waste") return "waste_review";
+  if (goal === "fatigue") return "fatigue_review";
+  if (goal === "fix_first") return "fix_first";
+  return "review_or_pause";
+}
+
+function recommendationSourceNote(
+  period: AnalysisDiagnosisPeriodFact,
+  dimension: AnalysisDimension,
+): AnalysisRecommendationSourceNote {
+  return {
+    label: period.label,
+    timeRange: period.timeRange,
+    filters: period.filters,
+    dimension,
+    sourceRows: period.sourceRows,
+    dataSource: "meta_ads",
+    sourceTable: "meta_daily_insights",
+    sourceFunction: "aggregate_meta_daily_insights",
+  };
+}
+
+function recommendationCaveats(input: {
+  goal: AnalysisRecommendationGoal;
+  current: AnalysisDiagnosisPeriodFact;
+  baseline: AnalysisDiagnosisPeriodFact;
+  metrics: AnalysisMetric[];
+  filters: AnalysisFilter[];
+  rows: MetaInsightAggregateRow[];
+}) {
+  const caveats: string[] = [];
+  if (input.current.empty) {
+    caveats.push("Current period had no matching rows, so recommendations cannot be made from current Meta Ads data.");
+  }
+  if (input.goal === "fatigue" && input.baseline.empty) {
+    caveats.push("Baseline period had no matching rows, so fatigue movement signals may be unavailable.");
+  }
+  const campaignUmbrellas = new Set(
+    input.rows
+      .map((row) => row.campaign_umbrella)
+      .filter((value): value is string => typeof value === "string" && Boolean(value.trim())),
+  );
+  const hasCampaignUmbrellaFilter = input.filters.some((filter) => filter.field === "campaign_umbrella");
+  if (input.metrics.includes("primary_results") && (!hasCampaignUmbrellaFilter || campaignUmbrellas.size > 1)) {
+    caveats.push(
+      "Primary results may blend campaign groups with different primary KPI definitions; treat recommendations as directional.",
+    );
+  }
+  return caveats;
+}
+
+function recommendationGroundingValues(input: {
+  current: AnalysisDiagnosisPeriodFact;
+  baseline: AnalysisDiagnosisPeriodFact;
+  candidates: AnalysisRecommendationCandidateFact[];
+}) {
+  const values: string[] = [];
+  const add = (value: number | null | string | undefined) => {
+    if (value === null || value === undefined) return;
+    values.push(String(value));
+  };
+  const addMetric = (value: number | null, metric: AnalysisMetric) => {
+    add(value);
+    if (typeof value === "number") {
+      add(formatMetricForAnswer(value, metric));
+      add(formatRecommendationMetricForAnswer(value, metric));
+    }
+  };
+  const addDelta = (delta: AnalysisDiagnosisMetricDelta) => {
+    addMetric(delta.current, delta.metric);
+    addMetric(delta.baseline, delta.metric);
+    add(delta.delta);
+    add(delta.percentDelta);
+    if (typeof delta.delta === "number") add(formatDelta(delta.delta, delta.metric));
+    if (typeof delta.percentDelta === "number") add(formatPercentDelta(delta.percentDelta));
+  };
+
+  [input.current, input.baseline].forEach((period) => {
+    add(period.sourceRows);
+    add(period.timeRange.days);
+    Object.entries(period.metrics).forEach(([metric, value]) => addMetric(value, metric as AnalysisMetric));
+  });
+  input.candidates.forEach((candidate) => {
+    add(candidate.sourceRows);
+    add(candidate.baselineSourceRows);
+    Object.entries(candidate.metrics).forEach(([metric, value]) => addMetric(value, metric as AnalysisMetric));
+    Object.values(candidate.metricDeltas).forEach(addDelta);
+    candidate.signals.forEach((signal) => {
+      addMetric(signal.current, signal.metric);
+      addMetric(signal.baseline, signal.metric);
+      add(signal.delta);
+      add(signal.percentDelta);
+    });
+  });
+
+  return uniqueStrings(values);
+}
+
+function recommendationMetricsForAnswer(
+  candidate: AnalysisRecommendationCandidateFact,
+  factPack: AnalysisRecommendationFactPack,
+) {
+  const metrics = uniqueAllowed(
+    [
+      "spend",
+      factPack.primaryMetric,
+      ...(factPack.efficiencyMetric ? [factPack.efficiencyMetric] : []),
+      "ctr",
+      "frequency",
+    ] as AnalysisMetric[],
+    ANALYSIS_METRICS,
+    factPack.metrics,
+  ).filter((metric) => factPack.metrics.includes(metric));
+  return metrics
+    .map((metric) => `${labelFor(metric)} ${formatRecommendationMetricForAnswer(candidate.metrics[metric], metric)}`)
+    .join(", ");
+}
+
+function formatRecommendationMetricForAnswer(value: number | null, metric: AnalysisMetric) {
+  if (metric === "frequency") return value === null ? "n/a" : Number(value).toFixed(2);
+  return formatMetricForAnswer(value, metric);
+}
+
+function recommendationActionLabel(action: AnalysisRecommendationAction) {
+  const labels: Record<AnalysisRecommendationAction, string> = {
+    review_or_pause: "Review/pause candidate",
+    scale_candidate: "Scale candidate",
+    waste_review: "Waste review",
+    fatigue_review: "Fatigue review",
+    fix_first: "Fix first",
+  };
+  return labels[action];
+}
+
+function recommendationGoalLabel(goal: AnalysisRecommendationGoal) {
+  const labels: Record<AnalysisRecommendationGoal, string> = {
+    pause: "Review/pause",
+    scale: "Scale",
+    waste: "Waste review",
+    fatigue: "Fatigue review",
+    fix_first: "Fix-first",
+  };
+  return labels[goal];
+}
+
+function medianNumber(values: Array<number | null | undefined>) {
+  const numbers = values
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+    .sort((a, b) => a - b);
+  if (!numbers.length) return 0;
+  const midpoint = Math.floor(numbers.length / 2);
+  return numbers.length % 2 === 0 ? (numbers[midpoint - 1] + numbers[midpoint]) / 2 : numbers[midpoint];
+}
+
 function formatDriverMetricDelta(driver: AnalysisDiagnosisDriverFact, metric: AnalysisMetric) {
   const delta = driver.metricDeltas[metric];
   return `${labelFor(metric)} ${formatDelta(delta?.delta ?? null, metric)} (${formatPercentDelta(
@@ -2403,11 +3109,13 @@ function buildAnalystDebug(input: {
   warnings?: string[];
   comparison?: AnalysisComparisonFactPack | null;
   diagnosis?: AnalysisDiagnosisFactPack | null;
+  recommendation?: AnalysisRecommendationFactPack | null;
 }): AnalysisAnalystDebug {
   return {
     validationStatus: input.validation.status,
     comparison: input.comparison || null,
     diagnosis: input.diagnosis || null,
+    recommendation: input.recommendation || null,
     dataSource: "meta_ads",
     sourceTable: "meta_daily_insights",
     sourceFunction: input.sourceFunction,
@@ -2766,6 +3474,15 @@ function validateAnalysisSpec(
   unsupportedDimensionNames.forEach((dimension) => {
     unsupportedReasons.push(`Dimension "${dimension}" is not available in the Meta Ads catalog.`);
   });
+
+  if (
+    unsupportedReasons.length &&
+    /\broas\b|\breturn\s+on\s+ad\s+spend\b|\brevenue\b|\bsales\s+(?:data|orders?|revenue|amount|from|by)\b/.test(lower)
+  ) {
+    unsupportedReasons.push(
+      "Try: ask for scale or pause candidates using Meta Ads spend, primary results, CPL, CTR, CPC, or frequency by campaign, ad set, ad, or creative.",
+    );
+  }
 
   const promptAsksForUmbrellaBreakdown =
     /\b(?:by|per|each|all|every)\s+(?:brand\s+and\s+)?(?:campaign[-\s]?umbrella|umbrella)s?\b/i.test(prompt) ||
@@ -3503,6 +4220,7 @@ function baseResult(input: {
     sourceTransparency: input.aggregated.sourceTransparency,
     comparison: input.aggregated.comparison,
     diagnosis: input.aggregated.diagnosis,
+    recommendation: input.aggregated.recommendation,
     analystDebug: {
       ...input.aggregated.analystDebug,
       questionType: input.plannerIntent.questionType,
@@ -3582,6 +4300,7 @@ function nonExecutableResult(input: {
     sourceTransparency,
     comparison: null,
     diagnosis: null,
+    recommendation: null,
     analystDebug: {
       ...analystDebug,
       questionType: input.plannerIntent.questionType,
@@ -3672,6 +4391,7 @@ async function persistAnalysis(
           firstRows: result.table.rows.slice(0, 3),
           comparison: result.comparison,
           diagnosis: result.diagnosis,
+          recommendation: result.recommendation,
         },
       } as unknown as Json,
     }));
@@ -4320,6 +5040,24 @@ function inferRecommendationDecisionIntent(lower: string):
       limit: number;
     }
   | undefined {
+  const asksForFatigue = /\bfatigue|tired|burn(?:ed)?\s*out|wear(?:ing)?\s*out\b/.test(lower);
+  if (asksForFatigue) {
+    const dimension = /\b(?:ad\s+)?creatives?\b/.test(lower)
+      ? "creative"
+      : /\bad\s+sets?\b/.test(lower)
+        ? "ad_set"
+        : /\bcampaigns?\b/.test(lower)
+          ? "campaign"
+          : "ad";
+
+    return {
+      dimensions: [dimension],
+      metrics: ["spend", "primary_results", "cpl", "cpc", "ctr", "frequency"],
+      sort: { field: "frequency", direction: "desc" },
+      limit: 20,
+    };
+  }
+
   const asksForWaste =
     /\b(wast(?:e|ed|ing)\s+money|wasteful|pause|turn\s+off|shut\s+off|fix\s+first)\b/.test(
       lower,
@@ -4815,7 +5553,7 @@ function isOpenEndedCustomDateRange(dateRange: AnalysisSpec["dateRange"]) {
 
 function inferQuestionType(prompt: string): AnalysisQuestionType {
   const lower = prompt.toLowerCase();
-  if (/\b(wast(?:e|ed|ing)\s+money|wasteful|what\s+should|which\s+.+\s+should|pause|scale|turn\s+off|fix\s+first)\b/.test(lower)) {
+  if (/\b(wast(?:e|ed|ing)\s+money|wasteful|what\s+should|which\s+.+\s+should|pause|scale|turn\s+off|fix\s+first|fatigue|tired|burn(?:ed)?\s*out|wear(?:ing)?\s*out)\b/.test(lower)) {
     return "recommendation";
   }
   if (/\b(why|diagnos(?:e|is)|what\s+changed|drop(?:ped)?|declin(?:e|ed|ing)|improv(?:e|ed|ing))\b/.test(lower)) {
