@@ -69,6 +69,11 @@ const DATE_PRESETS = [
   "last_8_weeks",
   "last_12_weeks",
   "last_90_days",
+  "last_complete_week",
+  "last_complete_month",
+  "last_complete_quarter",
+  "month_to_date",
+  "week_to_date",
   "custom",
 ] as const;
 
@@ -131,6 +136,17 @@ export type AnalysisSpec = {
     end?: string;
     days?: number;
     includeToday?: boolean;
+    calendar?: {
+      unit: "month" | "quarter";
+      month?: number;
+      quarter?: number;
+      year?: number;
+    };
+    startDateParts?: {
+      month: number;
+      day: number;
+      year?: number;
+    };
   };
   grain: AnalysisGrain;
   dimensions: AnalysisDimension[];
@@ -367,7 +383,7 @@ export const META_ADS_DATA_CATALOG = {
   dimensions: ANALYSIS_DIMENSIONS,
   filters: FILTER_FIELDS,
   dateSemantics:
-    "Relative last/past N day ranges end at the latest complete synced meta_daily_insights.date_start unless the prompt explicitly says including today.",
+    "Rolling last/past N day ranges end at the latest complete synced meta_daily_insights.date_start unless the prompt explicitly says including today. Last/previous/prior week, month, and quarter mean the previous complete calendar period. Past/recent/trailing month means rolling 30 days. Month-to-date and week-to-date end at the latest synced Meta Ads date.",
   sortableByRpc: Array.from(RPC_SORT_FIELDS),
   campaignGlossary: CAMPAIGN_GLOSSARY.map(({ label, value }) => ({ label, value, field: "campaign_umbrella" })),
   unsupportedRouters: UNSUPPORTED_SOURCE_ROUTERS.map(({ router, reason }) => ({ router, reason })),
@@ -395,6 +411,21 @@ const analysisSpecSchema = z.object({
       end: z.string().optional(),
       days: z.number().int().positive().max(MAX_DAYS).optional(),
       includeToday: z.boolean().optional(),
+      calendar: z
+        .object({
+          unit: z.enum(["month", "quarter"]),
+          month: z.number().int().min(1).max(12).optional(),
+          quarter: z.number().int().min(1).max(4).optional(),
+          year: z.number().int().min(2000).max(2100).optional(),
+        })
+        .optional(),
+      startDateParts: z
+        .object({
+          month: z.number().int().min(1).max(12),
+          day: z.number().int().min(1).max(31),
+          year: z.number().int().min(2000).max(2100).optional(),
+        })
+        .optional(),
     })
     .catch({ preset: "last_30_days" }),
   grain: z.enum(["summary", "daily", "weekly", "monthly"]).catch("weekly"),
@@ -1092,7 +1123,8 @@ async function createSpecWithAI(prompt: string, model: string) {
               "Trend prompts need a time dimension and line or table visual intent.",
               "Comparison prompts should keep safe shared query fields only; explicit comparison scopes are computed by later governed code.",
               "For unsupported sources such as revenue, ROAS, CRM, website, social inbox, employee, or landing-page analysis, keep a minimal Meta Ads intent; semantic validation will block the request.",
-              "For since/from/starting a specific date, use custom start. For relative ranges, use allowed presets when possible.",
+              "For since/from/starting a specific date, use custom start.",
+              "For last/previous/prior week, month, and quarter, use the matching complete-calendar preset. For past/recent/trailing month, use last_30_days. For month-to-date or week-to-date, use the matching to-date preset.",
               "If no date is stated, use last_30_days and add an assumption.",
               "If no metric is stated for performance, use primary_results, spend, and an efficiency metric such as cpl or cpc.",
               "Recommendation wording must remain advisory; never claim the app will pause, edit, create, duplicate, or mutate campaigns.",
@@ -1169,6 +1201,7 @@ async function editSpecWithAI(input: {
             "If the user asks for website, social inbox, CRM, employee, landing page, or response-time data, keep the closest spec minimal; validation will mark the request unsupported. Do not substitute Meta spend/click/lead tables.",
             "For month by month, monthly, or by month, use grain monthly and include the month dimension.",
             "For since/from/starting a specific date, use preset custom with start as YYYY-MM-DD and omit end unless the user gives one.",
+            "For last/previous/prior week, month, and quarter, use the matching complete-calendar preset. For past/recent/trailing month, use last_30_days. For month-to-date or week-to-date, use the matching to-date preset.",
             "For ad spend or spend-only requests, include spend first; if no other metric is requested, use only spend.",
             "For monthly budget or budget requests, use the monthly_budget metric. Do not substitute CTR, CPC, CPL, impressions, clicks, or leads for budget.",
             "If the user asks to add budget to a spend table, use metrics ['spend','monthly_budget'] unless they explicitly request more metrics.",
@@ -1690,6 +1723,14 @@ export function buildAnalysisPlanFromPlannerOutputForPrompt(
   };
 }
 
+export function resolveAnalysisDateRangeForPrompt(
+  prompt: string,
+  latestSyncedInsightDate?: string | null,
+) {
+  const dateRange = inferDateRangeFromPrompt(prompt) || { preset: "last_30_days" as const };
+  return resolveDateRange(dateRange, latestSyncedInsightDate);
+}
+
 function buildDeterministicPlannerIntent(
   prompt: string,
   spec: AnalysisSpec,
@@ -1835,6 +1876,12 @@ function validateAnalysisSpec(
 
   if (spec.dateRange.includeToday) {
     assumptions.push("Prompt explicitly allowed including today; result may include partial synced data.");
+  } else if (isCompleteCalendarDateRange(spec.dateRange)) {
+    assumptions.push("Calendar date phrase resolved to a complete calendar period.");
+  } else if (isToDateRange(spec.dateRange)) {
+    assumptions.push("To-date range will end at the latest complete synced Meta insight date.");
+  } else if (isOpenEndedCustomDateRange(spec.dateRange)) {
+    assumptions.push("Open-ended since/from date range will end at the latest complete synced Meta insight date.");
   } else if (isRelativeDateRange(spec.dateRange)) {
     assumptions.push("Relative date range will end at the latest complete synced Meta insight date.");
   }
@@ -2015,6 +2062,59 @@ function resolveDateRange(dateRange: AnalysisSpec["dateRange"], latestSyncedInsi
     !dateRange.includeToday && latestSyncedInsightDate && isDateString(latestSyncedInsightDate)
       ? parseISO(latestSyncedInsightDate)
       : today;
+  const calendarRange = resolveCalendarDateRange(dateRange.calendar, fallbackEnd);
+  if (calendarRange) return calendarRange;
+
+  if (dateRange.preset === "month_to_date") {
+    const start = new Date(fallbackEnd.getFullYear(), fallbackEnd.getMonth(), 1);
+    return {
+      start: format(start, "yyyy-MM-dd"),
+      end: format(fallbackEnd, "yyyy-MM-dd"),
+      days: differenceInCalendarDays(start, fallbackEnd) + 1,
+    };
+  }
+
+  if (dateRange.preset === "week_to_date") {
+    const start = startOfIsoWeek(fallbackEnd);
+    return {
+      start: format(start, "yyyy-MM-dd"),
+      end: format(fallbackEnd, "yyyy-MM-dd"),
+      days: differenceInCalendarDays(start, fallbackEnd) + 1,
+    };
+  }
+
+  if (dateRange.preset === "last_complete_week") {
+    const currentWeekStart = startOfIsoWeek(fallbackEnd);
+    const end = subDays(currentWeekStart, 1);
+    const start = subDays(end, 6);
+    return {
+      start: format(start, "yyyy-MM-dd"),
+      end: format(end, "yyyy-MM-dd"),
+      days: 7,
+    };
+  }
+
+  if (dateRange.preset === "last_complete_month") {
+    const previousMonth = new Date(fallbackEnd.getFullYear(), fallbackEnd.getMonth() - 1, 1);
+    const start = new Date(previousMonth.getFullYear(), previousMonth.getMonth(), 1);
+    const end = new Date(previousMonth.getFullYear(), previousMonth.getMonth() + 1, 0);
+    return {
+      start: format(start, "yyyy-MM-dd"),
+      end: format(end, "yyyy-MM-dd"),
+      days: differenceInCalendarDays(start, end) + 1,
+    };
+  }
+
+  if (dateRange.preset === "last_complete_quarter") {
+    const currentQuarterStartMonth = Math.floor(fallbackEnd.getMonth() / 3) * 3;
+    const start = new Date(fallbackEnd.getFullYear(), currentQuarterStartMonth - 3, 1);
+    const end = new Date(fallbackEnd.getFullYear(), currentQuarterStartMonth, 0);
+    return {
+      start: format(start, "yyyy-MM-dd"),
+      end: format(end, "yyyy-MM-dd"),
+      days: differenceInCalendarDays(start, end) + 1,
+    };
+  }
   let end = isDateString(dateRange.end) ? parseISO(dateRange.end) : fallbackEnd;
   const presetDays: Record<string, number> = {
     last_7_days: 7,
@@ -2029,7 +2129,12 @@ function resolveDateRange(dateRange: AnalysisSpec["dateRange"], latestSyncedInsi
     Math.max(dateRange.days || presetDays[dateRange.preset || ""] || 30, 1),
     MAX_DAYS,
   );
-  let start = isDateString(dateRange.start) ? parseISO(dateRange.start) : subDays(end, days - 1);
+  const startFromParts = resolveStartDateParts(dateRange.startDateParts, end);
+  let start = isDateString(dateRange.start)
+    ? parseISO(dateRange.start)
+    : startFromParts
+      ? parseISO(startFromParts)
+      : subDays(end, days - 1);
   if (start > end) [start, end] = [end, start];
   const actualDays = Math.max(1, differenceInCalendarDays(start, end) + 1);
 
@@ -3496,13 +3601,41 @@ function inferDateRangeFromPrompt(prompt: string): AnalysisSpec["dateRange"] | u
   if (explicitDate && /\bsince\b|\bfrom\b|\bstarting\b|\bbeginning\b/.test(lower)) {
     return { preset: "custom", start: explicitDate };
   }
+  const startDateParts = extractMonthDayDate(prompt);
+  if (startDateParts && /\bsince\b|\bfrom\b|\bstarting\b|\bbeginning\b/.test(lower)) {
+    return { preset: "custom", startDateParts };
+  }
+
+  const calendarQuarter = extractCalendarQuarterPeriod(prompt);
+  if (calendarQuarter) {
+    return {
+      preset: "custom",
+      calendar: {
+        unit: "quarter",
+        quarter: calendarQuarter.quarter,
+        ...(calendarQuarter.year ? { year: calendarQuarter.year } : {}),
+      },
+    };
+  }
+
+  const calendarMonth = extractCalendarMonthPeriod(prompt);
+  if (calendarMonth) {
+    return {
+      preset: "custom",
+      calendar: { unit: "month", month: calendarMonth.month, ...(calendarMonth.year ? { year: calendarMonth.year } : {}) },
+    };
+  }
 
   if (/\bytd\b|\byear to date\b|\bthis year\b/.test(lower)) {
     return { preset: "custom", start: `${new Date().getFullYear()}-01-01` };
   }
 
-  if (/\bthis\s+week\b|\bweek\s+to\s+date\b|\bwtd\b/.test(lower)) {
-    return { preset: "last_7_days" };
+  if (/\bmonth[-\s]+to[-\s]+date\b|\bmtd\b|\bthis\s+month\b/.test(lower)) {
+    return { preset: "month_to_date" };
+  }
+
+  if (/\bthis\s+week\b|\bweek[-\s]+to[-\s]+date\b|\bwtd\b/.test(lower)) {
+    return { preset: "week_to_date" };
   }
 
   return inferRelativeDateRange(lower, includeToday);
@@ -3529,6 +3662,12 @@ function inferRelativeDateRange(lower: string, includeToday = false): AnalysisSp
 
   const implicit = lower.match(/\b(?:last|past|previous|prior|recent|trailing)\s+(day|week|month|quarter)\b/);
   if (!implicit) return undefined;
+
+  if (/\b(?:last|previous|prior)\s+(week|month|quarter)\b/.test(lower)) {
+    if (implicit[1] === "week") return { preset: "last_complete_week" };
+    if (implicit[1] === "month") return { preset: "last_complete_month" };
+    if (implicit[1] === "quarter") return { preset: "last_complete_quarter" };
+  }
 
   const daysByUnit: Record<string, number> = {
     day: 1,
@@ -3560,6 +3699,23 @@ function rollingDateRange(count: number, unit: string, includeToday = false): An
 
 function isRelativeDateRange(dateRange: AnalysisSpec["dateRange"]) {
   return Boolean(dateRange.days || (dateRange.preset && dateRange.preset !== "custom"));
+}
+
+function isCompleteCalendarDateRange(dateRange: AnalysisSpec["dateRange"]) {
+  return Boolean(
+    dateRange.calendar ||
+      dateRange.preset === "last_complete_week" ||
+      dateRange.preset === "last_complete_month" ||
+      dateRange.preset === "last_complete_quarter",
+  );
+}
+
+function isToDateRange(dateRange: AnalysisSpec["dateRange"]) {
+  return dateRange.preset === "month_to_date" || dateRange.preset === "week_to_date";
+}
+
+function isOpenEndedCustomDateRange(dateRange: AnalysisSpec["dateRange"]) {
+  return dateRange.preset === "custom" && Boolean((dateRange.start || dateRange.startDateParts) && !dateRange.end);
 }
 
 function inferQuestionType(prompt: string): AnalysisQuestionType {
@@ -3660,6 +3816,113 @@ function extractDates(prompt: string) {
 function monthNumber(month: string) {
   const key = month.slice(0, 3).toLowerCase();
   return ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(key) + 1;
+}
+
+function extractCalendarMonthPeriod(prompt: string) {
+  const monthPattern =
+    /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:\s+(20\d{2}))?\b/gi;
+
+  for (const match of prompt.matchAll(monthPattern)) {
+    const month = monthNumber(match[1]);
+    if (!month) continue;
+
+    const nextText = prompt.slice((match.index || 0) + match[0].length, (match.index || 0) + match[0].length + 8);
+    if (!match[2] && /^\s+\d{1,2}(?:st|nd|rd|th)?\b/i.test(nextText)) continue;
+
+    return {
+      month,
+      year: match[2] ? Number(match[2]) : undefined,
+    };
+  }
+
+  return null;
+}
+
+function extractCalendarQuarterPeriod(prompt: string) {
+  const match = prompt.match(/\bq([1-4])(?:\s+(20\d{2}))?\b/i);
+  if (!match) return null;
+
+  return {
+    quarter: Number(match[1]),
+    year: match[2] ? Number(match[2]) : undefined,
+  };
+}
+
+function extractMonthDayDate(prompt: string) {
+  const monthDayPattern =
+    /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,)?(?:\s+(20\d{2}))?\b/i;
+  const match = prompt.match(monthDayPattern);
+  if (!match) return null;
+
+  return {
+    month: monthNumber(match[1]),
+    day: Number(match[2]),
+    ...(match[3] ? { year: Number(match[3]) } : {}),
+  };
+}
+
+function resolveCalendarDateRange(
+  calendar: AnalysisSpec["dateRange"]["calendar"],
+  anchor: Date,
+) {
+  if (!calendar) return null;
+
+  if (calendar.unit === "month" && calendar.month) {
+    const year = calendar.year || latestCompleteMonthYear(calendar.month, anchor);
+    const start = new Date(year, calendar.month - 1, 1);
+    const end = new Date(year, calendar.month, 0);
+    return {
+      start: format(start, "yyyy-MM-dd"),
+      end: format(end, "yyyy-MM-dd"),
+      days: differenceInCalendarDays(start, end) + 1,
+    };
+  }
+
+  if (calendar.unit === "quarter" && calendar.quarter) {
+    const year = calendar.year || latestCompleteQuarterYear(calendar.quarter, anchor);
+    const startMonth = (calendar.quarter - 1) * 3;
+    const start = new Date(year, startMonth, 1);
+    const end = new Date(year, startMonth + 3, 0);
+    return {
+      start: format(start, "yyyy-MM-dd"),
+      end: format(end, "yyyy-MM-dd"),
+      days: differenceInCalendarDays(start, end) + 1,
+    };
+  }
+
+  return null;
+}
+
+function latestCompleteMonthYear(month: number, anchor: Date) {
+  const candidateEnd = new Date(anchor.getFullYear(), month, 0);
+  return candidateEnd <= anchor ? anchor.getFullYear() : anchor.getFullYear() - 1;
+}
+
+function latestCompleteQuarterYear(quarter: number, anchor: Date) {
+  const candidateEnd = new Date(anchor.getFullYear(), quarter * 3, 0);
+  return candidateEnd <= anchor ? anchor.getFullYear() : anchor.getFullYear() - 1;
+}
+
+function resolveStartDateParts(
+  startDateParts: AnalysisSpec["dateRange"]["startDateParts"],
+  anchor: Date,
+) {
+  if (!startDateParts) return null;
+  const year = startDateParts.year || latestStartDatePartsYear(startDateParts.month, startDateParts.day, anchor);
+  return formatDateParts(year, startDateParts.month, startDateParts.day);
+}
+
+function latestStartDatePartsYear(month: number, day: number, anchor: Date) {
+  const candidate = new Date(anchor.getFullYear(), month - 1, day);
+  return candidate <= anchor ? anchor.getFullYear() : anchor.getFullYear() - 1;
+}
+
+function startOfIsoWeek(date: Date) {
+  const start = new Date(date);
+  const day = start.getDay();
+  const offset = day === 0 ? -6 : 1 - day;
+  start.setDate(start.getDate() + offset);
+  return start;
 }
 
 function formatDateParts(year: number, month: number, day: number) {

@@ -5,9 +5,86 @@ import {
   buildAnalysisPlanFromPlannerOutputForPrompt,
   buildAnalysisPlanForPrompt,
   normalizeAnalysisSpecForPrompt,
+  resolveAnalysisDateRangeForPrompt,
 } from "../src/lib/ad-hoc-analytics.ts";
 
 describe("ad-hoc analytics prompt normalization", () => {
+  it("resolves last month to the previous complete calendar month", () => {
+    const range = resolveAnalysisDateRangeForPrompt(
+      "Show spend by campaign last month",
+      "2026-05-25",
+    );
+
+    assert.deepEqual(range, { start: "2026-04-01", end: "2026-04-30", days: 30 });
+  });
+
+  it("resolves last week and last quarter to previous complete calendar periods", () => {
+    assert.deepEqual(
+      resolveAnalysisDateRangeForPrompt("Show spend last week", "2026-05-27"),
+      { start: "2026-05-18", end: "2026-05-24", days: 7 },
+    );
+    assert.deepEqual(
+      resolveAnalysisDateRangeForPrompt("Show spend last quarter", "2026-05-27"),
+      { start: "2026-01-01", end: "2026-03-31", days: 90 },
+    );
+  });
+
+  it("resolves named months to full calendar months", () => {
+    assert.deepEqual(
+      resolveAnalysisDateRangeForPrompt("Show April spend by campaign group", "2026-05-25"),
+      { start: "2026-04-01", end: "2026-04-30", days: 30 },
+    );
+    assert.deepEqual(
+      resolveAnalysisDateRangeForPrompt("Show April 2026 spend by campaign group", "2026-05-25"),
+      { start: "2026-04-01", end: "2026-04-30", days: 30 },
+    );
+  });
+
+  it("resolves past, recent, and trailing month to rolling 30-day windows", () => {
+    const expected = { start: "2026-04-26", end: "2026-05-25", days: 30 };
+
+    assert.deepEqual(resolveAnalysisDateRangeForPrompt("Show spend past month", "2026-05-25"), expected);
+    assert.deepEqual(resolveAnalysisDateRangeForPrompt("Show spend recent month", "2026-05-25"), expected);
+    assert.deepEqual(resolveAnalysisDateRangeForPrompt("Show spend trailing month", "2026-05-25"), expected);
+  });
+
+  it("resolves since and from month-day dates through latest synced date", () => {
+    const expected = { start: "2026-05-01", end: "2026-05-25", days: 25 };
+
+    assert.deepEqual(resolveAnalysisDateRangeForPrompt("Show spend since May 1", "2026-05-25"), expected);
+    assert.deepEqual(resolveAnalysisDateRangeForPrompt("Show spend from May 1", "2026-05-25"), expected);
+  });
+
+  it("resolves explicit quarter phrases to full calendar quarters", () => {
+    assert.deepEqual(
+      resolveAnalysisDateRangeForPrompt("Show performance for Q1 2026", "2026-05-25"),
+      { start: "2026-01-01", end: "2026-03-31", days: 90 },
+    );
+  });
+
+  it("resolves month-to-date and week-to-date through latest synced date", () => {
+    assert.deepEqual(
+      resolveAnalysisDateRangeForPrompt("Show month-to-date spend", "2026-05-27"),
+      { start: "2026-05-01", end: "2026-05-27", days: 27 },
+    );
+    assert.deepEqual(
+      resolveAnalysisDateRangeForPrompt("Show week-to-date spend", "2026-05-27"),
+      { start: "2026-05-25", end: "2026-05-27", days: 3 },
+    );
+  });
+
+  it("keeps inferred calendar dates ready with explicit assumptions", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "Show spend by campaign last month");
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.deepEqual(plan.clarificationQuestions, []);
+    assert.ok(
+      plan.assumptions.some((assumption) =>
+        assumption.includes("complete calendar period"),
+      ),
+    );
+  });
+
   it("repairs saved specs for cash-for-gold message spend tables", () => {
     const spec = normalizeAnalysisSpecForPrompt(
       {
@@ -189,7 +266,7 @@ describe("ad-hoc analytics prompt normalization", () => {
     );
 
     assert.equal(plan.questionType, "trend");
-    assert.deepEqual(plan.spec.dateRange, { preset: "last_7_days" });
+    assert.deepEqual(plan.spec.dateRange, { preset: "week_to_date" });
     assert.deepEqual(plan.spec.metrics, ["bookings"]);
     assert.deepEqual(plan.spec.dimensions, ["date"]);
     assert.deepEqual(plan.spec.filters, [
