@@ -72,6 +72,13 @@ const DATE_PRESETS = [
   "custom",
 ] as const;
 
+const QUESTION_TYPES = [
+  "leaderboard",
+  "trend",
+  "comparison",
+  "diagnosis",
+  "recommendation",
+] as const;
 const WIDGET_TYPES = ["metric", "table", "line", "bar"] as const;
 const TABLE_LAYOUT_TYPES = ["flat", "pivot", "metric_rows_pivot"] as const;
 const DEFAULT_METRICS: AnalysisMetric[] = ["spend", "impressions", "clicks", "ctr", "cpc", "leads", "cpl"];
@@ -148,6 +155,30 @@ export type AnalysisSpec = {
   }>;
 };
 
+export type AnalysisQuestionType = (typeof QUESTION_TYPES)[number];
+
+export type AnalysisPlannerIntent = {
+  questionType: AnalysisQuestionType;
+  title: string;
+  grain: AnalysisGrain;
+  metrics: AnalysisMetric[];
+  dimensions: AnalysisDimension[];
+  filters: AnalysisFilter[];
+  dateIntent: {
+    dateRange: AnalysisSpec["dateRange"];
+    source: "deterministic" | "model" | "fallback";
+    phrase: string | null;
+  };
+  sort?: AnalysisSpec["sort"];
+  limit: number;
+  visualIntent: {
+    widgets: AnalysisWidgetType[];
+    tableLayout?: AnalysisTableLayoutType;
+  };
+  assumptions: string[];
+  clarificationNeeds: string[];
+};
+
 export type AnalysisRuntimeContext = {
   dateRange?: {
     days?: number;
@@ -165,6 +196,8 @@ export type AnalysisTableColumn = {
 
 export type AnalysisAnalystDebug = {
   validationStatus: AnalysisValidationStatus;
+  questionType?: AnalysisQuestionType;
+  plannerIntent?: AnalysisPlannerIntent;
   dataSource: "meta_ads";
   sourceTable: "meta_daily_insights";
   sourceFunction: "aggregate_meta_daily_insights" | null;
@@ -188,6 +221,8 @@ export type AnalysisResult = {
   mode: AnalysisMode;
   title: string;
   answer: string;
+  questionType: AnalysisQuestionType;
+  plannerIntent: AnalysisPlannerIntent;
   spec: AnalysisSpec;
   resolvedSpec: AnalysisSpec;
   table: {
@@ -296,7 +331,7 @@ const CAMPAIGN_GLOSSARY: Array<{
     label: "book appointments",
     value: "Book Appts US",
     pattern:
-      /\bbook\s+appts?\s+us\b|\bbook\s+appointments?\s+us\b|\bbook\s+(?:appointments?|appts?)\s+(?:campaign|umbrella)\b|\b(?:campaign|umbrella)\s+book\s+(?:appointments?|appts?)\b/i,
+      /\bbook\s+appts?\s+us\b|\bbook\s+appointments?\s+us\b|\bbook\s+(?:appointments?|appts?)\s+(?:ads?|campaign|umbrella)\b|\b(?:campaign|umbrella)\s+book\s+(?:appointments?|appts?)\b/i,
   },
 ];
 
@@ -392,6 +427,47 @@ const analysisSpecSchema = z.object({
     .optional(),
   widgets: z.array(widgetSchema).min(1).max(4).catch([]),
 });
+
+const plannerDateRangeSchema = z.object({
+  preset: z.enum(DATE_PRESETS).nullable().optional().transform((value) => value || undefined),
+  start: z.string().nullable().optional().transform((value) => value || undefined),
+  end: z.string().nullable().optional().transform((value) => value || undefined),
+  days: z.number().int().positive().max(MAX_DAYS).nullable().optional().transform((value) => value || undefined),
+  includeToday: z.boolean().nullable().optional().transform((value) => value || undefined),
+}).strict();
+
+const plannerFilterSchema = z.object({
+  field: filterFieldSchema,
+  operator: z.enum(["contains", "equals"]),
+  value: z.string().max(120),
+}).strict();
+
+const plannerSortSchema = z.object({
+  field: z.union([metricSchema, dimensionSchema]),
+  direction: z.enum(["asc", "desc"]),
+}).strict();
+
+const plannerIntentOutputSchema = z.object({
+  questionType: z.enum(QUESTION_TYPES),
+  title: z.string().min(1).max(100),
+  dateIntent: z.object({
+    phrase: z.string().max(120).nullable(),
+    dateRange: plannerDateRangeSchema,
+    assumptions: z.array(z.string().max(200)).max(6),
+  }).strict(),
+  grain: z.enum(["summary", "daily", "weekly", "monthly"]),
+  dimensions: z.array(dimensionSchema).min(1).max(3),
+  filters: z.array(plannerFilterSchema).max(6),
+  metrics: z.array(metricSchema).min(1).max(8),
+  sort: plannerSortSchema.nullable(),
+  limit: z.number().int().min(1).max(MAX_TABLE_ROWS),
+  visualIntent: z.object({
+    widgets: z.array(widgetTypeSchema).min(1).max(4),
+    tableLayout: tableLayoutTypeSchema.nullable(),
+  }).strict(),
+  assumptions: z.array(z.string().max(200)).max(8),
+  clarificationNeeds: z.array(z.string().max(200)).max(6),
+}).strict();
 
 const nullableStringSchema = { anyOf: [{ type: "string" }, { type: "null" }] } as const;
 const nullableIntegerSchema = {
@@ -519,6 +595,127 @@ const analysisSpecResponseFormat = {
   },
 };
 
+const analysisPlannerIntentResponseFormat = {
+  type: "json_schema" as const,
+  json_schema: {
+    name: "analysis_intent",
+    strict: true,
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        questionType: { enum: QUESTION_TYPES },
+        title: { type: "string", minLength: 1, maxLength: 100 },
+        dateIntent: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            phrase: nullableStringSchema,
+            dateRange: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                preset: { anyOf: [{ enum: DATE_PRESETS }, { type: "null" }] },
+                start: nullableStringSchema,
+                end: nullableStringSchema,
+                days: nullableIntegerSchema,
+                includeToday: nullableBooleanSchema,
+              },
+              required: ["preset", "start", "end", "days", "includeToday"],
+            },
+            assumptions: {
+              type: "array",
+              maxItems: 6,
+              items: { type: "string", maxLength: 200 },
+            },
+          },
+          required: ["phrase", "dateRange", "assumptions"],
+        },
+        grain: { enum: ["summary", "daily", "weekly", "monthly"] },
+        dimensions: {
+          type: "array",
+          minItems: 1,
+          maxItems: 3,
+          items: { enum: ANALYSIS_DIMENSIONS },
+        },
+        filters: {
+          type: "array",
+          maxItems: 6,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              field: { enum: FILTER_FIELDS },
+              operator: { enum: ["contains", "equals"] },
+              value: { type: "string", maxLength: 120 },
+            },
+            required: ["field", "operator", "value"],
+          },
+        },
+        metrics: {
+          type: "array",
+          minItems: 1,
+          maxItems: 8,
+          items: { enum: ANALYSIS_METRICS },
+        },
+        sort: {
+          anyOf: [
+            {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                field: { enum: [...ANALYSIS_METRICS, ...ANALYSIS_DIMENSIONS] },
+                direction: { enum: ["asc", "desc"] },
+              },
+              required: ["field", "direction"],
+            },
+            { type: "null" },
+          ],
+        },
+        limit: { type: "integer", minimum: 1, maximum: MAX_TABLE_ROWS },
+        visualIntent: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            widgets: {
+              type: "array",
+              minItems: 1,
+              maxItems: 4,
+              items: { enum: WIDGET_TYPES },
+            },
+            tableLayout: { anyOf: [{ enum: TABLE_LAYOUT_TYPES }, { type: "null" }] },
+          },
+          required: ["widgets", "tableLayout"],
+        },
+        assumptions: {
+          type: "array",
+          maxItems: 8,
+          items: { type: "string", maxLength: 200 },
+        },
+        clarificationNeeds: {
+          type: "array",
+          maxItems: 6,
+          items: { type: "string", maxLength: 200 },
+        },
+      },
+      required: [
+        "questionType",
+        "title",
+        "dateIntent",
+        "grain",
+        "dimensions",
+        "filters",
+        "metrics",
+        "sort",
+        "limit",
+        "visualIntent",
+        "assumptions",
+        "clarificationNeeds",
+      ],
+    },
+  },
+};
+
 export async function fetchSavedAnalysisDashboards(limit = 12): Promise<SavedAnalysisDashboard[]> {
   const missing = getMissingDashboardEnv();
   if (missing.length) return [];
@@ -558,6 +755,7 @@ export async function runSavedAdHocAnalysis(
   const planModel = dashboard.model_plan || getOpenAIAnalysisModel("fast");
   const analysisModel = dashboard.model_analysis;
   const validation = validateAnalysisSpec(dashboard.prompt, resolvedSpec, { repairedSpec });
+  const plannerIntent = buildDeterministicPlannerIntent(dashboard.prompt, resolvedSpec, validation);
 
   if (validation.status !== "ready") {
     return nonExecutableResult({
@@ -565,6 +763,7 @@ export async function runSavedAdHocAnalysis(
       mode,
       spec,
       resolvedSpec,
+      plannerIntent,
       dashboardId: dashboard.id,
       planModel,
       analysisModel,
@@ -582,6 +781,7 @@ export async function runSavedAdHocAnalysis(
       mode,
       spec,
       resolvedSpec,
+      plannerIntent,
       aggregated,
       dashboardId: dashboard.id,
       planModel,
@@ -659,12 +859,14 @@ export async function createAdHocAnalysis(input: {
   );
   const preflightResolvedSpec = applyRuntimeContext(preflightSpec, input.runtimeContext);
   const preflightValidation = validateAnalysisSpec(prompt, preflightResolvedSpec);
+  const preflightPlannerIntent = buildDeterministicPlannerIntent(prompt, preflightResolvedSpec, preflightValidation);
   if (preflightValidation.status === "unsupported") {
     return nonExecutableResult({
       prompt,
       mode: input.mode,
       spec: preflightSpec,
       resolvedSpec: preflightResolvedSpec,
+      plannerIntent: preflightPlannerIntent,
       dashboardId: null,
       planModel,
       analysisModel: null,
@@ -674,7 +876,12 @@ export async function createAdHocAnalysis(input: {
     });
   }
 
-  const { spec: generatedSpec, usage: planUsage } = await createSpecWithAI(prompt, planModel);
+  const {
+    spec: generatedSpec,
+    plannerIntent: generatedPlannerIntent,
+    usage: planUsage,
+    model: usedPlanModel,
+  } = await createSpecWithAI(prompt, planModel);
   const spec = applyDefaultDateRange(generatedSpec, prompt, defaultDateRange);
   const resolvedSpec = applyRuntimeContext(spec, input.runtimeContext);
   const baseTokenEstimate = {
@@ -683,6 +890,7 @@ export async function createAdHocAnalysis(input: {
     planOutputTokens: planUsage.output,
   };
   const validation = validateAnalysisSpec(prompt, resolvedSpec);
+  const plannerIntent = rebasePlannerIntent(prompt, resolvedSpec, validation, generatedPlannerIntent);
 
   if (validation.status !== "ready") {
     return nonExecutableResult({
@@ -690,10 +898,11 @@ export async function createAdHocAnalysis(input: {
       mode: input.mode,
       spec,
       resolvedSpec,
+      plannerIntent,
       dashboardId: null,
-      planModel,
+      planModel: usedPlanModel,
       analysisModel: null,
-      tokenEstimate: withEstimatedCost(baseTokenEstimate, planModel, null),
+      tokenEstimate: withEstimatedCost(baseTokenEstimate, usedPlanModel, null),
       validation,
       repairedSpec: false,
     });
@@ -711,9 +920,10 @@ export async function createAdHocAnalysis(input: {
     mode: input.mode,
     spec,
     resolvedSpec,
+    plannerIntent,
     aggregated,
     dashboardId: null,
-    planModel,
+    planModel: usedPlanModel,
     analysisModel: analysis?.model || null,
     tokenEstimate: withEstimatedCost(
       {
@@ -721,7 +931,7 @@ export async function createAdHocAnalysis(input: {
         analysisInputTokens: analysis?.usage.input || 0,
         analysisOutputTokens: analysis?.usage.output || 0,
       },
-      planModel,
+      usedPlanModel,
       analysis?.model || null,
     ),
     validation,
@@ -733,7 +943,7 @@ export async function createAdHocAnalysis(input: {
     answer: analysis?.answer || buildDeterministicAnswer(resolvedSpec, aggregated),
   };
 
-  const persistence = await persistAnalysis(result, planModel, analysis?.model || null);
+  const persistence = await persistAnalysis(result, usedPlanModel, analysis?.model || null);
   return {
     ...result,
     dashboardId: persistence.dashboardId,
@@ -762,11 +972,13 @@ export async function editAdHocAnalysis(input: {
   const planModel = getOpenAIAnalysisModel("fast");
   const prompt = mergePrompts(basePrompt, editPrompt);
   const preflightValidation = validateAnalysisSpec(prompt, currentSpec);
+  const preflightPlannerIntent = buildDeterministicPlannerIntent(prompt, currentSpec, preflightValidation);
   if (preflightValidation.status === "unsupported") {
     return nonExecutableResult({
       prompt,
       mode: input.mode,
       spec: currentSpec,
+      plannerIntent: preflightPlannerIntent,
       dashboardId: dashboard?.id || null,
       planModel,
       analysisModel: null,
@@ -789,6 +1001,7 @@ export async function editAdHocAnalysis(input: {
     planOutputTokens: planUsage.output,
   };
   const validation = validateAnalysisSpec(prompt, resolvedSpec);
+  const plannerIntent = buildDeterministicPlannerIntent(prompt, resolvedSpec, validation);
 
   if (validation.status !== "ready") {
     return nonExecutableResult({
@@ -796,6 +1009,7 @@ export async function editAdHocAnalysis(input: {
       mode: input.mode,
       spec,
       resolvedSpec,
+      plannerIntent,
       dashboardId: dashboard?.id || null,
       planModel,
       analysisModel: null,
@@ -817,6 +1031,7 @@ export async function editAdHocAnalysis(input: {
     mode: input.mode,
     spec,
     resolvedSpec,
+    plannerIntent,
     aggregated,
     dashboardId: dashboard?.id || null,
     planModel,
@@ -848,65 +1063,68 @@ export async function editAdHocAnalysis(input: {
 }
 
 async function createSpecWithAI(prompt: string, model: string) {
-  const response = await createOpenAIClient().chat.completions.create({
-    model,
-    response_format: analysisSpecResponseFormat,
-    messages: [
-      {
-        role: "system",
-        content:
-          "You convert Meta Ads questions into a compact JSON dashboard spec. Return JSON matching the provided schema only. Never write SQL, code, or raw data. Use only the allowed fields and widgets.",
-      },
-      {
-        role: "user",
-        content: JSON.stringify({
-          task: "Create an AnalysisSpec for a Meta Ads ad-hoc dashboard.",
-          userPrompt: prompt,
-          allowed: {
-            metrics: ANALYSIS_METRICS,
-            dimensions: ANALYSIS_DIMENSIONS,
-            filterFields: FILTER_FIELDS,
-            grains: ["summary", "daily", "weekly", "monthly"],
-            widgets: WIDGET_TYPES,
-            tableLayouts: TABLE_LAYOUT_TYPES,
-            datePresets: DATE_PRESETS,
-          },
-          rules: [
-            "Use null for sort, tableLayout, dateRange fields, and widget x when they are not needed.",
-            "Map campaign umbrella, internal campaign umbrella, or umbrella to the campaign_umbrella dimension. Do not use a search filter for that.",
-            "Use exact campaign_umbrella filters for known campaign concepts: cash for gold => Cash for Gold US, book appointments => Book Appts US.",
-            "If the user asks for website, social inbox, CRM, employee, landing page, or response-time data, keep the closest spec minimal; validation will mark the request unsupported. Do not substitute Meta spend/click/lead tables.",
-            "For month by month, monthly, or by month, use grain monthly and include the month dimension.",
-            "For since/from/starting a specific date, use preset custom with start as YYYY-MM-DD and omit end unless the user gives one.",
-            "For ad spend or spend-only requests, include spend first; if no other metric is requested, use only spend.",
-            "For monthly budget or budget requests, use the monthly_budget metric. Do not substitute CTR, CPC, CPL, impressions, clicks, or leads for budget.",
-            "If the user asks to add budget to a spend table, use metrics ['spend','monthly_budget'] unless they explicitly request more metrics.",
-            "For messages, messaging, Messenger conversations, replies, or number of messages from ads, use the messaging_contacts metric. Use new_messaging_contacts only when the user explicitly asks for new messages, first replies, or new messaging contacts.",
-            "For campaign result metrics, use primary_results for results, number of results, primary results, primary KPI, or KPI. Use secondary_results only when the user explicitly asks for secondary results or secondary KPI.",
-            "For count/how many/number of campaigns, ad sets, ads, or creatives, use campaign_count, ad_set_count, ad_count, or creative_count. Do not list entity IDs unless the user asks to list or group by each entity.",
-            "If the user asks to group by specific fields, replace dimensions with those fields instead of preserving unrelated existing dimensions.",
-            "Use search filters only for free-text ad concepts, product names, or campaign/ad text explicitly named by the user.",
-            "For table-format requests, return a table widget first and add charts only when the user asks for charts.",
-            "For pivot, crosstab, matrix, first-row/first-column, or intersection-table requests, set tableLayout.type to pivot with rowDimension, columnDimension, and metric.",
-            "For pivot tables with one time dimension and one non-time dimension, use the non-time dimension as rowDimension and the time dimension as columnDimension unless the user says otherwise.",
-            "If the user wants metrics as sub-rows under each row group, for example campaign umbrella then Spend then Primary KPI with weeks as columns, set tableLayout.type to metric_rows_pivot.",
-            "Do not add multiple campaign_umbrella equals filters when campaign names are examples of desired row labels. Keep campaign_umbrella as a dimension unless the user explicitly asks to filter to one named umbrella.",
-            "For chart/graph requests, include a line widget for time-series groupings and a bar widget for non-time groupings.",
-            "Keep limits at or below 50 unless the user asks for a leaderboard.",
-          ],
-        }),
-      },
-    ],
-  });
+  try {
+    const response = await createOpenAIClient().chat.completions.create({
+      model,
+      response_format: analysisPlannerIntentResponseFormat,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You convert Meta Ads questions into governed analysis intent JSON. Return JSON matching the schema only. Never write SQL, code, raw data access, unsupported fields, or Meta mutation actions.",
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            task: "Create a governed AnalysisPlannerIntent for a Meta Ads Ask AI prompt.",
+            userPrompt: prompt,
+            catalog: META_ADS_DATA_CATALOG,
+            questionTypes: QUESTION_TYPES,
+            rules: [
+              "Choose one questionType: leaderboard, trend, comparison, diagnosis, or recommendation.",
+              "Use only catalog metrics, dimensions, filter fields, date presets, widget types, and table layout types.",
+              "Do not output SQL, formulas, raw table names beyond the provided catalog, arbitrary sources, or unsupported fields.",
+              "Metric/dimension/filter values must be exact catalog values.",
+              "Map campaign umbrella, internal campaign umbrella, or umbrella to campaign_umbrella.",
+              "Use exact campaign_umbrella filters for known campaign concepts: cash for gold => Cash for Gold US, book appointments => Book Appts US.",
+              "Advisory prompts like waste, pause, scale, fix first, and fatigue should be recommendation questionType with evidence metrics, not generic spend leaderboards.",
+              "Why, drop, improve, and what changed prompts should be diagnosis questionType with primary KPI, spend, and efficiency metrics.",
+              "Trend prompts need a time dimension and line or table visual intent.",
+              "Comparison prompts should keep safe shared query fields only; explicit comparison scopes are computed by later governed code.",
+              "For unsupported sources such as revenue, ROAS, CRM, website, social inbox, employee, or landing-page analysis, keep a minimal Meta Ads intent; semantic validation will block the request.",
+              "For since/from/starting a specific date, use custom start. For relative ranges, use allowed presets when possible.",
+              "If no date is stated, use last_30_days and add an assumption.",
+              "If no metric is stated for performance, use primary_results, spend, and an efficiency metric such as cpl or cpc.",
+              "Recommendation wording must remain advisory; never claim the app will pause, edit, create, duplicate, or mutate campaigns.",
+            ],
+          }),
+        },
+      ],
+    });
 
-  const content = response.choices[0]?.message?.content;
-  return {
-    spec: normalizeSpec(parseJson(content) || fallbackSpec(prompt), prompt),
-    usage: {
-      input: response.usage?.prompt_tokens || estimateTokens(prompt) + 700,
-      output: response.usage?.completion_tokens || estimateTokens(content || ""),
-    },
-  };
+    const content = response.choices[0]?.message?.content;
+    const plan = buildAnalysisPlanFromPlannerOutputForPrompt(parseJsonPreservingNulls(content), prompt);
+    return {
+      spec: plan.spec,
+      plannerIntent: plan.plannerIntent,
+      model: plan.plannerIntent.dateIntent.source === "fallback" ? "deterministic-fallback" : model,
+      usage: {
+        input: response.usage?.prompt_tokens || estimateTokens(prompt) + 900,
+        output: response.usage?.completion_tokens || estimateTokens(content || ""),
+      },
+    };
+  } catch {
+    const plan = buildAnalysisPlanFromPlannerOutputForPrompt(null, prompt);
+    return {
+      spec: plan.spec,
+      plannerIntent: plan.plannerIntent,
+      model: "deterministic-fallback",
+      usage: {
+        input: 0,
+        output: 0,
+      },
+    };
+  }
 }
 
 async function editSpecWithAI(input: {
@@ -1410,13 +1628,163 @@ export function buildAnalysisPlanForPrompt(
 ) {
   const spec = normalizeAnalysisSpecForPrompt(value, prompt, options);
   const validation = validateAnalysisSpec(prompt, spec);
+  const plannerIntent = buildDeterministicPlannerIntent(prompt, spec, validation);
   return {
     spec,
+    questionType: plannerIntent.questionType,
+    plannerIntent,
     validationStatus: validation.status,
     warnings: validation.warnings,
     unsupportedReasons: validation.unsupportedReasons,
     clarificationQuestions: validation.clarificationQuestions,
     assumptions: validation.assumptions,
+  };
+}
+
+export function buildAnalysisPlanFromPlannerOutputForPrompt(
+  value: unknown,
+  prompt: string,
+  options: { defaultDateRange?: DefaultAnalysisDateRange } = {},
+) {
+  const parsed = plannerIntentOutputSchema.safeParse(value);
+  if (!parsed.success) {
+    const fallback = buildAnalysisPlanForPrompt({}, prompt, options);
+    const plannerIntent = {
+      ...fallback.plannerIntent,
+      dateIntent: {
+        ...fallback.plannerIntent.dateIntent,
+        source: "fallback" as const,
+      },
+      assumptions: uniqueStrings([
+        "Model planner output was unavailable or malformed; deterministic planner used.",
+        ...fallback.plannerIntent.assumptions,
+      ]),
+    };
+    return {
+      ...fallback,
+      questionType: plannerIntent.questionType,
+      plannerIntent,
+      warnings: uniqueStrings([
+        ...fallback.warnings,
+        "Model planner output was unavailable or malformed; deterministic planner used.",
+      ]),
+    };
+  }
+
+  const spec = normalizeAnalysisSpecForPrompt(
+    specFromPlannerIntentOutput(parsed.data, prompt),
+    prompt,
+    options,
+  );
+  const validation = validateAnalysisSpec(prompt, spec);
+  const plannerIntent = buildPlannerIntent(prompt, spec, validation, "model", parsed.data);
+  return {
+    spec,
+    questionType: plannerIntent.questionType,
+    plannerIntent,
+    validationStatus: validation.status,
+    warnings: validation.warnings,
+    unsupportedReasons: validation.unsupportedReasons,
+    clarificationQuestions: validation.clarificationQuestions,
+    assumptions: validation.assumptions,
+  };
+}
+
+function buildDeterministicPlannerIntent(
+  prompt: string,
+  spec: AnalysisSpec,
+  validation: ValidationResult,
+): AnalysisPlannerIntent {
+  return buildPlannerIntent(prompt, spec, validation, "deterministic");
+}
+
+function buildPlannerIntent(
+  prompt: string,
+  spec: AnalysisSpec,
+  validation: ValidationResult,
+  source: AnalysisPlannerIntent["dateIntent"]["source"],
+  modelIntent?: z.infer<typeof plannerIntentOutputSchema>,
+): AnalysisPlannerIntent {
+  return {
+    questionType: modelIntent?.questionType || inferQuestionType(prompt),
+    title: spec.title,
+    grain: spec.grain,
+    metrics: spec.metrics,
+    dimensions: spec.dimensions,
+    filters: spec.filters,
+    dateIntent: {
+      dateRange: spec.dateRange,
+      source,
+      phrase: modelIntent?.dateIntent.phrase || extractDatePhrase(prompt),
+    },
+    sort: spec.sort,
+    limit: spec.limit,
+    visualIntent: {
+      widgets: spec.widgets.map((widget) => widget.type),
+      ...(spec.tableLayout?.type ? { tableLayout: spec.tableLayout.type } : {}),
+    },
+    assumptions: uniqueStrings([
+      ...(modelIntent?.assumptions || []),
+      ...(modelIntent?.dateIntent.assumptions || []),
+      ...validation.assumptions,
+    ]),
+    clarificationNeeds: uniqueStrings([
+      ...(modelIntent?.clarificationNeeds || []),
+      ...validation.clarificationQuestions,
+    ]),
+  };
+}
+
+function rebasePlannerIntent(
+  prompt: string,
+  spec: AnalysisSpec,
+  validation: ValidationResult,
+  plannerIntent: AnalysisPlannerIntent,
+): AnalysisPlannerIntent {
+  const next = buildPlannerIntent(prompt, spec, validation, plannerIntent.dateIntent.source);
+  return {
+    ...next,
+    questionType: plannerIntent.questionType,
+    dateIntent: {
+      ...next.dateIntent,
+      phrase: plannerIntent.dateIntent.phrase || next.dateIntent.phrase,
+    },
+    assumptions: uniqueStrings([...plannerIntent.assumptions, ...next.assumptions]),
+    clarificationNeeds: uniqueStrings([
+      ...plannerIntent.clarificationNeeds,
+      ...next.clarificationNeeds,
+    ]),
+  };
+}
+
+function specFromPlannerIntentOutput(
+  output: z.infer<typeof plannerIntentOutputSchema>,
+  prompt: string,
+): AnalysisSpec {
+  const x = output.dimensions.find(isTimeDimension) || output.dimensions[0];
+  const tableLayout =
+    output.visualIntent.tableLayout === "flat"
+      ? ({ type: "flat" } as const)
+      : output.visualIntent.tableLayout
+        ? inferTableLayoutFromPrompt(prompt.toLowerCase(), output.dimensions, output.metrics)
+        : undefined;
+
+  return {
+    title: output.title,
+    dateRange: stripUndefinedValues(output.dateIntent.dateRange) as AnalysisSpec["dateRange"],
+    grain: output.grain,
+    dimensions: output.dimensions,
+    filters: output.filters,
+    metrics: output.metrics,
+    sort: output.sort || undefined,
+    limit: output.limit,
+    tableLayout,
+    widgets: output.visualIntent.widgets.map((type) => ({
+      type,
+      title: labelForWidget(type),
+      ...(type === "metric" ? {} : { x }),
+      metrics: type === "metric" ? output.metrics.slice(0, 4) : output.metrics,
+    })),
   };
 }
 
@@ -1493,6 +1861,7 @@ function validateAnalysisSpec(
 function unsupportedMetricMentions(lower: string) {
   const mentions: string[] = [];
   const candidates: Array<[string, RegExp]> = [
+    ["ROAS", /\broas\b|\breturn\s+on\s+ad\s+spend\b/],
     ["landing page views", /\blanding\s+page\s+views?\b/],
     ["landing-page conversion rate", /\blanding[-\s]?page\s+conversion\s+rate\b|\bwebsite\s+conversion\s+rate\b/],
     ["website visitors", /\bwebsite\s+visitors?\b|\bsite\s+visitors?\b|\bvisitors?\b/],
@@ -2090,6 +2459,7 @@ function baseResult(input: {
   mode: AnalysisMode;
   spec: AnalysisSpec;
   resolvedSpec?: AnalysisSpec;
+  plannerIntent: AnalysisPlannerIntent;
   aggregated: Awaited<ReturnType<typeof aggregateSpec>>;
   dashboardId: string | null;
   planModel: string;
@@ -2107,13 +2477,19 @@ function baseResult(input: {
     mode: input.mode,
     title: input.spec.title,
     answer: "",
+    questionType: input.plannerIntent.questionType,
+    plannerIntent: input.plannerIntent,
     spec: input.spec,
     resolvedSpec,
     table: input.aggregated.table,
     totals: input.aggregated.totals,
     widgets: resolvedSpec.widgets,
     sourceTransparency: input.aggregated.sourceTransparency,
-    analystDebug: input.aggregated.analystDebug,
+    analystDebug: {
+      ...input.aggregated.analystDebug,
+      questionType: input.plannerIntent.questionType,
+      plannerIntent: input.plannerIntent,
+    },
     warnings: input.aggregated.warnings,
     unsupportedReasons: input.aggregated.unsupportedReasons,
     clarificationQuestions: input.aggregated.clarificationQuestions,
@@ -2130,6 +2506,7 @@ function nonExecutableResult(input: {
   mode: AnalysisMode;
   spec: AnalysisSpec;
   resolvedSpec?: AnalysisSpec;
+  plannerIntent: AnalysisPlannerIntent;
   dashboardId: string | null;
   planModel: string;
   analysisModel: string | null;
@@ -2174,6 +2551,8 @@ function nonExecutableResult(input: {
     mode: input.mode,
     title: input.spec.title,
     answer: buildValidationAnswer(input.validation),
+    questionType: input.plannerIntent.questionType,
+    plannerIntent: input.plannerIntent,
     spec: input.spec,
     resolvedSpec,
     table: {
@@ -2183,7 +2562,11 @@ function nonExecutableResult(input: {
     totals: aggregateMetrics(undefined),
     widgets: [],
     sourceTransparency,
-    analystDebug,
+    analystDebug: {
+      ...analystDebug,
+      questionType: input.plannerIntent.questionType,
+      plannerIntent: input.plannerIntent,
+    },
     warnings: input.validation.warnings,
     unsupportedReasons: input.validation.unsupportedReasons,
     clarificationQuestions: input.validation.clarificationQuestions,
@@ -2255,8 +2638,19 @@ async function persistAnalysis(
       source_transparency: result.sourceTransparency as unknown as Json,
       result_preview: {
         title: result.title,
+        answer: result.answer,
+        questionType: result.questionType,
+        validationStatus: result.validationStatus,
         rowCount: result.table.rows.length,
         widgets: result.widgets.map((widget) => widget.type),
+        warnings: result.warnings,
+        assumptions: result.plannerIntent.assumptions,
+        sourceNotes: result.sourceTransparency,
+        plannerIntent: result.plannerIntent,
+        keyFacts: {
+          totals: result.totals,
+          firstRows: result.table.rows.slice(0, 3),
+        },
       } as unknown as Json,
     }));
 
@@ -2354,11 +2748,14 @@ function inferPromptIntent(prompt: string): PromptIntent {
   const promptForMode = hasFollowUp ? latestPrompt : prompt;
   const promptForModeLower = promptForMode.toLowerCase();
   const scaleDecision = inferScaleDecisionIntent(promptForModeLower) || inferScaleDecisionIntent(lower);
+  const recommendationDecision =
+    inferRecommendationDecisionIntent(promptForModeLower) || inferRecommendationDecisionIntent(lower);
+  const decisionIntent = scaleDecision || recommendationDecision;
   const latestMetrics = inferMetricsFromPrompt(latestLower);
   const allMentionedMetrics = inferMetricsFromPrompt(lower);
   const additiveFollowUp = hasFollowUp && latestMetrics && shouldAddFollowUpMetrics(latestLower);
-  const metrics = scaleDecision
-    ? mergeMetricLists(scaleDecision.metrics, additiveFollowUp ? mergeMetricLists(allMentionedMetrics || [], latestMetrics || []) : latestMetrics || allMentionedMetrics || [])
+  const metrics = decisionIntent
+    ? mergeMetricLists(decisionIntent.metrics, additiveFollowUp ? mergeMetricLists(allMentionedMetrics || [], latestMetrics || []) : latestMetrics || allMentionedMetrics || [])
     : additiveFollowUp
     ? mergeMetricLists(allMentionedMetrics || [], latestMetrics)
     : latestMetrics || allMentionedMetrics;
@@ -2366,7 +2763,14 @@ function inferPromptIntent(prompt: string): PromptIntent {
   const latestDimensions = inferDimensionsFromPrompt(latestLower, metrics);
   const allMentionedDimensions = inferDimensionsFromPrompt(lower, metrics);
   const dimensions =
-    scaleDecision?.dimensions ||
+    decisionIntent
+      ? uniqueDimensions([
+          ...decisionIntent.dimensions,
+          ...((latestDimensions || allMentionedDimensions || []).filter(
+            (dimension) => !decisionIntent.dimensions.includes(dimension),
+          )),
+        ])
+      :
     (hasFollowUp && shouldMergeFollowUpDimensions(latestLower, latestDimensions, allMentionedDimensions)
       ? mergeDimensionsForFollowUp(allMentionedDimensions || [], latestDimensions || [])
       : latestDimensions || allMentionedDimensions);
@@ -2421,8 +2825,8 @@ function inferPromptIntent(prompt: string): PromptIntent {
     metrics: intendedMetrics,
     requiredMetrics,
     filters: filters.length ? filters : undefined,
-    sort: summaryOnly ? undefined : scaleDecision?.sort || inferSortFromPrompt(promptForModeLower, firstDimension, intendedMetrics),
-    limit: scaleDecision?.limit || inferLimitFromPrompt(promptForModeLower, intendedDimensions),
+    sort: summaryOnly ? undefined : decisionIntent?.sort || inferSortFromPrompt(promptForModeLower, firstDimension, intendedMetrics),
+    limit: decisionIntent?.limit || inferLimitFromPrompt(promptForModeLower, intendedDimensions),
     tableOnly,
     tableTitle:
       tableOnly && isMonthlyUmbrella && wantsBudget
@@ -2617,9 +3021,11 @@ function inferDimensionsFromPrompt(
     );
   const wantsCampaign = /\bcampaigns?\b/.test(lower) && !wantsUmbrella;
   const wantsAdSet = /\bad sets?\b/.test(lower);
-  const wantsAd = /\bads?\b/.test(lower);
+  const knownCampaignGroupAdPhrase =
+    /\b(?:cash\s+for\s+gold|book\s+(?:appointments?|appts?))\s+ads?\b/.test(lower);
+  const wantsAd = /\bads?\b/.test(lower) && !knownCampaignGroupAdPhrase;
   const wantsCreative = /\b(?:ad\s+)?creatives?\b/.test(lower);
-  const wantsBrand = /\bbrands?\b/.test(lower);
+  const wantsBrand = /\bbrands?\b|\bhp\b|\bvvs\b/.test(lower);
   const dimensions: AnalysisDimension[] = [];
   const countMetrics = new Set((metrics || []).filter(isCountMetric));
   const addDimension = (dimension: AnalysisDimension) => {
@@ -2735,6 +3141,38 @@ function inferScaleDecisionIntent(lower: string):
     dimensions: [dimension],
     metrics: ["spend", "leads", "cpl", "primary_results", "ctr", "frequency"],
     sort: { field: "leads", direction: "desc" },
+    limit: 20,
+  };
+}
+
+function inferRecommendationDecisionIntent(lower: string):
+  | {
+      dimensions: AnalysisDimension[];
+      metrics: AnalysisMetric[];
+      sort: AnalysisSpec["sort"];
+      limit: number;
+    }
+  | undefined {
+  const asksForWaste =
+    /\b(wast(?:e|ed|ing)\s+money|wasteful|pause|turn\s+off|shut\s+off|fix\s+first)\b/.test(
+      lower,
+    );
+  if (!asksForWaste) return undefined;
+
+  const dimension = /\b(?:ad\s+)?creatives?\b/.test(lower)
+    ? "creative"
+    : /\bad\s+sets?\b/.test(lower)
+      ? "ad_set"
+      : /\bads?\b/.test(lower)
+        ? "ad"
+        : /\bcampaigns?\b/.test(lower)
+          ? "campaign"
+          : "campaign_umbrella";
+
+  return {
+    dimensions: [dimension],
+    metrics: ["spend", "primary_results", "cpl", "ctr", "frequency"],
+    sort: { field: "spend", direction: "desc" },
     limit: 20,
   };
 }
@@ -3063,6 +3501,10 @@ function inferDateRangeFromPrompt(prompt: string): AnalysisSpec["dateRange"] | u
     return { preset: "custom", start: `${new Date().getFullYear()}-01-01` };
   }
 
+  if (/\bthis\s+week\b|\bweek\s+to\s+date\b|\bwtd\b/.test(lower)) {
+    return { preset: "last_7_days" };
+  }
+
   return inferRelativeDateRange(lower, includeToday);
 }
 
@@ -3118,6 +3560,30 @@ function rollingDateRange(count: number, unit: string, includeToday = false): An
 
 function isRelativeDateRange(dateRange: AnalysisSpec["dateRange"]) {
   return Boolean(dateRange.days || (dateRange.preset && dateRange.preset !== "custom"));
+}
+
+function inferQuestionType(prompt: string): AnalysisQuestionType {
+  const lower = prompt.toLowerCase();
+  if (/\b(wast(?:e|ed|ing)\s+money|wasteful|what\s+should|which\s+.+\s+should|pause|scale|turn\s+off|fix\s+first)\b/.test(lower)) {
+    return "recommendation";
+  }
+  if (/\b(why|diagnos(?:e|is)|what\s+changed|drop(?:ped)?|declin(?:e|ed|ing)|improv(?:e|ed|ing))\b/.test(lower)) {
+    return "diagnosis";
+  }
+  if (/\b(compare|vs\.?|versus|against)\b/.test(lower)) {
+    return "comparison";
+  }
+  if (/\b(trend|over\s+time|by\s+day|daily|by\s+week|weekly|by\s+month|monthly|day\s+over\s+day|week\s+over\s+week|month\s+over\s+month)\b/.test(lower)) {
+    return "trend";
+  }
+  return "leaderboard";
+}
+
+function extractDatePhrase(prompt: string) {
+  const match = prompt.match(
+    /\b(last|past|previous|prior|recent|trailing|this|since|from|starting|between|month to date|week to date|year to date)[^.?!\n,;]*/i,
+  );
+  return match?.[0]?.trim() || null;
 }
 
 function numberWordValue(value: string) {
@@ -3231,6 +3697,15 @@ function parseJson(content: string | null | undefined) {
   }
 }
 
+function parseJsonPreservingNulls(content: string | null | undefined) {
+  if (!content) return null;
+  try {
+    return JSON.parse(content) as unknown;
+  } catch {
+    return null;
+  }
+}
+
 function stripNullValues(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripNullValues);
   if (!value || typeof value !== "object") return value;
@@ -3239,6 +3714,17 @@ function stripNullValues(value: unknown): unknown {
     Object.entries(value as Record<string, unknown>)
       .filter(([, entryValue]) => entryValue !== null)
       .map(([key, entryValue]) => [key, stripNullValues(entryValue)]),
+  );
+}
+
+function stripUndefinedValues(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripUndefinedValues);
+  if (!value || typeof value !== "object") return value;
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, entryValue]) => entryValue !== undefined)
+      .map(([key, entryValue]) => [key, stripUndefinedValues(entryValue)]),
   );
 }
 
@@ -3255,6 +3741,10 @@ function uniqueAllowed<T extends string>(values: T[], allowed: readonly T[], fal
   const allowedSet = new Set(allowed);
   const unique = Array.from(new Set(values.filter((value) => allowedSet.has(value))));
   return unique.length ? unique : fallback;
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
 }
 
 function differenceInCalendarDays(start: Date, end: Date) {

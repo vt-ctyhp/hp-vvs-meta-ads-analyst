@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  buildAnalysisPlanFromPlannerOutputForPrompt,
   buildAnalysisPlanForPrompt,
   normalizeAnalysisSpecForPrompt,
 } from "../src/lib/ad-hoc-analytics.ts";
@@ -162,6 +163,75 @@ describe("ad-hoc analytics prompt normalization", () => {
     ]);
     assert.deepEqual(plan.spec.sort, { field: "leads", direction: "desc" });
     assert.equal(plan.spec.limit, 20);
+  });
+
+  it("plans wasting-money prompts as governed recommendations", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "Which campaigns are wasting money?");
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.equal(plan.questionType, "recommendation");
+    assert.equal(plan.plannerIntent.questionType, "recommendation");
+    assert.deepEqual(plan.spec.dimensions, ["campaign"]);
+    assert.deepEqual(plan.spec.metrics, [
+      "spend",
+      "primary_results",
+      "cpl",
+      "ctr",
+      "frequency",
+    ]);
+    assert.notDeepEqual(plan.spec.metrics, ["spend"]);
+  });
+
+  it("plans trend prompts with metric, date grain, filter, and date intent", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Show bookings by day for book appointment ads this week",
+    );
+
+    assert.equal(plan.questionType, "trend");
+    assert.deepEqual(plan.spec.dateRange, { preset: "last_7_days" });
+    assert.deepEqual(plan.spec.metrics, ["bookings"]);
+    assert.deepEqual(plan.spec.dimensions, ["date"]);
+    assert.deepEqual(plan.spec.filters, [
+      { field: "campaign_umbrella", operator: "equals", value: "Book Appts US" },
+    ]);
+    assert.equal(plan.plannerIntent.dateIntent.phrase, "this week");
+  });
+
+  it("plans all first-wave governed question types", () => {
+    const cases = [
+      ["Show top 10 campaigns by spend", "leaderboard"],
+      ["Compare HP vs VVS by CPL", "comparison"],
+      ["Why did performance drop?", "diagnosis"],
+      ["What should I pause this week?", "recommendation"],
+    ] as const;
+
+    for (const [prompt, questionType] of cases) {
+      const plan = buildAnalysisPlanForPrompt({}, prompt);
+
+      assert.equal(plan.questionType, questionType, prompt);
+      assert.equal(plan.plannerIntent.questionType, questionType, prompt);
+    }
+  });
+
+  it("falls back to deterministic planning for malformed model planner output", () => {
+    const plan = buildAnalysisPlanFromPlannerOutputForPrompt(
+      {
+        questionType: "sql",
+        metrics: ["roas"],
+        dimensions: ["campaign"],
+        filters: [],
+        dateIntent: { dateRange: { preset: "last_30_days" } },
+        visualIntent: { widgets: ["table"] },
+      },
+      "Show top campaigns by CPL",
+    );
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.equal(plan.plannerIntent.dateIntent.source, "fallback");
+    assert.equal(plan.questionType, "leaderboard");
+    assert.deepEqual(plan.spec.metrics, ["cpl"]);
+    assert.deepEqual(plan.spec.dimensions, ["campaign"]);
   });
 
   it("normalizes unqualified results to primary results for weekly umbrella tables", () => {
@@ -500,6 +570,16 @@ describe("ad-hoc analytics prompt normalization", () => {
     assert.equal(plan.validationStatus, "unsupported");
     assert.ok(plan.unsupportedReasons.some((reason) => reason.includes("website_events")));
     assert.ok(plan.unsupportedReasons.some((reason) => reason.includes("landing-page conversion rate")));
+  });
+
+  it("marks unsupported mixed metric requests unsupported as a whole", () => {
+    const plan = buildAnalysisPlanForPrompt(
+      {},
+      "Which campaign has best ROAS and spend?",
+    );
+
+    assert.equal(plan.validationStatus, "unsupported");
+    assert.ok(plan.unsupportedReasons.some((reason) => reason.includes("ROAS")));
   });
 
   it("does not treat sales-team action wording as CRM revenue data", () => {
