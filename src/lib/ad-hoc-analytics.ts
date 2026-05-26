@@ -229,6 +229,74 @@ export type AnalysisComparisonFactPack = {
   groundingValues: string[];
 };
 
+export type AnalysisDiagnosisPeriodResult = {
+  label: string;
+  timeRange: { start: string; end: string; days: number };
+  rows: MetaInsightAggregateRow[];
+};
+
+export type AnalysisDiagnosisMetricDelta = {
+  metric: AnalysisMetric;
+  current: number | null;
+  baseline: number | null;
+  delta: number | null;
+  percentDelta: number | null;
+};
+
+export type AnalysisDiagnosisPeriodFact = {
+  id: "current" | "baseline";
+  label: string;
+  timeRange: { start: string; end: string; days: number };
+  filters: AnalysisFilter[];
+  metrics: Record<AnalysisMetric, number | null>;
+  sourceRows: number;
+  empty: boolean;
+};
+
+export type AnalysisDiagnosisDriverFact = {
+  label: string;
+  dimension: AnalysisDimension;
+  signal: "negative" | "positive" | "flat";
+  metricDeltas: Record<AnalysisMetric, AnalysisDiagnosisMetricDelta>;
+  concentration: number | null;
+  currentSourceRows: number;
+  baselineSourceRows: number;
+};
+
+export type AnalysisDiagnosisSourceNote = {
+  label: string;
+  timeRange: { start: string; end: string; days: number };
+  filters: AnalysisFilter[];
+  dimension: AnalysisDimension;
+  sourceRows: number;
+  dataSource: "meta_ads";
+  sourceTable: "meta_daily_insights";
+  sourceFunction: "aggregate_meta_daily_insights";
+};
+
+export type AnalysisDiagnosisFactPack = {
+  dimension: AnalysisDimension;
+  primaryMetric: AnalysisMetric;
+  efficiencyMetric: AnalysisMetric | null;
+  metrics: AnalysisMetric[];
+  current: AnalysisDiagnosisPeriodFact;
+  baseline: AnalysisDiagnosisPeriodFact;
+  totalDeltas: Record<AnalysisMetric, AnalysisDiagnosisMetricDelta>;
+  drivers: AnalysisDiagnosisDriverFact[];
+  topNegativeDriver: AnalysisDiagnosisDriverFact | null;
+  topPositiveDriver: AnalysisDiagnosisDriverFact | null;
+  coMovingMetrics: Array<{
+    metric: AnalysisMetric;
+    delta: number | null;
+    percentDelta: number | null;
+    direction: "up" | "down" | "flat";
+  }>;
+  sourceNotes: AnalysisDiagnosisSourceNote[];
+  assumptions: string[];
+  caveats: string[];
+  groundingValues: string[];
+};
+
 export type AnalysisPlannerIntent = {
   questionType: AnalysisQuestionType;
   title: string;
@@ -272,6 +340,7 @@ export type AnalysisAnalystDebug = {
   questionType?: AnalysisQuestionType;
   plannerIntent?: AnalysisPlannerIntent;
   comparison?: AnalysisComparisonFactPack | null;
+  diagnosis?: AnalysisDiagnosisFactPack | null;
   dataSource: "meta_ads";
   sourceTable: "meta_daily_insights";
   sourceFunction: "aggregate_meta_daily_insights" | null;
@@ -315,8 +384,15 @@ export type AnalysisResult = {
     latestSyncedInsightDate?: string | null;
     filters?: AnalysisFilter[];
     comparisonScopes?: AnalysisComparisonSourceNote[];
+    diagnosis?: {
+      baselineTimeRange: { start: string; end: string; days: number };
+      sourceNotes: AnalysisDiagnosisSourceNote[];
+      assumptions: string[];
+      caveats: string[];
+    };
   };
   comparison?: AnalysisComparisonFactPack | null;
+  diagnosis?: AnalysisDiagnosisFactPack | null;
   analystDebug: AnalysisAnalystDebug;
   warnings: string[];
   unsupportedReasons: string[];
@@ -883,7 +959,9 @@ export async function runSavedAdHocAnalysis(
     }),
     answer: aggregated.comparison
       ? buildComparisonAnswer(aggregated.comparison)
-      : repairedSpec
+      : aggregated.diagnosis
+        ? buildDiagnosisAnswer(aggregated.diagnosis)
+        : repairedSpec
         ? "Loaded saved dashboard spec, repaired it from the original prompt, and refreshed the data directly from Supabase."
         : "Loaded saved dashboard spec and refreshed the data directly from Supabase.",
   };
@@ -1004,7 +1082,7 @@ export async function createAdHocAnalysis(input: {
   const aggregated = await aggregateSpec(resolvedSpec, validation, false, plannerIntent);
 
   const analysis =
-    input.mode === "deep" && !aggregated.comparison
+    input.mode === "deep" && !aggregated.comparison && !aggregated.diagnosis
       ? await generateDeepAnalysis(prompt, resolvedSpec, aggregated, getOpenAIAnalysisModel("deep"))
       : null;
 
@@ -1035,7 +1113,9 @@ export async function createAdHocAnalysis(input: {
     ...resultBeforeSave,
     answer: aggregated.comparison
       ? buildComparisonAnswer(aggregated.comparison)
-      : analysis?.answer || buildDeterministicAnswer(resolvedSpec, aggregated),
+      : aggregated.diagnosis
+        ? buildDiagnosisAnswer(aggregated.diagnosis)
+        : analysis?.answer || buildDeterministicAnswer(resolvedSpec, aggregated),
   };
 
   const persistence = await persistAnalysis(result, usedPlanModel, analysis?.model || null);
@@ -1117,7 +1197,7 @@ export async function editAdHocAnalysis(input: {
   const aggregated = await aggregateSpec(resolvedSpec, validation, false, plannerIntent);
 
   const analysis =
-    input.mode === "deep" && !aggregated.comparison
+    input.mode === "deep" && !aggregated.comparison && !aggregated.diagnosis
       ? await generateDeepAnalysis(prompt, resolvedSpec, aggregated, getOpenAIAnalysisModel("deep"))
       : null;
 
@@ -1148,7 +1228,9 @@ export async function editAdHocAnalysis(input: {
     ...resultBeforeSave,
     answer: aggregated.comparison
       ? buildComparisonAnswer(aggregated.comparison)
-      : analysis?.answer || buildDeterministicAnswer(resolvedSpec, aggregated),
+      : aggregated.diagnosis
+        ? buildDiagnosisAnswer(aggregated.diagnosis)
+        : analysis?.answer || buildDeterministicAnswer(resolvedSpec, aggregated),
   };
 
   const persistence = await persistAnalysis(result, planModel, analysis?.model || null, dashboard?.id || null);
@@ -1499,6 +1581,13 @@ async function aggregateSpec(
         latestSyncedInsightDate,
       })
     : null;
+  const diagnosis = plannerIntent?.questionType === "diagnosis"
+    ? await aggregateDiagnosis({
+        spec,
+        currentRange: range,
+        assumptions: validation.assumptions,
+      })
+    : null;
 
   const sourceTransparency = {
     timeRange: range,
@@ -1515,6 +1604,16 @@ async function aggregateSpec(
     latestSyncedInsightDate,
     filters: spec.filters,
     ...(comparison ? { comparisonScopes: comparison.sourceNotes } : {}),
+    ...(diagnosis
+      ? {
+          diagnosis: {
+            baselineTimeRange: diagnosis.baseline.timeRange,
+            sourceNotes: diagnosis.sourceNotes,
+            assumptions: diagnosis.assumptions,
+            caveats: diagnosis.caveats,
+          },
+        }
+      : {}),
   };
   const analystDebug = buildAnalystDebug({
     validation,
@@ -1526,6 +1625,7 @@ async function aggregateSpec(
     repairedSpec,
     warnings,
     comparison,
+    diagnosis,
   });
 
   return {
@@ -1538,6 +1638,7 @@ async function aggregateSpec(
     sourceTransparency,
     analystDebug,
     comparison,
+    diagnosis,
   };
 }
 
@@ -1674,6 +1775,476 @@ export function validateComparisonNumericGrounding(
 ) {
   const allowed = new Set(factPack.groundingValues.map(normalizeGroundingNumber).filter(Boolean));
   return extractNumericClaims(answer).every((claim) => allowed.has(claim));
+}
+
+async function aggregateDiagnosis(input: {
+  spec: AnalysisSpec;
+  currentRange: { start: string; end: string; days: number };
+  assumptions: string[];
+}) {
+  const dimension = diagnosisDimension(input.spec.dimensions);
+  const baselineRange = previousComparableRange(input.currentRange);
+  const [currentRows, baselineRows] = await Promise.all([
+    aggregateMetaInsights({
+      start: input.currentRange.start,
+      end: input.currentRange.end,
+      dimensions: [dimension],
+      filters: input.spec.filters,
+      sortField: dimension,
+      sortDirection: "asc",
+      limit: 10000,
+    }),
+    aggregateMetaInsights({
+      start: baselineRange.start,
+      end: baselineRange.end,
+      dimensions: [dimension],
+      filters: input.spec.filters,
+      sortField: dimension,
+      sortDirection: "asc",
+      limit: 10000,
+    }),
+  ]);
+
+  return buildDiagnosisFactPack({
+    metrics: input.spec.metrics,
+    dimension,
+    filters: input.spec.filters,
+    assumptions: input.assumptions,
+    current: {
+      label: "Current period",
+      timeRange: input.currentRange,
+      rows: currentRows,
+    },
+    baseline: {
+      label: "Baseline period",
+      timeRange: baselineRange,
+      rows: baselineRows,
+    },
+  });
+}
+
+export function buildDiagnosisFactPack(input: {
+  metrics: AnalysisMetric[];
+  dimension: AnalysisDimension;
+  filters?: AnalysisFilter[];
+  assumptions?: string[];
+  current: AnalysisDiagnosisPeriodResult;
+  baseline: AnalysisDiagnosisPeriodResult;
+}): AnalysisDiagnosisFactPack {
+  const metrics = diagnosisMetricBundle(input.metrics);
+  const primaryMetric = diagnosisPrimaryMetric(metrics);
+  const efficiencyMetric = metrics.find(isCostMetric) || null;
+  const filters = input.filters || [];
+  const current = diagnosisPeriodFact("current", input.current, filters, metrics);
+  const baseline = diagnosisPeriodFact("baseline", input.baseline, filters, metrics);
+  const totalDeltas = diagnosisMetricDeltas(current.metrics, baseline.metrics, metrics);
+  const drivers = diagnosisDrivers({
+    dimension: input.dimension,
+    metrics,
+    primaryMetric,
+    currentRows: input.current.rows,
+    baselineRows: input.baseline.rows,
+  });
+  const topNegativeDriver = [...drivers]
+    .filter((driver) => driver.signal === "negative")
+    .sort((a, b) => diagnosisDriverScore(a, primaryMetric) - diagnosisDriverScore(b, primaryMetric))[0] || null;
+  const topPositiveDriver = [...drivers]
+    .filter((driver) => driver.signal === "positive")
+    .sort((a, b) => diagnosisDriverScore(b, primaryMetric) - diagnosisDriverScore(a, primaryMetric))[0] || null;
+  const coMovingMetrics = metrics
+    .filter((metric) => metric !== primaryMetric)
+    .map((metric) => {
+      const delta = totalDeltas[metric]?.delta ?? null;
+      return {
+        metric,
+        delta,
+        percentDelta: totalDeltas[metric]?.percentDelta ?? null,
+        direction: delta === null || delta === 0 ? "flat" as const : delta > 0 ? "up" as const : "down" as const,
+      };
+    });
+  const sourceNotes = [
+    diagnosisSourceNote(current, input.dimension),
+    diagnosisSourceNote(baseline, input.dimension),
+  ];
+  const caveats = diagnosisCaveats({
+    current,
+    baseline,
+    metrics,
+    filters,
+    rows: [...input.current.rows, ...input.baseline.rows],
+  });
+  const groundingValues = diagnosisGroundingValues({
+    current,
+    baseline,
+    totalDeltas,
+    drivers,
+    coMovingMetrics,
+  });
+
+  return {
+    dimension: input.dimension,
+    primaryMetric,
+    efficiencyMetric,
+    metrics,
+    current,
+    baseline,
+    totalDeltas,
+    drivers,
+    topNegativeDriver,
+    topPositiveDriver,
+    coMovingMetrics,
+    sourceNotes,
+    assumptions: uniqueStrings(input.assumptions || []),
+    caveats,
+    groundingValues,
+  };
+}
+
+export function buildDiagnosisAnswer(factPack: AnalysisDiagnosisFactPack) {
+  const primaryDelta = factPack.totalDeltas[factPack.primaryMetric];
+  const primaryScore = diagnosisPerformanceScore(primaryDelta?.delta ?? null, factPack.primaryMetric);
+  const movement = primaryDelta
+    ? `${labelFor(factPack.primaryMetric)} moved from ${formatMetricForAnswer(
+        primaryDelta.baseline,
+        factPack.primaryMetric,
+      )} to ${formatMetricForAnswer(primaryDelta.current, factPack.primaryMetric)} (${formatDelta(
+        primaryDelta.delta,
+        factPack.primaryMetric,
+      )}, ${formatPercentDelta(primaryDelta.percentDelta)}).`
+    : `${labelFor(factPack.primaryMetric)} movement was unavailable.`;
+  const mainDriver = primaryScore > 0 ? factPack.topPositiveDriver : primaryScore < 0 ? factPack.topNegativeDriver : null;
+  const mainSignal = mainDriver
+    ? `${primaryScore > 0 ? "Top likely improvement signal" : "Top likely driver signal"}: ${mainDriver.label} with ${formatDriverMetricDelta(
+        mainDriver,
+        factPack.primaryMetric,
+      )}${formatDriverSupportingMetrics(mainDriver, factPack)}${formatDriverConcentration(mainDriver, factPack.primaryMetric)}.`
+    : primaryScore === 0
+      ? "Top likely driver signal: none; primary metric was flat."
+      : primaryScore > 0
+        ? "Top likely improvement signal: none; no positive mover stood out."
+        : "Top likely driver signal: none; no negative mover stood out.";
+  const offsetDriver = primaryScore > 0 ? factPack.topNegativeDriver : primaryScore < 0 ? factPack.topPositiveDriver : null;
+  const offsetSignal = offsetDriver
+    ? `${primaryScore > 0 ? "Offsetting negative signal" : "Offsetting positive signal"}: ${offsetDriver.label} with ${formatDriverMetricDelta(
+        offsetDriver,
+        factPack.primaryMetric,
+      )}.`
+    : "";
+  const coMoving = factPack.coMovingMetrics.length
+    ? `Co-moving signals: ${factPack.coMovingMetrics
+        .map((metric) => `${labelFor(metric.metric)} ${formatDelta(metric.delta, metric.metric)} (${formatPercentDelta(metric.percentDelta)})`)
+        .join("; ")}.`
+    : "";
+  const sourceNotes = factPack.sourceNotes
+    .map((note) =>
+      `${note.label}: ${note.timeRange.start} to ${note.timeRange.end}, filters ${formatFiltersForAnswer(
+        note.filters,
+      )}, grouping ${labelFor(note.dimension)}, source rows ${formatNumber(note.sourceRows)}`,
+    )
+    .join("; ");
+  const assumptions = factPack.assumptions.length ? ` Assumptions: ${factPack.assumptions.join(" ")}` : "";
+  const caveats = factPack.caveats.length ? ` Caveats: ${factPack.caveats.join(" ")}` : "";
+
+  return [
+    "Diagnosis uses directional signals, not proven causes.",
+    movement,
+    mainSignal,
+    offsetSignal,
+    coMoving,
+    `Baseline period: ${factPack.baseline.timeRange.start} to ${factPack.baseline.timeRange.end}.`,
+    `Source notes: ${sourceNotes}.`,
+    `${assumptions}${caveats}`,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+}
+
+export function validateDiagnosisNumericGrounding(
+  answer: string,
+  factPack: AnalysisDiagnosisFactPack,
+) {
+  const allowed = new Set(factPack.groundingValues.map(normalizeGroundingNumber).filter(Boolean));
+  return extractNumericClaims(answer).every((claim) => allowed.has(claim));
+}
+
+function diagnosisDimension(dimensions: AnalysisDimension[]): AnalysisDimension {
+  return dimensions.find((dimension) => !isTimeDimension(dimension)) || "campaign_umbrella";
+}
+
+function previousComparableRange(range: { start: string; end: string; days: number }) {
+  const baselineEnd = subDays(parseISO(range.start), 1);
+  const baselineStart = subDays(parseISO(range.start), range.days);
+  return {
+    start: format(baselineStart, "yyyy-MM-dd"),
+    end: format(baselineEnd, "yyyy-MM-dd"),
+    days: range.days,
+  };
+}
+
+function diagnosisMetricBundle(metrics: AnalysisMetric[]) {
+  const base = uniqueAllowed(metrics, ANALYSIS_METRICS, ["primary_results", "spend", "cpl"]);
+  const efficiencyMetric = base.find(isCostMetric) || "cpl";
+  return includeRequiredMetrics(base, ["primary_results", "spend", efficiencyMetric], 8);
+}
+
+function diagnosisPrimaryMetric(metrics: AnalysisMetric[]) {
+  const preferred: AnalysisMetric[] = [
+    "primary_results",
+    "leads",
+    "bookings",
+    "conversions",
+    "website_bookings",
+    "messaging_contacts",
+    "new_messaging_contacts",
+  ];
+  return preferred.find((metric) => metrics.includes(metric)) ||
+    metrics.find((metric) => metric !== "spend") ||
+    metrics[0] ||
+    "primary_results";
+}
+
+function diagnosisPeriodFact(
+  id: AnalysisDiagnosisPeriodFact["id"],
+  period: AnalysisDiagnosisPeriodResult,
+  filters: AnalysisFilter[],
+  metrics: AnalysisMetric[],
+): AnalysisDiagnosisPeriodFact {
+  const totalRow = sumAggregateRows(period.rows)[0];
+  const totals = aggregateMetrics(totalRow);
+  const sourceRows = totalRow?.source_rows || 0;
+
+  return {
+    id,
+    label: period.label,
+    timeRange: period.timeRange,
+    filters,
+    metrics: {
+      ...aggregateMetrics(undefined),
+      ...Object.fromEntries(metrics.map((metric) => [metric, totals[metric]])),
+    },
+    sourceRows,
+    empty: sourceRows === 0,
+  };
+}
+
+function diagnosisMetricDeltas(
+  current: Record<AnalysisMetric, number | null>,
+  baseline: Record<AnalysisMetric, number | null>,
+  metrics: AnalysisMetric[],
+): Record<AnalysisMetric, AnalysisDiagnosisMetricDelta> {
+  return Object.fromEntries(
+    ANALYSIS_METRICS.map((metric) => [
+      metric,
+      metrics.includes(metric)
+        ? diagnosisMetricDelta(metric, current[metric], baseline[metric])
+        : diagnosisMetricDelta(metric, null, null),
+    ]),
+  ) as Record<AnalysisMetric, AnalysisDiagnosisMetricDelta>;
+}
+
+function diagnosisMetricDelta(
+  metric: AnalysisMetric,
+  current: number | null,
+  baseline: number | null,
+): AnalysisDiagnosisMetricDelta {
+  const hasComparableValues = typeof current === "number" && typeof baseline === "number";
+  const delta = hasComparableValues ? round(current - baseline) : null;
+  const percentDelta = hasComparableValues && baseline !== 0
+    ? round(((current - baseline) / Math.abs(baseline)) * 100, 1)
+    : null;
+
+  return {
+    metric,
+    current,
+    baseline,
+    delta,
+    percentDelta,
+  };
+}
+
+function diagnosisDrivers(input: {
+  dimension: AnalysisDimension;
+  metrics: AnalysisMetric[];
+  primaryMetric: AnalysisMetric;
+  currentRows: MetaInsightAggregateRow[];
+  baselineRows: MetaInsightAggregateRow[];
+}) {
+  const currentByLabel = diagnosisRowsByLabel(input.currentRows, input.dimension);
+  const baselineByLabel = diagnosisRowsByLabel(input.baselineRows, input.dimension);
+  const labels = Array.from(new Set([...currentByLabel.keys(), ...baselineByLabel.keys()])).sort((a, b) =>
+    a.localeCompare(b, undefined, { numeric: true }),
+  );
+  const drivers = labels.map((label) => {
+    const currentTotalRow = sumAggregateRows(currentByLabel.get(label) || [])[0];
+    const baselineTotalRow = sumAggregateRows(baselineByLabel.get(label) || [])[0];
+    const currentMetrics = aggregateMetrics(currentTotalRow);
+    const baselineMetrics = aggregateMetrics(baselineTotalRow);
+    const metricDeltas = diagnosisMetricDeltas(currentMetrics, baselineMetrics, input.metrics);
+    const score = diagnosisPerformanceScore(metricDeltas[input.primaryMetric]?.delta ?? null, input.primaryMetric);
+
+    return {
+      label,
+      dimension: input.dimension,
+      signal: score < 0 ? "negative" as const : score > 0 ? "positive" as const : "flat" as const,
+      metricDeltas,
+      concentration: null,
+      currentSourceRows: currentTotalRow?.source_rows || 0,
+      baselineSourceRows: baselineTotalRow?.source_rows || 0,
+    };
+  });
+  const negativeMagnitude = drivers.reduce((sum, driver) => {
+    const score = diagnosisDriverScore(driver, input.primaryMetric);
+    return score < 0 ? sum + Math.abs(score) : sum;
+  }, 0);
+
+  return drivers.map((driver) => {
+    const score = diagnosisDriverScore(driver, input.primaryMetric);
+    return {
+      ...driver,
+      concentration: score < 0 && negativeMagnitude > 0 ? round((Math.abs(score) / negativeMagnitude) * 100, 1) : null,
+    };
+  });
+}
+
+function diagnosisRowsByLabel(rows: MetaInsightAggregateRow[], dimension: AnalysisDimension) {
+  const byLabel = new Map<string, MetaInsightAggregateRow[]>();
+  rows.forEach((row) => {
+    const label = String(aggregateDimensionValue(row, dimension) || "Unknown");
+    byLabel.set(label, [...(byLabel.get(label) || []), row]);
+  });
+  return byLabel;
+}
+
+function diagnosisPerformanceScore(delta: number | null, metric: AnalysisMetric) {
+  if (delta === null) return 0;
+  return lowerIsBetterMetric(metric) ? -delta : delta;
+}
+
+function diagnosisDriverScore(driver: AnalysisDiagnosisDriverFact, primaryMetric: AnalysisMetric) {
+  return diagnosisPerformanceScore(driver.metricDeltas[primaryMetric]?.delta ?? null, primaryMetric);
+}
+
+function diagnosisSourceNote(
+  period: AnalysisDiagnosisPeriodFact,
+  dimension: AnalysisDimension,
+): AnalysisDiagnosisSourceNote {
+  return {
+    label: period.label,
+    timeRange: period.timeRange,
+    filters: period.filters,
+    dimension,
+    sourceRows: period.sourceRows,
+    dataSource: "meta_ads",
+    sourceTable: "meta_daily_insights",
+    sourceFunction: "aggregate_meta_daily_insights",
+  };
+}
+
+function diagnosisCaveats(input: {
+  current: AnalysisDiagnosisPeriodFact;
+  baseline: AnalysisDiagnosisPeriodFact;
+  metrics: AnalysisMetric[];
+  filters: AnalysisFilter[];
+  rows: MetaInsightAggregateRow[];
+}) {
+  const caveats: string[] = [];
+  if (input.current.empty) {
+    caveats.push("Current period had no matching rows, so movement cannot be diagnosed from current data.");
+  }
+  if (input.baseline.empty) {
+    caveats.push("Baseline period had no matching rows, so percent deltas may be unavailable.");
+  }
+  if (input.current.timeRange.days !== input.baseline.timeRange.days) {
+    caveats.push("Current and baseline periods use different day counts; interpret movement as directional.");
+  }
+  const campaignUmbrellas = new Set(
+    input.rows
+      .map((row) => row.campaign_umbrella)
+      .filter((value): value is string => typeof value === "string" && Boolean(value.trim())),
+  );
+  const hasCampaignUmbrellaFilter = input.filters.some((filter) => filter.field === "campaign_umbrella");
+  if (input.metrics.includes("primary_results") && (!hasCampaignUmbrellaFilter || campaignUmbrellas.size > 1)) {
+    caveats.push(
+      "Primary results may blend campaign groups with different primary KPI definitions; treat driver signals as directional.",
+    );
+  }
+  return caveats;
+}
+
+function diagnosisGroundingValues(input: {
+  current: AnalysisDiagnosisPeriodFact;
+  baseline: AnalysisDiagnosisPeriodFact;
+  totalDeltas: Record<AnalysisMetric, AnalysisDiagnosisMetricDelta>;
+  drivers: AnalysisDiagnosisDriverFact[];
+  coMovingMetrics: Array<{
+    metric: AnalysisMetric;
+    delta: number | null;
+    percentDelta: number | null;
+    direction: "up" | "down" | "flat";
+  }>;
+}) {
+  const values: string[] = [];
+  const add = (value: number | null | string | undefined) => {
+    if (value === null || value === undefined) return;
+    values.push(String(value));
+  };
+  const addMetric = (value: number | null, metric: AnalysisMetric) => {
+    add(value);
+    if (typeof value === "number") add(formatMetricForAnswer(value, metric));
+  };
+  const addDelta = (delta: AnalysisDiagnosisMetricDelta) => {
+    addMetric(delta.current, delta.metric);
+    addMetric(delta.baseline, delta.metric);
+    add(delta.delta);
+    add(delta.percentDelta);
+    if (typeof delta.delta === "number") add(formatDelta(delta.delta, delta.metric));
+    if (typeof delta.percentDelta === "number") add(formatPercentDelta(delta.percentDelta));
+  };
+
+  [input.current, input.baseline].forEach((period) => {
+    add(period.sourceRows);
+    add(period.timeRange.days);
+    Object.entries(period.metrics).forEach(([metric, value]) => addMetric(value, metric as AnalysisMetric));
+  });
+  Object.values(input.totalDeltas).forEach(addDelta);
+  input.drivers.forEach((driver) => {
+    add(driver.currentSourceRows);
+    add(driver.baselineSourceRows);
+    add(driver.concentration);
+    if (typeof driver.concentration === "number") add(`${driver.concentration.toFixed(1)}%`);
+    Object.values(driver.metricDeltas).forEach(addDelta);
+  });
+  input.coMovingMetrics.forEach((metric) => {
+    add(metric.delta);
+    add(metric.percentDelta);
+    if (typeof metric.delta === "number") add(formatDelta(metric.delta, metric.metric));
+    if (typeof metric.percentDelta === "number") add(formatPercentDelta(metric.percentDelta));
+  });
+
+  return uniqueStrings(values);
+}
+
+function formatDriverMetricDelta(driver: AnalysisDiagnosisDriverFact, metric: AnalysisMetric) {
+  const delta = driver.metricDeltas[metric];
+  return `${labelFor(metric)} ${formatDelta(delta?.delta ?? null, metric)} (${formatPercentDelta(
+    delta?.percentDelta ?? null,
+  )})`;
+}
+
+function formatDriverSupportingMetrics(
+  driver: AnalysisDiagnosisDriverFact,
+  factPack: AnalysisDiagnosisFactPack,
+) {
+  const supporting = factPack.metrics
+    .filter((metric) => metric !== factPack.primaryMetric)
+    .map((metric) => formatDriverMetricDelta(driver, metric));
+  return supporting.length ? `; ${supporting.join(", ")}` : "";
+}
+
+function formatDriverConcentration(driver: AnalysisDiagnosisDriverFact, primaryMetric: AnalysisMetric) {
+  if (driver.concentration === null) return "";
+  return `; ${driver.concentration.toFixed(1)}% of negative ${labelFor(primaryMetric)} movement`;
 }
 
 function comparisonPrimaryMetric(metrics: AnalysisMetric[]) {
@@ -1831,10 +2402,12 @@ function buildAnalystDebug(input: {
   repairedSpec: boolean;
   warnings?: string[];
   comparison?: AnalysisComparisonFactPack | null;
+  diagnosis?: AnalysisDiagnosisFactPack | null;
 }): AnalysisAnalystDebug {
   return {
     validationStatus: input.validation.status,
     comparison: input.comparison || null,
+    diagnosis: input.diagnosis || null,
     dataSource: "meta_ads",
     sourceTable: "meta_daily_insights",
     sourceFunction: input.sourceFunction,
@@ -2929,6 +3502,7 @@ function baseResult(input: {
     widgets: resolvedSpec.widgets,
     sourceTransparency: input.aggregated.sourceTransparency,
     comparison: input.aggregated.comparison,
+    diagnosis: input.aggregated.diagnosis,
     analystDebug: {
       ...input.aggregated.analystDebug,
       questionType: input.plannerIntent.questionType,
@@ -3007,6 +3581,7 @@ function nonExecutableResult(input: {
     widgets: [],
     sourceTransparency,
     comparison: null,
+    diagnosis: null,
     analystDebug: {
       ...analystDebug,
       questionType: input.plannerIntent.questionType,
@@ -3096,6 +3671,7 @@ async function persistAnalysis(
           totals: result.totals,
           firstRows: result.table.rows.slice(0, 3),
           comparison: result.comparison,
+          diagnosis: result.diagnosis,
         },
       } as unknown as Json,
     }));
@@ -3196,7 +3772,9 @@ function inferPromptIntent(prompt: string): PromptIntent {
   const scaleDecision = inferScaleDecisionIntent(promptForModeLower) || inferScaleDecisionIntent(lower);
   const recommendationDecision =
     inferRecommendationDecisionIntent(promptForModeLower) || inferRecommendationDecisionIntent(lower);
-  const decisionIntent = scaleDecision || recommendationDecision;
+  const diagnosisDecision =
+    inferDiagnosisIntent(promptForModeLower) || inferDiagnosisIntent(lower);
+  const decisionIntent = scaleDecision || recommendationDecision || diagnosisDecision;
   const latestMetrics = inferMetricsFromPrompt(latestLower);
   const allMentionedMetrics = inferMetricsFromPrompt(lower);
   const additiveFollowUp = hasFollowUp && latestMetrics && shouldAddFollowUpMetrics(latestLower);
@@ -3762,6 +4340,39 @@ function inferRecommendationDecisionIntent(lower: string):
     dimensions: [dimension],
     metrics: ["spend", "primary_results", "cpl", "ctr", "frequency"],
     sort: { field: "spend", direction: "desc" },
+    limit: 20,
+  };
+}
+
+function inferDiagnosisIntent(lower: string):
+  | {
+      dimensions: AnalysisDimension[];
+      metrics: AnalysisMetric[];
+      sort: AnalysisSpec["sort"];
+      limit: number;
+    }
+  | undefined {
+  if (!/\b(why|diagnos(?:e|is)|what\s+changed|drop(?:ped)?|declin(?:e|ed|ing)|improv(?:e|ed|ing))\b/.test(lower)) {
+    return undefined;
+  }
+
+  const dimension = /\b(?:ad\s+)?creatives?\b/.test(lower)
+    ? "creative"
+    : /\bad\s+sets?\b/.test(lower)
+      ? "ad_set"
+      : /\bads?\b/.test(lower)
+        ? "ad"
+        : /\bcampaigns?\b/.test(lower)
+          ? "campaign"
+          : /\bbrands?\b|\bhp\b|\bvvs\b/.test(lower)
+            ? "brand"
+            : "campaign_umbrella";
+  const wantsImprovement = /\b(improv(?:e|ed|ing)|better|grew|growth|increase(?:d|s)?)\b/.test(lower);
+
+  return {
+    dimensions: [dimension],
+    metrics: ["primary_results", "spend", "cpl"],
+    sort: { field: "primary_results", direction: wantsImprovement ? "desc" : "asc" },
     limit: 20,
   };
 }

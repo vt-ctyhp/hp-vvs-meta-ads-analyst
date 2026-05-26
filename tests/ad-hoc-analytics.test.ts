@@ -4,11 +4,14 @@ import { describe, it } from "node:test";
 import {
   buildComparisonAnswer,
   buildComparisonFactPack,
+  buildDiagnosisAnswer,
+  buildDiagnosisFactPack,
   buildAnalysisPlanFromPlannerOutputForPrompt,
   buildAnalysisPlanForPrompt,
   normalizeAnalysisSpecForPrompt,
   resolveAnalysisDateRangeForPrompt,
   validateComparisonNumericGrounding,
+  validateDiagnosisNumericGrounding,
 } from "../src/lib/ad-hoc-analytics.ts";
 
 describe("ad-hoc analytics prompt normalization", () => {
@@ -294,6 +297,21 @@ describe("ad-hoc analytics prompt normalization", () => {
     }
   });
 
+  it("plans diagnosis prompts with governed entity grain and performance bundle", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "Why did performance drop?");
+
+    assert.equal(plan.validationStatus, "ready");
+    assert.equal(plan.questionType, "diagnosis");
+    assert.deepEqual(plan.spec.dimensions, ["campaign_umbrella"]);
+    assert.deepEqual(plan.spec.metrics, ["primary_results", "spend", "cpl"]);
+    assert.deepEqual(plan.spec.sort, { field: "primary_results", direction: "asc" });
+
+    const weeklyPlan = buildAnalysisPlanForPrompt({}, "What changed this week?");
+    assert.equal(weeklyPlan.questionType, "diagnosis");
+    assert.deepEqual(weeklyPlan.spec.dateRange, { preset: "week_to_date" });
+    assert.deepEqual(weeklyPlan.spec.dimensions, ["campaign_umbrella"]);
+  });
+
   it("plans brand comparisons as explicit labeled scopes with required side-by-side facts", () => {
     const plan = buildAnalysisPlanForPrompt({}, "Compare HP vs VVS by CPL");
 
@@ -464,6 +482,167 @@ describe("ad-hoc analytics prompt normalization", () => {
     assert.ok(factPack.caveats.some((caveat) => caveat.includes("different day counts")));
     assert.equal(factPack.deltas.find((delta) => delta.metric === "spend")?.percentDelta, null);
     assert.equal(validateComparisonNumericGrounding(buildComparisonAnswer(factPack), factPack), true);
+  });
+
+  it("builds diagnosis facts for performance drops with likely driver language and grounding", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "Why did performance drop?");
+    const factPack = buildDiagnosisFactPack({
+      metrics: plan.spec.metrics,
+      dimension: plan.spec.dimensions[0],
+      filters: plan.spec.filters,
+      assumptions: plan.assumptions,
+      current: {
+        label: "Current period",
+        timeRange: { start: "2026-04-26", end: "2026-05-25", days: 30 },
+        rows: [
+          aggregateRow({
+            campaign_umbrella: "Book Appts US",
+            spend: 900,
+            leads: 30,
+            primary_results: 30,
+            cpl: 30,
+            source_rows: 6,
+          }),
+          aggregateRow({
+            campaign_umbrella: "Cash for Gold US",
+            spend: 500,
+            leads: 25,
+            primary_results: 25,
+            cpl: 20,
+            source_rows: 4,
+          }),
+        ],
+      },
+      baseline: {
+        label: "Baseline period",
+        timeRange: { start: "2026-03-27", end: "2026-04-25", days: 30 },
+        rows: [
+          aggregateRow({
+            campaign_umbrella: "Book Appts US",
+            spend: 800,
+            leads: 50,
+            primary_results: 50,
+            cpl: 16,
+            source_rows: 5,
+          }),
+          aggregateRow({
+            campaign_umbrella: "Cash for Gold US",
+            spend: 450,
+            leads: 20,
+            primary_results: 20,
+            cpl: 22.5,
+            source_rows: 3,
+          }),
+        ],
+      },
+    });
+
+    assert.equal(factPack.primaryMetric, "primary_results");
+    assert.equal(factPack.baseline.timeRange.start, "2026-03-27");
+    assert.equal(factPack.topNegativeDriver?.label, "Book Appts US");
+    assert.equal(factPack.topNegativeDriver?.metricDeltas.primary_results.delta, -20);
+    assert.equal(factPack.topPositiveDriver?.label, "Cash for Gold US");
+    assert.ok(factPack.coMovingMetrics.some((metric) => metric.metric === "spend" && metric.direction === "up"));
+    assert.ok(factPack.caveats.some((caveat) => caveat.includes("different primary KPI definitions")));
+
+    const answer = buildDiagnosisAnswer(factPack);
+    assert.match(answer, /likely driver|signal/i);
+    assert.doesNotMatch(answer, /\bcaused\b/i);
+    assert.match(answer, /Baseline period: 2026-03-27 to 2026-04-25/);
+    assert.match(answer, /Source notes:/);
+    assert.match(answer, /Assumptions:/);
+    assert.match(answer, /source rows 10/);
+    assert.equal(validateDiagnosisNumericGrounding(answer, factPack), true);
+    assert.equal(validateDiagnosisNumericGrounding(`${answer} Uncited 999.`, factPack), false);
+  });
+
+  it("builds diagnosis facts for improvements with positive driver signals", () => {
+    const plan = buildAnalysisPlanForPrompt({}, "Why did HP improve?");
+    const factPack = buildDiagnosisFactPack({
+      metrics: plan.spec.metrics,
+      dimension: plan.spec.dimensions[0],
+      filters: plan.spec.filters,
+      current: {
+        label: "Current period",
+        timeRange: { start: "2026-04-26", end: "2026-05-25", days: 30 },
+        rows: [
+          aggregateRow({ brand: "HP", spend: 1200, leads: 80, primary_results: 80, cpl: 15, source_rows: 8 }),
+          aggregateRow({ brand: "VVS", spend: 700, leads: 20, primary_results: 20, cpl: 35, source_rows: 4 }),
+        ],
+      },
+      baseline: {
+        label: "Baseline period",
+        timeRange: { start: "2026-03-27", end: "2026-04-25", days: 30 },
+        rows: [
+          aggregateRow({ brand: "HP", spend: 1000, leads: 50, primary_results: 50, cpl: 20, source_rows: 7 }),
+          aggregateRow({ brand: "VVS", spend: 700, leads: 20, primary_results: 20, cpl: 35, source_rows: 4 }),
+        ],
+      },
+    });
+
+    assert.equal(plan.spec.dimensions[0], "brand");
+    assert.equal(factPack.topPositiveDriver?.label, "HP");
+    assert.equal(factPack.topPositiveDriver?.metricDeltas.primary_results.delta, 30);
+
+    const answer = buildDiagnosisAnswer(factPack);
+    assert.match(answer, /Top likely improvement signal: HP/);
+    assert.equal(validateDiagnosisNumericGrounding(answer, factPack), true);
+  });
+
+  it("builds diagnosis facts for no-change periods without inventing drivers", () => {
+    const factPack = buildDiagnosisFactPack({
+      metrics: ["primary_results", "spend", "cpl"],
+      dimension: "campaign_umbrella",
+      current: {
+        label: "Current period",
+        timeRange: { start: "2026-04-26", end: "2026-05-25", days: 30 },
+        rows: [
+          aggregateRow({ campaign_umbrella: "Book Appts US", spend: 500, leads: 25, primary_results: 25, cpl: 20, source_rows: 5 }),
+        ],
+      },
+      baseline: {
+        label: "Baseline period",
+        timeRange: { start: "2026-03-27", end: "2026-04-25", days: 30 },
+        rows: [
+          aggregateRow({ campaign_umbrella: "Book Appts US", spend: 500, leads: 25, primary_results: 25, cpl: 20, source_rows: 5 }),
+        ],
+      },
+    });
+
+    assert.equal(factPack.totalDeltas.primary_results.delta, 0);
+    assert.equal(factPack.topNegativeDriver, null);
+    assert.equal(factPack.topPositiveDriver, null);
+
+    const answer = buildDiagnosisAnswer(factPack);
+    assert.match(answer, /primary metric was flat/i);
+    assert.equal(validateDiagnosisNumericGrounding(answer, factPack), true);
+  });
+
+  it("builds diagnosis facts with empty-row caveats", () => {
+    const factPack = buildDiagnosisFactPack({
+      metrics: ["primary_results", "spend", "cpl"],
+      dimension: "campaign_umbrella",
+      current: {
+        label: "Current period",
+        timeRange: { start: "2026-04-26", end: "2026-05-25", days: 30 },
+        rows: [],
+      },
+      baseline: {
+        label: "Baseline period",
+        timeRange: { start: "2026-03-27", end: "2026-04-25", days: 30 },
+        rows: [
+          aggregateRow({ campaign_umbrella: "Book Appts US", spend: 500, leads: 25, primary_results: 25, cpl: 20, source_rows: 5 }),
+        ],
+      },
+    });
+
+    assert.equal(factPack.current.empty, true);
+    assert.ok(factPack.caveats.some((caveat) => caveat.includes("Current period had no matching rows")));
+    assert.equal(factPack.topNegativeDriver?.label, "Book Appts US");
+
+    const answer = buildDiagnosisAnswer(factPack);
+    assert.match(answer, /Current period had no matching rows/);
+    assert.equal(validateDiagnosisNumericGrounding(answer, factPack), true);
   });
 
   it("falls back to deterministic planning for malformed model planner output", () => {
