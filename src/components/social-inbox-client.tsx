@@ -7,9 +7,7 @@ import {
   Clock,
   EyeOff,
   ExternalLink,
-  Filter,
   Heart,
-  Inbox,
   Link2,
   Loader2,
   Mail,
@@ -18,7 +16,6 @@ import {
   Pencil,
   Phone,
   Plus,
-  Search,
   Send,
   RefreshCw,
   ShieldCheck,
@@ -57,12 +54,12 @@ import {
 import { InboxEyebrow } from "./v2/inbox/inbox-eyebrow";
 import { InboxLayoutShell } from "./v2/inbox/inbox-layout-shell";
 import { InboxStatusSentence } from "./v2/inbox/inbox-status-sentence";
+import { QueueRail, visibleQueueCategories } from "./v2/inbox/queue-rail";
 import { useDrawerState } from "./v2/inbox/use-drawer-state";
 import {
   useInboxFilters,
   type BrandFilter,
   type ItemTypeFilter,
-  type QueueCategoryFilter,
   type SourceChannelFilter,
   type SourceFilter,
   type StatusFilter,
@@ -134,7 +131,6 @@ export type SocialInboxStatus = {
   error: string | null;
 };
 
-type QueueCategoryOption = (typeof META_INBOX_QUEUE_CATEGORIES)[number];
 type QaScoreKey =
   | "toneScore"
   | "completenessScore"
@@ -333,10 +329,6 @@ export function SocialInboxClient({
   const visibleQueueKeys = useMemo(
     () => new Set(queueCategories.map((category) => category.key)),
     [queueCategories],
-  );
-  const queueCounts = useMemo(
-    () => queueCategoryCounts(queue, queueCategories),
-    [queue, queueCategories],
   );
   const {
     brandFilter,
@@ -1202,150 +1194,114 @@ export function SocialInboxClient({
 
       <InboxLayoutShell
         queue={
-          <aside className="min-w-0 bg-hp-card">
-          <div className="border-b border-hp-rule p-4">
-            <div className="mb-4 flex items-center gap-2 text-hp-ink">
-              <Inbox size={18} />
-              <span className="text-[11px] uppercase tracking-[0.14em]">Unified Queue</span>
-            </div>
-
-            <QueueTabs
-              value={effectiveQueueCategoryFilter}
-              counts={queueCounts}
-              categories={queueCategories}
-              onChange={setQueueCategoryFilter}
-            />
-
-            <label className="flex items-center gap-2 border-b border-hp-rule px-1 py-2 focus-within:border-hp-pink">
-              <Search size={15} className="text-hp-muted" />
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search sender or thread"
-                className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-hp-muted"
-              />
-            </label>
-
-            <div className="mt-4 grid gap-3">
-              <FilterSelect
-                label="Brand"
-                value={brandFilter}
-                onChange={(value) => setBrandFilter(value as BrandFilter)}
-                options={[
-                  ["all", "All Brands"],
-                  ["HP", "HP"],
-                  ["VVS", "VVS"],
-                ]}
-              />
-              <FilterSelect
-                label="Platform"
-                value={sourceFilter}
-                onChange={(value) => setSourceFilter(value as SourceFilter)}
-                options={[
-                  ["all", "Facebook + Instagram"],
-                  ["facebook", "Facebook"],
-                  ["instagram", "Instagram"],
-                ]}
-              />
-              <FilterSelect
-                label="Source Channel"
-                value={sourceChannelFilter}
-                onChange={(value) => setSourceChannelFilter(value as SourceChannelFilter)}
-                options={[
-                  ["all", "All Channels"],
-                  ...META_INBOX_SOURCE_CHANNELS.map((channel) => [channel.key, channel.label] as [
-                    string,
-                    string,
-                  ]),
-                ]}
-              />
-              <FilterSelect
-                label="Campaign Umbrella"
-                value={campaignUmbrellaFilter}
-                onChange={setCampaignUmbrellaFilter}
-                options={[
-                  ["all", "All Campaign Umbrellas"],
-                  ...attributionFilterOptions.campaignUmbrellas,
-                ]}
-              />
-              <div className="grid grid-cols-2 gap-3">
+          <QueueRail
+            queue={filteredQueue}
+            selectedId={selectedItem?.id || null}
+            query={query}
+            onQueryChange={setQuery}
+            queueCategoryFilter={effectiveQueueCategoryFilter}
+            onQueueCategoryChange={setQueueCategoryFilter}
+            queueCategories={queueCategories}
+            onSelect={(item) => handleSelectQueueItem(item.id)}
+            now={replyWindowNow}
+            legacyFilterChrome={
+              <div className="mt-4 grid gap-3 border-t border-hp-rule pt-4">
                 <FilterSelect
-                  label="Ad"
-                  value={adFilter}
-                  onChange={setAdFilter}
+                  label="Brand"
+                  value={brandFilter}
+                  onChange={(value) => setBrandFilter(value as BrandFilter)}
                   options={[
-                    ["all", "All Ads"],
-                    ...attributionFilterOptions.ads,
+                    ["all", "All Brands"],
+                    ["HP", "HP"],
+                    ["VVS", "VVS"],
                   ]}
                 />
                 <FilterSelect
-                  label="Creative"
-                  value={creativeFilter}
-                  onChange={setCreativeFilter}
+                  label="Platform"
+                  value={sourceFilter}
+                  onChange={(value) => setSourceFilter(value as SourceFilter)}
                   options={[
-                    ["all", "All Creatives"],
-                    ...attributionFilterOptions.creatives,
-                  ]}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <FilterSelect
-                  label="Type"
-                  value={itemTypeFilter}
-                  onChange={(value) => setItemTypeFilter(value as ItemTypeFilter)}
-                  options={[
-                    ["all", "All Items"],
-                    ["messages", "Messages"],
-                    ["comments", "Comments"],
+                    ["all", "Facebook + Instagram"],
+                    ["facebook", "Facebook"],
+                    ["instagram", "Instagram"],
                   ]}
                 />
                 <FilterSelect
-                  label="Status"
-                  value={statusFilter}
-                  onChange={(value) => setStatusFilter(value as StatusFilter)}
+                  label="Source Channel"
+                  value={sourceChannelFilter}
+                  onChange={(value) => setSourceChannelFilter(value as SourceChannelFilter)}
                   options={[
-                    ["all", "All Status"],
-                    ["unread", "Unread"],
-                    ["needs-reply", "Needs Reply"],
+                    ["all", "All Channels"],
+                    ...META_INBOX_SOURCE_CHANNELS.map((channel) => [
+                      channel.key,
+                      channel.label,
+                    ] as [string, string]),
                   ]}
                 />
-              </div>
-              <div className="flex items-center justify-between border-t border-hp-rule pt-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-                <span>{filteredQueue.length} shown</span>
-                <button
-                  onClick={resetInboxFilters}
-                  className="text-hp-ink underline-offset-4 hover:underline"
-                >
-                  Reset
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="max-h-[720px] overflow-y-auto">
-            {filteredQueue.length ? (
-              filteredQueue.map((item) => (
-                <QueueItem
-                  key={item.id}
-                  item={item}
-                  active={selectedItem?.id === item.id}
-                  onSelect={() => handleSelectQueueItem(item.id)}
+                <FilterSelect
+                  label="Campaign Umbrella"
+                  value={campaignUmbrellaFilter}
+                  onChange={setCampaignUmbrellaFilter}
+                  options={[
+                    ["all", "All Campaign Umbrellas"],
+                    ...attributionFilterOptions.campaignUmbrellas,
+                  ]}
                 />
-              ))
-            ) : (
-              <div className="p-8 text-center">
-                <div className="mx-auto flex h-12 w-12 items-center justify-center border border-hp-rule text-hp-muted">
-                  <Filter size={18} />
+                <div className="grid grid-cols-2 gap-3">
+                  <FilterSelect
+                    label="Ad"
+                    value={adFilter}
+                    onChange={setAdFilter}
+                    options={[
+                      ["all", "All Ads"],
+                      ...attributionFilterOptions.ads,
+                    ]}
+                  />
+                  <FilterSelect
+                    label="Creative"
+                    value={creativeFilter}
+                    onChange={setCreativeFilter}
+                    options={[
+                      ["all", "All Creatives"],
+                      ...attributionFilterOptions.creatives,
+                    ]}
+                  />
                 </div>
-                <h2 className="mt-4 font-title text-2xl text-hp-ink">No matching items</h2>
-                <p className="mt-2 text-sm leading-6 text-hp-muted">
-                  Adjust the source, brand, type, status, or search filters to widen the queue.
-                  Use Sync Inbox if you need the latest Meta data.
-                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <FilterSelect
+                    label="Type"
+                    value={itemTypeFilter}
+                    onChange={(value) => setItemTypeFilter(value as ItemTypeFilter)}
+                    options={[
+                      ["all", "All Items"],
+                      ["messages", "Messages"],
+                      ["comments", "Comments"],
+                    ]}
+                  />
+                  <FilterSelect
+                    label="Status"
+                    value={statusFilter}
+                    onChange={(value) => setStatusFilter(value as StatusFilter)}
+                    options={[
+                      ["all", "All Status"],
+                      ["unread", "Unread"],
+                      ["needs-reply", "Needs Reply"],
+                    ]}
+                  />
+                </div>
+                <div className="flex items-center justify-between border-t border-hp-rule pt-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                  <span>{filteredQueue.length} shown</span>
+                  <button
+                    type="button"
+                    onClick={resetInboxFilters}
+                    className="text-hp-ink underline-offset-4 hover:underline"
+                  >
+                    Reset
+                  </button>
+                </div>
               </div>
-            )}
-          </div>
-        </aside>
+            }
+          />
         }
 
         conversation={
@@ -1495,27 +1451,6 @@ export function SocialInboxClient({
 
 function buildQueue(data: SocialInboxData): QueueDisplayItem[] {
   return buildMetaInboxQueueItems(data);
-}
-
-function visibleQueueCategories(data: SocialInboxData): readonly QueueCategoryOption[] {
-  if (data.queueAccess.mode !== "team") return META_INBOX_QUEUE_CATEGORIES;
-
-  const allowed = new Set(data.queueAccess.allowedQueueCategoryKeys);
-  return META_INBOX_QUEUE_CATEGORIES.filter((category) => allowed.has(category.key));
-}
-
-function queueCategoryCounts(
-  queue: QueueDisplayItem[],
-  categories: readonly QueueCategoryOption[],
-) {
-  const counts = new Map<QueueCategoryFilter, number>([["all", queue.length]]);
-  for (const category of categories) {
-    counts.set(category.key, 0);
-  }
-  for (const item of queue) {
-    counts.set(item.queueCategoryKey, (counts.get(item.queueCategoryKey) || 0) + 1);
-  }
-  return counts;
 }
 
 function SelectedItemDetail({
@@ -2354,72 +2289,6 @@ function ReplyAttemptPanel({
         ) : null}
       </div>
     </div>
-  );
-}
-
-function QueueTabs({
-  value,
-  counts,
-  categories,
-  onChange,
-}: {
-  value: QueueCategoryFilter;
-  counts: Map<QueueCategoryFilter, number>;
-  categories: readonly QueueCategoryOption[];
-  onChange: (value: QueueCategoryFilter) => void;
-}) {
-  return (
-    <div className="-mx-1 mb-4 flex gap-2 overflow-x-auto px-1 pb-1">
-      <QueueTab
-        label="All"
-        value="all"
-        active={value === "all"}
-        count={counts.get("all") || 0}
-        onChange={onChange}
-      />
-      {categories.map((category) => (
-        <QueueTab
-          key={category.key}
-          label={category.label}
-          value={category.key}
-          active={value === category.key}
-          count={counts.get(category.key) || 0}
-          onChange={onChange}
-        />
-      ))}
-    </div>
-  );
-}
-
-function QueueTab({
-  label,
-  value,
-  active,
-  count,
-  onChange,
-}: {
-  label: string;
-  value: QueueCategoryFilter;
-  active: boolean;
-  count: number;
-  onChange: (value: QueueCategoryFilter) => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={() => onChange(value)}
-      className={[
-        "shrink-0 border px-3 py-2 text-[10px] uppercase tracking-[0.14em] transition-colors",
-        active
-          ? "border-hp-ink bg-hp-ink text-hp-foundation"
-          : "border-hp-rule text-hp-body hover:border-hp-ink hover:text-hp-ink",
-      ].join(" ")}
-    >
-      <span>{label}</span>
-      <span className={active ? "ml-2 text-hp-foundation/70" : "ml-2 text-hp-muted"}>
-        {count}
-      </span>
-    </button>
   );
 }
 
@@ -4123,42 +3992,6 @@ function FilterSelect({
         ))}
       </select>
     </label>
-  );
-}
-
-function QueueItem({
-  item,
-  active,
-  onSelect,
-}: {
-  item: QueueDisplayItem;
-  active: boolean;
-  onSelect: () => void;
-}) {
-  const Icon = item.channel === "Instagram" ? Camera : MessageCircle;
-  return (
-    <button
-      onClick={onSelect}
-      className={`w-full border-b border-hp-rule p-4 text-left transition-colors hover:bg-hp-inset ${
-        active ? "bg-hp-inset" : ""
-      }`}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-1 items-start gap-2">
-          <Icon size={16} className="mt-0.5 shrink-0 text-hp-muted" />
-          <span className="min-w-0 break-words text-sm leading-5 text-hp-ink">{item.sender}</span>
-        </div>
-        <span className="shrink-0 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-          {item.time}
-        </span>
-      </div>
-      <p className="mt-2 line-clamp-2 text-sm leading-6 text-hp-body">{item.preview}</p>
-      <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2 break-words text-[10px] uppercase leading-5 tracking-[0.14em] text-hp-muted">
-        <Clock size={13} />
-        {item.brand} · {metaInboxVocabularyLabel(META_INBOX_QUEUE_CATEGORIES, item.queueCategoryKey)} ·{" "}
-        {metaInboxVocabularyLabel(META_INBOX_SOURCE_CHANNELS, item.sourceChannel)} · {item.status}
-      </div>
-    </button>
   );
 }
 

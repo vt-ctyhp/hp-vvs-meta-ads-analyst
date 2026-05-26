@@ -87,7 +87,7 @@ test("InboxEyebrow renders null metric values as unavailable and invokes sync", 
 
   const button = findElement(InboxEyebrow(props), "button");
   assert.equal(typeof button.props.onClick, "function");
-  button.props.onClick();
+  button.props.onClick?.();
   assert.equal(syncCalls, 1);
 });
 

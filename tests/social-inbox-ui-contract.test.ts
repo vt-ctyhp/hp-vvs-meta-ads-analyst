@@ -16,7 +16,7 @@ const SOCIAL_INBOX_LIB = readFileSync("src/lib/social-inbox.ts", "utf8");
 
 describe("social inbox UI contract", () => {
   it("surfaces normalized queue, source, and workflow panels in the desktop inbox", () => {
-    assert.match(DESKTOP_INBOX, /QueueTabs/);
+    assert.match(DESKTOP_INBOX, /QueueRail/);
     assert.match(DESKTOP_INBOX, /ConversationSourcePanel/);
     assert.match(DESKTOP_INBOX, /WorkflowStatePanel/);
     assert.match(DESKTOP_INBOX, /META_INBOX_QUEUE_CATEGORIES/);
