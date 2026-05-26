@@ -254,6 +254,46 @@ test("run detail renders answer, source notes, and structured visual cards", () 
   assert.match(markup, /\$900 \/ \$45/);
 });
 
+test("run detail formats long answer summaries into readable sections", () => {
+  const { RunDetail } = loadModule("src/components/analysis-workbench-client.tsx");
+
+  const markup = renderToStaticMarkup(
+    React.createElement(RunDetail, {
+      run: {
+        id: "run-1",
+        status: "completed",
+        prompt: "Which creative won?",
+        outputMode: "answer_visuals",
+        title: "Which creative won?",
+        answer: {
+          summary:
+            "Answer + visuals mode used governed Meta Ads facts. Totals: 465 Primary KPI [F1]. Top creative was 842430645584684 at 115 [F2]. Assumption: relative range ends at latest synced Meta Ads day [S1]. Caveat: Primary KPI is group-specific [F1]. Source notes: Meta Ads daily insights [S1].",
+          citations: [],
+        },
+        facts: { status: "computed" },
+        sourceNotes: [{ id: "S1", label: "Data source", value: "Meta Ads daily insights" }],
+        visualCards: [],
+        validation: { status: "ready" },
+        lineage: { parentRunId: null },
+        dashboardPacket: null,
+        createdAt: "2026-05-25T14:30:00.000Z",
+        updatedAt: "2026-05-25T14:30:00.000Z",
+      },
+    }),
+  );
+
+  assert.match(markup, /Context/);
+  assert.match(markup, /Findings/);
+  assert.match(markup, /<ol class=/);
+  assert.match(markup, /Totals/);
+  assert.match(markup, /Top creative was 842430645584684/);
+  assert.match(markup, /Assumptions/);
+  assert.match(markup, /Caveats/);
+  assert.match(markup, /Source notes/);
+  assert.match(markup, /\[F1\]/);
+  assert.match(markup, /\[S1\]/);
+});
+
 test("run detail exposes promotion and renders saved dashboard packet sections", () => {
   const { RunDetail } = loadModule("src/components/analysis-workbench-client.tsx");
 

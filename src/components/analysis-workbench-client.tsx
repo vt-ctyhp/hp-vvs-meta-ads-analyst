@@ -62,6 +62,17 @@ const OUTPUT_MODE_HELP: Record<AnalysisOutputMode, string> = {
 const OUTPUT_MODES: AnalysisOutputMode[] = ["answer_only", "answer_visuals", "full_dashboard"];
 type StatusKind = "idle" | "success" | "error";
 type ControlledEditDraft = AnalysisWorkbenchControlledEdit;
+type ReadableAnswerItem = {
+  body: string;
+  label?: string;
+};
+type ParsedReadableAnswer = {
+  context: ReadableAnswerItem[];
+  findings: ReadableAnswerItem[];
+  assumptions: ReadableAnswerItem[];
+  caveats: ReadableAnswerItem[];
+  sourceNotes: ReadableAnswerItem[];
+};
 
 const EDIT_METRIC_OPTIONS = ["spend", "primary_results", "cpl", "ctr"] as const;
 const EDIT_DIMENSION_OPTIONS = ["campaign_umbrella", "campaign", "ad_set", "creative"] as const;
@@ -528,7 +539,7 @@ export function RunDetail({
           <FileText size={17} />
           <span className="text-[11px] uppercase tracking-[0.14em]">Answer</span>
         </div>
-        <p className="max-w-3xl text-sm leading-6 text-hp-body">{run.answer.summary}</p>
+        <ReadableAnswer summary={run.answer.summary} />
       </section>
 
       {run.dashboardPacket ? (
@@ -557,6 +568,159 @@ export function RunDetail({
         />
       </section>
     </article>
+  );
+}
+
+function ReadableAnswer({ summary }: { summary: string }) {
+  const answer = parseReadableAnswer(summary);
+
+  if (!hasReadableAnswerContent(answer)) {
+    return <p className="max-w-3xl text-sm leading-6 text-hp-muted">No answer saved.</p>;
+  }
+
+  const supportingSections = [
+    { title: "Assumptions", items: answer.assumptions },
+    { title: "Caveats", items: answer.caveats },
+    { title: "Source notes", items: answer.sourceNotes },
+  ].filter((section) => section.items.length);
+
+  return (
+    <div className="max-w-3xl space-y-4 text-sm leading-6 text-hp-body">
+      {answer.context.length ? (
+        <AnswerInset title="Context" items={answer.context} />
+      ) : null}
+
+      {answer.findings.length ? (
+        <div>
+          <p className="mb-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+            Findings
+          </p>
+          <ol className="divide-y divide-hp-rule-soft border-y border-hp-rule-soft">
+            {answer.findings.map((item, index) => (
+              <li key={`${item.body}-${index}`} className="grid grid-cols-[2.5rem_1fr] gap-3 py-3">
+                <span className="font-title text-lg leading-6 text-hp-muted lining-nums">
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+                <p>
+                  {item.label ? (
+                    <span className="mr-1 font-bold text-hp-ink">{item.label}:</span>
+                  ) : null}
+                  <AnswerText text={item.body} />
+                </p>
+              </li>
+            ))}
+          </ol>
+        </div>
+      ) : null}
+
+      {supportingSections.length ? (
+        <div className="grid gap-3 md:grid-cols-3">
+          {supportingSections.map((section) => (
+            <AnswerInset key={section.title} title={section.title} items={section.items} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function AnswerInset({ title, items }: { title: string; items: ReadableAnswerItem[] }) {
+  return (
+    <div className="border-l border-hp-rule pl-3">
+      <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{title}</p>
+      <div className="mt-1 space-y-2">
+        {items.map((item, index) => (
+          <p key={`${item.body}-${index}`}>
+            {item.label ? <span className="mr-1 font-bold text-hp-ink">{item.label}:</span> : null}
+            <AnswerText text={item.body} />
+          </p>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AnswerText({ text }: { text: string }) {
+  return text.split(/(\[[A-Z]\d+\])/g).map((part, index) => {
+    if (/^\[[A-Z]\d+\]$/.test(part)) {
+      return (
+        <span
+          key={`${part}-${index}`}
+          className="mx-0.5 inline-flex border border-hp-rule-soft bg-hp-card px-1 text-[0.72em] leading-5 text-hp-muted lining-nums"
+        >
+          {part}
+        </span>
+      );
+    }
+
+    return part;
+  });
+}
+
+function parseReadableAnswer(summary: string): ParsedReadableAnswer {
+  const parsed: ParsedReadableAnswer = {
+    context: [],
+    findings: [],
+    assumptions: [],
+    caveats: [],
+    sourceNotes: [],
+  };
+
+  const sentences = summary
+    .trim()
+    .split(/(?<=\.)\s+(?=[A-Z0-9])/)
+    .map((sentence) => sentence.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+
+  sentences.forEach((sentence) => {
+    const labelMatch = sentence.match(/^([A-Z][A-Za-z ]{2,32}s?):\s+(.+)$/);
+    const label = labelMatch?.[1];
+    const body = labelMatch?.[2] || sentence;
+    const lowerLabel = label?.toLowerCase() || "";
+    const lowerSentence = sentence.toLowerCase();
+    const item = label ? { label, body } : { body };
+
+    if (lowerLabel.startsWith("assumption")) {
+      parsed.assumptions.push({ body });
+      return;
+    }
+
+    if (lowerLabel.startsWith("caveat")) {
+      parsed.caveats.push({ body });
+      return;
+    }
+
+    if (lowerLabel.startsWith("source note")) {
+      parsed.sourceNotes.push({ body });
+      return;
+    }
+
+    if (
+      lowerSentence.startsWith("answer only mode used governed meta ads facts") ||
+      lowerSentence.startsWith("answer + visuals mode used governed meta ads facts") ||
+      lowerSentence.startsWith("full dashboard mode used governed meta ads facts")
+    ) {
+      parsed.context.push(item);
+      return;
+    }
+
+    parsed.findings.push(item);
+  });
+
+  if (!sentences.length && summary.trim()) {
+    parsed.findings.push({ body: summary.trim() });
+  }
+
+  return parsed;
+}
+
+function hasReadableAnswerContent(answer: ParsedReadableAnswer) {
+  return Boolean(
+    answer.context.length ||
+      answer.findings.length ||
+      answer.assumptions.length ||
+      answer.caveats.length ||
+      answer.sourceNotes.length,
   );
 }
 
