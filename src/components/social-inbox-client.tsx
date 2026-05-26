@@ -18,10 +18,9 @@ import {
   Pencil,
   Phone,
   Plus,
-  RefreshCw,
   Search,
   Send,
-  Settings2,
+  RefreshCw,
   ShieldCheck,
   Tags,
   Trash2,
@@ -29,7 +28,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { SYNC, translateError } from "@/lib/glossary";
+import { translateError } from "@/lib/glossary";
 import { buildMetaInboxManagerDashboard } from "@/lib/meta-inbox-manager-dashboard";
 import {
   buildMetaInboxQueueItems,
@@ -55,8 +54,9 @@ import {
   metaInboxVocabularyLabel,
   type MetaInboxQueueCategoryKey,
 } from "@/lib/meta-inbox-vocabulary";
-import { StatusSentence } from "./status-sentence";
-import { computeInboxHighlights } from "./v2/inbox/inbox-highlights";
+import { InboxEyebrow } from "./v2/inbox/inbox-eyebrow";
+import { InboxLayoutShell } from "./v2/inbox/inbox-layout-shell";
+import { InboxStatusSentence } from "./v2/inbox/inbox-status-sentence";
 import { useDrawerState } from "./v2/inbox/use-drawer-state";
 import {
   useInboxFilters,
@@ -363,7 +363,6 @@ export function SocialInboxClient({
     attributionFilterOptions,
     reset: resetInboxFilters,
   } = useInboxFilters(queue, { visibleQueueKeys });
-  const inboxHighlights = useMemo(() => computeInboxHighlights(queue), [queue]);
   const { close: closeDrawer } = useDrawerState();
   const handleSelectQueueItem = useCallback(
     (itemId: string) => {
@@ -1188,36 +1187,22 @@ export function SocialInboxClient({
 
   return (
     <main className="min-h-screen bg-hp-foundation px-4 py-6 text-hp-body md:px-8">
-      <header className="mx-auto flex max-w-7xl flex-col gap-5 border-b border-hp-rule pb-6 md:flex-row md:items-end md:justify-between">
-        <div>
-          <span className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-            HP/VVS Social Inbox
-          </span>
-          <h1 className="mt-2 font-title text-4xl leading-tight text-hp-ink md:text-5xl">
-            Message & Comment Command Center
-          </h1>
-          <StatusSentence
-            context={`${queue.length} ${queue.length === 1 ? "thread" : "threads"} synced`}
-            highlights={inboxHighlights}
-          />
-        </div>
-        <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.14em]">
-          <a
-            href="/convert/inbox/settings"
-            className="inline-flex h-9 items-center gap-2 border border-hp-rule px-3 text-hp-ink transition hover:border-hp-pink hover:text-hp-pink"
-          >
-            <Settings2 size={14} />
-            Settings
-          </a>
-          <StatusPill ready={status.readiness.socialInbox} label="Inbox Read" />
-          <StatusPill ready={status.readiness.socialReply} label="Replies" />
-        </div>
-      </header>
+      <section className="mx-auto max-w-7xl">
+        <InboxEyebrow
+          dashboard={managerDashboard}
+          syncRun={inboxData.syncRuns[0] || null}
+          onSync={handleSync}
+          isSyncing={isSyncing}
+          syncDisabled={!status.readiness.socialInbox}
+        />
+        <InboxStatusSentence queue={queue} />
+      </section>
 
       <InboxReadinessBanner status={status} />
 
-      <section className="mx-auto mt-8 grid max-w-7xl min-w-0 gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
-        <aside className="min-w-0 border border-hp-rule bg-hp-card">
+      <InboxLayoutShell
+        queue={
+          <aside className="min-w-0 bg-hp-card">
           <div className="border-b border-hp-rule p-4">
             <div className="mb-4 flex items-center gap-2 text-hp-ink">
               <Inbox size={18} />
@@ -1361,8 +1346,10 @@ export function SocialInboxClient({
             )}
           </div>
         </aside>
+        }
 
-        <section className="min-w-0 border border-hp-rule bg-hp-card">
+        conversation={
+          <section className="min-w-0 bg-hp-card">
           <div className="border-b border-hp-rule p-5">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div>
@@ -1378,14 +1365,6 @@ export function SocialInboxClient({
                   </p>
                 ) : null}
               </div>
-              <button
-                disabled={!status.readiness.socialInbox || isSyncing}
-                onClick={handleSync}
-                className="flex h-10 items-center justify-center gap-2 border border-hp-ink px-4 text-[11px] uppercase tracking-[0.14em] text-hp-ink transition-colors hover:bg-hp-ink hover:text-hp-foundation disabled:border-hp-rule disabled:text-hp-muted"
-              >
-                <RefreshCw size={14} className={isSyncing ? "animate-spin" : ""} />
-                {isSyncing ? SYNC.inProgress : `${SYNC.action} Inbox`}
-              </button>
             </div>
           </div>
 
@@ -1508,7 +1487,8 @@ export function SocialInboxClient({
             </aside>
           </div>
         </section>
-      </section>
+        }
+      />
     </main>
   );
 }
@@ -4111,21 +4091,6 @@ function ReadinessCard({
       <div className={`mt-3 text-sm ${ready ? "text-signal-positive" : "text-signal-warning"}`}>
         {detail}
       </div>
-    </div>
-  );
-}
-
-function StatusPill({ ready, label }: { ready: boolean; label: string }) {
-  return (
-    <div
-      className={`flex h-9 items-center gap-2 border px-3 ${
-        ready
-          ? "border-signal-positive text-signal-positive"
-          : "border-signal-warning text-signal-warning"
-      }`}
-    >
-      {ready ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
-      {label}
     </div>
   );
 }
