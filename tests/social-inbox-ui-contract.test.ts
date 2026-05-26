@@ -104,9 +104,12 @@ describe("social inbox UI contract", () => {
   });
 
   it("surfaces reply-window countdown and failed-send retry shell", () => {
-    assert.match(DESKTOP_INBOX, /Reply Window/);
-    assert.match(DESKTOP_INBOX, /Failed Send Inbox/);
-    assert.match(DESKTOP_INBOX, /Record Send Attempt/);
+    assert.match(MOBILE_COMPOSER, /Reply as/);
+    assert.match(MOBILE_COMPOSER, /Reply window closed/);
+    assert.match(MOBILE_COMPOSER, /send attempt/);
+    assert.match(MOBILE_COMPOSER, /This will record a send attempt/);
+    assert.match(MOBILE_COMPOSER, /Retry/);
+    assert.match(MOBILE_COMPOSER, /Queue Delivery/);
     assert.match(DESKTOP_INBOX, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/send-attempts/);
     assert.match(DESKTOP_INBOX, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/send-attempts\/retry/);
     assert.match(DESKTOP_INBOX, /live Meta delivery remains disabled/);

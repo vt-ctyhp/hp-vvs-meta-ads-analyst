@@ -12,11 +12,8 @@ import {
   Mail,
   MessageCircle,
   Paperclip,
-  Pencil,
-  Plus,
   Send,
   RefreshCw,
-  Tags,
   Trash2,
   UserRound,
 } from "lucide-react";
@@ -31,7 +28,6 @@ import {
 import {
   clearConversationTextState,
   readConversationTextState,
-  resolveReplyWindowState,
   writeConversationTextState,
   type ConversationTextState,
 } from "@/lib/social-inbox-ui-freshness";
@@ -45,6 +41,7 @@ import { DrawerOverlay } from "./v2/inbox/drawer-overlay";
 import { NotesDrawerPanel } from "./v2/inbox/notes-drawer-panel";
 import { QaDrawerPanel } from "./v2/inbox/qa-drawer-panel";
 import { QueueRail, visibleQueueCategories } from "./v2/inbox/queue-rail";
+import { ReplyComposer } from "./v2/inbox/reply-composer";
 import { useDrawerState } from "./v2/inbox/use-drawer-state";
 import {
   useInboxFilters,
@@ -1255,7 +1252,7 @@ export function SocialInboxClient({
             }
             emptyState={<EmptyThreadState />}
             replyComposer={
-              <ReplyAttemptPanel
+              <ReplyComposer
                 key={conversationPanelKey(selectedItem, "reply-attempt")}
                 item={selectedItem}
                 draft={activeReplyDraft}
@@ -1805,334 +1802,6 @@ function historyCompletenessLabel(
   return "No known message history";
 }
 
-function ReplyAttemptPanel({
-  item,
-  draft,
-  onDraftChange,
-  canSendInboxReply,
-  mutationState,
-  savedReplyMutationState,
-  replyWindowNow,
-  onCreateSendAttempt,
-  onQueueSendAttempt,
-  onRetrySendAttempt,
-  onCreateSavedReply,
-}: {
-  item: QueueDisplayItem | null;
-  draft: string;
-  onDraftChange: (value: string) => void;
-  canSendInboxReply: boolean;
-  mutationState: ReplyAttemptMutationLoadState;
-  savedReplyMutationState: SavedReplyMutationLoadState;
-  replyWindowNow: number;
-  onCreateSendAttempt: (conversationId: string, input: MetaInboxSendAttemptInput) => void;
-  onQueueSendAttempt: (conversationId: string, input: MetaInboxQueueSendAttemptInput) => void;
-  onRetrySendAttempt: (conversationId: string, input: MetaInboxRetrySendAttemptInput) => void;
-  onCreateSavedReply: (conversationId: string, input: MetaInboxSavedReplyInput) => void;
-}) {
-  const [savedReplyTitle, setSavedReplyTitle] = useState("");
-  const conversationId = item?.inboxConversation?.id || null;
-  const windowState = item ? resolveReplyWindowState(item, replyWindowNow) : null;
-  const failedAttempts = (item?.sendAttempts || [])
-    .filter((attempt) => attempt.status === "failed_retryable" || attempt.status === "failed_terminal")
-    .sort((a, b) => String(b.updated_at || b.created_at || "").localeCompare(String(a.updated_at || a.created_at || "")));
-  const recentAttempts = (item?.sendAttempts || [])
-    .filter((attempt) => attempt.status !== "failed_retryable" && attempt.status !== "failed_terminal")
-    .slice()
-    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))
-    .slice(0, 2);
-  const canRecord =
-    Boolean(conversationId) &&
-    canSendInboxReply &&
-    Boolean(windowState?.canAttemptSend) &&
-    Boolean(draft.trim()) &&
-    mutationState.status !== "saving";
-  const statusTone =
-    mutationState.status === "error"
-      ? "text-signal-danger"
-      : mutationState.status === "saved"
-        ? "text-signal-positive"
-        : "text-hp-muted";
-  const statusMessage = mutationState.message || "Live Meta delivery disabled.";
-  const buttonLabel = !item
-    ? "Select conversation first"
-    : mutationState.status === "saving"
-      ? "Recording..."
-      : !canSendInboxReply
-        ? "Read-only role"
-        : !windowState?.canAttemptSend
-          ? windowState?.label === "Expired"
-            ? "Reply window expired"
-            : "Reply unavailable"
-          : !draft.trim()
-            ? "Draft reply first"
-            : "Record send attempt";
-
-  function recordSendAttempt() {
-    if (!conversationId) return;
-    onCreateSendAttempt(conversationId, {
-      replyText: draft,
-      idempotencyKey: newSendAttemptIdempotencyKey(conversationId, draft),
-    });
-  }
-
-  function savePersonalDraft() {
-    if (!item || !conversationId || !draft.trim()) return;
-    onCreateSavedReply(conversationId, {
-      title: savedReplyTitle.trim() || defaultSavedReplyTitle(draft),
-      body: draft,
-      visibility: "personal",
-      queueCategoryKey: item.queueCategoryKey,
-      sourceChannel: item.sourceChannel,
-      language: "en",
-      leadQuality: item.inboxConversation?.lead_quality as MetaInboxSavedReplyInput["leadQuality"],
-    });
-    setSavedReplyTitle("");
-  }
-
-  return (
-    <div className="grid gap-3">
-      <div className="border border-hp-rule bg-hp-inset p-3 text-xs leading-5 text-hp-muted">
-        <div>
-          <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Reply Window</p>
-          <p className="mt-1 text-sm font-medium text-hp-ink">
-            {windowState?.label || "No conversation selected"}
-          </p>
-          <p className="mt-1">
-            {windowState?.detail || "Select a conversation before recording a send attempt."}
-          </p>
-        </div>
-        <p className={`mt-3 border-t border-hp-rule pt-3 ${statusTone}`}>{statusMessage}</p>
-      </div>
-
-      <div className="border border-hp-rule bg-hp-card p-3">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-hp-ink">
-            <Tags size={15} />
-            <span className="text-[10px] uppercase tracking-[0.14em]">Saved Replies</span>
-          </div>
-          <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-            {item?.savedReplies.length || 0} match
-          </span>
-        </div>
-        {item?.savedReplies.length ? (
-          <div className="grid gap-2">
-            {item.savedReplies.slice(0, 4).map((savedReply) => (
-              <div
-                key={savedReply.id}
-                className="flex flex-col gap-2 border border-hp-rule bg-hp-inset p-3 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-hp-ink">{savedReply.title}</p>
-                  <p className="mt-1 line-clamp-2 text-xs leading-5 text-hp-muted">
-                    {savedReply.body}
-                  </p>
-                  <p className="mt-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-                    {savedReply.visibility === "personal" ? "Personal Draft" : "Approved Shared"}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onDraftChange(savedReply.body)}
-                  disabled={!canSendInboxReply}
-                  className="flex h-9 shrink-0 items-center justify-center gap-2 border border-hp-rule px-3 text-xs font-medium text-hp-ink transition hover:border-hp-ink disabled:opacity-50"
-                >
-                  <Pencil size={13} />
-                  Use
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm leading-6 text-hp-muted">
-            No saved replies match this queue, source channel, lead quality, and language yet.
-          </p>
-        )}
-        <div className="mt-3 grid gap-2 border-t border-hp-rule pt-3 sm:grid-cols-[minmax(0,1fr)_auto]">
-          <input
-            value={savedReplyTitle}
-            onChange={(event) => setSavedReplyTitle(event.target.value)}
-            disabled={!item || !canSendInboxReply}
-            placeholder="Draft name"
-            className="h-10 min-w-0 border border-hp-rule bg-hp-inset px-3 text-sm outline-none placeholder:text-hp-muted focus:border-hp-ink disabled:opacity-70"
-          />
-          <button
-            type="button"
-            onClick={savePersonalDraft}
-            disabled={
-              !item ||
-              !canSendInboxReply ||
-              !draft.trim() ||
-              savedReplyMutationState.status === "saving"
-            }
-            className="flex min-h-10 shrink-0 items-center justify-center gap-2 border border-hp-ink px-3 text-xs font-medium text-hp-ink transition hover:bg-hp-ink hover:text-hp-foundation disabled:opacity-50"
-          >
-            {savedReplyMutationState.status === "saving" ? (
-              <Loader2 size={13} className="animate-spin" />
-            ) : (
-              <Plus size={13} />
-            )}
-            Save Personal Draft
-          </button>
-        </div>
-        <p className="mt-2 text-xs leading-5 text-hp-muted">
-          Shared templates require sales lead/admin approval before sales can use them.
-        </p>
-        {savedReplyMutationState.message ? (
-          <p
-            className={`mt-2 text-xs leading-5 ${
-              savedReplyMutationState.status === "error"
-                ? "text-signal-danger"
-                : savedReplyMutationState.status === "saved"
-                  ? "text-signal-positive"
-                  : "text-hp-muted"
-            }`}
-          >
-            {savedReplyMutationState.message}
-          </p>
-        ) : null}
-      </div>
-
-      <textarea
-        value={draft}
-        onChange={(event) => onDraftChange(event.target.value)}
-        disabled={!item}
-        rows={4}
-        placeholder={
-          item
-            ? "Write a human-approved reply draft. This records approval only."
-            : "Select a message or comment to draft a reply."
-        }
-        className="w-full resize-none border border-hp-rule bg-hp-inset p-3 text-sm leading-6 outline-none placeholder:text-hp-muted focus:border-hp-ink disabled:opacity-70"
-      />
-      <div className="grid gap-3">
-        <p className="min-w-0 text-xs leading-5 text-hp-muted">
-          Record Send Attempt stores human approval, reply-window choice, and audit data;
-          live Meta delivery remains disabled until the delivery worker is enabled.
-        </p>
-        <button
-          type="button"
-          onClick={recordSendAttempt}
-          disabled={!canRecord}
-          className="flex h-10 w-full shrink-0 items-center justify-center gap-2 whitespace-nowrap bg-hp-ink px-4 text-sm font-medium text-hp-foundation transition hover:opacity-90 disabled:opacity-50"
-        >
-          {mutationState.status === "saving" ? (
-            <Loader2 size={14} className="animate-spin" />
-          ) : (
-            <Send size={14} />
-          )}
-          {buttonLabel}
-        </button>
-      </div>
-
-      <div className="border border-hp-rule bg-hp-card p-3">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-hp-ink">
-            <AlertTriangle size={15} />
-            <span className="text-[10px] uppercase tracking-[0.14em]">Failed Send Inbox</span>
-          </div>
-          <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-            {failedAttempts.length} failed
-          </span>
-        </div>
-        {failedAttempts.length ? (
-          <div className="space-y-2">
-            {failedAttempts.map((attempt) => {
-              const canRetry =
-                Boolean(conversationId) &&
-                canSendInboxReply &&
-                attempt.status === "failed_retryable" &&
-                Boolean(windowState?.canAttemptSend) &&
-                mutationState.status !== "saving";
-              return (
-                <div key={attempt.id} className="border border-hp-rule bg-hp-inset p-3">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <p className="break-words text-sm leading-6 text-hp-ink">
-                        {attempt.meta_error_message || attempt.status.replaceAll("_", " ")}
-                      </p>
-                      <p className="mt-1 text-xs leading-5 text-hp-muted">
-                        Attempts {attempt.attempt_count} · last{" "}
-                        {formatDateLabel(attempt.last_attempted_at || attempt.updated_at)}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        conversationId &&
-                        onRetrySendAttempt(conversationId, { sendAttemptId: attempt.id })
-                      }
-                      disabled={!canRetry}
-                      className="flex h-9 shrink-0 items-center justify-center gap-2 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-ink transition hover:border-hp-ink disabled:opacity-50"
-                    >
-                      <RefreshCw size={13} />
-                      Retry
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <p className="text-sm leading-6 text-hp-muted">
-            No failed sends recorded for this conversation.
-          </p>
-        )}
-
-        {recentAttempts.length ? (
-          <div className="mt-3 space-y-2 border-t border-hp-rule pt-3 text-xs leading-5 text-hp-muted">
-            {recentAttempts.map((attempt) => {
-              const canQueue =
-                Boolean(conversationId) &&
-                canSendInboxReply &&
-                attempt.status === "approved" &&
-                Boolean(windowState?.canAttemptSend) &&
-                mutationState.status !== "saving";
-
-              return (
-                <div
-                  key={attempt.id}
-                  className="flex flex-col gap-2 border border-hp-rule bg-hp-inset p-3 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium leading-5 text-hp-ink">
-                      {attempt.status.replaceAll("_", " ")}
-                    </p>
-                    <p className="mt-1 break-words text-xs leading-5 text-hp-muted">
-                      {formatDateLabel(attempt.created_at)}
-                      {attempt.messaging_type ? ` · ${attempt.messaging_type}` : ""}
-                      {attempt.tag ? ` · ${attempt.tag}` : ""}
-                    </p>
-                  </div>
-                  {attempt.status === "approved" ? (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        conversationId &&
-                        onQueueSendAttempt(conversationId, { sendAttemptId: attempt.id })
-                      }
-                      disabled={!canQueue}
-                      className="flex h-9 shrink-0 items-center justify-center gap-2 border border-hp-rule px-3 text-xs font-medium text-hp-ink transition hover:border-hp-ink disabled:opacity-50"
-                    >
-                      {mutationState.status === "saving" &&
-                      mutationState.sendAttemptId === attempt.id ? (
-                        <Loader2 size={13} className="animate-spin" />
-                      ) : (
-                        <Send size={13} />
-                      )}
-                      Queue Delivery
-                    </button>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
 function conversationPanelKey(item: QueueDisplayItem | null, panel: string) {
   return `${panel}:${item?.inboxConversation?.id || item?.id || "empty"}`;
 }
@@ -2214,15 +1883,6 @@ function mergeConversationEvents(
   return Array.from(byId.values()).sort((a, b) =>
     String(b.event_at || "").localeCompare(String(a.event_at || "")),
   );
-}
-
-function newSendAttemptIdempotencyKey(conversationId: string, draft: string) {
-  return stableIdempotencyKey("send", conversationId, [draft]);
-}
-
-function defaultSavedReplyTitle(draft: string) {
-  const normalized = draft.trim().replace(/\s+/g, " ");
-  return normalized.length > 48 ? `${normalized.slice(0, 45)}...` : normalized;
 }
 
 function newCommentActionIdempotencyKey(

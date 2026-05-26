@@ -16,6 +16,7 @@ const CONVERSATION_HEADER = readFileSync(
   "utf8",
 );
 const DETAILS_DRAWER = readFileSync("src/components/v2/inbox/details-drawer-panel.tsx", "utf8");
+const REPLY_COMPOSER = readFileSync("src/components/v2/inbox/reply-composer.tsx", "utf8");
 
 describe("social inbox UI freshness contracts", () => {
   it("keeps text drafts keyed by conversation id", () => {
@@ -84,7 +85,7 @@ describe("social inbox UI freshness contracts", () => {
     assert.match(DESKTOP_INBOX, /\[conversationId\]: \{/);
     assert.match(DESKTOP_INBOX, /replyWindowNow/);
     assert.match(DESKTOP_INBOX, /window\.setInterval\(\(\) => setReplyWindowNow\(Date\.now\(\)\), 60_000\)/);
-    assert.match(DESKTOP_INBOX, /Reply window expired/);
+    assert.match(REPLY_COMPOSER, /Reply window closed/);
   });
 
   it("allows long selected customer labels to wrap instead of blocking replies", () => {
