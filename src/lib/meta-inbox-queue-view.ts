@@ -65,15 +65,27 @@ export function buildMetaInboxQueueItems(data: SocialInboxData): MetaInboxQueueD
       .map((conversation) => historyKey(conversation.platform, conversation.platform_thread_id))
       .filter(Boolean) as string[],
   );
+  const normalizedParticipantKeys = new Set(
+    data.inboxConversations
+      .map((conversation) =>
+        participantKey(conversation.platform, conversation.page_id, conversation.participant_id),
+      )
+      .filter(Boolean) as string[],
+  );
   const normalizedCommentKeys = new Set(
     data.inboxConversations
       .map((conversation) => historyKey(conversation.platform, conversation.source_id))
       .filter(Boolean) as string[],
   );
 
-  const rawThreadFallbacks = data.threads
-    .filter((thread) => !normalizedThreadKeys.has(historyKey(thread.platform, thread.thread_id)))
-    .map((thread) => itemFromRawThread(thread));
+  const rawThreadFallbacks = dedupeRawThreadsByParticipant(
+    data.threads.filter((thread) => {
+      if (normalizedThreadKeys.has(historyKey(thread.platform, thread.thread_id))) return false;
+      const pKey = participantKey(thread.platform, thread.page_id, thread.participant_id);
+      if (pKey && normalizedParticipantKeys.has(pKey)) return false;
+      return true;
+    }),
+  ).map((thread) => itemFromRawThread(thread));
   const rawCommentFallbacks = data.comments
     .filter((comment) => !normalizedCommentKeys.has(historyKey(comment.platform, comment.comment_id)))
     .map((comment) => itemFromRawComment(comment));
@@ -81,6 +93,45 @@ export function buildMetaInboxQueueItems(data: SocialInboxData): MetaInboxQueueD
   return [...items, ...rawThreadFallbacks, ...rawCommentFallbacks].sort((a, b) =>
     String(b.timestamp || "").localeCompare(String(a.timestamp || "")),
   );
+}
+
+function participantKey(
+  platform: string,
+  pageId: string | null | undefined,
+  participantId: string | null | undefined,
+): string | null {
+  if (!platform || !pageId || !participantId) return null;
+  return `${platform}:${pageId}:${participantId}`;
+}
+
+function dedupeRawThreadsByParticipant<T extends SocialInboxData["threads"][number]>(
+  threads: T[],
+): T[] {
+  const byKey = new Map<string, T>();
+  const noKey: T[] = [];
+  for (const thread of threads) {
+    const key = participantKey(thread.platform, thread.page_id, thread.participant_id);
+    if (!key) {
+      noKey.push(thread);
+      continue;
+    }
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, thread);
+      continue;
+    }
+    // Prefer the thread with a non-null participant_name. If both have one or
+    // neither does, prefer the most recent by last_message_at.
+    if (!existing.participant_name && thread.participant_name) {
+      byKey.set(key, thread);
+      continue;
+    }
+    if (existing.participant_name && !thread.participant_name) continue;
+    const existingTs = String(existing.last_message_at || "");
+    const candidateTs = String(thread.last_message_at || "");
+    if (candidateTs > existingTs) byKey.set(key, thread);
+  }
+  return [...byKey.values(), ...noKey];
 }
 
 export function buildMetaInboxMobileConversationItems(

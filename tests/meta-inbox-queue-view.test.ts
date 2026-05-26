@@ -227,6 +227,209 @@ describe("Meta inbox canonical queue view", () => {
   });
 });
 
+describe("Meta inbox raw-thread participant dedup", () => {
+  it("collapses two raw threads with the same (platform, page_id, participant_id) — named version wins", () => {
+    const queue = buildMetaInboxQueueItems({
+      ...emptyInboxData(),
+      threads: [
+        rawThread({
+          id: "thread-row-webhook",
+          thread_id: "facebook:webhook:100615618793615:27355382180747029",
+          participant_name: null,
+          last_message_at: "2026-05-26T14:32:56.000Z",
+        }),
+        rawThread({
+          id: "thread-row-graph",
+          thread_id: "t_1306976474238038",
+          participant_name: "Maxine Gathwright",
+          last_message_at: "2026-05-26T14:33:00.000Z",
+        }),
+      ],
+    });
+
+    assert.equal(queue.length, 1);
+    assert.equal(queue[0].sender, "Maxine Gathwright");
+    assert.equal(queue[0].sourceId, "t_1306976474238038");
+  });
+
+  it("hides a webhook-format raw thread when a normalized conversation covers the same (page_id, participant_id)", () => {
+    const queue = buildMetaInboxQueueItems({
+      ...emptyInboxData(),
+      inboxConversations: [
+        normalizedConversation({
+          id: "conversation-1",
+          platform_thread_id: "t_1306976474238038",
+          participant_id: "27355382180747029",
+          customer_profile_id: "profile-1",
+        }),
+      ],
+      customerProfiles: [
+        customerProfile({
+          id: "profile-1",
+          participant_id: "27355382180747029",
+          display_name: "Maxine Gathwright",
+        }),
+      ],
+      threads: [
+        rawThread({
+          id: "thread-row-webhook",
+          thread_id: "facebook:webhook:100615618793615:27355382180747029",
+          participant_name: null,
+          last_message_at: "2026-05-26T14:32:56.000Z",
+        }),
+        rawThread({
+          id: "thread-row-graph",
+          thread_id: "t_1306976474238038",
+          participant_name: "Maxine Gathwright",
+          last_message_at: "2026-05-26T14:33:00.000Z",
+        }),
+      ],
+    });
+
+    assert.equal(queue.length, 1);
+    assert.equal(queue[0].id, "conversation:conversation-1");
+    assert.equal(queue[0].sender, "Maxine Gathwright");
+  });
+
+  it("keeps raw threads with different participants separate", () => {
+    const queue = buildMetaInboxQueueItems({
+      ...emptyInboxData(),
+      threads: [
+        rawThread({
+          id: "thread-a",
+          thread_id: "t_aaa",
+          participant_id: "psid-a",
+          participant_name: "Customer A",
+          last_message_at: "2026-05-26T14:00:00.000Z",
+        }),
+        rawThread({
+          id: "thread-b",
+          thread_id: "t_bbb",
+          participant_id: "psid-b",
+          participant_name: "Customer B",
+          last_message_at: "2026-05-26T13:00:00.000Z",
+        }),
+      ],
+    });
+
+    assert.equal(queue.length, 2);
+    const senders = queue.map((q) => q.sender).sort();
+    assert.deepEqual(senders, ["Customer A", "Customer B"]);
+  });
+
+  it("does not dedup raw threads with null participant_id (keeps them all)", () => {
+    const queue = buildMetaInboxQueueItems({
+      ...emptyInboxData(),
+      threads: [
+        rawThread({
+          id: "thread-x",
+          thread_id: "t_xxx",
+          participant_id: null,
+          participant_name: null,
+          last_message_at: "2026-05-26T14:00:00.000Z",
+        }),
+        rawThread({
+          id: "thread-y",
+          thread_id: "t_yyy",
+          participant_id: null,
+          participant_name: null,
+          last_message_at: "2026-05-26T13:00:00.000Z",
+        }),
+      ],
+    });
+
+    assert.equal(queue.length, 2);
+  });
+});
+
+function rawThread(overrides: {
+  id: string;
+  thread_id: string;
+  participant_id?: string | null;
+  participant_name?: string | null;
+  last_message_at?: string | null;
+  page_id?: string | null;
+}) {
+  return {
+    id: overrides.id,
+    platform: "facebook" as const,
+    thread_id: overrides.thread_id,
+    page_id: overrides.page_id !== undefined ? overrides.page_id : "100615618793615",
+    ig_user_id: null,
+    participant_id:
+      overrides.participant_id !== undefined ? overrides.participant_id : "27355382180747029",
+    participant_name:
+      overrides.participant_name !== undefined ? overrides.participant_name : null,
+    snippet: null,
+    message_count: 1,
+    unread_count: 0,
+    last_message_at: overrides.last_message_at || null,
+    last_synced_at: null,
+  };
+}
+
+function normalizedConversation(overrides: {
+  id: string;
+  platform_thread_id: string;
+  participant_id: string;
+  customer_profile_id: string | null;
+}) {
+  return {
+    id: overrides.id,
+    canonical_conversation_key: `facebook:message_thread:${overrides.platform_thread_id}`,
+    source_channel: "facebook_message" as const,
+    source_type: "message_thread" as const,
+    platform: "facebook" as const,
+    customer_profile_id: overrides.customer_profile_id,
+    page_id: "100615618793615",
+    ig_user_id: null,
+    participant_id: overrides.participant_id,
+    platform_thread_id: overrides.platform_thread_id,
+    parent_content_id: null,
+    source_id: overrides.platform_thread_id,
+    first_inbound_at: "2026-05-26T14:32:56.000Z",
+    latest_inbound_at: "2026-05-26T14:32:56.000Z",
+    latest_outbound_at: null,
+    last_activity_at: "2026-05-26T14:32:56.000Z",
+    needs_reply: true,
+    reply_window_expires_at: "2026-05-27T14:32:56.000Z",
+    human_agent_window_expires_at: "2026-06-02T14:32:56.000Z",
+    send_eligibility: "standard_reply_allowed" as const,
+    conversation_status: "needs_reply" as const,
+    assigned_team_id: null,
+    assigned_user_id: null,
+    follow_up_at: null,
+    lead_quality: null,
+    lead_quality_reason_tags: [],
+    inbox_outcome: "no_outcome_yet" as const,
+    inbox_lost_reason: null,
+    queue_category_key: "general_inquiry" as const,
+    routing_source: "fallback",
+    routing_confidence: 0.35,
+    routing_explanation: "test",
+  };
+}
+
+function customerProfile(overrides: {
+  id: string;
+  participant_id: string;
+  display_name: string | null;
+}) {
+  return {
+    id: overrides.id,
+    platform: "facebook" as const,
+    page_id: "100615618793615",
+    ig_user_id: null,
+    participant_id: overrides.participant_id,
+    display_name: overrides.display_name,
+    username: null,
+    profile_picture_url: null,
+    profile_url: null,
+    profile_reference: overrides.display_name || overrides.participant_id,
+    last_profile_synced_at: null,
+  };
+}
+
 function emptyInboxData(): SocialInboxData {
   return {
     queueAccess: {
