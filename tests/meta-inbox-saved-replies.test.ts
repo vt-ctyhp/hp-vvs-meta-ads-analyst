@@ -17,7 +17,10 @@ const MIGRATION = readFileSync(
 );
 const ROUTE = readFileSync("src/app/api/social-inbox/saved-replies/route.ts", "utf8");
 const SOCIAL_INBOX_LIB = readFileSync("src/lib/social-inbox.ts", "utf8");
-const DESKTOP_INBOX = readFileSync("src/components/social-inbox-client.tsx", "utf8");
+const INBOX_MUTATIONS = readFileSync(
+  "src/components/v2/inbox/use-social-inbox-mutations.ts",
+  "utf8",
+);
 const REPLY_COMPOSER = readFileSync("src/components/v2/inbox/reply-composer.tsx", "utf8");
 const SCHEMA_GUARD = readFileSync("src/lib/meta-inbox-schema.ts", "utf8");
 const DATA_BOUNDARIES = readFileSync("src/lib/data-boundaries.ts", "utf8");
@@ -180,7 +183,7 @@ describe("Meta inbox saved replies foundation", () => {
     assert.match(REPLY_COMPOSER, /Saved Replies/);
     assert.match(REPLY_COMPOSER, /Save Personal Draft/);
     assert.match(REPLY_COMPOSER, /Approved Shared/);
-    assert.match(DESKTOP_INBOX, /\/api\/social-inbox\/saved-replies/);
+    assert.match(INBOX_MUTATIONS, /\/api\/social-inbox\/saved-replies/);
   });
 });
 

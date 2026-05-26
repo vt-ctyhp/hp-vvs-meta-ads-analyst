@@ -95,7 +95,10 @@ describe("Meta inbox approved send-attempt queue slice", () => {
       "utf8",
     );
     const socialInbox = readFileSync("src/lib/social-inbox.ts", "utf8");
-    const inboxClient = readFileSync("src/components/social-inbox-client.tsx", "utf8");
+    const inboxMutations = readFileSync(
+      "src/components/v2/inbox/use-social-inbox-mutations.ts",
+      "utf8",
+    );
     const replyComposer = readFileSync("src/components/v2/inbox/reply-composer.tsx", "utf8");
 
     assert.match(route, /queueSocialInboxSendAttempt/);
@@ -103,7 +106,7 @@ describe("Meta inbox approved send-attempt queue slice", () => {
     assert.match(socialInbox, /buildMetaInboxQueueAttemptUpdate/);
     assert.match(replyComposer, /Queue Delivery/);
     assert.match(
-      inboxClient,
+      inboxMutations,
       /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/send-attempts\/queue/,
     );
   });

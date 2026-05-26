@@ -23,6 +23,10 @@ const ROUTE = readFileSync(
 const SOCIAL_INBOX_LIB = readFileSync("src/lib/social-inbox.ts", "utf8");
 const MANAGER_DASHBOARD_LIB = readFileSync("src/lib/meta-inbox-manager-dashboard.ts", "utf8");
 const DESKTOP_INBOX = readFileSync("src/components/social-inbox-client.tsx", "utf8");
+const INBOX_MUTATIONS = readFileSync(
+  "src/components/v2/inbox/use-social-inbox-mutations.ts",
+  "utf8",
+);
 const INBOX_EYEBROW = readFileSync("src/components/v2/inbox/inbox-eyebrow.tsx", "utf8");
 const QA_DRAWER = readFileSync("src/components/v2/inbox/qa-drawer-panel.tsx", "utf8");
 const SCHEMA_GUARD = readFileSync("src/lib/meta-inbox-schema.ts", "utf8");
@@ -147,7 +151,7 @@ describe("Meta inbox QA scorecards foundation", () => {
     assert.match(QA_DRAWER, /QA Scorecards/);
     assert.match(QA_DRAWER, /Add Scorecard/);
     assert.match(QA_DRAWER, /manager coaching only/);
-    assert.match(DESKTOP_INBOX, /\/qa-scorecards/);
+    assert.match(INBOX_MUTATIONS, /\/qa-scorecards/);
   });
 });
 

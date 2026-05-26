@@ -5,6 +5,34 @@ import { describe, it } from "node:test";
 const DESKTOP_INBOX = readFileSync("src/components/social-inbox-client.tsx", "utf8");
 const DETAILS_DRAWER = readFileSync("src/components/v2/inbox/details-drawer-panel.tsx", "utf8");
 const INBOX_EYEBROW = readFileSync("src/components/v2/inbox/inbox-eyebrow.tsx", "utf8");
+const INBOX_CLIENT_STATE = readFileSync(
+  "src/components/v2/inbox/inbox-client-state.ts",
+  "utf8",
+);
+const INBOX_MUTATIONS = readFileSync(
+  "src/components/v2/inbox/use-social-inbox-mutations.ts",
+  "utf8",
+);
+const HISTORY_STATUS_STRIP = readFileSync(
+  "src/components/v2/inbox/history-status-strip.tsx",
+  "utf8",
+);
+const MESSAGE_ATTACHMENT_LIST = readFileSync(
+  "src/components/v2/inbox/message-attachment-list.tsx",
+  "utf8",
+);
+const PRESENCE_COLLISION_BANNER = readFileSync(
+  "src/components/v2/inbox/presence-collision-banner.tsx",
+  "utf8",
+);
+const PUBLIC_COMMENT_ACTION_PANEL = readFileSync(
+  "src/components/v2/inbox/public-comment-action-panel.tsx",
+  "utf8",
+);
+const SELECTED_ITEM_DETAIL = readFileSync(
+  "src/components/v2/inbox/selected-item-detail.tsx",
+  "utf8",
+);
 const DESKTOP_INBOX_PAGE = readFileSync("src/app/(workspace)/convert/inbox/page.tsx", "utf8");
 const MOBILE_INBOX_PAGE = readFileSync("src/app/m/inbox/page.tsx", "utf8");
 const MOBILE_INBOX_DETAIL_PAGE = readFileSync("src/app/m/inbox/[conversationId]/page.tsx", "utf8");
@@ -15,6 +43,17 @@ const MOBILE_CONVERSATION_DETAIL = readFileSync(
 const MOBILE_COMPOSER = readFileSync("src/components/v2/inbox/reply-composer.tsx", "utf8");
 const LEGACY_SEND_ROUTE = readFileSync("src/app/api/social-inbox/send-reply/route.ts", "utf8");
 const SOCIAL_INBOX_LIB = readFileSync("src/lib/social-inbox.ts", "utf8");
+const DESKTOP_INBOX_SURFACE = [
+  DESKTOP_INBOX,
+  DETAILS_DRAWER,
+  INBOX_CLIENT_STATE,
+  INBOX_MUTATIONS,
+  HISTORY_STATUS_STRIP,
+  MESSAGE_ATTACHMENT_LIST,
+  PRESENCE_COLLISION_BANNER,
+  PUBLIC_COMMENT_ACTION_PANEL,
+  SELECTED_ITEM_DETAIL,
+].join("\n");
 
 describe("social inbox UI contract", () => {
   it("surfaces normalized queue, source, and workflow panels in the desktop inbox", () => {
@@ -37,8 +76,8 @@ describe("social inbox UI contract", () => {
   it("loads selected desktop conversation history through the conversation-specific endpoint", () => {
     assert.match(DESKTOP_INBOX, /loadConversationHistory/);
     assert.match(DESKTOP_INBOX, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/messages/);
-    assert.match(DESKTOP_INBOX, /HistoryStatusStrip/);
-    assert.match(DESKTOP_INBOX, /Load Older History/);
+    assert.match(SELECTED_ITEM_DETAIL, /HistoryStatusStrip/);
+    assert.match(HISTORY_STATUS_STRIP, /Load Older History/);
   });
 
   it("loads mobile inbox list and detail through normalized conversations", () => {
@@ -67,8 +106,8 @@ describe("social inbox UI contract", () => {
     assert.match(DETAILS_DRAWER, /Workflow/);
     assert.match(DETAILS_DRAWER, /Claim Self/);
     assert.match(DETAILS_DRAWER, /Save State/);
-    assert.match(DESKTOP_INBOX, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/workflow/);
-    assert.equal(/snooze/i.test(DESKTOP_INBOX), false);
+    assert.match(INBOX_MUTATIONS, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/workflow/);
+    assert.equal(/snooze/i.test(DESKTOP_INBOX_SURFACE), false);
   });
 
   it("wires the Close chip to the Details drawer close preset", () => {
@@ -90,16 +129,16 @@ describe("social inbox UI contract", () => {
   });
 
   it("does not use random client idempotency keys for inbox sends or comment actions", () => {
-    assert.doesNotMatch(DESKTOP_INBOX, /crypto\.randomUUID/);
-    assert.doesNotMatch(DESKTOP_INBOX, /Math\.random/);
-    assert.match(DESKTOP_INBOX, /stableIdempotencyKey/);
+    assert.doesNotMatch(DESKTOP_INBOX_SURFACE, /crypto\.randomUUID/);
+    assert.doesNotMatch(DESKTOP_INBOX_SURFACE, /Math\.random/);
+    assert.match(INBOX_CLIENT_STATE, /stableIdempotencyKey/);
   });
 
   it("surfaces audited customer contact method controls in the source panel", () => {
     assert.match(DETAILS_DRAWER, /Contact Methods/);
     assert.match(DETAILS_DRAWER, /Add Contact/);
     assert.match(DETAILS_DRAWER, /Delete Contact/);
-    assert.match(DESKTOP_INBOX, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/contact-methods/);
+    assert.match(INBOX_MUTATIONS, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/contact-methods/);
     assert.match(DETAILS_DRAWER, /phone or email/);
   });
 
@@ -110,33 +149,33 @@ describe("social inbox UI contract", () => {
     assert.match(MOBILE_COMPOSER, /This will record a send attempt/);
     assert.match(MOBILE_COMPOSER, /Retry/);
     assert.match(MOBILE_COMPOSER, /Queue Delivery/);
-    assert.match(DESKTOP_INBOX, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/send-attempts/);
-    assert.match(DESKTOP_INBOX, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/send-attempts\/retry/);
-    assert.match(DESKTOP_INBOX, /live Meta delivery remains disabled/);
+    assert.match(INBOX_MUTATIONS, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/send-attempts/);
+    assert.match(INBOX_MUTATIONS, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/send-attempts\/retry/);
+    assert.match(INBOX_MUTATIONS, /live Meta delivery remains disabled/);
   });
 
   it("surfaces public comment actions with hide-delete reason controls", () => {
     assert.match(DESKTOP_INBOX, /PublicCommentActionPanel/);
-    assert.match(DESKTOP_INBOX, /Public Comment Actions/);
-    assert.match(DESKTOP_INBOX, /Public Reply/);
-    assert.match(DESKTOP_INBOX, /Private DM/);
-    assert.match(DESKTOP_INBOX, /Like/);
-    assert.match(DESKTOP_INBOX, /Hide/);
-    assert.match(DESKTOP_INBOX, /Delete/);
-    assert.match(DESKTOP_INBOX, /Reason note required for hide\/delete/);
-    assert.match(DESKTOP_INBOX, /window\.confirm/);
-    assert.match(DESKTOP_INBOX, /Queue Action/);
-    assert.match(DESKTOP_INBOX, /Retry Action/);
+    assert.match(PUBLIC_COMMENT_ACTION_PANEL, /Public Comment Actions/);
+    assert.match(PUBLIC_COMMENT_ACTION_PANEL, /Public Reply/);
+    assert.match(PUBLIC_COMMENT_ACTION_PANEL, /Private DM/);
+    assert.match(PUBLIC_COMMENT_ACTION_PANEL, /Like/);
+    assert.match(PUBLIC_COMMENT_ACTION_PANEL, /Hide/);
+    assert.match(PUBLIC_COMMENT_ACTION_PANEL, /Delete/);
+    assert.match(PUBLIC_COMMENT_ACTION_PANEL, /Reason note required for hide\/delete/);
+    assert.match(PUBLIC_COMMENT_ACTION_PANEL, /window\.confirm/);
+    assert.match(PUBLIC_COMMENT_ACTION_PANEL, /Queue Action/);
+    assert.match(PUBLIC_COMMENT_ACTION_PANEL, /Retry Action/);
     assert.match(
-      DESKTOP_INBOX,
+      INBOX_MUTATIONS,
       /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/comment-actions/,
     );
     assert.match(
-      DESKTOP_INBOX,
+      INBOX_MUTATIONS,
       /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/comment-actions\/queue/,
     );
     assert.match(
-      DESKTOP_INBOX,
+      INBOX_MUTATIONS,
       /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/comment-actions\/retry/,
     );
     assert.match(SOCIAL_INBOX_LIB, /commentActions: SocialInboxCommentAction\[\]/);
@@ -146,11 +185,11 @@ describe("social inbox UI contract", () => {
   });
 
   it("surfaces advisory presence collision warnings", () => {
-    assert.match(DESKTOP_INBOX, /PresenceCollisionBanner/);
+    assert.match(SELECTED_ITEM_DETAIL, /PresenceCollisionBanner/);
     assert.match(DESKTOP_INBOX, /sendPresenceHeartbeat/);
     assert.match(DESKTOP_INBOX, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/presence/);
-    assert.match(DESKTOP_INBOX, /is replying now/);
-    assert.match(DESKTOP_INBOX, /Advisory collision warning only/);
+    assert.match(PRESENCE_COLLISION_BANNER, /is replying now/);
+    assert.match(PRESENCE_COLLISION_BANNER, /Advisory collision warning only/);
     assert.match(SOCIAL_INBOX_LIB, /recordSocialInboxPresence/);
   });
 
@@ -163,9 +202,9 @@ describe("social inbox UI contract", () => {
   });
 
   it("surfaces normalized message attachments in conversation history", () => {
-    assert.match(DESKTOP_INBOX, /MessageAttachmentList/);
-    assert.match(DESKTOP_INBOX, /message\.attachments\.length/);
-    assert.match(DESKTOP_INBOX, /attachment\.mediaUrl/);
+    assert.match(SELECTED_ITEM_DETAIL, /MessageAttachmentList/);
+    assert.match(SELECTED_ITEM_DETAIL, /message\.attachments\.length/);
+    assert.match(MESSAGE_ATTACHMENT_LIST, /attachment\.mediaUrl/);
     assert.match(SOCIAL_INBOX_LIB, /normalizeMetaInboxAttachments/);
     assert.match(SOCIAL_INBOX_LIB, /attachmentIds\?: string\[\] \| null/);
   });

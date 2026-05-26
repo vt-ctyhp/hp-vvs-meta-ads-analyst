@@ -11,6 +11,10 @@ import {
 } from "../src/lib/social-inbox-ui-freshness.ts";
 
 const DESKTOP_INBOX = readFileSync("src/components/social-inbox-client.tsx", "utf8");
+const INBOX_MUTATIONS = readFileSync(
+  "src/components/v2/inbox/use-social-inbox-mutations.ts",
+  "utf8",
+);
 const CONVERSATION_HEADER = readFileSync(
   "src/components/v2/inbox/conversation-header.tsx",
   "utf8",
@@ -80,7 +84,7 @@ describe("social inbox UI freshness contracts", () => {
 
   it("keeps sync, presence, and reply windows fresh for the current conversation", () => {
     assert.match(DESKTOP_INBOX, /selectedConversationIdRef/);
-    assert.match(DESKTOP_INBOX, /loadConversationHistory\(refreshedSelectedConversationId\)/);
+    assert.match(INBOX_MUTATIONS, /loadConversationHistory\(refreshedSelectedConversationId\)/);
     assert.match(DESKTOP_INBOX, /setPresenceByConversationId\(\(current\) => \(\{/);
     assert.match(DESKTOP_INBOX, /\[conversationId\]: \{/);
     assert.match(DESKTOP_INBOX, /replyWindowNow/);
