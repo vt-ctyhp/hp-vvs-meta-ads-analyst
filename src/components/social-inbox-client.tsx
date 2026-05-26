@@ -3,7 +3,6 @@
 import {
   AlertTriangle,
   Camera,
-  CheckCircle2,
   Clock,
   EyeOff,
   Heart,
@@ -32,6 +31,7 @@ import {
   type ConversationTextState,
 } from "@/lib/social-inbox-ui-freshness";
 import { InboxEyebrow } from "./v2/inbox/inbox-eyebrow";
+import { InboxHealthRow } from "./v2/inbox/inbox-health-row";
 import { InboxLayoutShell } from "./v2/inbox/inbox-layout-shell";
 import { InboxStatusSentence } from "./v2/inbox/inbox-status-sentence";
 import { ConversationPane } from "./v2/inbox/conversation-pane";
@@ -1198,10 +1198,9 @@ export function SocialInboxClient({
           isSyncing={isSyncing}
           syncDisabled={!status.readiness.socialInbox}
         />
+        <InboxHealthRow status={status} syncRun={inboxData.syncRuns[0] || null} />
         <InboxStatusSentence queue={queue} />
       </section>
-
-      <InboxReadinessBanner status={status} />
 
       <InboxLayoutShell
         queue={
@@ -1918,181 +1917,6 @@ function commentActionLabel(actionType: SocialInboxCommentAction["action_type"])
   if (actionType === "like") return "Like";
   if (actionType === "hide") return "Hide";
   return "Delete";
-}
-
-function InboxReadinessBanner({ status }: { status: SocialInboxStatus }) {
-  const [open, setOpen] = useState(false);
-  const ready = status.readiness.socialInbox;
-  const hasError = Boolean(status.error || status.missingEnv.length);
-  const replyMissing = status.permissions?.socialReply.missing.length ?? 0;
-  const showBanner = !ready || hasError || replyMissing > 0;
-
-  if (!showBanner) return null;
-
-  const headline = !ready
-    ? "Inbox can't read Meta messages"
-    : hasError
-      ? "Inbox connection issue"
-      : `${replyMissing} permission${replyMissing === 1 ? "" : "s"} missing for replies`;
-
-  return (
-    <section className="mx-auto mt-4 max-w-7xl">
-      <div className="border-l-[3px] border-l-[#8B5B19] bg-hp-card">
-        <div className="flex items-center gap-3 px-4 py-3">
-          <span className="text-[11px] uppercase tracking-[0.14em] text-[#8B5B19]">
-            {ready && !hasError ? "Heads up" : "Action needed"}
-          </span>
-          <span className="flex-1 text-sm text-hp-ink">{headline}</span>
-          <button
-            type="button"
-            onClick={() => setOpen((value) => !value)}
-            className="text-[10px] uppercase tracking-[0.14em] text-hp-muted transition-colors duration-150 hover:text-hp-ink"
-          >
-            {open ? "Hide details" : "Show details"}
-          </button>
-        </div>
-        {open ? (
-          <div className="border-t border-hp-rule p-5">
-            <MetaReadinessPanel status={status} />
-          </div>
-        ) : null}
-      </div>
-    </section>
-  );
-}
-
-function MetaReadinessPanel({ status }: { status: SocialInboxStatus }) {
-  const permissions = status.permissions;
-  const socialReplyWarnings = permissions?.socialReply.warnings || [];
-
-  return (
-    <section className="border border-hp-rule bg-hp-card p-5">
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-        <div>
-          <span className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-            Meta Integration Status
-          </span>
-          <h2 className="mt-2 font-title text-[30px] leading-tight text-hp-ink">
-            {status.readiness.socialInbox ? "Inbox read access is ready" : "Inbox setup needed"}
-          </h2>
-          <p className="mt-3 max-w-3xl text-sm leading-6 text-hp-muted">
-            This page uses live Meta permission checks. The inbox can read Facebook and Instagram
-            message/comment surfaces, while reply actions stay disabled until the backend and final
-            permission set are in place.
-          </p>
-        </div>
-
-        <div className="grid min-w-0 gap-3 sm:grid-cols-3 xl:w-[620px]">
-          <ReadinessCard
-            title="Ads Sync"
-            ready={status.readiness.adsSync}
-            detail={status.readiness.adsSync ? "Operational" : "Needs attention"}
-          />
-          <ReadinessCard
-            title="Social Inbox"
-            ready={status.readiness.socialInbox}
-            detail={status.readiness.socialInbox ? "Read access ready" : "Missing permissions"}
-          />
-          <ReadinessCard
-            title="Replies"
-            ready={status.readiness.socialReply}
-            detail={status.readiness.socialReply ? "Ready for send APIs" : "Limited"}
-          />
-        </div>
-      </div>
-
-      <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_1fr]">
-        <div className="border border-hp-rule bg-hp-inset p-4">
-          <div className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-            Connected Accounts
-          </div>
-          <div className="mt-3 space-y-2">
-            {status.accounts.length ? (
-              status.accounts.map((account) => (
-                <div
-                  key={account.accountId}
-                  className="flex items-center justify-between gap-3 text-sm"
-                >
-                  <span className="text-hp-ink">{account.name || account.accountId}</span>
-                  <span className={account.ok ? "text-signal-positive" : "text-signal-danger"}>
-                    {account.ok ? "Ready" : account.error || "Error"}
-                  </span>
-                </div>
-              ))
-            ) : (
-              <p className="text-sm text-hp-muted">No configured Meta accounts available.</p>
-            )}
-          </div>
-        </div>
-
-        <div className="border border-hp-rule bg-hp-inset p-4">
-          <div className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-            Remaining Setup
-          </div>
-          <div className="mt-3 space-y-2 text-sm leading-6">
-            {status.error ? <p className="text-signal-danger">{status.error}</p> : null}
-            {status.missingEnv.length ? (
-              <p className="text-signal-danger">
-                Missing env vars: {status.missingEnv.join(", ")}
-              </p>
-            ) : null}
-            {permissions?.forbiddenGranted.length ? (
-              <p className="text-signal-danger">
-                Forbidden permission granted: {permissions.forbiddenGranted.join(", ")}
-              </p>
-            ) : null}
-            {permissions?.socialReply.missing.length ? (
-              <p className="text-signal-warning">
-                Missing for Facebook comment replies: {permissions.socialReply.missing.join(", ")}
-              </p>
-            ) : null}
-            {permissions?.adsSync.optionalMissing?.length ? (
-              <p className="text-hp-muted">
-                Optional ads permission missing: {permissions.adsSync.optionalMissing.join(", ")}
-              </p>
-            ) : null}
-            {socialReplyWarnings.map((warning) => (
-              <p key={warning} className="text-hp-muted">
-                {warning}
-              </p>
-            ))}
-            {!status.error &&
-            !status.missingEnv.length &&
-            !permissions?.socialReply.missing.length &&
-            !permissions?.forbiddenGranted.length ? (
-              <p className="text-signal-positive">All tracked permissions are ready.</p>
-            ) : null}
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function ReadinessCard({
-  title,
-  ready,
-  detail,
-}: {
-  title: string;
-  ready: boolean;
-  detail: string;
-}) {
-  return (
-    <div className="border border-hp-rule bg-hp-inset p-4">
-      <div className="flex items-center justify-between gap-3">
-        <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{title}</div>
-        {ready ? (
-          <CheckCircle2 size={16} className="text-signal-positive" />
-        ) : (
-          <AlertTriangle size={16} className="text-signal-warning" />
-        )}
-      </div>
-      <div className={`mt-3 text-sm ${ready ? "text-signal-positive" : "text-signal-warning"}`}>
-        {detail}
-      </div>
-    </div>
-  );
 }
 
 function EmptyThreadState() {

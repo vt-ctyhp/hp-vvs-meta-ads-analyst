@@ -28,6 +28,9 @@ const { InboxLayoutShell } = loadModule(
 ) as {
   InboxLayoutShell: (props: Record<string, unknown>) => React.ReactElement;
 };
+const { InboxHealthRow } = loadModule("src/components/v2/inbox/inbox-health-row.tsx") as {
+  InboxHealthRow: (props: Record<string, unknown>) => React.ReactElement | null;
+};
 
 test("InboxEyebrow renders the five real manager metrics and sync freshness", () => {
   const markup = renderToStaticMarkup(
@@ -153,6 +156,116 @@ test("InboxLayoutShell renders queue and conversation slots in the shell grid", 
   assert.match(markup, /Drawer slot/);
 });
 
+test("InboxHealthRow renders nothing when inbox and sync health are green", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(InboxHealthRow, {
+      status: statusFixture(),
+      syncRun: syncRunFixture({ status: "success" }),
+    }),
+  );
+
+  assert.equal(markup, "");
+});
+
+test("InboxHealthRow renders social inbox read failures with status pills", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(InboxHealthRow, {
+      status: statusFixture({
+        readiness: { socialInbox: false },
+        permissions: {
+          socialInbox: { missing: ["pages_messaging"] },
+        },
+      }),
+      syncRun: syncRunFixture(),
+    }),
+  );
+
+  assert.match(markup, /Inbox can&#x27;t read Meta messages/);
+  assert.match(markup, /data-component="inbox-health-row"/);
+  assert.match(markup, /data-status-pill="inbox-read"[^>]*data-tone="warning"[\s\S]*>Blocked</);
+  assert.match(markup, /data-status-pill="replies"[^>]*data-tone="positive"[\s\S]*>Ready</);
+  assert.match(markup, />Show details</);
+  assert.doesNotMatch(markup, /Meta Integration Status/);
+});
+
+test("InboxHealthRow uses permission headline when replies are blocked", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(InboxHealthRow, {
+      status: statusFixture({
+        readiness: { socialReply: false },
+        permissions: {
+          socialReply: { missing: ["pages_manage_metadata", "instagram_manage_messages"] },
+        },
+      }),
+      syncRun: syncRunFixture(),
+    }),
+  );
+
+  assert.match(markup, /2 permissions missing for replies/);
+  assert.match(markup, /data-status-pill="inbox-read"[^>]*data-tone="positive"[\s\S]*>Ready</);
+  assert.match(markup, /data-status-pill="replies"[^>]*data-tone="warning"[\s\S]*>Limited</);
+});
+
+test("InboxHealthRow uses connection headline for missing env and failed sync", () => {
+  const missingEnvMarkup = renderToStaticMarkup(
+    React.createElement(InboxHealthRow, {
+      status: statusFixture({ missingEnv: ["META_ACCESS_TOKEN"] }),
+      syncRun: syncRunFixture(),
+    }),
+  );
+  assert.match(missingEnvMarkup, /Inbox connection issue/);
+  assert.match(missingEnvMarkup, /META_ACCESS_TOKEN/);
+
+  const failedSyncMarkup = renderToStaticMarkup(
+    React.createElement(InboxHealthRow, {
+      status: statusFixture(),
+      syncRun: syncRunFixture({
+        status: "failed",
+        errors: ["Meta timeout"],
+      }),
+    }),
+  );
+  assert.match(failedSyncMarkup, /Inbox connection issue/);
+  assert.match(failedSyncMarkup, /Last sync failed/);
+});
+
+test("InboxHealthRow toggle reveals readiness and sync details", () => {
+  const harness = loadHealthRowHarness();
+  const props = {
+    status: statusFixture({
+      readiness: { socialReply: false },
+      permissions: {
+        socialReply: {
+          missing: ["instagram_manage_messages"],
+          warnings: ["Instagram reply token expires soon."],
+        },
+      },
+    }),
+    syncRun: syncRunFixture({
+      status: "failed",
+      completed_at: "2026-05-25T17:00:00.000Z",
+      metrics: { threads: 3, messages: 4, comments: 2 },
+      errors: ["Meta timeout"],
+    }),
+  };
+
+  let tree = harness.render(props);
+  assert.match(textContent(tree), /Show details/);
+  assert.doesNotMatch(textContent(tree), /Meta Integration Status/);
+
+  buttonByText(tree, "Show details").props.onClick?.();
+  tree = harness.render(props);
+
+  assert.match(textContent(tree), /Hide details/);
+  assert.match(textContent(tree), /Meta Integration Status/);
+  assert.match(textContent(tree), /Remaining Setup/);
+  assert.match(textContent(tree), /instagram_manage_messages/);
+  assert.match(textContent(tree), /Instagram reply token expires soon\./);
+  assert.match(textContent(tree), /Last sync failed/);
+  assert.match(textContent(tree), /Threads3/);
+  assert.match(textContent(tree), /First errorMeta timeout/);
+});
+
 function dashboardFixture(overrides: Record<string, unknown> = {}) {
   return {
     metrics: {
@@ -188,6 +301,56 @@ function syncRunFixture(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function statusFixture(overrides: Record<string, unknown> = {}) {
+  const {
+    readiness: readinessInput = {},
+    permissions: permissionsInput = {},
+    ...rest
+  } = overrides;
+  const readinessOverrides = readinessInput as Record<string, unknown>;
+  const permissionOverrides = permissionsInput as Record<string, unknown>;
+  return {
+    ok: true,
+    missingEnv: [],
+    accounts: [
+      {
+        brandCode: "HP",
+        accountId: "act-1",
+        ok: true,
+        name: "HP Meta",
+        accountStatus: 1,
+      },
+    ],
+    readiness: {
+      adsSync: true,
+      socialInbox: true,
+      socialReply: true,
+      ...readinessOverrides,
+    },
+    permissions: {
+      granted: ["pages_messaging", "instagram_manage_messages"],
+      forbiddenGranted: [],
+      adsSync: permissionBlock(),
+      socialInbox: permissionBlock(),
+      socialReply: permissionBlock(),
+      ...permissionOverrides,
+    },
+    error: null,
+    ...rest,
+  };
+}
+
+function permissionBlock(overrides: Record<string, unknown> = {}) {
+  return {
+    ok: true,
+    required: [],
+    missing: [],
+    optionalMissing: [],
+    warnings: [],
+    ...overrides,
+  };
+}
+
 function queueItem(overrides: Record<string, unknown>) {
   return {
     id: "item",
@@ -203,6 +366,89 @@ type TestElement = {
     onClick?: () => void;
   };
 };
+
+function loadHealthRowHarness() {
+  const states: unknown[] = [];
+  let cursor = 0;
+
+  const fakeReact = {
+    ...React,
+    useState<T>(initial: T | (() => T)): [T, (next: T | ((current: T) => T)) => void] {
+      const stateIndex = cursor++;
+      if (!(stateIndex in states)) {
+        states[stateIndex] = typeof initial === "function" ? (initial as () => T)() : initial;
+      }
+      return [
+        states[stateIndex] as T,
+        (next) => {
+          states[stateIndex] =
+            typeof next === "function" ? (next as (current: T) => T)(states[stateIndex] as T) : next;
+        },
+      ];
+    },
+  };
+
+  const healthRowModule = loadModule("src/components/v2/inbox/inbox-health-row.tsx", {
+    react: fakeReact,
+  }) as {
+    InboxHealthRow: (props: Record<string, unknown>) => TestElement | null;
+  };
+
+  return {
+    render(props: Record<string, unknown>) {
+      cursor = 0;
+      return materialize(healthRowModule.InboxHealthRow(props)) as TestElement;
+    },
+  };
+}
+
+function buttonByText(tree: TestElement, label: string) {
+  const button = elementsByType(tree, "button").find((node) => textContent(node).includes(label));
+  if (!button) throw new Error(`No button found for ${label}`);
+  return button;
+}
+
+function elementsByType(node: unknown, type: string): TestElement[] {
+  return findAllElements(node).filter((element) => element.type === type);
+}
+
+function materialize(node: unknown): unknown {
+  if (!node || typeof node !== "object") return node;
+  if (Array.isArray(node)) return node.map(materialize);
+
+  const element = node as TestElement;
+  if (typeof element.type === "function") {
+    return materialize(element.type(element.props));
+  }
+
+  if (!element.props || !("children" in element.props)) return element;
+  return {
+    ...element,
+    props: {
+      ...element.props,
+      children: materialize(element.props.children),
+    },
+  };
+}
+
+function textContent(node: unknown): string {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(textContent).join("");
+  if (typeof node !== "object") return "";
+  const element = node as TestElement;
+  return textContent(element.props?.children);
+}
+
+function findAllElements(node: unknown): TestElement[] {
+  if (!node || typeof node !== "object") return [];
+
+  const element = node as TestElement;
+  const children = element.props?.children;
+  const stack = Array.isArray(children) ? children : [children];
+
+  return element.props ? [element, ...stack.flatMap(findAllElements)] : [];
+}
 
 function findElement(node: unknown, type: string): TestElement {
   if (!node || typeof node !== "object") {
@@ -227,7 +473,7 @@ function findElement(node: unknown, type: string): TestElement {
   throw new Error(`No ${type} element found`);
 }
 
-function loadModule(filePath: string) {
+function loadModule(filePath: string, stubs: Record<string, unknown> = {}) {
   const cache = new Map<string, Record<string, unknown>>();
   return load(resolve(filePath));
 
@@ -252,11 +498,22 @@ function loadModule(filePath: string) {
       exports: commonJsModule.exports,
       module: commonJsModule,
       require(id: string) {
+        if (id in stubs) return stubs[id];
         if (id === "lucide-react") {
-          return {
-            RefreshCw: ({ className }: { className?: string }) =>
-              React.createElement("svg", { className, "aria-hidden": "true" }),
-          };
+          return new Proxy(
+            {},
+            {
+              get: (_target, key) => {
+                if (key === "__esModule") return false;
+                return ({ className }: { className?: string }) =>
+                  React.createElement("svg", {
+                    className,
+                    "data-icon": String(key),
+                    "aria-hidden": "true",
+                  });
+              },
+            },
+          );
         }
         if (id.startsWith(".")) return load(resolveLocalImport(dirname(absolutePath), id));
         return require(id);
