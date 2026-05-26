@@ -76,3 +76,13 @@ type DispositionPreset = "close" | null;
 ## Blocked by
 
 None — can start immediately.
+
+## Ralph status — 2026-05-26
+
+Completed. Extracted `useInboxFilters`, `computeConversationSearchHaystack`, `computeInboxHighlights`, and `useDrawerState`; wired `SocialInboxClient` to consume them.
+
+Verification:
+- `npm run test` passed: 571 passed, 5 skipped.
+- `npm run typecheck` could not run because `package.json` has no `typecheck` script.
+- `npx tsc --noEmit --pretty false` is blocked by the known unrelated `tests/meta-ads-e2e-truth.test.ts:286` cast error.
+- `npm run lint` is blocked by pre-existing unrelated lint errors in `tests/customer-journey-ledger-visitor-first.test.ts`.

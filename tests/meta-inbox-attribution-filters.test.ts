@@ -11,6 +11,7 @@ import type {
 } from "../src/lib/social-inbox.ts";
 
 const DESKTOP_INBOX = readFileSync("src/components/social-inbox-client.tsx", "utf8");
+const INBOX_FILTERS = readFileSync("src/components/v2/inbox/use-inbox-filters.ts", "utf8");
 
 describe("Meta inbox attribution filters", () => {
   it("rolls manager health up by campaign umbrella, ad, and creative", () => {
@@ -59,10 +60,10 @@ describe("Meta inbox attribution filters", () => {
     assert.match(DESKTOP_INBOX, /All Campaign Umbrellas/);
     assert.match(DESKTOP_INBOX, /All Ads/);
     assert.match(DESKTOP_INBOX, /All Creatives/);
-    assert.match(DESKTOP_INBOX, /buildAttributionFilterOptions/);
-    assert.match(DESKTOP_INBOX, /item\.firstTouch\?\.campaign_umbrella_id/);
-    assert.match(DESKTOP_INBOX, /item\.firstTouch\?\.ad_id/);
-    assert.match(DESKTOP_INBOX, /item\.firstTouch\?\.creative_id/);
+    assert.match(INBOX_FILTERS, /buildAttributionFilterOptions/);
+    assert.match(INBOX_FILTERS, /item\.firstTouch\?\.campaign_umbrella_id/);
+    assert.match(INBOX_FILTERS, /item\.firstTouch\?\.ad_id/);
+    assert.match(INBOX_FILTERS, /item\.firstTouch\?\.creative_id/);
     assert.match(DESKTOP_INBOX, /Attribution/);
   });
 });
