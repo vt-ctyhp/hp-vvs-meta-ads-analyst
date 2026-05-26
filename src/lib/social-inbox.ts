@@ -18,6 +18,7 @@ import {
   type MetaInboxThreadHistoryLoader,
 } from "./meta-inbox-normalization.ts";
 import { fetchMessengerProfile, shouldEnrichProfile } from "./meta-messenger-profile.ts";
+import { pickLatestNonEmptySnippet } from "./meta-message-snippet.ts";
 import {
   assertMetaInboxConversationMutationAccess,
   assertMetaInboxOperationalWriteAccess,
@@ -2819,13 +2820,16 @@ async function refreshThreadFromMessages(
   // authoritative job of syncConversations (from the /conversations
   // participants array). Overwriting from latest.from would clobber the
   // customer with the page identity whenever the latest message is outbound.
+  // Snippet: pick the most recent message that has actual text — attachment-
+  // only messages (photos, stickers) have empty bodies and would otherwise
+  // leave the preview as "Conversation history not synced yet".
   await upsertMany(
     "meta_social_threads",
     [
       {
         platform,
         thread_id: threadId,
-        snippet: stringField(latest.message),
+        snippet: pickLatestNonEmptySnippet(messages),
         last_message_at: stringField(latest.created_time),
       },
     ],
