@@ -20,6 +20,7 @@ const migrationText = META_INBOX_REQUIRED_MIGRATIONS.map((migration) => {
   assert.equal(existsSync(path), true, `${migration} must exist`);
   return readFileSync(path, "utf8");
 }).join("\n");
+const socialInboxSource = readFileSync(join(REPO_ROOT, "src/lib/social-inbox.ts"), "utf8");
 
 describe("Meta inbox schema readiness", () => {
   it("keeps every runtime inbox table backed by migrations and data-boundary ownership", () => {
@@ -94,5 +95,18 @@ describe("Meta inbox schema readiness", () => {
     assert.equal(isMissingMetaInboxSchemaError(error), false);
     assert.equal(metaInboxSchemaReadinessMessage(error), null);
     assert.equal(normalizeMetaInboxSchemaError(error), error);
+  });
+
+  it("keeps webhook raw ingestion non-blocking while normalized inbox schema is absent", () => {
+    assert.match(
+      socialInboxSource,
+      /normalizeMetaInboxRowsWhenSchemaReady\(\{ threads, messages \}, "ingest"\)/,
+    );
+    assert.match(
+      socialInboxSource,
+      /normalizeMetaInboxRowsWhenSchemaReady\(\{ comments \}, "ingest"\)/,
+    );
+    assert.match(socialInboxSource, /if \(isMissingMetaInboxSchemaError\(error\)\) return;/);
+    assert.match(socialInboxSource, /throw error;/);
   });
 });

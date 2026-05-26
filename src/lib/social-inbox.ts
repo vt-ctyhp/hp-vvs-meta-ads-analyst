@@ -50,7 +50,10 @@ import {
   type MetaInboxNormalizedAttachment,
   type MetaInboxSendAttachmentRow,
 } from "./meta-inbox-attachments.ts";
-import { normalizeMetaInboxSchemaError } from "./meta-inbox-schema.ts";
+import {
+  isMissingMetaInboxSchemaError,
+  normalizeMetaInboxSchemaError,
+} from "./meta-inbox-schema.ts";
 import {
   buildMetaInboxCommentActionDraft,
   buildMetaInboxQueueCommentActionUpdate,
@@ -2274,7 +2277,7 @@ export async function ingestMetaWebhookPayload(payload: JsonRecord): Promise<Met
         "platform,message_id",
         "ingest",
       );
-      await normalizeMetaInboxRows({ threads, messages }, "ingest");
+      await normalizeMetaInboxRowsWhenSchemaReady({ threads, messages }, "ingest");
       result.messages += messages.length;
     }
 
@@ -2288,7 +2291,7 @@ export async function ingestMetaWebhookPayload(payload: JsonRecord): Promise<Met
         "platform,comment_id",
         "ingest",
       );
-      await normalizeMetaInboxRows({ comments }, "ingest");
+      await normalizeMetaInboxRowsWhenSchemaReady({ comments }, "ingest");
       result.comments += comments.length;
     }
   }
@@ -3070,6 +3073,18 @@ async function normalizeMetaInboxRows(
     role,
     { ignoreDuplicates: true },
   );
+}
+
+async function normalizeMetaInboxRowsWhenSchemaReady(
+  input: MetaInboxNormalizationInput,
+  role: "worker" | "ingest" = "worker",
+) {
+  try {
+    await normalizeMetaInboxRows(input, role);
+  } catch (error) {
+    if (isMissingMetaInboxSchemaError(error)) return;
+    throw error;
+  }
 }
 
 async function selectMetaInboxConversationWorkflowState(
