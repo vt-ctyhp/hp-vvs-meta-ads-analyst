@@ -107,6 +107,18 @@ describe("Convert customer ledger adapter", () => {
     assert.equal(rows[0].occurredAt, "2026-05-25T18:20:00.000Z");
   });
 
+  it("does not fall back to appointment time for Activity", () => {
+    const rows = customerLedgerRowsFromJourneys([
+      journeyRow({
+        appointmentVisitDateTime: "2026-05-26T21:30:00.000Z",
+        bookingTime: "2026-05-26T21:30:00.000Z",
+        lastSeen: "",
+      }),
+    ]);
+
+    assert.equal(rows[0].occurredAt, "");
+  });
+
   it("keeps rows without paid touch valid and leaves ad context empty", () => {
     const rows = customerLedgerRowsFromJourneys([
       journeyRow({

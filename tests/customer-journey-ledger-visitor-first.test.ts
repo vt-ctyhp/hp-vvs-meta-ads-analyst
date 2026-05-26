@@ -685,3 +685,78 @@ test(
     assert.equal(data.rows[0].lastSeen, "2026-05-25T18:20:00.000Z");
   },
 );
+
+test(
+  "appointment-anchored conversion uses paid website touch instead of appointment-shaped conversion time",
+  async () => {
+    const apptId = "acuity-touch-future-visit";
+    const appointment = makeAppointment({
+      external_booking_id: apptId,
+      visit_date_time: "2026-05-26T21:30:00.000Z",
+    });
+    const conversion = {
+      event_id: "conv-touch-future-visit",
+      session_id: null,
+      visitor_id: null,
+      occurred_at: "2026-05-26T21:30:00.000Z",
+      received_at: null,
+      source_type: "paid_meta",
+      acuity_appointment_id: apptId,
+      appointment_type: "General Meeting",
+      brand: "hpusa",
+      customer_name: "Ella Goto",
+      customer_email: "ella.goto@gmail.com",
+      customer_phone: null,
+      meta_event_id: null,
+      meta_capi_status: "sent",
+      meta_capi_test_mode: null,
+      fbp: null,
+      fbc: null,
+      geo_country: null,
+      geo_region: null,
+      geo_city: null,
+      geo_timezone: null,
+      user_agent: null,
+      device_category: null,
+      browser_name: null,
+      os_name: null,
+      page_url: null,
+      referrer: null,
+      first_touch: null,
+      last_touch: null,
+      last_paid_touch: {
+        capturedAt: "2026-05-25T18:20:00.000Z",
+        sourceType: "paid_meta",
+        source: "ig",
+        utm: {
+          adId: "ad-1",
+          campaignId: "campaign-1",
+          placement: "Instagram_Stories",
+          source: "ig",
+        },
+      },
+      conversion_touch: {
+        capturedAt: "2026-05-26T21:30:00.000Z",
+        sourceType: "paid_meta",
+      },
+      properties: null,
+      raw_json: null,
+    };
+    const client = makeMockClient({
+      appointment_events: [appointment],
+      website_visitors: [],
+      website_events: [],
+      website_conversions: [conversion],
+      website_sessions: [],
+    });
+
+    const data = await fetchCustomerJourneyLedgerData(
+      { startDate: "2026-05-01", endDate: "2026-05-26" },
+      client as CustomerJourneyLedgerClient,
+    );
+
+    assert.equal(data.rows[0].appointmentVisitDateTime, "2026-05-26T21:30:00.000Z");
+    assert.equal(data.rows[0].bookingTime, "2026-05-26T21:30:00.000Z");
+    assert.equal(data.rows[0].lastSeen, "2026-05-25T18:20:00.000Z");
+  },
+);

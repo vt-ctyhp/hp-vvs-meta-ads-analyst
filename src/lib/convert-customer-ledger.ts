@@ -129,7 +129,7 @@ export function customerLedgerRowsFromJourneys(
       geoTimezone: row.geoTimezone,
       hasConversion: row.hasConversion,
       hasPaidTouch: row.hasPaidTouch,
-      occurredAt: row.lastSeen || row.bookingTime || row.appointmentVisitDateTime || "",
+      occurredAt: customerLedgerActivityAt(row),
       paidTouchCampaign: row.campaignId,
       paidTouchSource: row.lastPaidSource,
       placement: row.placement,
@@ -292,6 +292,27 @@ function matchesSource(row: CustomerLedgerRow, source: string) {
     return !row.hasPaidTouch && !row.sourceType;
   }
   return true;
+}
+
+function customerLedgerActivityAt(
+  row: Pick<CustomerJourneyLedgerRow, "appointmentVisitDateTime" | "bookingTime" | "lastSeen">,
+) {
+  return (
+    nonAppointmentActivityAt(row.lastSeen, row.appointmentVisitDateTime) ||
+    nonAppointmentActivityAt(row.bookingTime, row.appointmentVisitDateTime) ||
+    ""
+  );
+}
+
+function nonAppointmentActivityAt(value: string | null, appointmentTime: string | null) {
+  if (!value) return "";
+  if (!appointmentTime) return value;
+  const valueTime = Date.parse(value);
+  const appointmentTimestamp = Date.parse(appointmentTime);
+  if (Number.isFinite(valueTime) && Number.isFinite(appointmentTimestamp)) {
+    return valueTime === appointmentTimestamp ? "" : value;
+  }
+  return value === appointmentTime ? "" : value;
 }
 
 function matchesCapi(row: CustomerLedgerRow, capi: string) {

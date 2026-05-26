@@ -1459,7 +1459,7 @@ export function buildCustomerJourneyLedgerRows(input: {
       consumedConversions.add(conversion);
       if (!visitor) {
         anchoredRows.push(withAppointmentFields(
-          conversionOnlyLedgerRow(conversion, events, input.conversions, true),
+          conversionOnlyLedgerRow(conversion, events, input.conversions, true, appointment),
           appointment,
         ));
         continue;
@@ -1471,7 +1471,7 @@ export function buildCustomerJourneyLedgerRows(input: {
         sessionsById: sessionsByVisitorAndId.get(visitor.visitor_id),
       });
       anchoredRows.push(withAppointmentFields(
-        conversionLedgerRow({ allConversions: input.conversions, conversion, events, session, visitor, isAppointmentAnchored: true }),
+        conversionLedgerRow({ allConversions: input.conversions, appointment, conversion, events, session, visitor, isAppointmentAnchored: true }),
         appointment,
       ));
       continue;
@@ -1606,13 +1606,15 @@ function stageKeysForVisitorOnly(input: {
 
 function conversionLedgerRow(input: {
   allConversions: CustomerJourneyLedgerConversionRow[];
+  appointment?: CustomerJourneyLedgerAppointmentRow | null;
   conversion: CustomerJourneyLedgerConversionRow;
   events: CustomerJourneyLedgerEventRow[];
   session: CustomerJourneyLedgerSessionRow | null;
   visitor: CustomerJourneyLedgerVisitorRow;
   isAppointmentAnchored: boolean;
 }): CustomerJourneyLedgerRow {
-  const { allConversions, conversion, events, session, visitor, isAppointmentAnchored } = input;
+  const { allConversions, appointment, conversion, events, session, visitor, isAppointmentAnchored } = input;
+  const appointmentTime = appointmentVisitDateTime(appointment);
   const eventTouches = events.flatMap(eventAttributionTouches);
   const paidTouch = selectPaidTouchForConversion(
     conversion,
@@ -1677,7 +1679,10 @@ function conversionLedgerRow(input: {
     hasPaidTouch: Boolean(paidTouch),
     lastPaidSource: source,
     lastPaidSourceType: paidTouch?.sourceType || conversion.source_type || null,
-    lastSeen: latestWebsiteActivityAt({ conversion, events, session, visitor }) || conversion.occurred_at,
+    lastSeen:
+      latestWebsiteActivityAt({ beforeAt: appointmentTime, conversion, events, session, visitor }) ||
+      nonAppointmentTimestamp(conversion.occurred_at, appointmentTime) ||
+      "",
     metaEventId: conversion.meta_event_id || null,
     osName,
     placement,
@@ -1692,7 +1697,9 @@ function conversionOnlyLedgerRow(
   events: CustomerJourneyLedgerEventRow[],
   allConversions: CustomerJourneyLedgerConversionRow[] = [conversion],
   isAppointmentAnchored = false,
+  appointment?: CustomerJourneyLedgerAppointmentRow | null,
 ): CustomerJourneyLedgerRow {
+  const appointmentTime = appointmentVisitDateTime(appointment);
   const eventTouches = events.flatMap(eventAttributionTouches);
   const paidTouch = selectPaidTouchForConversion(
     conversion,
@@ -1745,7 +1752,10 @@ function conversionOnlyLedgerRow(
     hasPaidTouch: Boolean(paidTouch),
     lastPaidSource: source,
     lastPaidSourceType: paidTouch?.sourceType || conversion.source_type || null,
-    lastSeen: latestWebsiteActivityAt({ conversion, events }) || conversion.occurred_at,
+    lastSeen:
+      latestWebsiteActivityAt({ beforeAt: appointmentTime, conversion, events }) ||
+      nonAppointmentTimestamp(conversion.occurred_at, appointmentTime) ||
+      "",
     metaEventId: conversion.meta_event_id || null,
     osName,
     placement,
@@ -1762,7 +1772,8 @@ function appointmentLedgerRow(input: {
   visitor: CustomerJourneyLedgerVisitorRow | null;
 }): CustomerJourneyLedgerRow {
   const { appointment, events, session, visitor } = input;
-  const appointmentTime = appointmentVisitDateTime(appointment) || appointment.created_at;
+  const visitTime = appointmentVisitDateTime(appointment);
+  const appointmentTime = visitTime || appointment.created_at;
   const eventTouches = events.flatMap(eventAttributionTouches);
   const paidTouch = selectOriginalPaidTouch(
     [
@@ -1813,7 +1824,10 @@ function appointmentLedgerRow(input: {
     hasPaidTouch: Boolean(paidTouch),
     lastPaidSource: source,
     lastPaidSourceType: paidTouch?.sourceType || null,
-    lastSeen: latestWebsiteActivityAt({ events, session, visitor }) || appointmentTime,
+    lastSeen:
+      latestWebsiteActivityAt({ beforeAt: visitTime, events, session, visitor }) ||
+      nonAppointmentTimestamp(appointment.created_at, visitTime) ||
+      "",
     metaEventId: null,
     osName,
     placement,
@@ -1838,19 +1852,38 @@ function withAppointmentFields(
 }
 
 function latestWebsiteActivityAt(input: {
+  beforeAt?: string | null;
   conversion?: CustomerJourneyLedgerConversionRow | null;
   events?: CustomerJourneyLedgerEventRow[];
   session?: CustomerJourneyLedgerSessionRow | null;
   visitor?: CustomerJourneyLedgerVisitorRow | null;
 }) {
+  const beforeTimestamp = timestampValue(input.beforeAt);
   const candidates = [
     input.visitor?.last_seen_at,
     input.session?.last_seen_at,
-    input.conversion?.occurred_at,
     ...(input.events || []).map((event) => event.occurred_at),
-  ].filter((value): value is string => Boolean(value));
+    attributionTouch(input.conversion?.first_touch)?.capturedAt,
+    attributionTouch(input.conversion?.last_touch)?.capturedAt,
+    attributionTouch(input.conversion?.last_paid_touch)?.capturedAt,
+    attributionTouch(input.conversion?.conversion_touch)?.capturedAt,
+  ].filter((value): value is string => {
+    if (!value) return false;
+    const candidateTimestamp = timestampValue(value);
+    if (!candidateTimestamp) return false;
+    return !beforeTimestamp || candidateTimestamp < beforeTimestamp;
+  });
 
   return candidates.sort((a, b) => timestampValue(b) - timestampValue(a))[0] || null;
+}
+
+function nonAppointmentTimestamp(value: string | null | undefined, appointmentTime: string | null) {
+  if (!value) return null;
+  if (!appointmentTime) return value;
+  const valueTime = timestampValue(value);
+  const appointmentTimestamp = timestampValue(appointmentTime);
+  if (valueTime && appointmentTimestamp && valueTime === appointmentTimestamp) return null;
+  return value === appointmentTime ? null : value;
 }
 
 function selectPaidTouchForConversion(
