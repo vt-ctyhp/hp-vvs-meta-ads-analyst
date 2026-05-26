@@ -297,6 +297,8 @@ test("run detail formats long answer summaries into readable sections", () => {
   );
 
   assert.match(markup, /Context/);
+  assert.match(markup, /Est\. API cost/);
+  assert.match(markup, /No model call/);
   assert.match(markup, /Findings/);
   assert.match(markup, /<ol class=/);
   assert.match(markup, /Totals/);

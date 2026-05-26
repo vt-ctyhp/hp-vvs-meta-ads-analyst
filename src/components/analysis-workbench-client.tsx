@@ -1796,7 +1796,7 @@ function formatApiCost(value: number) {
 }
 
 function formatApiCostDetail(apiCost: OpenAICostBreakdown) {
-  if (apiCost.model === "governed-local") return "governed local pipeline";
+  if (apiCost.model === "governed-local") return "No model call";
   return `${apiCost.model} · ${formatNumber(apiCost.totalTokens)} tokens`;
 }
 
