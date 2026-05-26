@@ -10,7 +10,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import * as ts from "typescript";
 
 import { useInboxFilters } from "../src/components/v2/inbox/use-inbox-filters.ts";
-import type { QueueCategoryFilter } from "../src/components/v2/inbox/use-inbox-filters.ts";
+import type {
+  ItemTypeFilter,
+  QueueCategoryFilter,
+  SourceChannelFilter,
+  StatusFilter,
+} from "../src/components/v2/inbox/use-inbox-filters.ts";
 import type { MetaInboxQueueDisplayItem } from "../src/lib/meta-inbox-queue-view.ts";
 import type { MetaInboxQueueCategoryKey } from "../src/lib/meta-inbox-vocabulary.ts";
 import type { SocialInboxData } from "../src/lib/social-inbox.ts";
@@ -120,17 +125,10 @@ test("QueueRow exposes needs-reply, over-SLA, active, and default visual modes",
 
 test("QueueRail renders admin and team-scoped category options", () => {
   const adminMarkup = renderToStaticMarkup(
-    React.createElement(QueueRail, {
+    React.createElement(QueueRail, queueRailProps({
       queue: queueFixture(),
-      selectedId: null,
-      query: "",
-      onQueryChange: () => {},
-      queueCategoryFilter: "all",
-      onQueueCategoryChange: () => {},
       queueCategories: visibleQueueCategories(dataAccessFixture("all")),
-      onSelect: () => {},
-      now: new Date("2026-05-25T12:00:00.000Z"),
-    }),
+    })),
   );
 
   assert.match(adminMarkup, />All categories</);
@@ -148,19 +146,12 @@ test("QueueRail renders admin and team-scoped category options", () => {
   }
 
   const teamMarkup = renderToStaticMarkup(
-    React.createElement(QueueRail, {
+    React.createElement(QueueRail, queueRailProps({
       queue: queueFixture(),
-      selectedId: null,
-      query: "",
-      onQueryChange: () => {},
-      queueCategoryFilter: "all",
-      onQueueCategoryChange: () => {},
       queueCategories: visibleQueueCategories(
         dataAccessFixture("team", ["cash_for_gold", "book_appointment"]),
       ),
-      onSelect: () => {},
-      now: new Date("2026-05-25T12:00:00.000Z"),
-    }),
+    })),
   );
 
   assert.match(teamMarkup, />Cash for Gold</);
@@ -186,15 +177,14 @@ test("QueueRail category select drives useInboxFilters and narrows rendered rows
       }
 
       return React.createElement(QueueRail, {
-        queue: filters.filteredQueue,
-        selectedId: null,
-        query: filters.query,
-        onQueryChange: filters.setQuery,
-        queueCategoryFilter: filters.effectiveQueueCategoryFilter,
-        onQueueCategoryChange: filters.setQueueCategoryFilter,
-        queueCategories: visibleQueueCategories(dataAccessFixture("all")),
-        onSelect: () => {},
-        now: new Date("2026-05-25T12:00:00.000Z"),
+        ...queueRailProps({
+          queue: filters.filteredQueue,
+          query: filters.query,
+          onQueryChange: filters.setQuery,
+          queueCategoryFilter: filters.effectiveQueueCategoryFilter,
+          onQueueCategoryChange: filters.setQueueCategoryFilter,
+          queueCategories: visibleQueueCategories(dataAccessFixture("all")),
+        }),
       });
     }),
   );
@@ -205,19 +195,12 @@ test("QueueRail category select drives useInboxFilters and narrows rendered rows
 
   let selected: QueueCategoryFilter | null = null;
   const select = findElement(
-    QueueRail({
+    QueueRail(queueRailProps({
       queue,
-      selectedId: null,
-      query: "",
-      onQueryChange: () => {},
-      queueCategoryFilter: "all",
       onQueueCategoryChange: (value: QueueCategoryFilter) => {
         selected = value;
       },
-      queueCategories: visibleQueueCategories(dataAccessFixture("all")),
-      onSelect: () => {},
-      now: new Date("2026-05-25T12:00:00.000Z"),
-    }),
+    })),
     "select",
   );
 
@@ -225,8 +208,122 @@ test("QueueRail category select drives useInboxFilters and narrows rendered rows
   if (typeof onChange !== "function") {
     throw new Error("Queue category select is missing an onChange handler.");
   }
-  onChange({ target: { value: "cash_for_gold" } });
+  (onChange as (event: { target: { value: string } }) => void)({
+    target: { value: "cash_for_gold" },
+  });
   assert.equal(selected, "cash_for_gold");
+});
+
+test("QueueRail owns collapsed filter disclosure and dirty reset affordances", () => {
+  const cleanMarkup = renderToStaticMarkup(
+    React.createElement(QueueRail, queueRailProps({ queue: queueFixture() })),
+  );
+
+  assert.match(cleanMarkup, /\+ Filters/);
+  assert.match(cleanMarkup, /data-component="queue-filter-disclosure"/);
+  assert.doesNotMatch(cleanMarkup, /data-component="queue-filter-disclosure"[^>]*checked/);
+  assert.match(cleanMarkup, /3 conversations · Sorted by age/);
+  assert.doesNotMatch(cleanMarkup, />Reset</);
+
+  const dirtyMarkup = renderToStaticMarkup(
+    React.createElement(
+      QueueRail,
+      queueRailProps({
+        queue: queueFixture().slice(0, 1),
+        filtersDirty: true,
+      }),
+    ),
+  );
+
+  assert.match(dirtyMarkup, /1 conversation ·/);
+  assert.match(dirtyMarkup, />Reset</);
+  assert.doesNotMatch(dirtyMarkup, /Sorted by age/);
+});
+
+test("QueueRail disclosure renders the rail-owned filter controls", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      QueueRail,
+      queueRailProps({
+        queue: queueFixture(),
+        sourceChannelFilter: "instagram_message",
+        campaignUmbrellaFilter: "cash-umbrella",
+        itemTypeFilter: "messages",
+        statusFilter: "needs-reply",
+        filtersDirty: true,
+      }),
+    ),
+  );
+
+  assert.match(markup, />Source Channel</);
+  assert.match(markup, />Campaign Umbrella</);
+  assert.match(markup, />Item Type</);
+  assert.match(markup, />Status</);
+  assert.match(markup, />Facebook Message</);
+  assert.match(markup, />Instagram Message</);
+  assert.match(markup, />All Campaign Umbrellas</);
+  assert.match(markup, />cash-umbrella</);
+  assert.match(markup, />All Items</);
+  assert.match(markup, />Messages</);
+  assert.match(markup, />Comments</);
+  assert.match(markup, />Unread</);
+  assert.match(markup, />Needs Reply</);
+});
+
+test("QueueRail filter controls call the supplied filter handlers", () => {
+  const changes: Record<string, string> = {};
+  let reset = false;
+  const rail = QueueRail(
+    queueRailProps({
+      queue: queueFixture(),
+      filtersDirty: true,
+      onSourceChannelChange: (value: SourceChannelFilter) => {
+        changes.sourceChannel = value;
+      },
+      onCampaignUmbrellaChange: (value: string) => {
+        changes.campaignUmbrella = value;
+      },
+      onItemTypeChange: (value: ItemTypeFilter) => {
+        changes.itemType = value;
+      },
+      onStatusChange: (value: StatusFilter) => {
+        changes.status = value;
+      },
+      onResetFilters: () => {
+        reset = true;
+      },
+    }),
+  );
+
+  changeSelect(rail, "Source channel", "instagram_message");
+  changeSelect(rail, "Campaign umbrella", "cash-umbrella");
+  changeSelect(rail, "Item type", "comments");
+  changeSelect(rail, "Status", "unread");
+  clickButton(rail, "Reset");
+
+  assert.deepEqual(changes, {
+    sourceChannel: "instagram_message",
+    campaignUmbrella: "cash-umbrella",
+    itemType: "comments",
+    status: "unread",
+  });
+  assert.equal(reset, true);
+});
+
+test("QueueRail empty filtered state points to Reset", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      QueueRail,
+      queueRailProps({
+        queue: [],
+        filtersDirty: true,
+      }),
+    ),
+  );
+
+  assert.match(markup, /No conversations match/);
+  assert.match(markup, /Try resetting/);
+  assert.match(markup, />Reset</);
 });
 
 function queueFixture(): MetaInboxQueueDisplayItem[] {
@@ -339,10 +436,45 @@ function dataAccessFixture(
 type TestElement = {
   type?: unknown;
   props: {
+    "aria-label"?: string;
+    ariaLabel?: string;
     children?: unknown;
-    onChange?: (event: { target: { value: string } }) => void;
+    onClick?: () => void;
+    onChange?: ((event: { target: { value: string } }) => void) | ((value: string) => void);
   };
 };
+
+type QueueRailProps = Parameters<typeof QueueRail>[0];
+
+function queueRailProps(overrides: Partial<QueueRailProps> = {}): QueueRailProps {
+  return {
+    queue: queueFixture(),
+    selectedId: null,
+    query: "",
+    onQueryChange: () => {},
+    queueCategoryFilter: "all",
+    onQueueCategoryChange: () => {},
+    sourceChannelFilter: "all",
+    onSourceChannelChange: () => {},
+    campaignUmbrellaFilter: "all",
+    onCampaignUmbrellaChange: () => {},
+    itemTypeFilter: "all",
+    onItemTypeChange: () => {},
+    statusFilter: "all",
+    onStatusChange: () => {},
+    attributionFilterOptions: {
+      campaignUmbrellas: [["cash-umbrella", "cash-umbrella"]],
+      ads: [],
+      creatives: [],
+    },
+    filtersDirty: false,
+    onResetFilters: () => {},
+    queueCategories: visibleQueueCategories(dataAccessFixture("all")),
+    onSelect: () => {},
+    now: new Date("2026-05-25T12:00:00.000Z"),
+    ...overrides,
+  };
+}
 
 function findElement(node: unknown, type: string): TestElement {
   if (!node || typeof node !== "object") {
@@ -365,6 +497,65 @@ function findElement(node: unknown, type: string): TestElement {
   }
 
   throw new Error(`No ${type} element found`);
+}
+
+function findElements(node: unknown, type: string): TestElement[] {
+  if (!node || typeof node !== "object") return [];
+
+  const maybeElement = node as TestElement;
+  const matches = maybeElement.type === type ? [maybeElement] : [];
+  const children = maybeElement.props?.children;
+  const stack = Array.isArray(children) ? children : [children];
+
+  for (const child of stack) {
+    matches.push(...findElements(child, type));
+  }
+
+  return matches;
+}
+
+function changeSelect(node: unknown, label: string, value: string) {
+  const select = findAllElements(node).find(
+    (element) => element.props?.["aria-label"] === label || element.props?.ariaLabel === label,
+  );
+  if (!select?.props.onChange) {
+    throw new Error(`No select found for ${label}`);
+  }
+  if (select.props["aria-label"] === label) {
+    (select.props.onChange as (event: { target: { value: string } }) => void)({
+      target: { value },
+    });
+  } else {
+    (select.props.onChange as (nextValue: string) => void)(value);
+  }
+}
+
+function clickButton(node: unknown, label: string) {
+  const button = findElements(node, "button").find((element) =>
+    textContent(element).includes(label),
+  );
+  if (!button?.props.onClick) {
+    throw new Error(`No button found for ${label}`);
+  }
+  button.props.onClick();
+}
+
+function textContent(node: unknown): string {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (!node || typeof node !== "object") return "";
+  const children = (node as TestElement).props?.children;
+  if (Array.isArray(children)) return children.map(textContent).join("");
+  return textContent(children);
+}
+
+function findAllElements(node: unknown): TestElement[] {
+  if (!node || typeof node !== "object") return [];
+
+  const element = node as TestElement;
+  const children = element.props?.children;
+  const stack = Array.isArray(children) ? children : [children];
+
+  return element.props ? [element, ...stack.flatMap(findAllElements)] : [];
 }
 
 function escapeRegExp(value: string) {

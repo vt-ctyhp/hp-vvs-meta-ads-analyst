@@ -58,10 +58,8 @@ import { QueueRail, visibleQueueCategories } from "./v2/inbox/queue-rail";
 import { useDrawerState } from "./v2/inbox/use-drawer-state";
 import {
   useInboxFilters,
-  type BrandFilter,
   type ItemTypeFilter,
   type SourceChannelFilter,
-  type SourceFilter,
   type StatusFilter,
 } from "./v2/inbox/use-inbox-filters";
 import type {
@@ -331,10 +329,6 @@ export function SocialInboxClient({
     [queueCategories],
   );
   const {
-    brandFilter,
-    setBrandFilter,
-    sourceFilter,
-    setSourceFilter,
     itemTypeFilter,
     setItemTypeFilter,
     statusFilter,
@@ -345,14 +339,11 @@ export function SocialInboxClient({
     setSourceChannelFilter,
     campaignUmbrellaFilter,
     setCampaignUmbrellaFilter,
-    adFilter,
-    setAdFilter,
-    creativeFilter,
-    setCreativeFilter,
     query,
     setQuery,
     filteredQueue,
     attributionFilterOptions,
+    filtersDirty,
     reset: resetInboxFilters,
   } = useInboxFilters(queue, { visibleQueueKeys });
   const { close: closeDrawer } = useDrawerState();
@@ -1201,106 +1192,20 @@ export function SocialInboxClient({
             onQueryChange={setQuery}
             queueCategoryFilter={effectiveQueueCategoryFilter}
             onQueueCategoryChange={setQueueCategoryFilter}
+            sourceChannelFilter={sourceChannelFilter}
+            onSourceChannelChange={(value) => setSourceChannelFilter(value as SourceChannelFilter)}
+            campaignUmbrellaFilter={campaignUmbrellaFilter}
+            onCampaignUmbrellaChange={setCampaignUmbrellaFilter}
+            itemTypeFilter={itemTypeFilter}
+            onItemTypeChange={(value) => setItemTypeFilter(value as ItemTypeFilter)}
+            statusFilter={statusFilter}
+            onStatusChange={(value) => setStatusFilter(value as StatusFilter)}
+            attributionFilterOptions={attributionFilterOptions}
+            filtersDirty={filtersDirty}
+            onResetFilters={resetInboxFilters}
             queueCategories={queueCategories}
             onSelect={(item) => handleSelectQueueItem(item.id)}
             now={replyWindowNow}
-            legacyFilterChrome={
-              <div className="mt-4 grid gap-3 border-t border-hp-rule pt-4">
-                <FilterSelect
-                  label="Brand"
-                  value={brandFilter}
-                  onChange={(value) => setBrandFilter(value as BrandFilter)}
-                  options={[
-                    ["all", "All Brands"],
-                    ["HP", "HP"],
-                    ["VVS", "VVS"],
-                  ]}
-                />
-                <FilterSelect
-                  label="Platform"
-                  value={sourceFilter}
-                  onChange={(value) => setSourceFilter(value as SourceFilter)}
-                  options={[
-                    ["all", "Facebook + Instagram"],
-                    ["facebook", "Facebook"],
-                    ["instagram", "Instagram"],
-                  ]}
-                />
-                <FilterSelect
-                  label="Source Channel"
-                  value={sourceChannelFilter}
-                  onChange={(value) => setSourceChannelFilter(value as SourceChannelFilter)}
-                  options={[
-                    ["all", "All Channels"],
-                    ...META_INBOX_SOURCE_CHANNELS.map((channel) => [
-                      channel.key,
-                      channel.label,
-                    ] as [string, string]),
-                  ]}
-                />
-                <FilterSelect
-                  label="Campaign Umbrella"
-                  value={campaignUmbrellaFilter}
-                  onChange={setCampaignUmbrellaFilter}
-                  options={[
-                    ["all", "All Campaign Umbrellas"],
-                    ...attributionFilterOptions.campaignUmbrellas,
-                  ]}
-                />
-                <div className="grid grid-cols-2 gap-3">
-                  <FilterSelect
-                    label="Ad"
-                    value={adFilter}
-                    onChange={setAdFilter}
-                    options={[
-                      ["all", "All Ads"],
-                      ...attributionFilterOptions.ads,
-                    ]}
-                  />
-                  <FilterSelect
-                    label="Creative"
-                    value={creativeFilter}
-                    onChange={setCreativeFilter}
-                    options={[
-                      ["all", "All Creatives"],
-                      ...attributionFilterOptions.creatives,
-                    ]}
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <FilterSelect
-                    label="Type"
-                    value={itemTypeFilter}
-                    onChange={(value) => setItemTypeFilter(value as ItemTypeFilter)}
-                    options={[
-                      ["all", "All Items"],
-                      ["messages", "Messages"],
-                      ["comments", "Comments"],
-                    ]}
-                  />
-                  <FilterSelect
-                    label="Status"
-                    value={statusFilter}
-                    onChange={(value) => setStatusFilter(value as StatusFilter)}
-                    options={[
-                      ["all", "All Status"],
-                      ["unread", "Unread"],
-                      ["needs-reply", "Needs Reply"],
-                    ]}
-                  />
-                </div>
-                <div className="flex items-center justify-between border-t border-hp-rule pt-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-                  <span>{filteredQueue.length} shown</span>
-                  <button
-                    type="button"
-                    onClick={resetInboxFilters}
-                    className="text-hp-ink underline-offset-4 hover:underline"
-                  >
-                    Reset
-                  </button>
-                </div>
-              </div>
-            }
           />
         }
 
