@@ -488,6 +488,28 @@ export type AnalysisResult = {
   persistenceWarning?: string;
 };
 
+export type AnalysisRunPreview = {
+  title: string;
+  answer: string;
+  questionType: AnalysisQuestionType;
+  validationStatus: AnalysisValidationStatus;
+  rowCount: number;
+  widgets: AnalysisWidgetType[];
+  warnings: string[];
+  unsupportedReasons: string[];
+  clarificationQuestions: string[];
+  assumptions: string[];
+  sourceNotes: AnalysisResult["sourceTransparency"];
+  plannerIntent: AnalysisPlannerIntent;
+  keyFacts: {
+    totals: AnalysisResult["totals"];
+    firstRows: AnalysisResult["table"]["rows"];
+    comparison: AnalysisComparisonFactPack | null | undefined;
+    diagnosis: AnalysisDiagnosisFactPack | null | undefined;
+    recommendation: AnalysisRecommendationFactPack | null | undefined;
+  };
+};
+
 export type SavedAnalysisDashboard = {
   id: string;
   title: string;
@@ -4338,6 +4360,35 @@ function buildValidationAnswer(validation: ValidationResult) {
   return "";
 }
 
+export function buildAnalysisRunPreview(result: AnalysisResult): AnalysisRunPreview {
+  return {
+    title: result.title,
+    answer: result.answer,
+    questionType: result.questionType,
+    validationStatus: result.validationStatus,
+    rowCount: result.table.rows.length,
+    widgets: result.widgets.map((widget) => widget.type),
+    warnings: result.warnings,
+    unsupportedReasons: result.unsupportedReasons,
+    clarificationQuestions: result.clarificationQuestions,
+    assumptions: uniqueStrings([
+      ...result.plannerIntent.assumptions,
+      ...result.analystDebug.assumptions,
+      ...(result.sourceTransparency.diagnosis?.assumptions || []),
+      ...(result.sourceTransparency.recommendation?.assumptions || []),
+    ]),
+    sourceNotes: result.sourceTransparency,
+    plannerIntent: result.plannerIntent,
+    keyFacts: {
+      totals: result.totals,
+      firstRows: result.table.rows.slice(0, 3),
+      comparison: result.comparison,
+      diagnosis: result.diagnosis,
+      recommendation: result.recommendation,
+    },
+  };
+}
+
 async function persistAnalysis(
   result: AnalysisResult,
   planModel: string,
@@ -4381,25 +4432,7 @@ async function persistAnalysis(
       model_analysis: analysisModel,
       token_estimate: result.tokenEstimate as unknown as Json,
       source_transparency: result.sourceTransparency as unknown as Json,
-      result_preview: {
-        title: result.title,
-        answer: result.answer,
-        questionType: result.questionType,
-        validationStatus: result.validationStatus,
-        rowCount: result.table.rows.length,
-        widgets: result.widgets.map((widget) => widget.type),
-        warnings: result.warnings,
-        assumptions: result.plannerIntent.assumptions,
-        sourceNotes: result.sourceTransparency,
-        plannerIntent: result.plannerIntent,
-        keyFacts: {
-          totals: result.totals,
-          firstRows: result.table.rows.slice(0, 3),
-          comparison: result.comparison,
-          diagnosis: result.diagnosis,
-          recommendation: result.recommendation,
-        },
-      } as unknown as Json,
+      result_preview: buildAnalysisRunPreview(result) as unknown as Json,
     }));
 
     return { dashboardId: savedDashboardId };

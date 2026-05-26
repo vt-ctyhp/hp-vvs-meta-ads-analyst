@@ -32,6 +32,7 @@ import {
 } from "recharts";
 
 import type {
+  AnalysisFilter,
   AnalysisMetric,
   AnalysisResult,
   AnalysisRuntimeContext,
@@ -623,8 +624,6 @@ export function AnalysisOutput({
           <p className="mt-3 text-sm text-signal-warning">{result.persistenceWarning}</p>
         ) : null}
         <MessageList tone="warning" messages={result.warnings} />
-        <MessageList tone="danger" messages={result.unsupportedReasons} />
-        <MessageList tone="info" messages={result.clarificationQuestions} />
         {hideDiagnostics ? null : (
           <>
             <MetaStrip result={result} />
@@ -632,6 +631,10 @@ export function AnalysisOutput({
           </>
         )}
       </section>
+      <RecommendationAdvisory result={result} />
+      <ClarificationPanel questions={result.clarificationQuestions} />
+      <UnsupportedBoundaryPanel reasons={result.unsupportedReasons} />
+      <RunTransparencyPanel result={result} />
 
       {result.validationStatus === "ready" ? (
         <div className="space-y-6">
@@ -646,6 +649,191 @@ export function AnalysisOutput({
       ) : null}
     </>
   );
+}
+
+function RecommendationAdvisory({ result }: { result: AnalysisResult }) {
+  if (result.questionType !== "recommendation") return null;
+
+  return (
+    <section className="border border-signal-warning bg-signal-warning-bg p-4 text-sm leading-6 text-signal-warning">
+      <div className="flex gap-2">
+        <Info size={15} className="mt-1 shrink-0" />
+        <div>
+          <p className="font-bold text-signal-warning">Advisory only</p>
+          <p>No Meta campaign changes were made. Treat these recommendations as review cues before changing Meta Ads.</p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ClarificationPanel({ questions }: { questions?: string[] }) {
+  const uniqueQuestions = Array.from(new Set(questions || [])).filter(Boolean);
+  if (!uniqueQuestions.length) return null;
+
+  return (
+    <section className="border border-signal-info bg-signal-info-bg p-4 text-sm leading-6 text-signal-info">
+      <div className="mb-3 flex items-center gap-2">
+        <Info size={15} />
+        <h3 className="font-title text-xl leading-tight text-signal-info">Needs clarification</h3>
+      </div>
+      <div className="space-y-3">
+        {uniqueQuestions.map((question) => {
+          const choices = suggestedChoicesForClarification(question);
+          return (
+            <div key={question}>
+              <p>{question}</p>
+              {choices.length ? (
+                <p className="mt-1 text-xs uppercase tracking-[0.14em]">
+                  Suggested choices: {choices.join(", ")}
+                </p>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function UnsupportedBoundaryPanel({ reasons }: { reasons?: string[] }) {
+  const uniqueReasons = Array.from(new Set(reasons || [])).filter(Boolean);
+  if (!uniqueReasons.length) return null;
+
+  const rewriteReasons = uniqueReasons
+    .filter((reason) => /^try:/i.test(reason))
+    .map((reason) => reason.replace(/^try:\s*/i, ""));
+  const blockedReasons = uniqueReasons.filter((reason) => !/^try:/i.test(reason));
+  const rewrites = rewriteReasons.length
+    ? rewriteReasons
+    : [
+        "Ask for Meta Ads spend, primary results, CPL, CTR, CPC, or frequency by campaign, ad set, ad, or creative.",
+      ];
+
+  return (
+    <section className="border border-signal-danger bg-signal-danger-bg p-4 text-sm leading-6 text-signal-danger">
+      <div className="mb-3 flex items-center gap-2">
+        <AlertTriangle size={15} />
+        <h3 className="font-title text-xl leading-tight text-signal-danger">Unsupported boundary</h3>
+      </div>
+      <TransparencyList title="Why blocked" items={blockedReasons} />
+      <TransparencyList title="Supported rewrites" items={rewrites} />
+    </section>
+  );
+}
+
+function RunTransparencyPanel({ result }: { result: AnalysisResult }) {
+  const assumptions = visibleAssumptions(result);
+  const sourceNotes = sourceNoteItems(result);
+  const comparisonNotes = (result.sourceTransparency.comparisonScopes || []).map(
+    (scope) =>
+      `${scope.label}: ${formatTimeRange(scope.timeRange)}, ${formatFilters(scope.filters)}, source rows ${formatNumber(scope.sourceRows)}.`,
+  );
+
+  return (
+    <section className="border border-hp-rule bg-hp-card p-4">
+      <div className="mb-4 flex items-center gap-2 text-hp-ink">
+        <Info size={16} />
+        <h3 className="font-title text-2xl leading-tight">Run transparency</h3>
+      </div>
+      <div className="grid gap-3 text-xs md:grid-cols-5">
+        <MiniFact label="Question type" value={formatQuestionType(result.questionType)} />
+        <MiniFact label="Date basis" value={formatTimeRange(result.sourceTransparency.timeRange)} />
+        <MiniFact label="Metric bundle" value={formatList(result.resolvedSpec.metrics.map(labelFor))} />
+        <MiniFact label="Grouping" value={formatList(result.resolvedSpec.dimensions.map(labelFor))} />
+        <MiniFact
+          label="Latest sync"
+          value={result.sourceTransparency.latestSyncedInsightDate || result.analystDebug.latestSyncedInsightDate || "unknown"}
+        />
+      </div>
+      <div className="mt-4 grid gap-4 text-sm leading-6 lg:grid-cols-2">
+        <TransparencyList title="Assumptions" items={assumptions} />
+        <TransparencyList title="Source notes" items={sourceNotes} />
+        <TransparencyList title="Comparison scopes" items={comparisonNotes} />
+      </div>
+    </section>
+  );
+}
+
+function TransparencyList({ title, items }: { title: string; items: string[] }) {
+  const uniqueItems = Array.from(new Set(items)).filter(Boolean);
+  if (!uniqueItems.length) return null;
+
+  return (
+    <div>
+      <div className="mb-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">{title}</div>
+      <ul className="space-y-2 text-hp-body">
+        {uniqueItems.map((item) => (
+          <li key={item} className="flex gap-2">
+            <span className="mt-2 h-1.5 w-1.5 shrink-0 bg-hp-ink" />
+            <span>{item}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function visibleAssumptions(result: AnalysisResult) {
+  const items = [
+    ...result.plannerIntent.assumptions,
+    ...result.analystDebug.assumptions,
+  ];
+  if (!result.plannerIntent.dateIntent.phrase) {
+    items.push(`No date phrase was supplied; using ${formatTimeRange(result.sourceTransparency.timeRange)}.`);
+  }
+  if (result.resolvedSpec.metrics.length > 1) {
+    items.push(`Metric bundle: ${formatList(result.resolvedSpec.metrics.map(labelFor))}.`);
+  }
+  if (result.resolvedSpec.dimensions.length) {
+    items.push(`Grouping: ${formatList(result.resolvedSpec.dimensions.map(labelFor))}.`);
+  }
+  const latestSync =
+    result.sourceTransparency.latestSyncedInsightDate || result.analystDebug.latestSyncedInsightDate;
+  if (latestSync) {
+    items.push(`Latest synced Meta Ads date: ${latestSync}.`);
+  }
+  return Array.from(new Set(items)).filter(Boolean);
+}
+
+function sourceNoteItems(result: AnalysisResult) {
+  const sourceTable = result.sourceTransparency.sourceTable || result.analystDebug.sourceTable;
+  const sourceFunction =
+    result.sourceTransparency.sourceFunction || result.analystDebug.sourceFunction || "direct query";
+  const matchedRows =
+    result.sourceTransparency.recordCounts.matched_insights ||
+    result.analystDebug.recordCounts.matched_insights ||
+    0;
+  const items = [
+    `Meta Ads data from ${sourceTable} via ${sourceFunction}; ${formatNumber(matchedRows)} matched daily records; ${formatFilters(result.sourceTransparency.filters || result.analystDebug.filters)}.`,
+  ];
+
+  result.sourceTransparency.diagnosis?.sourceNotes.forEach((note) => {
+    items.push(
+      `${note.label}: ${formatTimeRange(note.timeRange)}, grouping ${labelFor(note.dimension)}, source rows ${formatNumber(note.sourceRows)}.`,
+    );
+  });
+  result.sourceTransparency.recommendation?.sourceNotes.forEach((note) => {
+    items.push(
+      `${note.label}: ${formatTimeRange(note.timeRange)}, grouping ${labelFor(note.dimension)}, source rows ${formatNumber(note.sourceRows)}.`,
+    );
+  });
+
+  return items;
+}
+
+function suggestedChoicesForClarification(question: string) {
+  if (/campaign umbrella|campaign group/i.test(question)) {
+    return ["Book Appts US", "Cash for Gold US", "Facebook US Product", "Facebook VN Product", "US Promotions"];
+  }
+  if (/\bbrand\b/i.test(question)) return ["HP", "VVS"];
+  if (/\bmetric|performance\b/i.test(question)) {
+    return ["Spend", "Primary Results", "CPL", "CTR", "CPC"];
+  }
+  if (/\bgroup|grain|level\b/i.test(question)) {
+    return ["Campaign Umbrella", "Campaign", "Ad Set", "Ad", "Creative"];
+  }
+  return [];
 }
 
 function validationLabel(status: AnalysisResult["validationStatus"]) {
@@ -1055,16 +1243,24 @@ function formatMetricValue(value: string | number | null | undefined, metric: An
 function labelFor(value: string) {
   const labels: Record<string, string> = {
     ad_count: "Ads",
+    ad: "Ad",
     ad_set_count: "Ad Sets",
+    ad_set: "Ad Set",
     bookings: "Bookings",
+    brand: "Brand",
+    campaign: "Campaign",
     campaign_count: "Campaigns",
+    campaign_umbrella: "Campaign Umbrella",
     clicks: "Clicks",
     conversions: "Conversions",
     cpc: "CPC",
     cpl: "CPL",
     cpm: "CPM",
+    creative: "Creative",
     ctr: "CTR",
     creative_count: "Creatives",
+    date: "Date",
+    delivery_status: "Delivery Status",
     frequency: "Frequency",
     impressions: "Impressions",
     leads: "Leads",
@@ -1076,8 +1272,35 @@ function labelFor(value: string) {
     secondary_results: "Secondary Results",
     spend: "Spend",
     website_bookings: "Website Bookings",
+    week: "Week",
+    month: "Month",
+    quarter: "Quarter",
+    year: "Year",
   };
   return labels[value] || value;
+}
+
+function formatQuestionType(value: string) {
+  return value
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function formatTimeRange(range?: { start: string; end: string; days: number } | null) {
+  if (!range) return "not resolved";
+  return `${range.start} to ${range.end} (${formatNumber(range.days)} days)`;
+}
+
+function formatFilters(filters?: AnalysisFilter[]) {
+  if (!filters?.length) return "no filters";
+  return filters
+    .map((filter) => `${labelFor(filter.field)} ${filter.operator} ${filter.value}`)
+    .join("; ");
+}
+
+function formatList(values: string[]) {
+  return values.length ? values.join(", ") : "none";
 }
 
 function formatMoney(value: number) {

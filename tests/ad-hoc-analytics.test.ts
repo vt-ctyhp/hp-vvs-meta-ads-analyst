@@ -10,6 +10,7 @@ import {
   buildRecommendationFactPack,
   buildAnalysisPlanFromPlannerOutputForPrompt,
   buildAnalysisPlanForPrompt,
+  buildAnalysisRunPreview,
   normalizeAnalysisSpecForPrompt,
   resolveAnalysisDateRangeForPrompt,
   validateComparisonNumericGrounding,
@@ -397,6 +398,75 @@ describe("ad-hoc analytics prompt normalization", () => {
 
       assert.equal(plan.questionType, questionType, prompt);
       assert.equal(plan.plannerIntent.questionType, questionType, prompt);
+    }
+  });
+
+  it("keeps natural-language persona QA prompts covered across the release gate", () => {
+    const cases = [
+      {
+        persona: "marketing operator leaderboard",
+        prompt: "Show top 10 campaigns by spend",
+        questionType: "leaderboard",
+        validationStatus: "ready",
+      },
+      {
+        persona: "marketing operator trend",
+        prompt: "Show bookings by day for book appointment ads this week",
+        questionType: "trend",
+        validationStatus: "ready",
+      },
+      {
+        persona: "manager comparison",
+        prompt: "Compare HP vs VVS by CPL",
+        questionType: "comparison",
+        validationStatus: "ready",
+      },
+      {
+        persona: "analyst diagnosis",
+        prompt: "Why did performance drop?",
+        questionType: "diagnosis",
+        validationStatus: "ready",
+      },
+      {
+        persona: "marketing operator recommendation",
+        prompt: "What should I pause this week?",
+        questionType: "recommendation",
+        validationStatus: "ready",
+      },
+      {
+        persona: "edge unsupported mixed request",
+        prompt: "Which campaign has best ROAS and spend?",
+        questionType: "leaderboard",
+        validationStatus: "unsupported",
+      },
+      {
+        persona: "edge date semantics",
+        prompt: "Show April 2026 spend by campaign group",
+        questionType: "leaderboard",
+        validationStatus: "ready",
+        dateRange: { preset: "custom", calendar: { unit: "month", month: 4, year: 2026 } },
+        resolvedDateRange: { start: "2026-04-01", end: "2026-04-30", days: 30 },
+      },
+    ] as const;
+
+    for (const entry of cases) {
+      const plan = buildAnalysisPlanForPrompt({}, entry.prompt);
+
+      assert.equal(plan.questionType, entry.questionType, entry.persona);
+      assert.equal(plan.validationStatus, entry.validationStatus, entry.persona);
+      if ("dateRange" in entry) {
+        assert.deepEqual(plan.spec.dateRange, entry.dateRange);
+        assert.deepEqual(
+          resolveAnalysisDateRangeForPrompt(entry.prompt, "2026-05-25"),
+          entry.resolvedDateRange,
+        );
+        assert.ok(
+          plan.assumptions.some((assumption) =>
+            assumption.includes("complete calendar period"),
+          ),
+          entry.persona,
+        );
+      }
     }
   });
 
@@ -1301,6 +1371,75 @@ describe("ad-hoc analytics prompt normalization", () => {
     assert.equal(plan.validationStatus, "unsupported");
     assert.ok(plan.unsupportedReasons.some((reason) => reason.includes("ROAS")));
     assert.ok(plan.unsupportedReasons.some((reason) => reason.includes("Try:")));
+  });
+
+  it("builds saved run previews with QA replay metadata", () => {
+    const sourceNotes = {
+      timeRange: { start: "2026-04-01", end: "2026-04-30", days: 30 },
+      adAccountsAnalyzed: ["HP Ads"],
+      recordCounts: { matched_insights: 42 },
+      dataSource: "meta_ads",
+      sourceTable: "meta_daily_insights",
+      sourceFunction: "aggregate_meta_daily_insights",
+      latestSyncedInsightDate: "2026-05-22",
+      filters: [],
+      comparisonScopes: [
+        {
+          label: "HP",
+          timeRange: { start: "2026-04-01", end: "2026-04-30", days: 30 },
+          filters: [{ field: "brand", operator: "equals", value: "HP" }],
+          sourceRows: 21,
+          dataSource: "meta_ads",
+          sourceTable: "meta_daily_insights",
+          sourceFunction: "aggregate_meta_daily_insights",
+        },
+      ],
+    };
+    const comparison = {
+      scopeType: "entity",
+      primaryMetric: "cpl",
+      metrics: ["cpl", "spend", "primary_results"],
+      scopes: [],
+      deltas: [],
+      sourceNotes: sourceNotes.comparisonScopes,
+      caveats: [],
+      groundingValues: [],
+    };
+    const preview = buildAnalysisRunPreview({
+      title: "HP vs VVS",
+      answer: "HP won on CPL.",
+      questionType: "comparison",
+      validationStatus: "ready",
+      table: { rows: [{ brand: "HP", cpl: 12 }] },
+      widgets: [{ type: "table", title: "Comparison table", metrics: ["cpl"] }],
+      warnings: ["Date range ended at latest complete synced Meta insight date (2026-05-22)."],
+      unsupportedReasons: [],
+      clarificationQuestions: [],
+      plannerIntent: { assumptions: ["Calendar date phrase resolved to a complete calendar period."] },
+      analystDebug: { assumptions: ["Latest synced date governed the range."] },
+      sourceTransparency: sourceNotes,
+      totals: { spend: 1200 },
+      comparison,
+      diagnosis: null,
+      recommendation: null,
+    } as unknown as Parameters<typeof buildAnalysisRunPreview>[0]);
+
+    assert.equal(preview.answer, "HP won on CPL.");
+    assert.equal(preview.questionType, "comparison");
+    assert.equal(preview.validationStatus, "ready");
+    assert.deepEqual(preview.warnings, [
+      "Date range ended at latest complete synced Meta insight date (2026-05-22).",
+    ]);
+    assert.ok(preview.assumptions.includes("Calendar date phrase resolved to a complete calendar period."));
+    assert.ok(preview.assumptions.includes("Latest synced date governed the range."));
+    assert.deepEqual(preview.sourceNotes, sourceNotes);
+    assert.deepEqual(preview.keyFacts, {
+      totals: { spend: 1200 },
+      firstRows: [{ brand: "HP", cpl: 12 }],
+      comparison,
+      diagnosis: null,
+      recommendation: null,
+    });
   });
 
   it("does not treat sales-team action wording as CRM revenue data", () => {
