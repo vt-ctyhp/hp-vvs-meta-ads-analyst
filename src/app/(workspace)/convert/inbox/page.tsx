@@ -1,3 +1,5 @@
+import { PrototypeSwitcher, type VariantKey } from "@/components/inbox-prototype/prototype-switcher";
+import { VariantA } from "@/components/inbox-prototype/variant-a";
 import { SocialInboxClient, type SocialInboxStatus } from "@/components/social-inbox-client";
 import { getMissingRequiredEnv } from "@/lib/env";
 import { safeErrorMessage } from "@/lib/error-message";
@@ -11,8 +13,34 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export default async function InboxPage() {
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+function parseVariant(raw: string | string[] | undefined): VariantKey | null {
+  const v = Array.isArray(raw) ? raw[0] : raw;
+  return v === "A" ? "A" : null;
+}
+
+export default async function InboxPage({
+  searchParams,
+}: {
+  searchParams?: SearchParams;
+}) {
+  const params = searchParams ? await searchParams : {};
+  const variant = parseVariant(params.variant);
+
+  // PROTOTYPE — variants render seed data only, no real auth needed.
+  // Guarded by NODE_ENV so a stray ?variant= cannot show in production.
+  if (variant && process.env.NODE_ENV !== "production") {
+    return (
+      <div className="mx-auto max-w-[1320px] px-6 py-6">
+        <VariantA />
+        <PrototypeSwitcher current={variant} />
+      </div>
+    );
+  }
+
   const profile = await requirePagePermission("view_inbox", "/convert/inbox");
+
   const [status, inboxData] = await Promise.all([
     getSocialInboxStatus(),
     getSafeSocialInboxData(profile),
