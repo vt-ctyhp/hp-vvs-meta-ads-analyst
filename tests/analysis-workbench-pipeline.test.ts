@@ -86,6 +86,13 @@ test("answer-only requests run through governed intent, query, facts, and cited 
   assert.match(result.answer.summary, /Book Appts US/);
   assert.match(result.answer.summary, /average group/);
   assert.ok(result.answer.citations.length >= 5);
+  assert.deepEqual(result.answer.apiCost, {
+    model: "governed-local",
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    estimatedCostUsd: 0,
+  });
   assert.ok(result.sourceNotes.some((note) => note.label === "Date range"));
   assert.ok(result.sourceNotes.some((note) => note.value === "12 matching Meta Ads daily rows"));
   assert.deepEqual(result.validation.blockers, []);

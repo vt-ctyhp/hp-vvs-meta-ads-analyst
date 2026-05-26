@@ -26,6 +26,7 @@ import {
   type AnalysisOutputMode,
   type AnalysisWorkbenchDashboardPacket,
   type AnalysisWorkbenchContextChip,
+  type AnalysisWorkbenchContextFilter,
   type AnalysisWorkbenchControlledEdit,
   type AnalysisRunStatus,
   type AnalysisWorkbenchVisualCard,
@@ -41,7 +42,9 @@ import {
   type AnalysisWorkbenchChartExportCard,
   type AnalysisWorkbenchTableExportCard,
 } from "@/lib/analysis-workbench-export";
+import { CAMPAIGN_UMBRELLAS } from "@/lib/campaign-umbrellas";
 import { translateError } from "@/lib/glossary";
+import type { OpenAICostBreakdown } from "@/lib/openai-cost";
 
 type Props = {
   initialRuns: AnalysisWorkbenchRun[];
@@ -78,6 +81,27 @@ const EDIT_METRIC_OPTIONS = ["spend", "primary_results", "cpl", "ctr"] as const;
 const EDIT_DIMENSION_OPTIONS = ["campaign_umbrella", "campaign", "ad_set", "creative"] as const;
 const EDIT_FILTER_OPTIONS = ["brand", "campaign_umbrella", "delivery_status"] as const;
 const EDIT_CHART_OPTIONS = ["bar_chart", "line_chart", "flat_table", "pivot_table", "scatter_chart"] as const;
+type EditFilterField = (typeof EDIT_FILTER_OPTIONS)[number];
+
+const EDIT_FILTER_VALUE_OPTIONS: Record<EditFilterField, Array<{ value: string; label: string }>> = {
+  brand: [
+    { value: "HP", label: "HP" },
+    { value: "VVS", label: "VVS" },
+    { value: "Unassigned", label: "Unassigned" },
+  ],
+  campaign_umbrella: CAMPAIGN_UMBRELLAS.map((value) => ({ value, label: value })),
+  delivery_status: [
+    { value: "live", label: "Live" },
+    { value: "paused", label: "Paused" },
+  ],
+};
+const LOCAL_WORKBENCH_API_COST: OpenAICostBreakdown = {
+  model: "governed-local",
+  inputTokens: 0,
+  outputTokens: 0,
+  totalTokens: 0,
+  estimatedCostUsd: 0,
+};
 
 export function AnalysisWorkbenchClient({ initialRuns }: Props) {
   const [runs, setRuns] = useState(initialRuns);
@@ -524,10 +548,9 @@ export function RunDetail({
         </div>
       </div>
 
-      <div className="grid gap-4 border-b border-hp-rule py-5 md:grid-cols-3">
+      <div className="grid gap-4 border-b border-hp-rule py-5 md:grid-cols-2">
         <RunField label="Created" value={formatDateTime(run.createdAt)} />
         <RunField label="Updated" value={formatDateTime(run.updatedAt)} />
-        <RunField label="Run ID" value={run.id} />
       </div>
 
       {onApplyEdits ? (
@@ -535,9 +558,12 @@ export function RunDetail({
       ) : null}
 
       <section className="border-b border-hp-rule py-5">
-        <div className="mb-3 flex items-center gap-2 text-hp-ink">
-          <FileText size={17} />
-          <span className="text-[11px] uppercase tracking-[0.14em]">Answer</span>
+        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2 text-hp-ink">
+            <FileText size={17} />
+            <span className="text-[11px] uppercase tracking-[0.14em]">Answer</span>
+          </div>
+          <AnswerApiCostBadge apiCost={run.answer.apiCost || LOCAL_WORKBENCH_API_COST} />
         </div>
         <ReadableAnswer summary={run.answer.summary} />
       </section>
@@ -777,11 +803,15 @@ function ControlledEditPanel({
 }) {
   const context = resolveAnalysisRunContext(run);
   const firstCard = run.visualCards[0] || run.dashboardPacket?.visualObjects[0] || null;
+  const initialFilter = firstEditableFilter(context?.filters);
   const [start, setStart] = useState(context?.dateRange?.start || "");
   const [end, setEnd] = useState(context?.dateRange?.end || "");
-  const [filterField, setFilterField] =
-    useState<(typeof EDIT_FILTER_OPTIONS)[number]>("campaign_umbrella");
-  const [filterValue, setFilterValue] = useState(context?.filters?.[0]?.value || "");
+  const [filterField, setFilterField] = useState<EditFilterField>(
+    initialFilter?.field || "campaign_umbrella",
+  );
+  const [filterValue, setFilterValue] = useState(
+    validEditFilterValue(initialFilter?.field || "campaign_umbrella", initialFilter?.value || ""),
+  );
   const [metric, setMetric] = useState<(typeof EDIT_METRIC_OPTIONS)[number]>(
     (context?.metrics?.[0] as (typeof EDIT_METRIC_OPTIONS)[number]) || "spend",
   );
@@ -794,6 +824,7 @@ function ControlledEditPanel({
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [limit, setLimit] = useState("10");
   const [objectTitle, setObjectTitle] = useState(firstCard?.title || "");
+  const filterValueOptions = EDIT_FILTER_VALUE_OPTIONS[filterField];
 
   function submitEdits(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -851,9 +882,13 @@ function ControlledEditPanel({
           <span className="grid grid-cols-[0.9fr_1.1fr] gap-2">
             <select
               value={filterField}
-              onChange={(event) =>
-                setFilterField(event.target.value as (typeof EDIT_FILTER_OPTIONS)[number])
-              }
+              onChange={(event) => {
+                const nextField = event.target.value as EditFilterField;
+                const inheritedValue =
+                  context?.filters?.find((filter) => filter.field === nextField)?.value || "";
+                setFilterField(nextField);
+                setFilterValue(validEditFilterValue(nextField, inheritedValue));
+              }}
               className="h-10 border border-hp-rule bg-hp-foundation px-2 text-sm text-hp-ink outline-none focus:border-hp-ink"
             >
               {EDIT_FILTER_OPTIONS.map((option) => (
@@ -862,12 +897,18 @@ function ControlledEditPanel({
                 </option>
               ))}
             </select>
-            <input
+            <select
               value={filterValue}
               onChange={(event) => setFilterValue(event.target.value)}
-              placeholder="Book Appts US"
-              className="h-10 border border-hp-rule bg-hp-foundation px-2 text-sm text-hp-ink outline-none placeholder:text-hp-muted focus:border-hp-ink"
-            />
+              className="h-10 border border-hp-rule bg-hp-foundation px-2 text-sm text-hp-ink outline-none focus:border-hp-ink"
+            >
+              <option value="">Choose value</option>
+              {filterValueOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </span>
         </label>
         <label className="grid gap-1 text-sm text-hp-body">
@@ -1652,6 +1693,19 @@ function VisualCardMeta({ card }: { card: AnalysisWorkbenchVisualCard }) {
   );
 }
 
+function AnswerApiCostBadge({ apiCost }: { apiCost?: OpenAICostBreakdown }) {
+  if (!apiCost) return null;
+
+  return (
+    <div className="inline-flex min-h-9 items-center border border-hp-rule bg-hp-foundation px-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+      <span className="text-hp-ink">Est. API cost</span>
+      <span className="ml-2 normal-case tracking-normal text-hp-body">
+        {formatApiCost(apiCost.estimatedCostUsd)} · {formatApiCostDetail(apiCost)}
+      </span>
+    </div>
+  );
+}
+
 function RunField({ label, value }: { label: string; value: string }) {
   return (
     <div>
@@ -1701,6 +1755,20 @@ function normalizeSourceNote(note: unknown) {
   };
 }
 
+function firstEditableFilter(filters: AnalysisWorkbenchContextFilter[] | undefined) {
+  return filters?.find((filter): filter is AnalysisWorkbenchContextFilter & { field: EditFilterField } =>
+    isEditFilterField(filter.field),
+  );
+}
+
+function isEditFilterField(value: string): value is EditFilterField {
+  return EDIT_FILTER_OPTIONS.includes(value as EditFilterField);
+}
+
+function validEditFilterValue(field: EditFilterField, value: string) {
+  return EDIT_FILTER_VALUE_OPTIONS[field].some((option) => option.value === value) ? value : "";
+}
+
 function formatVisualCell(cell: AnalysisWorkbenchVisualCell | undefined) {
   if (cell === null || cell === undefined || cell === "") return "n/a";
   if (typeof cell === "object") return cell.formattedValue || String(cell.value ?? "n/a");
@@ -1721,6 +1789,19 @@ function editLabel(value: string) {
   return value
     .replace(/_/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatApiCost(value: number) {
+  return `$${Math.max(0, value).toFixed(5)}`;
+}
+
+function formatApiCostDetail(apiCost: OpenAICostBreakdown) {
+  if (apiCost.model === "governed-local") return "governed local pipeline";
+  return `${apiCost.model} · ${formatNumber(apiCost.totalTokens)} tokens`;
+}
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
 }
 
 function lineChartPoints(points: Array<{ value: number }>) {

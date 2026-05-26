@@ -366,7 +366,7 @@ function loadClientModule(filePath: string) {
             return { fileName: "packet.pdf", mimeType: "application/pdf", content: "%PDF-1.4" };
           },
           buildAnalysisWorkbenchTableCsvExport() {
-            return { fileName: "table.csv", mimeType: "text/csv;charset=utf-8", content: "Run ID" };
+            return { fileName: "table.csv", mimeType: "text/csv;charset=utf-8", content: "Table" };
           },
           isAnalysisWorkbenchChartCard(card: { type?: string }) {
             return (
@@ -378,6 +378,20 @@ function loadClientModule(filePath: string) {
           isAnalysisWorkbenchTableCard(card: { type?: string }) {
             return card.type === "flat_table" || card.type === "pivot_table";
           },
+        };
+      }
+      if (id === "@/lib/campaign-umbrellas") {
+        return {
+          CAMPAIGN_UMBRELLAS: [
+            "Facebook US Product",
+            "Book Appts US",
+            "US Promotions (WKDS / OOAK)",
+            "Cash for Gold US",
+            "Facebook VN Product",
+            "VN Promotions (WKDS / OOAK)",
+            "Excluded / Non-umbrella",
+            "Needs review",
+          ],
         };
       }
       if (id === "@/lib/glossary") {
