@@ -11,6 +11,10 @@ import {
 } from "../src/lib/social-inbox-ui-freshness.ts";
 
 const DESKTOP_INBOX = readFileSync("src/components/social-inbox-client.tsx", "utf8");
+const CONVERSATION_HEADER = readFileSync(
+  "src/components/v2/inbox/conversation-header.tsx",
+  "utf8",
+);
 
 describe("social inbox UI freshness contracts", () => {
   it("keeps text drafts keyed by conversation id", () => {
@@ -67,7 +71,7 @@ describe("social inbox UI freshness contracts", () => {
     assert.match(DESKTOP_INBOX, /replyInstructionByConversationId/);
     assert.doesNotMatch(DESKTOP_INBOX, /replyContextId/);
     assert.match(DESKTOP_INBOX, /key=\{conversationPanelKey\(selectedItem, "reply-attempt"\)\}/);
-    assert.match(DESKTOP_INBOX, /key=\{conversationPanelKey\(item, "comment-actions"\)\}/);
+    assert.match(DESKTOP_INBOX, /key=\{conversationPanelKey\(selectedItem, "comment-actions"\)\}/);
     assert.match(DESKTOP_INBOX, /key=\{conversationPanelKey\(selectedItem, "notes"\)\}/);
     assert.match(DESKTOP_INBOX, /key=\{conversationPanelKey\(selectedItem, "qa-scorecard"\)\}/);
   });
@@ -83,7 +87,8 @@ describe("social inbox UI freshness contracts", () => {
   });
 
   it("allows long selected customer labels to wrap instead of blocking replies", () => {
-    assert.match(DESKTOP_INBOX, /break-words\s+text-\[34px\]/);
+    assert.match(DESKTOP_INBOX, /ConversationPane/);
+    assert.match(CONVERSATION_HEADER, /break-words\s+text-\[22px\]/);
     assert.match(DESKTOP_INBOX, /StateTile/);
     assert.match(DESKTOP_INBOX, /break-words text-sm font-medium text-hp-ink/);
   });

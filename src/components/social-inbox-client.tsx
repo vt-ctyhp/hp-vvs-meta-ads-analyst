@@ -54,6 +54,7 @@ import {
 import { InboxEyebrow } from "./v2/inbox/inbox-eyebrow";
 import { InboxLayoutShell } from "./v2/inbox/inbox-layout-shell";
 import { InboxStatusSentence } from "./v2/inbox/inbox-status-sentence";
+import { ConversationPane } from "./v2/inbox/conversation-pane";
 import { QueueRail, visibleQueueCategories } from "./v2/inbox/queue-rail";
 import { useDrawerState } from "./v2/inbox/use-drawer-state";
 import {
@@ -384,6 +385,14 @@ export function SocialInboxClient({
     const root = inboxData.comments.find((comment) => comment.comment_id === selectedItem.sourceId);
     return root ? [root] : [];
   }, [inboxData.comments, selectedHistoryState?.data, selectedItem]);
+  const selectedRootComment = useMemo(() => {
+    if (selectedItem?.type !== "comment") return null;
+    return (
+      selectedComments.find((comment) => comment.comment_id === selectedItem.sourceId) ||
+      selectedComments.find((comment) => !comment.parent_comment_id) ||
+      null
+    );
+  }, [selectedComments, selectedItem]);
   const activeReplyDraft = readConversationTextState(
     replyDraftByConversationId,
     selectedConversationId,
@@ -1210,144 +1219,133 @@ export function SocialInboxClient({
         }
 
         conversation={
-          <section className="min-w-0 bg-hp-card">
-          <div className="border-b border-hp-rule p-5">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-              <div>
-                <span className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-                  Conversation Detail
-                </span>
-                <h2 className="mt-2 font-title break-words text-[34px] leading-tight text-hp-ink">
-                  {selectedItem ? selectedItem.sender : "Select a thread"}
-                </h2>
-                {syncStatus ? (
-                  <p className="mt-2 max-w-3xl break-words text-sm leading-6 text-hp-muted">
-                    {syncStatus}
-                  </p>
-                ) : null}
-              </div>
-            </div>
-          </div>
-
-          <div className="grid min-h-[640px] gap-0 lg:grid-cols-[minmax(0,1fr)_340px]">
-            <div className="flex min-w-0 flex-col border-b border-hp-rule lg:border-b-0 lg:border-r">
-              <div className="flex-1 p-6">
-                {selectedItem ? (
-                  <SelectedItemDetail
-                    item={selectedItem}
-                    messages={selectedMessages}
-                    comments={selectedComments}
-                    presences={selectedPresenceState.presences}
-                    historyState={selectedHistoryState}
-                    canSendInboxReply={canSendInboxReply}
-                    commentActionState={selectedCommentActionMutationState}
-                    onCreateCommentAction={handleCommentActionCreate}
-                    onQueueCommentAction={handleCommentActionQueue}
-                    onRetryCommentAction={handleCommentActionRetry}
-                    onLoadOlderHistory={
-                      selectedConversationId && selectedHistoryNextCursor
-                        ? () => loadConversationHistory(selectedConversationId, selectedHistoryNextCursor)
-                        : null
-                    }
-                  />
-                ) : (
-                  <EmptyThreadState />
-                )}
-              </div>
-
-              <div className="border-t border-hp-rule p-4">
-                <ReplyAttemptPanel
-                  key={conversationPanelKey(selectedItem, "reply-attempt")}
+          <ConversationPane
+            item={selectedItem}
+            now={replyWindowNow}
+            syncStatus={syncStatus}
+            thread={
+              selectedItem ? (
+                <SelectedItemDetail
                   item={selectedItem}
-                  draft={activeReplyDraft}
-                  onDraftChange={(value) => {
-                    setReplyDraftByConversationId((current) =>
-                      writeConversationTextState(current, selectedConversationId, value),
-                    );
-                  }}
-                  canSendInboxReply={canSendInboxReply}
-                  mutationState={selectedReplyAttemptMutationState}
-                  savedReplyMutationState={selectedSavedReplyMutationState}
-                  replyWindowNow={replyWindowNow}
-                  onCreateSendAttempt={handleSendAttemptCreate}
-                  onQueueSendAttempt={handleSendAttemptQueue}
-                  onRetrySendAttempt={handleSendAttemptRetry}
-                  onCreateSavedReply={handleSavedReplyCreate}
+                  messages={selectedMessages}
+                  comments={selectedComments}
+                  presences={selectedPresenceState.presences}
+                  historyState={selectedHistoryState}
+                  onLoadOlderHistory={
+                    selectedConversationId && selectedHistoryNextCursor
+                      ? () => loadConversationHistory(selectedConversationId, selectedHistoryNextCursor)
+                      : null
+                  }
                 />
-              </div>
-            </div>
-
-            <aside className="min-w-0 p-5">
-              <ConversationSourcePanel
-                key={conversationPanelKey(selectedItem, "source")}
+              ) : null
+            }
+            emptyState={<EmptyThreadState />}
+            replyComposer={
+              <ReplyAttemptPanel
+                key={conversationPanelKey(selectedItem, "reply-attempt")}
                 item={selectedItem}
-                canManageInboxState={canManageInboxState}
-                mutationState={selectedContactMethodMutationState}
-                onContactMethodMutation={handleContactMethodMutation}
-              />
-              <WorkflowStatePanel
-                key={workflowPanelKey(selectedItem)}
-                item={selectedItem}
-                canManageInboxState={canManageInboxState}
-                mutationState={selectedWorkflowMutationState}
-                onWorkflowUpdate={handleWorkflowUpdate}
-                instruction={activeReplyInstruction}
-                onInstructionChange={(value) => {
-                  setReplyInstructionByConversationId((current) =>
+                draft={activeReplyDraft}
+                onDraftChange={(value) => {
+                  setReplyDraftByConversationId((current) =>
                     writeConversationTextState(current, selectedConversationId, value),
                   );
                 }}
+                canSendInboxReply={canSendInboxReply}
+                mutationState={selectedReplyAttemptMutationState}
+                savedReplyMutationState={selectedSavedReplyMutationState}
                 replyWindowNow={replyWindowNow}
+                onCreateSendAttempt={handleSendAttemptCreate}
+                onQueueSendAttempt={handleSendAttemptQueue}
+                onRetrySendAttempt={handleSendAttemptRetry}
+                onCreateSavedReply={handleSavedReplyCreate}
               />
-              <AuditTrailPanel item={selectedItem} />
+            }
+            commentActions={
+              selectedItem ? (
+                <PublicCommentActionPanel
+                  key={conversationPanelKey(selectedItem, "comment-actions")}
+                  item={selectedItem}
+                  rootComment={selectedRootComment}
+                  canSendInboxReply={canSendInboxReply}
+                  mutationState={selectedCommentActionMutationState}
+                  onCreateCommentAction={handleCommentActionCreate}
+                  onQueueCommentAction={handleCommentActionQueue}
+                  onRetryCommentAction={handleCommentActionRetry}
+                />
+              ) : null
+            }
+            legacySideRail={
+              <>
+                <ConversationSourcePanel
+                  key={conversationPanelKey(selectedItem, "source")}
+                  item={selectedItem}
+                  canManageInboxState={canManageInboxState}
+                  mutationState={selectedContactMethodMutationState}
+                  onContactMethodMutation={handleContactMethodMutation}
+                />
+                <WorkflowStatePanel
+                  key={workflowPanelKey(selectedItem)}
+                  item={selectedItem}
+                  canManageInboxState={canManageInboxState}
+                  mutationState={selectedWorkflowMutationState}
+                  onWorkflowUpdate={handleWorkflowUpdate}
+                  instruction={activeReplyInstruction}
+                  onInstructionChange={(value) => {
+                    setReplyInstructionByConversationId((current) =>
+                      writeConversationTextState(current, selectedConversationId, value),
+                    );
+                  }}
+                  replyWindowNow={replyWindowNow}
+                />
+                <AuditTrailPanel item={selectedItem} />
 
-              <NotesCoachingPanel
-                key={conversationPanelKey(selectedItem, "notes")}
-                item={selectedItem}
-                canManageInboxState={canManageInboxState}
-                canCreateManagerCoaching={canCreateManagerCoaching}
-                mutationState={selectedNoteMutationState}
-                onCreateNote={handleNoteCreate}
-              />
+                <NotesCoachingPanel
+                  key={conversationPanelKey(selectedItem, "notes")}
+                  item={selectedItem}
+                  canManageInboxState={canManageInboxState}
+                  canCreateManagerCoaching={canCreateManagerCoaching}
+                  mutationState={selectedNoteMutationState}
+                  onCreateNote={handleNoteCreate}
+                />
 
-              <QaScorecardPanel
-                key={conversationPanelKey(selectedItem, "qa-scorecard")}
-                item={selectedItem}
-                canManageInboxState={canManageInboxState}
-                canCreateManagerCoaching={canCreateManagerCoaching}
-                mutationState={selectedQaScorecardMutationState}
-                onCreateScorecard={handleQaScorecardCreate}
-              />
+                <QaScorecardPanel
+                  key={conversationPanelKey(selectedItem, "qa-scorecard")}
+                  item={selectedItem}
+                  canManageInboxState={canManageInboxState}
+                  canCreateManagerCoaching={canCreateManagerCoaching}
+                  mutationState={selectedQaScorecardMutationState}
+                  onCreateScorecard={handleQaScorecardCreate}
+                />
 
-              <SyncRunPanel data={inboxData} />
+                <SyncRunPanel data={inboxData} />
 
-              <ManagerSnapshotPanel dashboard={managerDashboard} />
+                <ManagerSnapshotPanel dashboard={managerDashboard} />
 
-              <div className="mt-5 border border-hp-rule p-4">
-                <div className="mb-3 flex items-center gap-2 text-hp-ink">
-                  <ShieldCheck size={17} />
-                  <span className="text-[11px] uppercase tracking-[0.14em]">Safety Rules</span>
+                <div className="mt-5 border border-hp-rule p-4">
+                  <div className="mb-3 flex items-center gap-2 text-hp-ink">
+                    <ShieldCheck size={17} />
+                    <span className="text-[11px] uppercase tracking-[0.14em]">Safety Rules</span>
+                  </div>
+                  <ul className="space-y-2 text-sm leading-6 text-hp-muted">
+                    <li>Human click required for every reply.</li>
+                    <li>Raw Meta payload stays hidden from product UI.</li>
+                    <li>Queue routing is visible and auditable before reply.</li>
+                    <li>Campaign/ad mutation remains disabled.</li>
+                    <li>
+                      {status.readiness.socialReply ? (
+                        "Facebook comment replies are permission-ready; send APIs must still enforce human approval."
+                      ) : (
+                        <>
+                          Facebook comment replies remain limited until{" "}
+                          <span className="text-hp-ink">pages_manage_engagement</span> is granted.
+                        </>
+                      )}
+                    </li>
+                  </ul>
                 </div>
-                <ul className="space-y-2 text-sm leading-6 text-hp-muted">
-                  <li>Human click required for every reply.</li>
-                  <li>Raw Meta payload stays hidden from product UI.</li>
-                  <li>Queue routing is visible and auditable before reply.</li>
-                  <li>Campaign/ad mutation remains disabled.</li>
-                  <li>
-                    {status.readiness.socialReply ? (
-                      "Facebook comment replies are permission-ready; send APIs must still enforce human approval."
-                    ) : (
-                      <>
-                        Facebook comment replies remain limited until{" "}
-                        <span className="text-hp-ink">pages_manage_engagement</span> is granted.
-                      </>
-                    )}
-                  </li>
-                </ul>
-              </div>
-            </aside>
-          </div>
-        </section>
+              </>
+            }
+          />
         }
       />
     </main>
@@ -1364,11 +1362,6 @@ function SelectedItemDetail({
   comments,
   presences,
   historyState,
-  canSendInboxReply,
-  commentActionState,
-  onCreateCommentAction,
-  onQueueCommentAction,
-  onRetryCommentAction,
   onLoadOlderHistory,
 }: {
   item: QueueDisplayItem;
@@ -1376,11 +1369,6 @@ function SelectedItemDetail({
   comments: SocialInboxComment[];
   presences: SocialInboxPresence[];
   historyState: ConversationHistoryLoadState | null;
-  canSendInboxReply: boolean;
-  commentActionState: CommentActionMutationLoadState;
-  onCreateCommentAction: (conversationId: string, input: MetaInboxCommentActionInput) => void;
-  onQueueCommentAction: (conversationId: string, input: MetaInboxQueueCommentActionInput) => void;
-  onRetryCommentAction: (conversationId: string, input: MetaInboxRetryCommentActionInput) => void;
   onLoadOlderHistory: (() => void) | null;
 }) {
   if (item.type === "comment") {
@@ -1420,16 +1408,6 @@ function SelectedItemDetail({
             Open on Meta
           </a>
         ) : null}
-        <PublicCommentActionPanel
-          key={conversationPanelKey(item, "comment-actions")}
-          item={item}
-          rootComment={rootComment}
-          canSendInboxReply={canSendInboxReply}
-          mutationState={commentActionState}
-          onCreateCommentAction={onCreateCommentAction}
-          onQueueCommentAction={onQueueCommentAction}
-          onRetryCommentAction={onRetryCommentAction}
-        />
         {replyComments.length ? (
           <div className="mt-6 space-y-3 border-t border-hp-rule pt-4">
             <div className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
