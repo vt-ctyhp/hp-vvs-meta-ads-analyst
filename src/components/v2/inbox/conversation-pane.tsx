@@ -11,7 +11,6 @@ type ConversationPaneProps = {
   replyComposer?: ReactNode;
   commentActions?: ReactNode;
   emptyState?: ReactNode;
-  legacySideRail?: ReactNode;
   onOpenDetails?: () => void;
   onOpenAudit?: () => void;
   onOpenNotes?: () => void;
@@ -27,7 +26,6 @@ export function ConversationPane({
   replyComposer = null,
   commentActions = null,
   emptyState = null,
-  legacySideRail = null,
   onOpenDetails,
   onOpenAudit,
   onOpenNotes,
@@ -63,12 +61,6 @@ export function ConversationPane({
           <div data-slot="conversation-action" className="border-t border-hp-rule p-4">
             {actionSurface}
           </div>
-        ) : null}
-
-        {legacySideRail ? (
-          <aside data-slot="legacy-side-rail" className="border-t border-hp-rule p-5">
-            {legacySideRail}
-          </aside>
         ) : null}
       </div>
     </section>

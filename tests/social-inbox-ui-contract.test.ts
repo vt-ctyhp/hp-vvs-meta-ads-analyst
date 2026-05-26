@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 const DESKTOP_INBOX = readFileSync("src/components/social-inbox-client.tsx", "utf8");
+const DETAILS_DRAWER = readFileSync("src/components/v2/inbox/details-drawer-panel.tsx", "utf8");
+const INBOX_EYEBROW = readFileSync("src/components/v2/inbox/inbox-eyebrow.tsx", "utf8");
 const DESKTOP_INBOX_PAGE = readFileSync("src/app/(workspace)/convert/inbox/page.tsx", "utf8");
 const MOBILE_INBOX_PAGE = readFileSync("src/app/m/inbox/page.tsx", "utf8");
 const MOBILE_INBOX_DETAIL_PAGE = readFileSync("src/app/m/inbox/[conversationId]/page.tsx", "utf8");
@@ -17,10 +19,10 @@ const SOCIAL_INBOX_LIB = readFileSync("src/lib/social-inbox.ts", "utf8");
 describe("social inbox UI contract", () => {
   it("surfaces normalized queue, source, and workflow panels in the desktop inbox", () => {
     assert.match(DESKTOP_INBOX, /QueueRail/);
-    assert.match(DESKTOP_INBOX, /ConversationSourcePanel/);
-    assert.match(DESKTOP_INBOX, /WorkflowStatePanel/);
-    assert.match(DESKTOP_INBOX, /META_INBOX_QUEUE_CATEGORIES/);
-    assert.match(DESKTOP_INBOX, /META_INBOX_SOURCE_CHANNELS/);
+    assert.match(DESKTOP_INBOX, /DetailsDrawerPanel/);
+    assert.match(DESKTOP_INBOX, /DrawerOverlay/);
+    assert.match(DETAILS_DRAWER, /META_INBOX_QUEUE_CATEGORIES/);
+    assert.match(DETAILS_DRAWER, /META_INBOX_SOURCE_CHANNELS/);
   });
 
   it("keeps active AI reply controls out of the foundation inbox surfaces", () => {
@@ -62,22 +64,22 @@ describe("social inbox UI contract", () => {
   });
 
   it("surfaces audited sales workflow mutation controls without snooze", () => {
-    assert.match(DESKTOP_INBOX, /Sales Workflow Controls/);
-    assert.match(DESKTOP_INBOX, /Claim Self/);
-    assert.match(DESKTOP_INBOX, /Save State/);
+    assert.match(DETAILS_DRAWER, /Workflow/);
+    assert.match(DETAILS_DRAWER, /Claim Self/);
+    assert.match(DETAILS_DRAWER, /Save State/);
     assert.match(DESKTOP_INBOX, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/workflow/);
     assert.equal(/snooze/i.test(DESKTOP_INBOX), false);
   });
 
   it("initializes workflow drafts from selected conversation values before saving", () => {
-    assert.match(DESKTOP_INBOX, /key=\{workflowPanelKey\(selectedItem\)\}/);
-    assert.match(DESKTOP_INBOX, /useState\(conversation\?\.lead_quality \|\| ""\)/);
-    assert.match(DESKTOP_INBOX, /conversation\?\.lead_quality_reason_tags \|\| \[\]/);
+    assert.match(DESKTOP_INBOX, /key=\{conversationPanelKey\(selectedItem, "details-drawer"\)\}/);
+    assert.match(DETAILS_DRAWER, /useState\(conversation\?\.lead_quality \|\| ""\)/);
+    assert.match(DETAILS_DRAWER, /conversation\?\.lead_quality_reason_tags \|\| \[\]/);
     assert.match(
-      DESKTOP_INBOX,
+      DETAILS_DRAWER,
       /conversation\?\.inbox_outcome \|\| "no_outcome_yet"/,
     );
-    assert.match(DESKTOP_INBOX, /conversation\?\.inbox_lost_reason \|\| ""/);
+    assert.match(DETAILS_DRAWER, /conversation\?\.inbox_lost_reason \|\| ""/);
   });
 
   it("does not use random client idempotency keys for inbox sends or comment actions", () => {
@@ -87,11 +89,11 @@ describe("social inbox UI contract", () => {
   });
 
   it("surfaces audited customer contact method controls in the source panel", () => {
-    assert.match(DESKTOP_INBOX, /Contact Methods/);
-    assert.match(DESKTOP_INBOX, /Add Contact/);
-    assert.match(DESKTOP_INBOX, /Delete Contact/);
+    assert.match(DETAILS_DRAWER, /Contact Methods/);
+    assert.match(DETAILS_DRAWER, /Add Contact/);
+    assert.match(DETAILS_DRAWER, /Delete Contact/);
     assert.match(DESKTOP_INBOX, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/contact-methods/);
-    assert.match(DESKTOP_INBOX, /future verified matching/);
+    assert.match(DETAILS_DRAWER, /phone or email/);
   });
 
   it("surfaces reply-window countdown and failed-send retry shell", () => {
@@ -143,12 +145,11 @@ describe("social inbox UI contract", () => {
   });
 
   it("surfaces the first manager dashboard snapshot", () => {
-    assert.match(DESKTOP_INBOX, /ManagerSnapshotPanel/);
     assert.match(DESKTOP_INBOX, /buildMetaInboxManagerDashboard/);
-    assert.match(DESKTOP_INBOX, /Manager Snapshot/);
-    assert.match(DESKTOP_INBOX, /Needs Reply/);
-    assert.match(DESKTOP_INBOX, /Missed Follow-Up/);
-    assert.match(DESKTOP_INBOX, /Avg first response/);
+    assert.match(DESKTOP_INBOX, /InboxEyebrow/);
+    assert.match(INBOX_EYEBROW, /Needs reply/);
+    assert.match(INBOX_EYEBROW, /Median first/);
+    assert.match(INBOX_EYEBROW, /QA avg/);
   });
 
   it("surfaces normalized message attachments in conversation history", () => {

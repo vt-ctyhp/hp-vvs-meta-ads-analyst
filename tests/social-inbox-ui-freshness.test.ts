@@ -15,6 +15,7 @@ const CONVERSATION_HEADER = readFileSync(
   "src/components/v2/inbox/conversation-header.tsx",
   "utf8",
 );
+const DETAILS_DRAWER = readFileSync("src/components/v2/inbox/details-drawer-panel.tsx", "utf8");
 
 describe("social inbox UI freshness contracts", () => {
   it("keeps text drafts keyed by conversation id", () => {
@@ -72,8 +73,8 @@ describe("social inbox UI freshness contracts", () => {
     assert.doesNotMatch(DESKTOP_INBOX, /replyContextId/);
     assert.match(DESKTOP_INBOX, /key=\{conversationPanelKey\(selectedItem, "reply-attempt"\)\}/);
     assert.match(DESKTOP_INBOX, /key=\{conversationPanelKey\(selectedItem, "comment-actions"\)\}/);
-    assert.match(DESKTOP_INBOX, /key=\{conversationPanelKey\(selectedItem, "notes"\)\}/);
-    assert.match(DESKTOP_INBOX, /key=\{conversationPanelKey\(selectedItem, "qa-scorecard"\)\}/);
+    assert.match(DESKTOP_INBOX, /key=\{conversationPanelKey\(selectedItem, "notes-drawer"\)\}/);
+    assert.match(DESKTOP_INBOX, /key=\{conversationPanelKey\(selectedItem, "qa-drawer"\)\}/);
   });
 
   it("keeps sync, presence, and reply windows fresh for the current conversation", () => {
@@ -89,7 +90,7 @@ describe("social inbox UI freshness contracts", () => {
   it("allows long selected customer labels to wrap instead of blocking replies", () => {
     assert.match(DESKTOP_INBOX, /ConversationPane/);
     assert.match(CONVERSATION_HEADER, /break-words\s+text-\[22px\]/);
-    assert.match(DESKTOP_INBOX, /StateTile/);
-    assert.match(DESKTOP_INBOX, /break-words text-sm font-medium text-hp-ink/);
+    assert.match(DETAILS_DRAWER, /break-words[\s\S]*text-hp-ink/);
+    assert.match(DETAILS_DRAWER, /break-all/);
   });
 });

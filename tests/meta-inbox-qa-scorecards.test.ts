@@ -23,6 +23,8 @@ const ROUTE = readFileSync(
 const SOCIAL_INBOX_LIB = readFileSync("src/lib/social-inbox.ts", "utf8");
 const MANAGER_DASHBOARD_LIB = readFileSync("src/lib/meta-inbox-manager-dashboard.ts", "utf8");
 const DESKTOP_INBOX = readFileSync("src/components/social-inbox-client.tsx", "utf8");
+const INBOX_EYEBROW = readFileSync("src/components/v2/inbox/inbox-eyebrow.tsx", "utf8");
+const QA_DRAWER = readFileSync("src/components/v2/inbox/qa-drawer-panel.tsx", "utf8");
 const SCHEMA_GUARD = readFileSync("src/lib/meta-inbox-schema.ts", "utf8");
 const DATA_BOUNDARIES = readFileSync("src/lib/data-boundaries.ts", "utf8");
 
@@ -131,19 +133,20 @@ describe("Meta inbox QA scorecards foundation", () => {
     assert.equal(dashboard.metrics.qaScorecardsReviewed, 2);
     assert.equal(dashboard.metrics.averageQaScore, 3.9);
     assert.match(MANAGER_DASHBOARD_LIB, /qaScorecardsReviewed/);
-    assert.match(DESKTOP_INBOX, /QA Reviews/);
-    assert.match(DESKTOP_INBOX, /Avg QA/);
+    assert.match(INBOX_EYEBROW, /QA avg/);
+    assert.match(INBOX_EYEBROW, /averageQaScore/);
   });
 
-  it("wires protected API, data loading, audit event, and QA sidebar UI", () => {
+  it("wires protected API, data loading, audit event, and QA drawer UI", () => {
     assert.match(ROUTE, /requirePermissionFromRequest\(request, "manage_inbox_state"\)/);
     assert.match(ROUTE, /createSocialInboxQaScorecard/);
     assert.match(SOCIAL_INBOX_LIB, /meta_inbox_qa_scorecards/);
     assert.match(SOCIAL_INBOX_LIB, /qaScorecards: SocialInboxQaScorecard\[\]/);
     assert.match(SOCIAL_INBOX_LIB, /qa_scorecard_added/);
-    assert.match(DESKTOP_INBOX, /QA Scorecards/);
-    assert.match(DESKTOP_INBOX, /Add Scorecard/);
-    assert.match(DESKTOP_INBOX, /manager coaching only/);
+    assert.match(DESKTOP_INBOX, /QaDrawerPanel/);
+    assert.match(QA_DRAWER, /QA Scorecards/);
+    assert.match(QA_DRAWER, /Add Scorecard/);
+    assert.match(QA_DRAWER, /manager coaching only/);
     assert.match(DESKTOP_INBOX, /\/qa-scorecards/);
   });
 });

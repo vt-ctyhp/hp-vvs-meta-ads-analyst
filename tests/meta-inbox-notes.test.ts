@@ -21,6 +21,7 @@ const ROUTE = readFileSync(
 );
 const SOCIAL_INBOX_LIB = readFileSync("src/lib/social-inbox.ts", "utf8");
 const DESKTOP_INBOX = readFileSync("src/components/social-inbox-client.tsx", "utf8");
+const NOTES_DRAWER = readFileSync("src/components/v2/inbox/notes-drawer-panel.tsx", "utf8");
 const SCHEMA_GUARD = readFileSync("src/lib/meta-inbox-schema.ts", "utf8");
 const DATA_BOUNDARIES = readFileSync("src/lib/data-boundaries.ts", "utf8");
 
@@ -192,15 +193,16 @@ describe("Meta inbox notes and manager coaching foundation", () => {
     );
   });
 
-  it("wires protected API, data loading, queue filtering, and sidebar UI", () => {
+  it("wires protected API, data loading, queue filtering, and drawer UI", () => {
     assert.match(ROUTE, /requirePermissionFromRequest\(request, "manage_inbox_state"\)/);
     assert.match(ROUTE, /createSocialInboxConversationNote/);
     assert.match(SOCIAL_INBOX_LIB, /meta_inbox_notes/);
     assert.match(SOCIAL_INBOX_LIB, /notes: SocialInboxConversationNote\[\]/);
     assert.match(SOCIAL_INBOX_LIB, /note_added/);
-    assert.match(DESKTOP_INBOX, /Notes & Coaching/);
-    assert.match(DESKTOP_INBOX, /Add Note/);
-    assert.match(DESKTOP_INBOX, /never sent to the customer/);
+    assert.match(DESKTOP_INBOX, /NotesDrawerPanel/);
+    assert.match(NOTES_DRAWER, /Notes & Coaching/);
+    assert.match(NOTES_DRAWER, /Add Note/);
+    assert.match(NOTES_DRAWER, /never sent to the customer/);
     assert.match(DESKTOP_INBOX, /\/notes/);
   });
 });

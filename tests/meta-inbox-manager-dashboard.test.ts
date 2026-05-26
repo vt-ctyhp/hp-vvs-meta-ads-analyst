@@ -14,6 +14,7 @@ import type {
 
 const ROUTE = readFileSync("src/app/api/social-inbox/manager-dashboard/route.ts", "utf8");
 const DESKTOP_INBOX = readFileSync("src/components/social-inbox-client.tsx", "utf8");
+const INBOX_EYEBROW = readFileSync("src/components/v2/inbox/inbox-eyebrow.tsx", "utf8");
 
 describe("Meta inbox manager dashboard foundation", () => {
   it("defaults to last 7 days and measures queue health", () => {
@@ -53,12 +54,11 @@ describe("Meta inbox manager dashboard foundation", () => {
     assert.match(ROUTE, /getSocialInboxManagerDashboardData\(profile\)/);
     assert.match(ROUTE, /buildMetaInboxManagerDashboard/);
     assert.match(ROUTE, /managerDashboardFiltersFromSearchParams/);
-    assert.match(DESKTOP_INBOX, /ManagerSnapshotPanel/);
-    assert.match(DESKTOP_INBOX, /Manager Snapshot/);
-    assert.match(DESKTOP_INBOX, /Needs Reply/);
-    assert.match(DESKTOP_INBOX, /Missed Follow-Up/);
-    assert.match(DESKTOP_INBOX, /Failed Sends/);
-    assert.match(DESKTOP_INBOX, /Avg first response/);
+    assert.match(DESKTOP_INBOX, /InboxEyebrow/);
+    assert.match(INBOX_EYEBROW, /Needs reply/);
+    assert.match(INBOX_EYEBROW, /Unassigned/);
+    assert.match(INBOX_EYEBROW, /Median first/);
+    assert.match(INBOX_EYEBROW, /QA avg/);
   });
 
   it("adds response-age, workload, source, outcome, and label-completeness metrics", () => {
@@ -116,10 +116,10 @@ describe("Meta inbox manager dashboard foundation", () => {
       ],
     );
 
-    assert.match(DESKTOP_INBOX, /Response Age/);
-    assert.match(DESKTOP_INBOX, /Workload/);
-    assert.match(DESKTOP_INBOX, /Source Health/);
-    assert.match(DESKTOP_INBOX, /Label Complete/);
+    assert.match(DESKTOP_INBOX, /buildMetaInboxManagerDashboard/);
+    assert.match(INBOX_EYEBROW, /staleConversations/);
+    assert.match(INBOX_EYEBROW, /medianFirstResponseMinutes/);
+    assert.match(INBOX_EYEBROW, /averageQaScore/);
   });
 
   it("counts complete range data above the inbox list cap", () => {

@@ -125,7 +125,8 @@ test("ConversationPane swaps reply composer and public comment actions by item t
   assert.match(messageMarkup, /Thread bubbles/);
   assert.match(messageMarkup, /ReplyComposer/);
   assert.doesNotMatch(messageMarkup, /PublicCommentActionPanel/);
-  assert.match(messageMarkup, /Legacy side rail/);
+  assert.doesNotMatch(messageMarkup, /Legacy side rail/);
+  assert.doesNotMatch(messageMarkup, /data-slot="legacy-side-rail"/);
 
   const commentMarkup = renderToStaticMarkup(
     React.createElement(ConversationPane, {
@@ -138,6 +139,29 @@ test("ConversationPane swaps reply composer and public comment actions by item t
 
   assert.match(commentMarkup, /PublicCommentActionPanel/);
   assert.doesNotMatch(commentMarkup, /ReplyComposer/);
+});
+
+test("ConversationPane drawer chips invoke their supplied drawer callbacks", () => {
+  const calls: string[] = [];
+  const pane = ConversationPane({
+    item: itemFixture({ type: "message" }),
+    thread: React.createElement("div", null, "Thread bubbles"),
+    replyComposer: React.createElement("div", null, "ReplyComposer"),
+    onOpenDetails: () => calls.push("details"),
+    onOpenAudit: () => calls.push("audit"),
+    onOpenNotes: () => calls.push("notes"),
+    onOpenQa: () => calls.push("qa"),
+    onCloseConversation: () => calls.push("close"),
+  });
+
+  const header = findComponent(pane, "ConversationHeader");
+  header.props.onOpenDetails?.();
+  header.props.onOpenAudit?.();
+  header.props.onOpenNotes?.();
+  header.props.onOpenQa?.();
+  header.props.onCloseConversation?.();
+
+  assert.deepEqual(calls, ["details", "audit", "notes", "qa", "close"]);
 });
 
 function itemFixture(overrides: Record<string, unknown> = {}) {
@@ -286,4 +310,36 @@ function resolveLocalImport(baseDir: string, id: string): string {
   }
 
   throw new Error(`Cannot resolve ${id} from ${baseDir}`);
+}
+
+type TestElement = {
+  type?: unknown;
+  props: {
+    children?: unknown;
+    onClick?: () => void;
+    onOpenDetails?: () => void;
+    onOpenAudit?: () => void;
+    onOpenNotes?: () => void;
+    onOpenQa?: () => void;
+    onCloseConversation?: () => void;
+  };
+};
+
+function findComponent(node: unknown, name: string): TestElement {
+  const component = findAllElements(node).find((element) => {
+    const type = element.type;
+    return typeof type === "function" && type.name === name;
+  });
+  if (!component) throw new Error(`No component found for ${name}`);
+  return component;
+}
+
+function findAllElements(node: unknown): TestElement[] {
+  if (!node || typeof node !== "object") return [];
+
+  const element = node as TestElement;
+  const children = element.props?.children;
+  const stack = Array.isArray(children) ? children : [children];
+
+  return element.props ? [element, ...stack.flatMap(findAllElements)] : [];
 }

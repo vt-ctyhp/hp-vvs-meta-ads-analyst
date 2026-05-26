@@ -12,6 +12,7 @@ import type {
 
 const DESKTOP_INBOX = readFileSync("src/components/social-inbox-client.tsx", "utf8");
 const QUEUE_RAIL = readFileSync("src/components/v2/inbox/queue-rail.tsx", "utf8");
+const DETAILS_DRAWER = readFileSync("src/components/v2/inbox/details-drawer-panel.tsx", "utf8");
 const INBOX_FILTERS = readFileSync("src/components/v2/inbox/use-inbox-filters.ts", "utf8");
 
 describe("Meta inbox attribution filters", () => {
@@ -65,7 +66,8 @@ describe("Meta inbox attribution filters", () => {
     assert.match(INBOX_FILTERS, /item\.firstTouch\?\.campaign_umbrella_id/);
     assert.match(INBOX_FILTERS, /item\.firstTouch\?\.ad_id/);
     assert.match(INBOX_FILTERS, /item\.firstTouch\?\.creative_id/);
-    assert.match(DESKTOP_INBOX, /Attribution/);
+    assert.match(DETAILS_DRAWER, /First Touch/);
+    assert.match(DETAILS_DRAWER, /Umbrella/);
   });
 });
 
