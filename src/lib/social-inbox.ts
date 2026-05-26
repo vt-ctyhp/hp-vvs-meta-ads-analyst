@@ -2649,7 +2649,7 @@ async function syncConversations({ page, platform, params = {} }: ConversationSy
     },
     {
       accessToken: page.accessToken,
-      maxPages: 1,
+      maxPages: getPositiveIntegerEnv("META_SOCIAL_SYNC_CONVERSATION_PAGES", 50),
       timeoutMs: 25000,
     },
   );
@@ -2815,15 +2815,16 @@ async function refreshThreadFromMessages(
   const latest = sorted[0];
   if (!latest) return;
 
-  const from = recordField(latest.from);
+  // Only update snippet + last_message_at here. Participant identity is the
+  // authoritative job of syncConversations (from the /conversations
+  // participants array). Overwriting from latest.from would clobber the
+  // customer with the page identity whenever the latest message is outbound.
   await upsertMany(
     "meta_social_threads",
     [
       {
         platform,
         thread_id: threadId,
-        participant_id: stringField(from.id),
-        participant_name: stringField(from.name) || stringField(from.username),
         snippet: stringField(latest.message),
         last_message_at: stringField(latest.created_time),
       },
