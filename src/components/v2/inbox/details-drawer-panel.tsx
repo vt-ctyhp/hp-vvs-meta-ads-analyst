@@ -172,6 +172,27 @@ function CustomerSection({
           <p className="mb-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
             First Touch
           </p>
+          {firstTouch?.creative_image_url ? (
+            <a
+              href={firstTouch.source_permalink || firstTouch.creative_image_url}
+              target="_blank"
+              rel="noreferrer"
+              className="mb-3 block border border-hp-rule bg-hp-card hover:border-hp-ink"
+              title={firstTouch.ad_title || "Ad creative"}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={firstTouch.creative_image_url}
+                alt={firstTouch.ad_title || "Ad creative"}
+                className="block h-32 w-full object-cover"
+              />
+              {firstTouch.ad_title ? (
+                <p className="border-t border-hp-rule px-3 py-2 text-xs italic text-hp-muted">
+                  {firstTouch.ad_title}
+                </p>
+              ) : null}
+            </a>
+          ) : null}
           <div className="space-y-2">
             <InfoLine
               label="Source"

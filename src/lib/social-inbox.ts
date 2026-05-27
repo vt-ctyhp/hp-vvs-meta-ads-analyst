@@ -350,6 +350,17 @@ export type SocialInboxFirstTouchSource = {
   creative_id: string | null;
   attribution_method: string | null;
   attribution_confidence: number | null;
+  /**
+   * Best available image URL for the ad creative that originated this
+   * conversation. Resolved server-side from two sources in priority
+   * order: (1) `ads_context_data_json.photo_url` delivered with the
+   * webhook referral, (2) the matching `meta_creatives` row's
+   * thumbnail_url / image_url / video_thumbnail_url. Null when neither
+   * is available (e.g. organic threads or pre-subscription history).
+   */
+  creative_image_url: string | null;
+  /** Ad title delivered alongside the referral payload, when present. */
+  ad_title: string | null;
 };
 
 export type SocialInboxSendAttempt = {
@@ -664,6 +675,11 @@ export async function getSocialInboxData(
     if (result.error) throw normalizeMetaInboxSchemaError(result.error);
   }
 
+  const firstTouchSourcesResolved = await resolveCreativeImageUrls(
+    rows<JsonRecord>(firstTouchSources.data).map(mapFirstTouchSource),
+    supabase,
+  );
+
   return filterSocialInboxDataForQueueAccess({
     queueAccess,
     threads: rows<JsonRecord>(threads.data).map(mapThread),
@@ -672,7 +688,7 @@ export async function getSocialInboxData(
     inboxConversations: rows<JsonRecord>(inboxConversations.data).map(mapInboxConversation),
     customerProfiles: rows<JsonRecord>(customerProfiles.data).map(mapCustomerProfile),
     customerContactMethods: rows<JsonRecord>(customerContactMethods.data).map(mapContactMethod),
-    firstTouchSources: rows<JsonRecord>(firstTouchSources.data).map(mapFirstTouchSource),
+    firstTouchSources: firstTouchSourcesResolved,
     sendAttempts: rows<JsonRecord>(sendAttempts.data).map(mapSendAttempt),
     commentActions: rows<JsonRecord>(commentActions.data).map(mapCommentAction),
     conversationEvents: rows<JsonRecord>(conversationEvents.data).map(mapConversationEvent),
@@ -744,12 +760,17 @@ export async function getSocialInboxManagerDashboardData(
     ),
   ]);
 
+  const firstTouchSources = await resolveCreativeImageUrls(
+    firstTouchSourceRows.map(mapFirstTouchSource),
+    supabase,
+  );
+
   return filterSocialInboxDataForQueueAccess({
     ...emptySocialInboxData(),
     queueAccess,
     messages: messageRows.map(mapMessage),
     inboxConversations,
-    firstTouchSources: firstTouchSourceRows.map(mapFirstTouchSource),
+    firstTouchSources,
     sendAttempts: sendAttemptRows.map(mapSendAttempt),
     commentActions: commentActionRows.map(mapCommentAction),
     qaScorecards: qaScorecardRows.map(mapQaScorecard),
@@ -3910,6 +3931,15 @@ function mapInboxConversation(row: JsonRecord): SocialInboxConversation {
 }
 
 function mapFirstTouchSource(row: JsonRecord): SocialInboxFirstTouchSource {
+  // Meta delivers `photo_url` (and sometimes `video_url`) inside
+  // `ads_context_data` on click-to-Messenger referrals. Use that as
+  // the primary source for the ad creative thumbnail; the
+  // meta_creatives join (resolveCreativeImageUrls) backfills the rest.
+  const adsContext = isRecord(row.ads_context_data_json) ? row.ads_context_data_json : {};
+  const photoUrl =
+    stringField(adsContext.photo_url) ||
+    stringField(adsContext.video_url) ||
+    null;
   return {
     id: String(row.id),
     conversation_id: String(row.conversation_id || ""),
@@ -3928,7 +3958,53 @@ function mapFirstTouchSource(row: JsonRecord): SocialInboxFirstTouchSource {
     creative_id: stringField(row.creative_id),
     attribution_method: stringField(row.attribution_method),
     attribution_confidence: numberField(row.attribution_confidence),
+    creative_image_url: photoUrl,
+    ad_title: stringField(adsContext.ad_title),
   };
+}
+
+/**
+ * Backfill `creative_image_url` from the `meta_creatives` table for any
+ * first-touch rows that have a `creative_id` but no webhook-delivered
+ * photo URL. Mutates and returns the array for chaining.
+ */
+async function resolveCreativeImageUrls(
+  rows: SocialInboxFirstTouchSource[],
+  supabase: ReturnType<typeof dynamicSupabase>,
+): Promise<SocialInboxFirstTouchSource[]> {
+  const missingCreativeIds = uniqueStrings(
+    rows
+      .filter((r) => !r.creative_image_url && r.creative_id)
+      .map((r) => r.creative_id || ""),
+  );
+  if (!missingCreativeIds.length) return rows;
+  const { data, error } = await supabase
+    .from("meta_creatives")
+    .select("creative_id,thumbnail_url,image_url,video_thumbnail_url")
+    .in("creative_id", missingCreativeIds);
+  if (error) {
+    // Silent fallthrough — analyst schema may not be present in every
+    // environment; missing creative previews are non-fatal.
+    if (isMissingMetaInboxSchemaError(error)) return rows;
+    return rows;
+  }
+  const urlByCreativeId = new Map<string, string>();
+  for (const row of rowsFrom(data)) {
+    const creativeId = stringField(row.creative_id);
+    if (!creativeId) continue;
+    const url =
+      stringField(row.thumbnail_url) ||
+      stringField(row.image_url) ||
+      stringField(row.video_thumbnail_url);
+    if (url) urlByCreativeId.set(creativeId, url);
+  }
+  if (!urlByCreativeId.size) return rows;
+  for (const row of rows) {
+    if (row.creative_image_url || !row.creative_id) continue;
+    const url = urlByCreativeId.get(row.creative_id);
+    if (url) row.creative_image_url = url;
+  }
+  return rows;
 }
 
 function mapSendAttachmentRow(row: JsonRecord): MetaInboxSendAttachmentRow {

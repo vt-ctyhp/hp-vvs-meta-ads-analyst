@@ -217,6 +217,8 @@ function firstTouchFixture(
     creative_id: null,
     attribution_method: "meta_referral",
     attribution_confidence: null,
+    creative_image_url: null,
+    ad_title: null,
     ...overrides,
   };
 }

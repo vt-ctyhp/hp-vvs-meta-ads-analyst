@@ -494,6 +494,8 @@ function firstTouchSource(id: string, conversationId: string) {
     creative_id: null,
     attribution_method: null,
     attribution_confidence: null,
+    creative_image_url: null,
+    ad_title: null,
   };
 }
 

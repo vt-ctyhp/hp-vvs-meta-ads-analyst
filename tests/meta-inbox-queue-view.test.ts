@@ -81,6 +81,8 @@ describe("Meta inbox canonical queue view", () => {
           creative_id: "creative-1",
           attribution_method: "webhook_referral",
           attribution_confidence: 0.96,
+          creative_image_url: null,
+          ad_title: null,
         },
       ],
     });
