@@ -246,6 +246,43 @@ function makeMockClient(input: {
 }
 
 test(
+  "confirmed appointment rows are selected by booked_at instead of scheduled visit date",
+  async () => {
+    const appointment = makeAppointment({
+      external_booking_id: "acuity-future-visit",
+      booked_at: "2026-05-26T10:00:00.000Z",
+      created_at: "2026-05-26T10:00:00.000Z",
+      visit_date_time: "2026-06-06T20:00:00.000Z",
+      raw_payload: {
+        appointment: {
+          firstName: "Nancy",
+          lastName: "Nguyen",
+          datetimeCreated: "2026-05-26T20:42:15-0500",
+        },
+      },
+    });
+    const client = makeMockClient({
+      appointment_events: [appointment],
+      website_visitors: [],
+      website_events: [],
+      website_conversions: [],
+      website_sessions: [],
+    });
+
+    const data = await fetchCustomerJourneyLedgerData(
+      { startDate: "2026-05-21", endDate: "2026-05-27" },
+      client as never,
+    );
+
+    assert.equal(data.rows.length, 1);
+    assert.equal(data.rows[0]?.acuityAppointmentId, "acuity-future-visit");
+    assert.equal(data.rows[0]?.customerName, "Nancy Nguyen");
+    assert.equal(data.rows[0]?.appointmentVisitDateTime, "2026-06-06T20:00:00.000Z");
+    assert.deepEqual(data.rows[0]?.stageKeys, ["confirmed_website_bookings"]);
+  },
+);
+
+test(
   "visitor-only row gets booking_page_view stage from a PageView on the booking page",
   async () => {
     const apptId = "acuity-xyz-anchored";
