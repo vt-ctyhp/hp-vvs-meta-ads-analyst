@@ -27,6 +27,16 @@ export const META_INBOX_QUEUE_CATEGORIES = [
     description: "Product inquiries tied to Vietnam inventory, Vietnam service, or Vietnam-market ads.",
   },
   {
+    key: "us_promotions",
+    label: "US Promotions",
+    description: "Conversations attributed to US WKDS, OOAK, or other US promotional campaigns.",
+  },
+  {
+    key: "vn_promotions",
+    label: "VN Promotions",
+    description: "Conversations attributed to Vietnam WKDS, OOAK, or other VN promotional campaigns.",
+  },
+  {
     key: "custom_jewelry",
     label: "Custom Jewelry",
     description: "Custom design, redesign, CAD, made-to-order, or inspiration-photo conversations.",

@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { buildMetaInboxNormalizationBatch } from "../src/lib/meta-inbox-normalization.ts";
+import {
+  applyCampaignUmbrellaRouting,
+  buildMetaInboxNormalizationBatch,
+  type MetaAdsLookupRow,
+} from "../src/lib/meta-inbox-normalization.ts";
 
 describe("Meta inbox raw normalization", () => {
   it("normalizes a click-to-message webhook into profile, conversation, routing, and first-touch source", () => {
@@ -103,10 +107,10 @@ describe("Meta inbox raw normalization", () => {
       humanAgentWindowExpiresAt: "2026-05-30T00:00:00.000Z",
       sendEligibility: "standard_reply_allowed",
       conversationStatus: "new_inquiry",
-      queueCategoryKey: "cash_for_gold",
-      routingSource: "attribution_keyword",
-      routingConfidence: 0.85,
-      routingExplanation: "Matched cash for gold from first-touch attribution.",
+      queueCategoryKey: "general_inquiry",
+      routingSource: "fallback",
+      routingConfidence: 0.35,
+      routingExplanation: "No ad attribution captured — routed to General Inquiry.",
     });
 
     assert.equal(batch.firstTouchSources.length, 1);
@@ -114,6 +118,33 @@ describe("Meta inbox raw normalization", () => {
     assert.equal(batch.firstTouchSources[0].ref, "Cash for Gold May");
     assert.equal(batch.firstTouchSources[0].sourcePermalink, "https://fb.me/source");
     assert.equal(batch.firstTouchSources[0].attributionMethod, "meta_referral");
+
+    // Once the ad lookup resolves to a campaign umbrella, the second pass
+    // upgrades the routing to the matching queue.
+    const adLookup = new Map<string, MetaAdsLookupRow>([
+      [
+        "ad-123",
+        {
+          ad_id: "ad-123",
+          campaign_id: "campaign-1",
+          ad_set_id: "adset-1",
+          creative_id: "creative-1",
+          campaign_name: "Whatever the analyst named it",
+          ad_set_name: null,
+          campaign_umbrella: "Cash for Gold US",
+        },
+      ],
+    ]);
+    const enriched = applyCampaignUmbrellaRouting(batch, adLookup);
+    assert.equal(enriched.conversations[0].queueCategoryKey, "cash_for_gold");
+    assert.equal(enriched.conversations[0].routingSource, "campaign_umbrella");
+    assert.equal(enriched.conversations[0].routingConfidence, 0.85);
+    assert.equal(
+      enriched.conversations[0].routingExplanation,
+      "Routed by campaign umbrella: Cash for Gold US.",
+    );
+    assert.equal(enriched.firstTouchSources[0].campaignUmbrellaId, "Cash for Gold US");
+    assert.equal(enriched.firstTouchSources[0].campaignId, "campaign-1");
   });
 
   it("normalizes public comments with source-channel filters independent from queue category", () => {
@@ -145,7 +176,10 @@ describe("Meta inbox raw normalization", () => {
     assert.equal(batch.customerProfiles[0].displayName, "Anna Buyer");
     assert.equal(batch.customerProfiles[0].username, "anna_buyer");
     assert.equal(batch.conversations[0].sourceChannel, "instagram_public_comment");
-    assert.equal(batch.conversations[0].queueCategoryKey, "book_appointment");
+    // No ad attribution on this comment → falls back to general_inquiry
+    // under the umbrella-only routing rule (no message-keyword matching).
+    assert.equal(batch.conversations[0].queueCategoryKey, "general_inquiry");
+    assert.equal(batch.conversations[0].routingSource, "fallback");
     assert.equal(batch.conversations[0].sendEligibility, "human_agent_allowed");
     assert.equal(batch.firstTouchSources[0].sourceCommentId, "comment-1");
     assert.equal(batch.firstTouchSources[0].sourcePermalink, "https://instagram.com/p/media-1");
@@ -406,5 +440,132 @@ describe("Meta inbox raw normalization", () => {
     assert.equal(batch.conversations[0].sourceChannel, "instagram_message");
     assert.equal(batch.conversations[0].sendEligibility, "expired");
     assert.equal(batch.conversations[0].queueCategoryKey, "general_inquiry");
+  });
+
+  it("applyCampaignUmbrellaRouting maps every umbrella to the right queue", () => {
+    const umbrellaCases: ReadonlyArray<{
+      adId: string;
+      umbrella: string;
+      expectedQueue: string;
+      expectedSource: "campaign_umbrella" | "fallback";
+    }> = [
+      { adId: "ad-c4g", umbrella: "Cash for Gold US", expectedQueue: "cash_for_gold", expectedSource: "campaign_umbrella" },
+      { adId: "ad-book", umbrella: "Book Appts US", expectedQueue: "book_appointment", expectedSource: "campaign_umbrella" },
+      { adId: "ad-us-prod", umbrella: "Facebook US Product", expectedQueue: "us_product", expectedSource: "campaign_umbrella" },
+      { adId: "ad-vn-prod", umbrella: "Facebook VN Product", expectedQueue: "vn_product", expectedSource: "campaign_umbrella" },
+      { adId: "ad-us-promo", umbrella: "US Promotions (WKDS / OOAK)", expectedQueue: "us_promotions", expectedSource: "campaign_umbrella" },
+      { adId: "ad-vn-promo", umbrella: "VN Promotions (WKDS / OOAK)", expectedQueue: "vn_promotions", expectedSource: "campaign_umbrella" },
+      // "Excluded / Non-umbrella" and "Needs review" have no queue mapping —
+      // routing keeps the initial fallback bucket (general_inquiry here,
+      // since the thread carries inbound text).
+      { adId: "ad-excluded", umbrella: "Excluded / Non-umbrella", expectedQueue: "general_inquiry", expectedSource: "fallback" },
+      { adId: "ad-needs-review", umbrella: "Needs review", expectedQueue: "general_inquiry", expectedSource: "fallback" },
+    ];
+
+    for (const testCase of umbrellaCases) {
+      const batch = buildMetaInboxNormalizationBatch({
+        now: new Date("2026-05-26T01:00:00.000Z"),
+        threads: [
+          {
+            id: `thread-${testCase.adId}`,
+            platform: "facebook",
+            thread_id: `facebook:webhook:page-1:${testCase.adId}`,
+            page_id: "page-1",
+            participant_id: `customer-${testCase.adId}`,
+            snippet: "hello",
+            last_message_at: "2026-05-26T00:00:00.000Z",
+          },
+        ],
+        messages: [
+          {
+            id: `message-${testCase.adId}`,
+            platform: "facebook",
+            thread_id: `facebook:webhook:page-1:${testCase.adId}`,
+            message_id: `mid.${testCase.adId}`,
+            direction: "inbound",
+            sender_id: `customer-${testCase.adId}`,
+            body: "hello",
+            sent_at: "2026-05-26T00:00:00.000Z",
+            raw_json: { message: { referral: { ad_id: testCase.adId } } },
+          },
+        ],
+      });
+      const adLookup = new Map<string, MetaAdsLookupRow>([
+        [
+          testCase.adId,
+          {
+            ad_id: testCase.adId,
+            campaign_id: null,
+            ad_set_id: null,
+            creative_id: null,
+            campaign_name: null,
+            ad_set_name: null,
+            campaign_umbrella: testCase.umbrella,
+          },
+        ],
+      ]);
+      const enriched = applyCampaignUmbrellaRouting(batch, adLookup);
+      assert.equal(
+        enriched.conversations[0].queueCategoryKey,
+        testCase.expectedQueue,
+        `umbrella '${testCase.umbrella}' should route to '${testCase.expectedQueue}'`,
+      );
+      assert.equal(
+        enriched.conversations[0].routingSource,
+        testCase.expectedSource,
+        `umbrella '${testCase.umbrella}' should use routingSource '${testCase.expectedSource}'`,
+      );
+    }
+  });
+
+  it("applyCampaignUmbrellaRouting falls back to regex classification when meta_ads.campaign_umbrella is null", () => {
+    const batch = buildMetaInboxNormalizationBatch({
+      now: new Date("2026-05-26T01:00:00.000Z"),
+      threads: [
+        {
+          id: "thread-fallback-1",
+          platform: "facebook",
+          thread_id: "facebook:webhook:page-1:fallback",
+          page_id: "page-1",
+          participant_id: "customer-fallback",
+          snippet: "hi",
+          last_message_at: "2026-05-26T00:00:00.000Z",
+        },
+      ],
+      messages: [
+        {
+          id: "message-fallback-1",
+          platform: "facebook",
+          thread_id: "facebook:webhook:page-1:fallback",
+          message_id: "mid.fallback",
+          direction: "inbound",
+          sender_id: "customer-fallback",
+          body: "hi",
+          sent_at: "2026-05-26T00:00:00.000Z",
+          raw_json: { message: { referral: { ad_id: "ad-new" } } },
+        },
+      ],
+    });
+    // Brand-new ad not yet stamped by the analyst sync: stored umbrella is
+    // null, so enrichment falls back to in-place regex classification of
+    // the campaign + ad-set names.
+    const adLookup = new Map<string, MetaAdsLookupRow>([
+      [
+        "ad-new",
+        {
+          ad_id: "ad-new",
+          campaign_id: "campaign-new",
+          ad_set_id: "adset-new",
+          creative_id: "creative-new",
+          campaign_name: "Cash for Gold US — May launch",
+          ad_set_name: null,
+          campaign_umbrella: null,
+        },
+      ],
+    ]);
+    const enriched = applyCampaignUmbrellaRouting(batch, adLookup);
+    assert.equal(enriched.conversations[0].queueCategoryKey, "cash_for_gold");
+    assert.equal(enriched.conversations[0].routingSource, "campaign_umbrella");
+    assert.equal(enriched.firstTouchSources[0].campaignUmbrellaId, "Cash for Gold US");
   });
 });
