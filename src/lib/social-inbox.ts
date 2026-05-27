@@ -3499,14 +3499,40 @@ async function selectMetaInboxConversationWorkflowState(
   return state;
 }
 
-function preserveMetaInboxConversationWorkflowFields(row: JsonRecord, existing: JsonRecord) {
+export function preserveMetaInboxConversationWorkflowFields(
+  row: JsonRecord,
+  existing: JsonRecord,
+) {
+  // Manual override always wins: a sales user explicitly moved this
+  // conversation and the system must not overwrite their decision.
+  const manualOverride = existing.routing_source === "manual_override";
+
+  // Allow upgrading from a fallback routing (e.g. general_inquiry assigned
+  // because no ad attribution was captured at the time) to an actual
+  // campaign-umbrella routing once enrichment surfaces ad context on a
+  // later inbound. Without this, existing conversations stay stuck in
+  // general_inquiry forever even when a fresh message brings real
+  // attribution.
+  const upgradeFromFallback =
+    !manualOverride &&
+    existing.routing_source === "fallback" &&
+    row.routing_source === "campaign_umbrella";
+
   return {
     ...row,
     conversation_status: preservedField(existing.conversation_status, row.conversation_status),
-    queue_category_key: preservedField(existing.queue_category_key, row.queue_category_key),
-    routing_source: preservedField(existing.routing_source, row.routing_source),
-    routing_confidence: preservedField(existing.routing_confidence, row.routing_confidence),
-    routing_explanation: preservedField(existing.routing_explanation, row.routing_explanation),
+    queue_category_key: upgradeFromFallback
+      ? row.queue_category_key
+      : preservedField(existing.queue_category_key, row.queue_category_key),
+    routing_source: upgradeFromFallback
+      ? row.routing_source
+      : preservedField(existing.routing_source, row.routing_source),
+    routing_confidence: upgradeFromFallback
+      ? row.routing_confidence
+      : preservedField(existing.routing_confidence, row.routing_confidence),
+    routing_explanation: upgradeFromFallback
+      ? row.routing_explanation
+      : preservedField(existing.routing_explanation, row.routing_explanation),
   };
 }
 
