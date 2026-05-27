@@ -105,9 +105,15 @@ export function SelectedItemDetail({
               <div className="mb-2 text-[10px] uppercase tracking-[0.14em] opacity-70">
                 {message.sender_name || message.direction} · {formatDateLabel(message.sent_at)}
               </div>
-              <p className="whitespace-pre-wrap break-words text-sm leading-6">
-                {message.body || "Attachment or unsupported message"}
-              </p>
+              {message.body ? (
+                <p className="whitespace-pre-wrap break-words text-sm leading-6">
+                  {message.body}
+                </p>
+              ) : message.attachments.length ? null : (
+                <p className="whitespace-pre-wrap break-words text-sm leading-6">
+                  Unsupported message
+                </p>
+              )}
               {message.attachments.length ? (
                 <MessageAttachmentList
                   attachments={message.attachments}

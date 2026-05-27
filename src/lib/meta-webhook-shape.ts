@@ -79,7 +79,7 @@ export function webhookMessageRow(
       recipient_id: recipientId,
       recipient_name: recipientName,
       body,
-      attachments: normalizeMetaInboxAttachments(recordField(message.attachments).data),
+      attachments: normalizeMetaInboxAttachments(message.attachments),
       sent_at: sentAt,
       raw_json: event,
     },

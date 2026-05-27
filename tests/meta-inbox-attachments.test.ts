@@ -91,6 +91,33 @@ describe("Meta inbox attachment foundation", () => {
     assert.equal(file.label, "File attachment");
   });
 
+  it("keeps already-normalized DB attachment URLs stable for thread previews", () => {
+    const attachment = normalizeMetaInboxAttachment({
+      attachmentType: "image",
+      label: "image-2859520727714664",
+      metaAttachmentId: "2859520727714664",
+      mimeType: "image/jpeg",
+      mediaUrl: "https://scontent.example/full.jpg",
+      previewUrl: "https://scontent.example/preview.jpg",
+      sizeBytes: 784502,
+      raw: {
+        id: "2859520727714664",
+        image_data: {
+          url: "https://scontent.example/full.jpg",
+          preview_url: "https://scontent.example/preview.jpg",
+        },
+      },
+    });
+
+    assert.equal(attachment.attachmentType, "image");
+    assert.equal(attachment.label, "image-2859520727714664");
+    assert.equal(attachment.metaAttachmentId, "2859520727714664");
+    assert.equal(attachment.mimeType, "image/jpeg");
+    assert.equal(attachment.mediaUrl, "https://scontent.example/full.jpg");
+    assert.equal(attachment.previewUrl, "https://scontent.example/preview.jpg");
+    assert.equal(attachment.sizeBytes, 784502);
+  });
+
   it("normalizes webhook sticker/share attachments and preserves unsupported placeholders", () => {
     const attachments = normalizeMetaInboxAttachments([
       {
@@ -116,6 +143,23 @@ describe("Meta inbox attachment foundation", () => {
     assert.equal(attachments[1].attachmentType, "share");
     assert.equal(attachments[2].attachmentType, "unknown");
     assert.equal(attachments[2].label, "Unsupported attachment");
+  });
+
+  it("normalizes Graph data-wrapped attachment lists", () => {
+    const attachments = normalizeMetaInboxAttachments({
+      data: [
+        {
+          type: "image",
+          payload: {
+            url: "https://cdn.example/graph-image.jpg",
+          },
+        },
+      ],
+    });
+
+    assert.equal(attachments.length, 1);
+    assert.equal(attachments[0].attachmentType, "image");
+    assert.equal(attachments[0].mediaUrl, "https://cdn.example/graph-image.jpg");
   });
 
   it("stores approved send-attempt attachment IDs without requiring text", () => {

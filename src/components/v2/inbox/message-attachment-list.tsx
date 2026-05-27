@@ -1,4 +1,5 @@
 import { AlertTriangle, Camera, Link2, Paperclip } from "lucide-react";
+import Image from "next/image";
 
 import type { SocialInboxMessage } from "../../../lib/social-inbox.ts";
 
@@ -18,31 +19,57 @@ export function MessageAttachmentList({
       {attachments.map((attachment, index) => {
         const icon = attachmentIcon(attachment.attachmentType);
         const href = attachment.mediaUrl || attachment.previewUrl;
+        const imagePreviewUrl =
+          attachment.attachmentType === "image"
+            ? attachment.previewUrl || attachment.mediaUrl
+            : null;
         return (
           <div
             key={`${attachment.metaAttachmentId || attachment.label}-${index}`}
-            className={`flex min-w-0 items-center justify-between gap-3 border ${border} ${background} p-3`}
+            className={`min-w-0 border ${border} ${background} p-3`}
           >
-            <div className="flex min-w-0 items-center gap-3">
-              <span className="shrink-0">{icon}</span>
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium leading-5">{attachment.label}</p>
-                <p className={`truncate text-xs leading-5 ${muted}`}>
-                  {attachment.mimeType || attachment.attachmentType}
-                  {attachment.sizeBytes ? ` · ${formatBytes(attachment.sizeBytes)}` : ""}
-                </p>
-              </div>
-            </div>
-            {href ? (
+            {imagePreviewUrl ? (
               <a
-                href={href}
+                href={href || imagePreviewUrl}
                 target="_blank"
                 rel="noreferrer"
-                className={`shrink-0 text-xs font-medium ${muted} hover:underline`}
+                className={`relative mb-3 block h-48 overflow-hidden border ${border} ${
+                  tone === "dark" ? "bg-hp-ink" : "bg-hp-foundation"
+                }`}
               >
-                Open
+                <Image
+                  src={imagePreviewUrl}
+                  alt={attachment.label}
+                  fill
+                  sizes="(max-width: 768px) 70vw, 360px"
+                  unoptimized
+                  loading="lazy"
+                  className="object-contain"
+                />
               </a>
             ) : null}
+            <div className="flex min-w-0 items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <span className="shrink-0">{icon}</span>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium leading-5">{attachment.label}</p>
+                  <p className={`truncate text-xs leading-5 ${muted}`}>
+                    {attachment.mimeType || attachment.attachmentType}
+                    {attachment.sizeBytes ? ` · ${formatBytes(attachment.sizeBytes)}` : ""}
+                  </p>
+                </div>
+              </div>
+              {href ? (
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={`shrink-0 text-xs font-medium ${muted} hover:underline`}
+                >
+                  Open
+                </a>
+              ) : null}
+            </div>
           </div>
         );
       })}
