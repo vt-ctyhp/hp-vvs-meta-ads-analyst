@@ -457,13 +457,38 @@ describe("website analytics appointment reconciliation", () => {
     assert.equal(data.funnel.find((row) => row.key === "confirmed_website_bookings")?.count, 2);
   });
 
-  it("filters appointment denominator by visit date and valid Acuity status", async () => {
+  it("filters appointment denominator by booking creation date and valid Acuity status", async () => {
     const appointments = [
-      appointmentEvent({ external_booking_id: "active-in-range", status: "active", visit_date_time: "2026-05-01T13:00:00.000Z" }),
-      appointmentEvent({ external_booking_id: "outside-range", status: "active", visit_date_time: "2026-04-30T13:00:00.000Z" }),
-      appointmentEvent({ external_booking_id: "cancelled", status: "canceled", visit_date_time: "2026-05-01T14:00:00.000Z" }),
-      appointmentEvent({ external_booking_id: "old-rescheduled", status: "rescheduled", visit_date_time: "2026-05-01T15:00:00.000Z" }),
-      appointmentEvent({ external_booking_id: "new-rescheduled-time", status: "scheduled", visit_date_time: "2026-05-02T15:00:00.000Z" }),
+      appointmentEvent({
+        external_booking_id: "active-in-range",
+        status: "active",
+        booked_at: "2026-05-01T13:00:00.000Z",
+        visit_date_time: "2026-06-06T20:00:00.000Z",
+      }),
+      appointmentEvent({
+        external_booking_id: "outside-range",
+        status: "active",
+        booked_at: "2026-04-30T13:00:00.000Z",
+        visit_date_time: "2026-05-01T13:00:00.000Z",
+      }),
+      appointmentEvent({
+        external_booking_id: "cancelled",
+        status: "canceled",
+        booked_at: "2026-05-01T14:00:00.000Z",
+        visit_date_time: "2026-05-01T14:00:00.000Z",
+      }),
+      appointmentEvent({
+        external_booking_id: "old-rescheduled",
+        status: "rescheduled",
+        booked_at: "2026-05-01T15:00:00.000Z",
+        visit_date_time: "2026-05-01T15:00:00.000Z",
+      }),
+      appointmentEvent({
+        external_booking_id: "new-rescheduled-time",
+        status: "scheduled",
+        booked_at: "2026-05-02T15:00:00.000Z",
+        visit_date_time: "2026-05-10T15:00:00.000Z",
+      }),
     ];
 
     const may1 = await fetchWebsiteFunnelData(
@@ -511,7 +536,7 @@ describe("website analytics appointment reconciliation", () => {
 
     assert.equal(data.overview.websiteScheduleConversions, 1);
     // 0 because the conversion is outside the window. Confirmed bookings come
-    // from appointment_events; paid-Meta count comes from conversions-in-window.
+    // from appointment_events by booked_at; paid-Meta count comes from conversions-in-window.
     assert.equal(data.overview.paidMetaScheduleConversions, 0);
     assert.equal(data.trend[0]?.paidMetaScheduleConversions, 0);
   });
@@ -1175,10 +1200,10 @@ function resolvedSelect(
 function appointmentEvent(overrides: Record<string, unknown> = {}) {
   return {
     appt_id: "acuity:apt-1",
-    booked_at: "2026-04-30T10:00:00.000Z",
+    booked_at: "2026-05-01T10:00:00.000Z",
     booking_source: "acuity",
     brand: "hpusa",
-    created_at: "2026-04-30T10:00:00.000Z",
+    created_at: "2026-05-01T10:00:00.000Z",
     external_booking_id: "apt-1",
     id: "appointment-event-1",
     raw_payload: {},

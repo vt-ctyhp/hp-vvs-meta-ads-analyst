@@ -1209,6 +1209,16 @@ function appointmentVisitDateTimeForRow(row: WebsiteAcuityAppointmentRow) {
   return timestampValue(row.visit_date_time) || "";
 }
 
+function appointmentBookedAtForRow(row: WebsiteAcuityAppointmentRow) {
+  if ("raw_payload" in row) {
+    const rawPayload = objectRecord(row.raw_payload);
+    const appointment = objectRecord(rawPayload.appointment);
+    const datetimeCreated = timestampValue(appointment.datetimeCreated);
+    if (datetimeCreated) return datetimeCreated;
+  }
+  return timestampValue(row.booked_at) || timestampValue(row.created_at) || appointmentVisitDateTimeForRow(row);
+}
+
 function uniqueScheduleConversionsByAcuityId(
   conversions: WebsiteConversionRow[],
   appointmentIds: string[],
@@ -1530,9 +1540,9 @@ async function fetchAppointmentConversionsFromCoreTable(
         "raw_payload",
       ].join(","),
     )
-    .gte("visit_date_time", startIso)
-    .lte("visit_date_time", endIso)
-    .order("visit_date_time", { ascending: false })
+    .gte("booked_at", startIso)
+    .lte("booked_at", endIso)
+    .order("booked_at", { ascending: false })
     .limit(MAX_APPOINTMENT_CONVERSIONS);
 
   if (appointmentsResult.error) throw appointmentsResult.error;
@@ -1571,9 +1581,9 @@ async function fetchAppointmentConversionsFromBoundaryView(startIso: string, end
         "conversion_occurred_at",
       ].join(","),
     )
-    .gte("visit_date_time", startIso)
-    .lte("visit_date_time", endIso)
-    .order("visit_date_time", { ascending: false })
+    .gte("booked_at", startIso)
+    .lte("booked_at", endIso)
+    .order("booked_at", { ascending: false })
     .limit(MAX_APPOINTMENT_CONVERSIONS);
 
   if (result.error) throw result.error;
@@ -2696,7 +2706,7 @@ function buildFunnel(events: WebsiteEventRow[], appointments: {
       key: "confirmed_website_bookings",
       label: "Confirmed website bookings",
       dataMapping:
-        "appointment_events: distinct external_booking_id where booking_source = acuity, visit_date_time is in range, and status is not canceled/rescheduled. Grain is confirmed Acuity appointment.",
+        "appointment_events: distinct external_booking_id where booking_source = acuity, booked_at is in range, and status is not canceled/rescheduled. Grain is confirmed Acuity appointment.",
       unit: "booking" as const,
       count: appointments.websiteScheduleConversions,
     },
@@ -2999,7 +3009,7 @@ function buildTrend(
   }
 
   for (const appointment of appointments) {
-    const date = appointmentVisitDateTimeForRow(appointment).slice(0, 10);
+    const date = appointmentBookedAtForRow(appointment).slice(0, 10);
     const row = rows.get(date);
     if (!row) continue;
     row.websiteScheduleConversions += 1;

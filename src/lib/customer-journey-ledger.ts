@@ -551,9 +551,9 @@ async function fetchCustomerJourneyLedgerDataUncached(
     client
       .from("appointment_events")
       .select(APPOINTMENT_COLUMNS)
-      .gte("visit_date_time", startIso)
-      .lte("visit_date_time", endIso)
-      .order("visit_date_time", { ascending: false })
+      .gte("booked_at", startIso)
+      .lte("booked_at", endIso)
+      .order("booked_at", { ascending: false })
       .limit(MAX_RELATED_ROWS),
     // Phase 2 (v3 plan): fetch visitors active in the window directly so the
     // ledger surfaces browse-but-no-book visitors. Pre-Phase-2 the loader was
@@ -1522,7 +1522,7 @@ export function buildCustomerJourneyLedgerRows(input: {
   const allRows = [...anchoredRows, ...visitorOnlyRows];
 
   return allRows.sort(
-    (a, b) => timestampValue(b.appointmentVisitDateTime || b.lastSeen) - timestampValue(a.appointmentVisitDateTime || a.lastSeen),
+    (a, b) => timestampValue(b.lastSeen || b.bookingTime || b.appointmentVisitDateTime) - timestampValue(a.lastSeen || a.bookingTime || a.appointmentVisitDateTime),
   );
 }
 
@@ -1773,7 +1773,8 @@ function appointmentLedgerRow(input: {
 }): CustomerJourneyLedgerRow {
   const { appointment, events, session, visitor } = input;
   const visitTime = appointmentVisitDateTime(appointment);
-  const appointmentTime = visitTime || appointment.created_at;
+  const bookedAt = appointmentBookedAt(appointment);
+  const appointmentTime = visitTime || bookedAt || appointment.created_at;
   const eventTouches = events.flatMap(eventAttributionTouches);
   const paidTouch = selectOriginalPaidTouch(
     [
@@ -1826,7 +1827,7 @@ function appointmentLedgerRow(input: {
     lastPaidSourceType: paidTouch?.sourceType || null,
     lastSeen:
       latestWebsiteActivityAt({ beforeAt: visitTime, events, session, visitor }) ||
-      nonAppointmentTimestamp(appointment.created_at, visitTime) ||
+      nonAppointmentTimestamp(bookedAt || appointment.created_at, visitTime) ||
       "",
     metaEventId: null,
     osName,
@@ -2644,6 +2645,13 @@ function appointmentVisitDateTime(row: CustomerJourneyLedgerAppointmentRow | nul
   return typeof row?.visit_date_time === "string" && row.visit_date_time.trim()
     ? row.visit_date_time
     : null;
+}
+
+function appointmentBookedAt(row: CustomerJourneyLedgerAppointmentRow | null | undefined) {
+  if (!row) return null;
+  const raw = objectRecord(row.raw_payload);
+  const appointment = objectRecord(raw?.appointment);
+  return stringValue(appointment?.datetimeCreated) || row.booked_at || row.created_at || appointmentVisitDateTime(row);
 }
 
 function appointmentSourceId(row: CustomerJourneyLedgerAppointmentRow | null | undefined) {
