@@ -15,11 +15,13 @@ import {
   applyCampaignUmbrellaRouting,
   buildMetaInboxNormalizationBatch,
   buildMetaInboxNormalizationBatchWithThreadHistory,
+  umbrellaToQueueCategory,
   type MetaAdsLookupRow,
   type MetaInboxFirstTouchCandidate,
   type MetaInboxNormalizationInput,
   type MetaInboxThreadHistoryLoader,
 } from "./meta-inbox-normalization.ts";
+import { isCampaignUmbrella } from "./campaign-umbrellas.ts";
 import { fetchMessengerProfile, shouldEnrichProfile } from "./meta-messenger-profile.ts";
 import { pickLatestNonEmptySnippet } from "./meta-message-snippet.ts";
 import {
@@ -2259,6 +2261,160 @@ export function emptySocialInboxData(): SocialInboxData {
   };
 }
 
+/**
+ * Land the ad attribution carried by a `messaging_referrals` webhook
+ * event onto the corresponding conversation, independently of the
+ * normalize pipeline.
+ *
+ * Why this exists: Meta sometimes delivers a standalone
+ * `messaging_referrals` event AFTER a conversation already has prior
+ * messages (e.g. an existing customer clicks a new ad). In that case
+ * the normalize path's `firstTouchFromMessage` keys off the earlier
+ * message's `raw_json` — which doesn't carry the referral — and the
+ * first-touch upsert uses `ignoreDuplicates: true` to protect existing
+ * rows. The combination silently drops the new attribution.
+ *
+ * This function writes the referral fields directly:
+ *   - looks up `meta_ads` to resolve `campaign_umbrella`
+ *   - UPDATEs the existing first-touch row (only when its ad_id is
+ *     null, so we never downgrade good data)
+ *   - UPDATEs the conversation's queue/routing when the umbrella
+ *     maps to a recognised queue AND the current routing is fallback
+ *     (preserving manual_override and umbrella routing as before)
+ */
+async function applyReferralAttribution(
+  referralRow: { thread: JsonRecord; referral: JsonRecord },
+  role: "ingest",
+): Promise<void> {
+  const supabase = dynamicSupabase(role);
+  const thread = referralRow.thread;
+  const platform = thread.platform === "instagram" ? "instagram" : "facebook";
+  const pageId = stringField(thread.page_id);
+  const igUserId = stringField(thread.ig_user_id);
+  const businessId = platform === "instagram" ? igUserId : pageId;
+  const participantId = stringField(thread.participant_id);
+  if (!businessId || !participantId) return;
+
+  const canonicalKey = `${platform}:message_thread:${businessId}:${participantId}`;
+  const adId = stringField(referralRow.referral.ad_id);
+  const ref = stringField(referralRow.referral.ref);
+
+  // No usable attribution → nothing to do.
+  if (!adId && !ref) return;
+
+  const convResult = await selectActiveMetaInboxRows(
+    supabase,
+    "meta_inbox_conversations",
+    "id,routing_source,queue_category_key",
+  )
+    .eq("canonical_conversation_key", canonicalKey)
+    .limit(1);
+  if (convResult.error) {
+    if (isMissingMetaInboxSchemaError(convResult.error)) return;
+    throw normalizeMetaInboxSchemaError(convResult.error);
+  }
+  const convRow = rowsFrom(convResult.data)[0];
+  if (!convRow) return;
+  const conversationId = stringField(convRow.id);
+  if (!conversationId) return;
+
+  // Resolve campaign metadata. Use the same path the normalize pipeline
+  // uses so umbrella resolution stays consistent.
+  const adLookup = adId
+    ? await loadMetaAdsForFirstTouchSources(
+        [
+          {
+            canonicalConversationKey: canonicalKey,
+            firstMessageId: null,
+            firstMessageAt: null,
+            referralJson: {},
+            adId,
+            adsContextDataJson: {},
+            ref: null,
+            sourcePostId: null,
+            sourceMediaId: null,
+            sourceCommentId: null,
+            sourceProductId: null,
+            sourcePermalink: null,
+            campaignUmbrellaId: null,
+            campaignId: null,
+            adsetId: null,
+            creativeId: null,
+            attributionMethod: "meta_referral",
+            attributionConfidence: 0.95,
+            rawPayloadJson: {},
+          },
+        ] as readonly MetaInboxFirstTouchCandidate[],
+        role,
+      )
+    : new Map<string, MetaAdsLookupRow>();
+  const adRow = adId ? adLookup.get(adId) || null : null;
+  const storedUmbrella = adRow && isCampaignUmbrella(adRow.campaign_umbrella)
+    ? (adRow.campaign_umbrella as string)
+    : null;
+
+  // Patch first-touch source — only when current ad_id is null, so we
+  // never overwrite better attribution from an earlier referral.
+  const existingFtResult = await selectActiveMetaInboxRows(
+    supabase,
+    "meta_inbox_first_touch_sources",
+    "id,ad_id",
+  )
+    .eq("conversation_id", conversationId)
+    .limit(1);
+  if (existingFtResult.error) {
+    if (isMissingMetaInboxSchemaError(existingFtResult.error)) return;
+    throw normalizeMetaInboxSchemaError(existingFtResult.error);
+  }
+  const existingFt = rowsFrom(existingFtResult.data)[0];
+  if (existingFt && !stringField(existingFt.ad_id)) {
+    const adsContext = recordField(referralRow.referral.ads_context_data);
+    const patch: JsonRecord = {
+      ad_id: adId,
+      ref,
+      ads_context_data_json: adsContext,
+      referral_json: referralRow.referral,
+      attribution_method: adId ? "meta_referral" : "meta_referral",
+      attribution_confidence: adId ? 0.95 : 0.75,
+    };
+    if (adRow) {
+      patch.campaign_id = stringField(adRow.campaign_id);
+      patch.adset_id = stringField(adRow.ad_set_id);
+      patch.creative_id = stringField(adRow.creative_id);
+    }
+    if (storedUmbrella) patch.campaign_umbrella_id = storedUmbrella;
+    const { error: ftUpdateError } = await supabase
+      .from("meta_inbox_first_touch_sources")
+      .update(patch)
+      .eq("id", String(existingFt.id));
+    if (ftUpdateError && !isMissingMetaInboxSchemaError(ftUpdateError)) {
+      throw normalizeMetaInboxSchemaError(ftUpdateError);
+    }
+  }
+
+  // Re-route the conversation if the existing routing is a fallback and
+  // we now have a recognised umbrella. Mirrors the upgrade rule in
+  // preserveMetaInboxConversationWorkflowFields.
+  const mappedQueue = storedUmbrella ? umbrellaToQueueCategory(storedUmbrella) : null;
+  if (
+    mappedQueue &&
+    stringField(convRow.routing_source) === "fallback"
+  ) {
+    const { error: convUpdateError } = await supabase
+      .from("meta_inbox_conversations")
+      .update({
+        queue_category_key: mappedQueue,
+        routing_source: "campaign_umbrella",
+        routing_confidence: 0.85,
+        routing_explanation: `Routed by campaign umbrella: ${storedUmbrella}.`,
+      })
+      .eq("id", conversationId);
+    if (convUpdateError && !isMissingMetaInboxSchemaError(convUpdateError)) {
+      throw normalizeMetaInboxSchemaError(convUpdateError);
+    }
+  }
+}
+
 export async function ingestMetaWebhookPayload(payload: JsonRecord): Promise<MetaWebhookIngestResult> {
   const object = stringField(payload.object);
   const entries = arrayField(payload.entry).filter(isRecord);
@@ -2287,6 +2443,16 @@ export async function ingestMetaWebhookPayload(payload: JsonRecord): Promise<Met
           "ingest",
           { loadFullThreadHistory: true },
         );
+        // The normalize pass above creates the conversation row but
+        // cannot reliably plant the ad attribution onto an existing
+        // first-touch source — when a prior message exists for this
+        // thread, firstTouchFromMessage reads the message's raw_json
+        // (no referral) instead of the thread's raw_json (referral
+        // just landed), and the first_touch upsert is ignoreDuplicates.
+        // applyReferralAttribution closes that gap by writing the
+        // referral fields directly and re-routing the conversation
+        // when the existing attribution is empty or weaker.
+        await applyReferralAttribution(referralRow, "ingest");
         result.referrals += 1;
       }
 
