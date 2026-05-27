@@ -8,8 +8,8 @@ import type { MetaInboxMobileConversationItem } from "@/lib/meta-inbox-queue-vie
 /**
  * Mobile conversation list — full-screen card list with search.
  *
- * Each row links to /m/inbox/<id> for the detail view. Unread DMs
- * show the count.
+ * Each row links to /m/inbox/<id> for the detail view. Needs-reply
+ * rows show the action marker.
  *
  * Search is client-side over name + body. Server-side full-text search
  * is a Phase 11 polish.

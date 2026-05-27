@@ -182,7 +182,6 @@ export function QueueRail({
                 onChange={(value) => onStatusChange(value as StatusFilter)}
                 options={[
                   ["all", "All Statuses"],
-                  ["unread", "Unread"],
                   ["needs-reply", "Needs Reply"],
                 ]}
               />

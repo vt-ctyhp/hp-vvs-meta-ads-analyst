@@ -122,60 +122,55 @@ test("QueueRow exposes needs-reply, over-SLA, active, and default visual modes",
   assert.match(resolved, /data-label-tone="none"/);
   assert.doesNotMatch(resolved, /Needs reply|Over SLA/);
 
-  const unread = renderToStaticMarkup(
+  const staleWorkflow = renderToStaticMarkup(
     React.createElement(QueueRow, {
       item: itemFixture({
-        id: "unread",
-        sender: "Uma Unread",
-        status: "Unread",
-        conversationStatus: "new_inquiry",
-        timestamp: "2026-05-25T10:00:00.000Z",
-      }),
-      active: false,
-      now,
-      onSelect: () => {},
-    }),
-  );
-  assert.match(unread, /data-visual-mode="needs-reply"/);
-  assert.match(unread, /data-label-tone="pink"/);
-  assert.match(unread, />Needs reply</);
-
-  const unreadOverSla = renderToStaticMarkup(
-    React.createElement(QueueRow, {
-      item: itemFixture({
-        id: "unread-sla",
-        sender: "Sal Slow",
-        status: "Unread",
-        conversationStatus: "new_inquiry",
+        id: "stale-workflow",
+        sender: "Nhu Bui",
+        status: "Synced",
+        conversationStatus: "needs_reply",
         timestamp: "2026-05-24T08:00:00.000Z",
+        inboxConversation: conversationFixture({
+          needs_reply: false,
+          conversation_status: "needs_reply",
+          latest_inbound_at: "2026-05-24T08:00:00.000Z",
+          latest_outbound_at: "2026-05-25T10:00:00.000Z",
+          last_activity_at: "2026-05-25T10:00:00.000Z",
+        }),
       }),
       active: false,
       now,
       onSelect: () => {},
     }),
   );
-  assert.match(unreadOverSla, /data-visual-mode="needs-reply"/);
-  assert.match(unreadOverSla, /data-over-sla="true"/);
-  assert.match(unreadOverSla, /data-label-tone="warning"/);
-  assert.match(unreadOverSla, />↑ Over SLA</);
-  assert.doesNotMatch(unreadOverSla, />Needs reply</);
+  assert.match(staleWorkflow, /data-visual-mode="default"/);
+  assert.match(staleWorkflow, /data-over-sla="false"/);
+  assert.match(staleWorkflow, /data-label-tone="none"/);
+  assert.doesNotMatch(staleWorkflow, /Needs reply|Over SLA/);
 
-  const unreadActive = renderToStaticMarkup(
+  const missingInbound = renderToStaticMarkup(
     React.createElement(QueueRow, {
       item: itemFixture({
-        id: "unread-active",
-        sender: "Ava Active",
-        status: "Unread",
-        conversationStatus: "new_inquiry",
-        timestamp: "2026-05-25T10:00:00.000Z",
+        id: "missing-inbound",
+        sender: "Mina Missing",
+        status: "Needs reply",
+        conversationStatus: "needs_reply",
+        timestamp: "2026-05-24T08:00:00.000Z",
+        inboxConversation: conversationFixture({
+          needs_reply: true,
+          latest_inbound_at: null,
+          last_activity_at: "2026-05-24T08:00:00.000Z",
+        }),
       }),
-      active: true,
+      active: false,
       now,
       onSelect: () => {},
     }),
   );
-  assert.match(unreadActive, /data-visual-mode="active"/);
-  assert.match(unreadActive, /data-active="true"/);
+  assert.match(missingInbound, /data-visual-mode="needs-reply"/);
+  assert.match(missingInbound, /data-over-sla="false"/);
+  assert.match(missingInbound, /data-label-tone="pink"/);
+  assert.match(missingInbound, />Needs reply</);
 });
 
 test("QueueRail renders admin and team-scoped category options", () => {
@@ -321,7 +316,6 @@ test("QueueRail disclosure renders the rail-owned filter controls", () => {
   assert.match(markup, />All Items</);
   assert.match(markup, />Messages</);
   assert.match(markup, />Comments</);
-  assert.match(markup, />Unread</);
   assert.match(markup, />Needs Reply</);
 });
 
@@ -353,14 +347,14 @@ test("QueueRail filter controls call the supplied filter handlers", () => {
   changeSelect(rail, "Source channel", "instagram_message");
   changeSelect(rail, "Campaign umbrella", "cash-umbrella");
   changeSelect(rail, "Item type", "comments");
-  changeSelect(rail, "Status", "unread");
+  changeSelect(rail, "Status", "needs-reply");
   clickButton(rail, "Reset");
 
   assert.deepEqual(changes, {
     sourceChannel: "instagram_message",
     campaignUmbrella: "cash-umbrella",
     itemType: "comments",
-    status: "unread",
+    status: "needs-reply",
   });
   assert.equal(reset, true);
 });
@@ -405,7 +399,7 @@ function queueFixture(): MetaInboxQueueDisplayItem[] {
       type: "comment",
       sender: "Ben Booker",
       preview: "Need Saturday visit.",
-      status: "Unread",
+      status: "Synced",
       conversationStatus: "new_inquiry",
       timestamp: "2026-05-25T09:00:00.000Z",
       sourceChannel: "facebook_public_comment",
@@ -461,6 +455,46 @@ function itemFixture(
     savedReplies: [],
     notes: [],
     qaScorecards: [],
+    ...overrides,
+  };
+}
+
+function conversationFixture(
+  overrides: Partial<NonNullable<MetaInboxQueueDisplayItem["inboxConversation"]>> = {},
+): NonNullable<MetaInboxQueueDisplayItem["inboxConversation"]> {
+  return {
+    id: "conversation",
+    canonical_conversation_key: "facebook:thread:customer",
+    source_channel: "facebook_message",
+    source_type: "message_thread",
+    platform: "facebook",
+    customer_profile_id: null,
+    page_id: "page-1",
+    ig_user_id: null,
+    participant_id: "customer",
+    platform_thread_id: "thread-1",
+    parent_content_id: null,
+    source_id: "thread-1",
+    first_inbound_at: "2026-05-25T10:00:00.000Z",
+    latest_inbound_at: "2026-05-25T10:00:00.000Z",
+    latest_outbound_at: null,
+    last_activity_at: "2026-05-25T10:00:00.000Z",
+    needs_reply: true,
+    reply_window_expires_at: null,
+    human_agent_window_expires_at: null,
+    send_eligibility: "standard_reply_allowed",
+    conversation_status: "needs_reply",
+    assigned_team_id: null,
+    assigned_user_id: null,
+    follow_up_at: null,
+    lead_quality: null,
+    lead_quality_reason_tags: [],
+    inbox_outcome: "no_outcome_yet",
+    inbox_lost_reason: null,
+    queue_category_key: "general_inquiry",
+    routing_source: null,
+    routing_confidence: null,
+    routing_explanation: null,
     ...overrides,
   };
 }

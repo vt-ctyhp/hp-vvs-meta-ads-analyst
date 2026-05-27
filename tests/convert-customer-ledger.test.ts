@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import {
   buildCustomerLedgerStatusSentence,
   countCustomerLedgerCapiGaps,
-  countUnreadThreads,
+  countNeedsReplyConversations,
   customerLedgerDetailIdentityFromSearchParams,
   customerLedgerDetailUrl,
   customerJourneyLedgerRequestFromSearchParams,
@@ -280,13 +280,16 @@ describe("Convert customer ledger adapter", () => {
       }),
     ]);
 
-    assert.equal(countUnreadThreads([{ unread_count: 2 }, { unread_count: null }]), 2);
+    assert.equal(
+      countNeedsReplyConversations([{ needs_reply: true }, { needs_reply: false }]),
+      1,
+    );
     assert.equal(
       buildCustomerLedgerStatusSentence({
         bookings: 1,
         rows,
         sessions: 10,
-        unreadConversations: 2,
+        needsReplyConversations: 2,
       }),
       "10 sessions → 1 booking (10.0%). 2 conversations waiting.",
     );
@@ -296,7 +299,7 @@ describe("Convert customer ledger adapter", () => {
         rows,
         sessionNoun: "booking session",
         sessions: 258,
-        unreadConversations: 0,
+        needsReplyConversations: 0,
       }),
       "258 booking sessions → 12 bookings (4.7%).",
     );

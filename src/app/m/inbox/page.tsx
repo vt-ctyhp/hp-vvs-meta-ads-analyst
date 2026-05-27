@@ -26,11 +26,16 @@ export default async function MobileInboxIndex() {
   const conversations = buildMetaInboxMobileConversationItems(inbox);
 
   const waiting = conversations.filter((item) => item.status === "Needs reply").length;
-  const oldestUnread = conversations
-    .filter((item) => item.status === "Needs reply" && item.timestamp)
-    .map((item) => Date.parse(item.timestamp as string))
+  const oldestWaiting = conversations
+    .flatMap((item) => {
+      if (item.status !== "Needs reply") return [];
+      const sourceTime = item.inboxConversation?.latest_inbound_at || item.timestamp;
+      const timestamp = Date.parse(String(sourceTime || ""));
+      return Number.isFinite(timestamp) ? [timestamp] : [];
+    })
     .sort((a, b) => a - b)[0];
-  const oldestRel = oldestUnread ? relTime(new Date(oldestUnread).toISOString()) : "—";
+  const oldestRel =
+    oldestWaiting !== undefined ? relTime(new Date(oldestWaiting).toISOString()) : "—";
 
   const sentence: StatusSentence =
     conversations.length === 0

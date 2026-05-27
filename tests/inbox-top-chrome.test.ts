@@ -113,14 +113,13 @@ test("InboxEyebrow loading state matches the sync action vocabulary", () => {
 test("InboxStatusSentence renders computeInboxHighlights output on one line", () => {
   const cases = [
     [[], /Inbox is empty for the current connection/],
-    [[queueItem({ id: "u1", status: "Unread" })], /1 unread/],
     [[queueItem({ id: "n1", status: "Needs reply" })], /1 needing reply/],
     [
       [
-        queueItem({ id: "u1", status: "Unread" }),
+        queueItem({ id: "s1", status: "Synced" }),
         queueItem({ id: "n1", status: "Needs reply" }),
       ],
-      /1 unread<\/span><span class="text-hp-muted"> · <\/span><span data-tone="warning"/,
+      /1 needing reply/,
     ],
     [
       [

@@ -225,10 +225,10 @@ export function countCustomerLedgerCapiGaps(rows: CustomerLedgerRow[]): number {
   }).length;
 }
 
-export function countUnreadThreads(
-  threads: Array<{ unread_count?: number | null }>,
+export function countNeedsReplyConversations(
+  conversations: Array<{ needs_reply?: boolean | null }>,
 ): number {
-  return threads.reduce((sum, thread) => sum + (thread.unread_count || 0), 0);
+  return conversations.filter((conversation) => conversation.needs_reply === true).length;
 }
 
 export function buildCustomerLedgerStatusSentence({
@@ -236,18 +236,18 @@ export function buildCustomerLedgerStatusSentence({
   rows,
   sessionNoun = "session",
   sessions,
-  unreadConversations,
+  needsReplyConversations,
 }: {
   bookings: number;
   rows: CustomerLedgerRow[];
   sessionNoun?: string;
   sessions: number;
-  unreadConversations: number;
+  needsReplyConversations: number;
 }): string {
   const gaps = countCustomerLedgerCapiGaps(rows);
   const sessionUnit = `${sessionNoun}${sessions === 1 ? "" : "s"}`;
 
-  if (sessions === 0 && bookings === 0 && unreadConversations === 0 && rows.length === 0) {
+  if (sessions === 0 && bookings === 0 && needsReplyConversations === 0 && rows.length === 0) {
     return `No ${sessionNoun} activity in this range yet. Once the booking pixel + inbox sync are live, traffic + bookings + conversations land here.`;
   }
 
@@ -260,10 +260,10 @@ export function buildCustomerLedgerStatusSentence({
       }${rate ? ` (${rate}%)` : ""}.`,
     );
   }
-  if (unreadConversations > 0) {
+  if (needsReplyConversations > 0) {
     pieces.push(
-      `${unreadConversations} conversation${
-        unreadConversations === 1 ? "" : "s"
+      `${needsReplyConversations} conversation${
+        needsReplyConversations === 1 ? "" : "s"
       } waiting.`,
     );
   }

@@ -21,7 +21,7 @@ export type SourceFilter = "all" | "facebook" | "instagram";
 export type SourceChannelFilter = "all" | MetaInboxSourceChannelKey;
 export type QueueCategoryFilter = "all" | MetaInboxQueueCategoryKey;
 export type ItemTypeFilter = "all" | "messages" | "comments";
-export type StatusFilter = "all" | "unread" | "needs-reply";
+export type StatusFilter = "all" | "needs-reply";
 
 export type AttributionFilterOptions = {
   campaignUmbrellas: [string, string][];
@@ -110,7 +110,6 @@ export function useInboxFilters(
         }
         if (itemTypeFilter === "messages" && item.type !== "message") return false;
         if (itemTypeFilter === "comments" && item.type !== "comment") return false;
-        if (statusFilter === "unread" && item.status !== "Unread") return false;
         if (statusFilter === "needs-reply" && item.status !== "Needs reply") return false;
 
         const normalizedQuery = query.trim().toLowerCase();

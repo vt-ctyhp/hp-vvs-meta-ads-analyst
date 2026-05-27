@@ -163,6 +163,45 @@ describe("Meta inbox canonical queue view", () => {
     assert.equal(items[0].legacySourceHref, "/m/inbox/t-raw-thread-1");
   });
 
+  it("ignores raw Meta unread counts when normalized reply state is waiting on customer", () => {
+    const inboxData = {
+      ...emptyInboxData(),
+      threads: [
+        rawThread({
+          id: "thread-row-nhu",
+          thread_id: "t_nhu",
+          participant_id: "psid-nhu",
+          participant_name: "Nhu Bui",
+          unread_count: 60,
+          last_message_at: "2026-05-26T14:47:51.000Z",
+        }),
+      ],
+      inboxConversations: [
+        {
+          ...normalizedConversation({
+            id: "conversation-nhu",
+            platform_thread_id: "t_nhu",
+            participant_id: "psid-nhu",
+            customer_profile_id: null,
+          }),
+          latest_inbound_at: "2026-05-26T14:38:13.000Z",
+          latest_outbound_at: "2026-05-26T14:47:51.000Z",
+          last_activity_at: "2026-05-26T14:47:51.000Z",
+          needs_reply: false,
+          conversation_status: "waiting_on_customer" as const,
+        },
+      ],
+    };
+
+    const queue = buildMetaInboxQueueItems(inboxData);
+    const mobileItems = buildMetaInboxMobileConversationItems(inboxData);
+
+    assert.equal(queue.length, 1);
+    assert.equal(queue[0].sender, "Nhu Bui");
+    assert.equal(queue[0].status, "Synced");
+    assert.equal(mobileItems[0].status, "Synced");
+  });
+
   it("renders normalized public comment conversations even when raw comment rows are capped out", () => {
     const queue = buildMetaInboxQueueItems({
       ...emptyInboxData(),
@@ -319,6 +358,26 @@ describe("Meta inbox raw-thread participant dedup", () => {
     assert.deepEqual(senders, ["Customer A", "Customer B"]);
   });
 
+  it("does not promote raw thread unread counts into operator urgency", () => {
+    const queue = buildMetaInboxQueueItems({
+      ...emptyInboxData(),
+      threads: [
+        rawThread({
+          id: "thread-unread",
+          thread_id: "t_unread",
+          participant_id: "psid-unread",
+          participant_name: "Raw Unread",
+          unread_count: 3,
+          last_message_at: "2026-05-26T14:00:00.000Z",
+        }),
+      ],
+    });
+
+    assert.equal(queue.length, 1);
+    assert.equal(queue[0].sender, "Raw Unread");
+    assert.equal(queue[0].status, "Synced");
+  });
+
   it("does not dedup raw threads with null participant_id (keeps them all)", () => {
     const queue = buildMetaInboxQueueItems({
       ...emptyInboxData(),
@@ -351,6 +410,7 @@ function rawThread(overrides: {
   participant_name?: string | null;
   last_message_at?: string | null;
   page_id?: string | null;
+  unread_count?: number;
 }) {
   return {
     id: overrides.id,
@@ -364,7 +424,7 @@ function rawThread(overrides: {
       overrides.participant_name !== undefined ? overrides.participant_name : null,
     snippet: null,
     message_count: 1,
-    unread_count: 0,
+    unread_count: overrides.unread_count || 0,
     last_message_at: overrides.last_message_at || null,
     last_synced_at: null,
   };

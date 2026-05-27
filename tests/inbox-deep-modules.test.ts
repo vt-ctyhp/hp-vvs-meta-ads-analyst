@@ -22,9 +22,6 @@ describe("inbox deep modules", () => {
     assert.deepEqual(computeInboxHighlights([]), [
       { text: "Inbox is empty for the current connection" },
     ]);
-    assert.deepEqual(computeInboxHighlights([itemFixture({ id: "u1", status: "Unread" })]), [
-      { text: "1 unread", tone: "warning" },
-    ]);
     assert.deepEqual(
       computeInboxHighlights([
         itemFixture({ id: "n1", status: "Needs reply" }),
@@ -34,13 +31,10 @@ describe("inbox deep modules", () => {
     );
     assert.deepEqual(
       computeInboxHighlights([
-        itemFixture({ id: "u1", status: "Unread" }),
+        itemFixture({ id: "s1", status: "Synced" }),
         itemFixture({ id: "n1", status: "Needs reply" }),
       ]),
-      [
-        { text: "1 unread", tone: "warning" },
-        { text: "1 needing reply", tone: "warning" },
-      ],
+      [{ text: "1 needing reply", tone: "warning" }],
     );
     assert.deepEqual(
       computeInboxHighlights([
@@ -156,14 +150,6 @@ describe("inbox deep modules", () => {
     assert.deepEqual(
       ids(
         renderInboxFilters(queue, (filters) => {
-          if (filters.statusFilter !== "unread") filters.setStatusFilter("unread");
-        }),
-      ),
-      ["book"],
-    );
-    assert.deepEqual(
-      ids(
-        renderInboxFilters(queue, (filters) => {
           if (filters.statusFilter !== "needs-reply") {
             filters.setStatusFilter("needs-reply");
           }
@@ -219,7 +205,6 @@ describe("inbox deep modules", () => {
       ["vvs", ["book", "repair"]],
       ["facebook", ["book", "custom"]],
       ["comment", ["book"]],
-      ["unread", ["book"]],
     ];
 
     for (const [query, expectedIds] of cases) {
@@ -324,7 +309,7 @@ function renderInboxFiltersThroughReset(queue: MetaInboxQueueDisplayItem[]): Use
 
     if (phase === 0) {
       filters.setQuery("ada");
-      filters.setStatusFilter("unread");
+      filters.setStatusFilter("needs-reply");
       setPhase(1);
     } else if (phase === 1) {
       filters.reset();
@@ -406,7 +391,7 @@ function queueFixture() {
       channel: "Facebook",
       platform: "facebook",
       type: "comment",
-      status: "Unread",
+      status: "Synced",
       sender: "Ben Booker",
       preview: "Need Saturday visit.",
       routingExplanation: "Appointment route from comment.",

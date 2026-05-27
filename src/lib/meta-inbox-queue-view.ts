@@ -26,7 +26,7 @@ export type MetaInboxQueueDisplayItem = {
   type: "message" | "comment";
   sender: string;
   preview: string;
-  status: "Synced" | "Unread" | "Needs reply";
+  status: "Synced" | "Needs reply";
   time: string;
   timestamp: string | null;
   sourceChannel: MetaInboxSourceChannelKey;
@@ -220,11 +220,7 @@ function itemFromConversation(
       rawThread?.snippet ||
       rawComment?.body ||
       (type === "comment" ? "Comment history not synced yet" : "Conversation history not synced yet"),
-    status: conversation.needs_reply
-      ? "Needs reply"
-      : rawThread && rawThread.unread_count > 0
-        ? "Unread"
-        : "Synced",
+    status: conversation.needs_reply ? "Needs reply" : "Synced",
     time: formatDateLabel(
       conversation.last_activity_at ||
         rawThread?.last_message_at ||
@@ -273,7 +269,7 @@ function itemFromRawThread(
     type: "message",
     sender: thread.participant_name || `${channel} Conversation`,
     preview: thread.snippet || `${thread.message_count} synced message(s)`,
-    status: thread.unread_count > 0 ? "Unread" : "Synced",
+    status: "Synced",
     time: formatDateLabel(thread.last_message_at || thread.last_synced_at),
     timestamp: thread.last_message_at || thread.last_synced_at,
     sourceChannel: fallbackSourceChannel(thread.platform, "message"),

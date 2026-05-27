@@ -138,10 +138,11 @@ export function queueItemIsOverSla(
 ) {
   if (!isNeedsReply(item)) return false;
 
-  const sourceTime =
-    item.inboxConversation?.latest_inbound_at ||
-    item.inboxConversation?.last_activity_at ||
-    item.timestamp;
+  const sourceTime = item.inboxConversation
+    ? item.inboxConversation.latest_inbound_at
+    : item.status === "Needs reply"
+      ? item.timestamp
+      : null;
   const sourceMs = Date.parse(String(sourceTime || ""));
   const nowMs = typeof now === "number" ? now : now.getTime();
   if (!Number.isFinite(sourceMs) || !Number.isFinite(nowMs) || sourceMs > nowMs) return false;
@@ -150,15 +151,8 @@ export function queueItemIsOverSla(
 }
 
 function isNeedsReply(item: MetaInboxQueueDisplayItem) {
-  // Treat both workflow-flagged ("Needs reply") and not-yet-opened ("Unread")
-  // conversations as needing attention. Both contribute to the warning-toned
-  // `inboxHighlights` at the top of the page, so the row treatment must
-  // mirror the status sentence.
-  return (
-    item.conversationStatus === "needs_reply" ||
-    item.status === "Needs reply" ||
-    item.status === "Unread"
-  );
+  if (item.inboxConversation) return item.inboxConversation.needs_reply === true;
+  return item.status === "Needs reply";
 }
 
 function senderInitials(sender: string) {
