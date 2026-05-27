@@ -75,6 +75,29 @@ describe("Meta inbox conversation history", () => {
     assert.equal(history.pageInfo.historyCompleteness, "complete_known_history");
   });
 
+  it("loads known messages for ad-referral conversations with a platform thread id", () => {
+    const history = buildSocialInboxConversationHistoryPage(
+      conversationFixture({
+        sourceType: "ad_referral",
+        source_channel: "ad_referral",
+        platformThreadId: "thread-1",
+        sourceId: "thread-1",
+      }),
+      {
+        messages: [
+          messageFixture("m1", "2026-05-23T10:00:00.000Z"),
+          messageFixture("m2", "2026-05-23T10:01:00.000Z"),
+        ],
+        comments: [],
+      },
+      { pageSize: 10 },
+    );
+
+    assert.deepEqual(history.messages.map((message) => message.id), ["m1", "m2"]);
+    assert.equal(history.pageInfo.knownTotal, 2);
+    assert.equal(history.pageInfo.historyCompleteness, "complete_known_history");
+  });
+
   it("returns root comment plus direct replies for public comment chains", () => {
     const history = buildSocialInboxConversationHistoryPage(
       conversationFixture({ sourceType: "public_comment", sourceId: "comment-root" }),

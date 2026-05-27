@@ -36,6 +36,18 @@ type BuildHistoryOptions = {
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
 
+export function hasKnownMessageHistorySource(
+  conversation: Pick<SocialInboxConversation, "source_type" | "platform_thread_id">,
+): conversation is Pick<SocialInboxConversation, "source_type" | "platform_thread_id"> & {
+  platform_thread_id: string;
+} {
+  return (
+    conversation.source_type !== "public_comment" &&
+    typeof conversation.platform_thread_id === "string" &&
+    conversation.platform_thread_id.trim().length > 0
+  );
+}
+
 export function buildSocialInboxConversationHistoryPage(
   conversation: SocialInboxConversation,
   input: BuildHistoryInput,
@@ -116,7 +128,7 @@ function knownMessagesForConversation(
   conversation: SocialInboxConversation,
   messages: readonly SocialInboxMessage[],
 ) {
-  if (conversation.source_type !== "message_thread" || !conversation.platform_thread_id) return [];
+  if (!hasKnownMessageHistorySource(conversation)) return [];
 
   return messages
     .filter(
@@ -171,7 +183,7 @@ function historyCompleteness(
   total: number,
   nextCursor: string | null,
 ): MetaInboxHistoryCompleteness {
-  if (conversation.source_type === "message_thread" && !conversation.platform_thread_id) {
+  if (conversation.source_type !== "public_comment" && !conversation.platform_thread_id) {
     return "source_missing";
   }
   if (conversation.source_type === "public_comment" && !conversation.source_id) {

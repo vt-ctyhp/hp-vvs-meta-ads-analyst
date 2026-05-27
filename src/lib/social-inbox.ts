@@ -35,6 +35,7 @@ import {
 } from "./meta-inbox-access.ts";
 import {
   buildSocialInboxConversationHistoryPage,
+  hasKnownMessageHistorySource,
   type SocialInboxConversationHistory,
 } from "./meta-inbox-history.ts";
 import {
@@ -2208,7 +2209,7 @@ async function selectKnownMessagesForConversation(
   supabase: DynamicSupabaseClient,
   conversation: SocialInboxConversation,
 ) {
-  if (conversation.source_type !== "message_thread" || !conversation.platform_thread_id) {
+  if (!hasKnownMessageHistorySource(conversation)) {
     return [];
   }
 
