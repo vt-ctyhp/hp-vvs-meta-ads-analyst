@@ -12,9 +12,9 @@ import {
   withActiveMetaInboxEnvironmentRows,
 } from "./meta-inbox-environment.ts";
 import {
+  applyCampaignUmbrellaRouting,
   buildMetaInboxNormalizationBatch,
   buildMetaInboxNormalizationBatchWithThreadHistory,
-  enrichFirstTouchSourceWithAd,
   type MetaAdsLookupRow,
   type MetaInboxFirstTouchCandidate,
   type MetaInboxNormalizationInput,
@@ -3114,7 +3114,9 @@ async function loadMetaAdsForFirstTouchSources(
   const supabase = dynamicSupabase(role);
   const { data: adData, error: adError } = await supabase
     .from("meta_ads")
-    .select("ad_id,campaign_id,ad_set_id,creative_id,campaign_ref_id,ad_set_ref_id")
+    .select(
+      "ad_id,campaign_id,ad_set_id,creative_id,campaign_ref_id,ad_set_ref_id,campaign_umbrella",
+    )
     .in("ad_id", adIds);
 
   if (adError) {
@@ -3180,6 +3182,7 @@ async function loadMetaAdsForFirstTouchSources(
       creative_id: stringField(row.creative_id),
       campaign_name: campaignRefId ? campaignNameById.get(campaignRefId) || null : null,
       ad_set_name: adSetRefId ? adSetNameById.get(adSetRefId) || null : null,
+      campaign_umbrella: stringField(row.campaign_umbrella),
     });
   }
   return lookup;
@@ -3231,9 +3234,18 @@ async function normalizeMetaInboxRows(
     role,
   );
 
+  // Resolve campaign umbrellas from the analyst-synced `meta_ads` table
+  // BEFORE upserting conversations so the persisted queue routing reflects
+  // the real ad attribution. The first pass inside the batch builder runs
+  // without ad context, so ad-driven threads start in the fallback bucket;
+  // this enrichment + re-routing settles them into the right queue.
+  const adLookup = await loadMetaAdsForFirstTouchSources(batch.firstTouchSources, role);
+  const enrichedBatch = applyCampaignUmbrellaRouting(batch, adLookup);
+  const enrichedFirstTouchSources = enrichedBatch.firstTouchSources;
+
   const conversationRows = await upsertMetaInboxMany(
     "meta_inbox_conversations",
-    batch.conversations.map((conversation) => {
+    enrichedBatch.conversations.map((conversation) => {
       const initialWorkflow = {
         status: conversation.conversationStatus,
         queueCategory: conversation.queueCategoryKey,
@@ -3282,11 +3294,6 @@ async function normalizeMetaInboxRows(
       String(conversation.canonical_conversation_key),
       String(conversation.id),
     ]),
-  );
-
-  const adLookup = await loadMetaAdsForFirstTouchSources(batch.firstTouchSources, role);
-  const enrichedFirstTouchSources = batch.firstTouchSources.map((source) =>
-    source.adId ? enrichFirstTouchSourceWithAd(source, adLookup.get(source.adId) || null) : source,
   );
 
   await upsertMetaInboxMany(
@@ -3947,6 +3954,8 @@ function queueCategoryField(value: unknown): MetaInboxQueueCategoryKey {
     case "book_appointment":
     case "us_product":
     case "vn_product":
+    case "us_promotions":
+    case "vn_promotions":
     case "custom_jewelry":
     case "repair_service":
     case "general_inquiry":

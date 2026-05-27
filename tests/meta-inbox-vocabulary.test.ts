@@ -32,6 +32,8 @@ describe("Meta inbox vocabulary", () => {
       "book_appointment",
       "us_product",
       "vn_product",
+      "us_promotions",
+      "vn_promotions",
       "custom_jewelry",
       "repair_service",
       "general_inquiry",

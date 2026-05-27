@@ -6,8 +6,10 @@ import {
   webhookMessageRow,
 } from "../src/lib/meta-webhook-shape.ts";
 import {
+  applyCampaignUmbrellaRouting,
   buildMetaInboxNormalizationBatch,
   enrichFirstTouchSourceWithAd,
+  type MetaAdsLookupRow,
   type MetaInboxFirstTouchCandidate,
 } from "../src/lib/meta-inbox-normalization.ts";
 
@@ -148,7 +150,7 @@ describe("inbound-only message text scanning", () => {
     assert.equal(batch.conversations[0].routingSource, "fallback");
     assert.equal(batch.conversations[0].routingConfidence, 0.35);
     assert.ok(
-      batch.conversations[0].routingExplanation.includes("No ad referral captured"),
+      batch.conversations[0].routingExplanation.includes("No ad attribution captured"),
       `Expected honest explanation, got: ${batch.conversations[0].routingExplanation}`,
     );
   });
@@ -183,15 +185,55 @@ describe("inbound-only message text scanning", () => {
       creative_id: "cre-1",
       campaign_name: "Cash for Gold – May 2026",
       ad_set_name: "CFG May All",
+      campaign_umbrella: null,
     });
 
     assert.equal(enriched.campaignId, "camp-1");
     assert.equal(enriched.adsetId, "as-1");
     assert.equal(enriched.creativeId, "cre-1");
-    assert.ok(
-      enriched.campaignUmbrellaId,
-      `expected campaign_umbrella_id set, got ${enriched.campaignUmbrellaId}`,
-    );
+    // Stored umbrella missing → falls back to regex classification of the
+    // campaign + ad-set names; "Cash for Gold" pattern matches.
+    assert.equal(enriched.campaignUmbrellaId, "Cash for Gold US");
+  });
+
+  it("prefers the stored campaign_umbrella over re-running the regex classifier", () => {
+    const base: MetaInboxFirstTouchCandidate = {
+      canonicalConversationKey: "key",
+      firstMessageId: null,
+      firstMessageAt: null,
+      referralJson: { ad_id: "ad-stored" },
+      adId: "ad-stored",
+      adsContextDataJson: {},
+      ref: null,
+      sourcePostId: null,
+      sourceMediaId: null,
+      sourceCommentId: null,
+      sourceProductId: null,
+      sourcePermalink: null,
+      campaignUmbrellaId: null,
+      campaignId: null,
+      adsetId: null,
+      creativeId: null,
+      attributionMethod: "meta_referral",
+      attributionConfidence: 0.95,
+      rawPayloadJson: {},
+    };
+
+    // Stored umbrella ("Book Appts US") deliberately disagrees with what
+    // the regex would derive from the campaign name ("Cash for Gold ...").
+    // The stored value wins because it already accounts for analyst
+    // overrides + inherited classification.
+    const enriched = enrichFirstTouchSourceWithAd(base, {
+      ad_id: "ad-stored",
+      campaign_id: "camp-stored",
+      ad_set_id: null,
+      creative_id: null,
+      campaign_name: "Cash for Gold relaunch",
+      ad_set_name: null,
+      campaign_umbrella: "Book Appts US",
+    });
+
+    assert.equal(enriched.campaignUmbrellaId, "Book Appts US");
   });
 
   it("leaves first-touch source unchanged when no ad row resolves", () => {
@@ -227,7 +269,14 @@ describe("inbound-only message text scanning", () => {
     assert.equal(enriched.attributionConfidence, 0.95);
   });
 
-  it("still routes by inbound customer text keywords", () => {
+  it("does not auto-route by inbound message keywords (umbrella routing only)", () => {
+    // Previously a body containing "book appointment" was enough to route
+    // the thread into the book_appointment queue. That produced too many
+    // false positives (a customer saying "I might book an appointment
+    // someday") and made inbox queues drift from analyst campaign
+    // attribution. Routing now requires an ad referral resolving to a
+    // recognised campaign umbrella; without one, the thread lands in
+    // general_inquiry regardless of body text.
     const batch = buildMetaInboxNormalizationBatch({
       now: new Date("2026-05-23T01:00:00.000Z"),
       threads: [
@@ -255,8 +304,54 @@ describe("inbound-only message text scanning", () => {
       ],
     });
 
-    assert.equal(batch.conversations[0].queueCategoryKey, "book_appointment");
-    assert.equal(batch.conversations[0].routingSource, "message_keyword");
-    assert.equal(batch.conversations[0].routingConfidence, 0.6);
+    assert.equal(batch.conversations[0].queueCategoryKey, "general_inquiry");
+    assert.equal(batch.conversations[0].routingSource, "fallback");
+  });
+
+  it("routes click-to-Messenger threads to the queue matching the stored campaign umbrella", () => {
+    const batch = buildMetaInboxNormalizationBatch({
+      now: new Date("2026-05-23T01:00:00.000Z"),
+      threads: [
+        {
+          id: "thread-3",
+          platform: "facebook",
+          thread_id: "facebook:webhook:page-1:customer-3",
+          page_id: "page-1",
+          participant_id: "customer-3",
+          snippet: "hi",
+          last_message_at: "2026-05-23T00:00:00.000Z",
+        },
+      ],
+      messages: [
+        {
+          id: "msg-inbound-3",
+          platform: "facebook",
+          thread_id: "facebook:webhook:page-1:customer-3",
+          message_id: "mid.4",
+          direction: "inbound",
+          sender_id: "customer-3",
+          body: "hi",
+          sent_at: "2026-05-23T00:00:00.000Z",
+          raw_json: { message: { referral: { ad_id: "ad-book-1" } } },
+        },
+      ],
+    });
+    const adLookup = new Map<string, MetaAdsLookupRow>([
+      [
+        "ad-book-1",
+        {
+          ad_id: "ad-book-1",
+          campaign_id: "camp-book-1",
+          ad_set_id: "as-book-1",
+          creative_id: "cre-book-1",
+          campaign_name: null,
+          ad_set_name: null,
+          campaign_umbrella: "Book Appts US",
+        },
+      ],
+    ]);
+    const enriched = applyCampaignUmbrellaRouting(batch, adLookup);
+    assert.equal(enriched.conversations[0].queueCategoryKey, "book_appointment");
+    assert.equal(enriched.conversations[0].routingSource, "campaign_umbrella");
   });
 });

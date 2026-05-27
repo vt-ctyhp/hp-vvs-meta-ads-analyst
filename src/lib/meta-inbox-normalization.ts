@@ -1,10 +1,13 @@
-import { classifyCampaignUmbrella } from "./campaign-umbrellas.ts";
+import { classifyCampaignUmbrella, isCampaignUmbrella } from "./campaign-umbrellas.ts";
+import type { CampaignUmbrella } from "./campaign-umbrellas.ts";
 import type {
   MetaInboxQueueCategoryKey,
   MetaInboxSourceChannelKey,
 } from "./meta-inbox-vocabulary.ts";
 
 export type MetaInboxRawRecord = Record<string, unknown>;
+
+export type MetaInboxRoutingSource = "campaign_umbrella" | "fallback";
 
 export type MetaInboxNormalizationInput = {
   threads?: readonly MetaInboxRawRecord[];
@@ -58,7 +61,7 @@ export type MetaInboxConversationCandidate = {
     | "closed"
     | "lost_lead";
   queueCategoryKey: MetaInboxQueueCategoryKey;
-  routingSource: "attribution_keyword" | "message_keyword" | "fallback";
+  routingSource: MetaInboxRoutingSource;
   routingConfidence: number;
   routingExplanation: string;
 };
@@ -98,6 +101,14 @@ export type MetaAdsLookupRow = {
   creative_id: string | null;
   campaign_name: string | null;
   ad_set_name: string | null;
+  /**
+   * Pre-resolved campaign umbrella populated by the analyst sync pipeline.
+   * Already accounts for manual `campaign_umbrella_overrides` and the
+   * inherited-from-campaign fallback chain, so reading this value is the
+   * single source of truth shared with the analyst page. Null when the
+   * analyst sync has not yet classified this ad.
+   */
+  campaign_umbrella: string | null;
 };
 
 /**
@@ -105,24 +116,85 @@ export type MetaAdsLookupRow = {
  * (which only carries `ad_id`) with the campaign/adset/creative chain we
  * already sync locally in `meta_ads`. Pure — caller does the supabase lookup
  * and hands the row (or null) to this function.
+ *
+ * Umbrella resolution prefers the stored `campaign_umbrella` column (which
+ * the analyst sync writes after applying overrides + inherited classification)
+ * and only falls back to running `classifyCampaignUmbrella` from raw names
+ * when the stored value is missing — e.g. a brand-new ad the analyst sync
+ * has not classified yet.
  */
 export function enrichFirstTouchSourceWithAd(
   source: MetaInboxFirstTouchCandidate,
   adRow: MetaAdsLookupRow | null,
 ): MetaInboxFirstTouchCandidate {
   if (!adRow) return source;
-  const umbrella = classifyCampaignUmbrella({
-    campaignName: adRow.campaign_name,
-    adSetName: adRow.ad_set_name,
-  });
-  const umbrellaLabel =
-    umbrella.umbrella && umbrella.umbrella !== "Needs review" ? umbrella.umbrella : null;
+  const storedUmbrella = isCampaignUmbrella(adRow.campaign_umbrella)
+    ? (adRow.campaign_umbrella as CampaignUmbrella)
+    : null;
+  const resolvedUmbrella =
+    storedUmbrella ||
+    fallbackClassifyUmbrella(adRow.campaign_name, adRow.ad_set_name);
   return {
     ...source,
     campaignId: source.campaignId || adRow.campaign_id,
     adsetId: source.adsetId || adRow.ad_set_id,
     creativeId: source.creativeId || adRow.creative_id,
-    campaignUmbrellaId: source.campaignUmbrellaId || umbrellaLabel,
+    campaignUmbrellaId: source.campaignUmbrellaId || resolvedUmbrella,
+  };
+}
+
+function fallbackClassifyUmbrella(
+  campaignName: string | null,
+  adSetName: string | null,
+): CampaignUmbrella | null {
+  if (!campaignName && !adSetName) return null;
+  const result = classifyCampaignUmbrella({ campaignName, adSetName });
+  return result.umbrella;
+}
+
+/**
+ * Re-resolve routing on every conversation in `batch` using the ad lookup
+ * map produced after the first-touch sources are persisted. The first
+ * normalization pass runs `inferQueueCategory` before the supabase ad
+ * lookup has happened, so any conversation tied to a click-to-Messenger ad
+ * is initially classified as a fallback. This pass enriches first-touch
+ * sources with the analyst-resolved `campaign_umbrella`, then upgrades the
+ * conversation routing to `campaign_umbrella` whenever a recognised
+ * umbrella maps to a queue. Conversations without a usable umbrella keep
+ * the original fallback routing (which already correctly distinguished
+ * "has inbound text → general_inquiry" from "no text → needs review").
+ */
+export function applyCampaignUmbrellaRouting(
+  batch: MetaInboxNormalizationBatch,
+  adLookup: Map<string, MetaAdsLookupRow>,
+): MetaInboxNormalizationBatch {
+  const enrichedFirstTouchSources = batch.firstTouchSources.map((source) =>
+    source.adId ? enrichFirstTouchSourceWithAd(source, adLookup.get(source.adId) || null) : source,
+  );
+  const firstTouchByConversation = new Map(
+    enrichedFirstTouchSources.map(
+      (source) => [source.canonicalConversationKey, source] as const,
+    ),
+  );
+
+  const conversations = batch.conversations.map((conversation) => {
+    const firstTouch = firstTouchByConversation.get(conversation.canonicalConversationKey);
+    if (!firstTouch) return conversation;
+    const mapped = umbrellaToQueueCategory(firstTouch.campaignUmbrellaId);
+    if (!mapped) return conversation;
+    return {
+      ...conversation,
+      queueCategoryKey: mapped,
+      routingSource: "campaign_umbrella" as const,
+      routingConfidence: 0.85,
+      routingExplanation: `Routed by campaign umbrella: ${firstTouch.campaignUmbrellaId}.`,
+    };
+  });
+
+  return {
+    customerProfiles: batch.customerProfiles,
+    conversations,
+    firstTouchSources: enrichedFirstTouchSources,
   };
 }
 
@@ -134,35 +206,31 @@ export type MetaInboxThreadHistoryLoader = (
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HUMAN_AGENT_WINDOW_MS = 7 * DAY_MS;
 
-const QUEUE_KEYWORDS: Array<{
-  queue: MetaInboxQueueCategoryKey;
-  keywords: readonly string[];
-}> = [
-  {
-    queue: "cash_for_gold",
-    keywords: ["cash for gold", "sell gold", "selling gold", "trade in", "trade-in", "gold buyer"],
-  },
-  {
-    queue: "book_appointment",
-    keywords: ["book appointment", "appointment", "schedule", "consultation", "visit"],
-  },
-  {
-    queue: "us_product",
-    keywords: ["us product", "u.s. product", "usa product", "united states", "us inventory"],
-  },
-  {
-    queue: "vn_product",
-    keywords: ["vn product", "vietnam", "viet nam", "vn inventory"],
-  },
-  {
-    queue: "custom_jewelry",
-    keywords: ["custom", "redesign", "cad", "made to order", "made-to-order", "inspiration photo"],
-  },
-  {
-    queue: "repair_service",
-    keywords: ["repair", "resize", "resizing", "cleaning", "appraisal", "warranty", "service"],
-  },
-];
+/**
+ * Single source of truth for mapping an analyst-side campaign umbrella to an
+ * inbox queue. Any umbrella not listed here (currently "Excluded /
+ * Non-umbrella" and "Needs review") falls through to general_inquiry.
+ *
+ * UI-friendly labels for these queues live in
+ * META_INBOX_QUEUE_CATEGORIES — this map only deals with internal keys.
+ */
+const UMBRELLA_TO_QUEUE: Readonly<Record<CampaignUmbrella, MetaInboxQueueCategoryKey | null>> = {
+  "Cash for Gold US": "cash_for_gold",
+  "Book Appts US": "book_appointment",
+  "Facebook US Product": "us_product",
+  "Facebook VN Product": "vn_product",
+  "US Promotions (WKDS / OOAK)": "us_promotions",
+  "VN Promotions (WKDS / OOAK)": "vn_promotions",
+  "Excluded / Non-umbrella": null,
+  "Needs review": null,
+};
+
+export function umbrellaToQueueCategory(
+  umbrella: string | null | undefined,
+): MetaInboxQueueCategoryKey | null {
+  if (!isCampaignUmbrella(umbrella)) return null;
+  return UMBRELLA_TO_QUEUE[umbrella as CampaignUmbrella];
+}
 
 export function buildMetaInboxNormalizationBatch(
   input: MetaInboxNormalizationInput,
@@ -211,10 +279,10 @@ export function buildMetaInboxNormalizationBatch(
     const inboundBodies = threadMessages
       .filter((message) => stringField(message.direction) !== "outbound")
       .map((message) => stringField(message.body));
-    const routing = inferQueueCategory(firstTouch, [
-      stringField(thread.snippet),
-      ...inboundBodies,
-    ]);
+    const hasInboundText = [stringField(thread.snippet), ...inboundBodies].some(
+      (value) => Boolean(value && value.trim()),
+    );
+    const routing = inferQueueCategory(firstTouch, hasInboundText);
     const replyWindow = replyWindowState(timeline.latestInboundAt, now);
     const needsReply = Boolean(
       timeline.latestInboundAt &&
@@ -293,11 +361,12 @@ export function buildMetaInboxNormalizationBatch(
     const firstInboundAt = commentTimes[0] || null;
     const latestInboundAt = commentTimes[commentTimes.length - 1] || null;
     const firstTouch = firstTouchFromComment(canonicalKey, primaryComment, group.rootCommentId);
+    const commentHasText = group.comments.some((comment) => {
+      const body = stringField(comment.body);
+      return Boolean(body && body.trim());
+    });
     const routing = group.rootComment
-      ? inferQueueCategory(firstTouch, [
-          ...group.comments.map((comment) => stringField(comment.body)),
-          ...group.comments.map((comment) => stringField(comment.content_permalink)),
-        ])
+      ? inferQueueCategory(firstTouch, commentHasText)
       : orphanCommentRouting();
     const replyWindow = replyWindowState(latestInboundAt, now);
     const primaryCommentId = stringField(primaryComment.comment_id) || group.rootCommentId;
@@ -652,67 +721,58 @@ function orphanCommentRouting() {
   };
 }
 
+/**
+ * Routing rule (post-keyword era): if the conversation's first-touch source
+ * carries a recognised campaign umbrella, route to the matching queue;
+ * otherwise route by presence of message text. We never inspect the message
+ * body for keywords — that produced false positives (e.g. auto-replies
+ * matching "appointment") and decoupled the inbox queue from the analyst's
+ * own campaign rollup.
+ *
+ * The `firstTouch.campaignUmbrellaId` field is populated by
+ * `enrichFirstTouchSourceWithAd` (which reads `meta_ads.campaign_umbrella`,
+ * the analyst-resolved value with overrides applied). Until that enrichment
+ * runs, this function will route ad-driven threads to the fallback bucket;
+ * the caller is expected to invoke `applyCampaignUmbrellaRouting` after the
+ * ad lookup completes to settle the final queue.
+ */
 function inferQueueCategory(
   firstTouch: MetaInboxFirstTouchCandidate,
-  textSources: Array<string | null>,
+  hasInboundText: boolean,
 ): {
   queueCategoryKey: MetaInboxQueueCategoryKey;
-  routingSource: "attribution_keyword" | "message_keyword" | "fallback";
+  routingSource: MetaInboxRoutingSource;
   routingConfidence: number;
   routingExplanation: string;
 } {
-  const attributionText = [
-    firstTouch.ref,
-    firstTouch.adId,
-    firstTouch.campaignUmbrellaId,
-    firstTouch.campaignId,
-    firstTouch.adsetId,
-    firstTouch.creativeId,
-    JSON.stringify(firstTouch.referralJson),
-    JSON.stringify(firstTouch.adsContextDataJson),
-  ].join(" ").toLowerCase();
-  const messageText = textSources.filter(Boolean).join(" ").toLowerCase();
-  const attributionMatch = keywordMatch(attributionText);
-  const messageMatch = keywordMatch(messageText);
-
-  if (attributionMatch) {
+  const umbrella = firstTouch.campaignUmbrellaId;
+  const mapped = umbrellaToQueueCategory(umbrella);
+  if (mapped) {
     return {
-      queueCategoryKey: attributionMatch.queue,
-      routingSource: "attribution_keyword" as const,
+      queueCategoryKey: mapped,
+      routingSource: "campaign_umbrella" as const,
       routingConfidence: 0.85,
-      routingExplanation: `Matched ${attributionMatch.keyword} from first-touch attribution.`,
+      routingExplanation: `Routed by campaign umbrella: ${umbrella}.`,
     };
   }
 
-  if (messageMatch) {
+  if (hasInboundText) {
     return {
-      queueCategoryKey: messageMatch.queue,
-      routingSource: "message_keyword" as const,
-      routingConfidence: 0.6,
-      routingExplanation: `Matched ${messageMatch.keyword} from message text.`,
+      queueCategoryKey: "general_inquiry",
+      routingSource: "fallback" as const,
+      routingConfidence: 0.35,
+      routingExplanation: umbrella
+        ? `Campaign umbrella '${umbrella}' has no queue mapping — routed to General Inquiry.`
+        : "No ad attribution captured — routed to General Inquiry.",
     };
   }
-
-  const fallbackQueue: MetaInboxQueueCategoryKey = messageText.trim()
-    ? "general_inquiry"
-    : "uncategorized_needs_review";
 
   return {
-    queueCategoryKey: fallbackQueue,
+    queueCategoryKey: "uncategorized_needs_review",
     routingSource: "fallback" as const,
-    routingConfidence: messageText.trim() ? 0.35 : 0.15,
-    routingExplanation: messageText.trim()
-      ? "No ad referral captured; no locked routing keyword in customer text — routed to General Inquiry."
-      : "Missing source and message routing signals; needs human review.",
+    routingConfidence: 0.15,
+    routingExplanation: "Missing attribution and message text — needs human review.",
   };
-}
-
-function keywordMatch(value: string) {
-  for (const group of QUEUE_KEYWORDS) {
-    const keyword = group.keywords.find((candidate) => value.includes(candidate));
-    if (keyword) return { queue: group.queue, keyword };
-  }
-  return null;
 }
 
 function replyWindowState(latestInboundAt: string | null, now: Date) {
