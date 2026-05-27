@@ -464,6 +464,7 @@ export function SocialInboxClient({
                 mutationState={selectedReplyAttemptMutationState}
                 savedReplyMutationState={selectedSavedReplyMutationState}
                 replyWindowNow={replyWindowNow}
+                onUploadAttachment={mutations.handleAttachmentUpload}
                 onCreateSendAttempt={mutations.handleSendAttemptCreate}
                 onQueueSendAttempt={mutations.handleSendAttemptQueue}
                 onRetrySendAttempt={mutations.handleSendAttemptRetry}

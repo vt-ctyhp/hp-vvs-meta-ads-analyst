@@ -83,7 +83,7 @@ describe("Meta inbox schema readiness", () => {
     assert.match(String(message), /public\.meta_inbox_conversations/);
     assert.match(
       String(message),
-      /20260524170500_meta_inbox_comment_action_idempotency_key_scope\.sql/,
+      /20260527204830_meta_inbox_attachment_uploads\.sql/,
     );
     assert.doesNotMatch(String(message), /schema cache/);
 

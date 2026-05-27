@@ -22,6 +22,10 @@ const MIGRATION = join(
   "supabase/migrations/20260524110000_meta_inbox_attachments.sql",
 );
 const migration = readFileSync(MIGRATION, "utf8");
+const uploadMigration = readFileSync(
+  join(REPO_ROOT, "supabase/migrations/20260527204830_meta_inbox_attachment_uploads.sql"),
+  "utf8",
+);
 const SOCIAL_INBOX = readFileSync(join(REPO_ROOT, "src/lib/social-inbox.ts"), "utf8");
 
 const NOW = "2026-05-24T12:00:00.000Z";
@@ -51,6 +55,13 @@ describe("Meta inbox attachment foundation", () => {
     assert.match(migration, /meta_inbox_attachments_conversation_idx/);
     assert.match(migration, /meta_inbox_attachments_send_attempt_idx/);
     assert.match(migration, /ads_analyst_environment_matches\(environment\)/);
+  });
+
+  it("creates public storage for operator-uploaded attachment media", () => {
+    assert.match(uploadMigration, /insert into storage\.buckets/);
+    assert.match(uploadMigration, /meta-inbox-attachments/);
+    assert.match(uploadMigration, /ads_analyst_web_meta_inbox_attachment_write/);
+    assert.match(uploadMigration, /ads_analyst_web_meta_inbox_attachment_read/);
   });
 
   it("normalizes Graph API image/file attachments into a UI-safe shape", () => {
@@ -145,6 +156,21 @@ describe("Meta inbox attachment foundation", () => {
           { actorUserId: ACTOR_ID, now: NOW, humanAgentEnabled: true },
         ),
       /separate send attempts/i,
+    );
+  });
+
+  it("rejects multiple attachment IDs in one send attempt", () => {
+    assert.throws(
+      () =>
+        buildMetaInboxSendAttemptDraft(
+          conversationFixture(),
+          {
+            replyText: "",
+            attachmentIds: [ATTACHMENT_ID, OTHER_ATTACHMENT_ID],
+          },
+          { actorUserId: ACTOR_ID, now: NOW, humanAgentEnabled: true },
+        ),
+      /one attachment/i,
     );
   });
 

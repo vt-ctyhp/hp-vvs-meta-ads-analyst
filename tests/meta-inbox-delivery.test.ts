@@ -338,6 +338,77 @@ describe("Meta inbox delivery worker foundation", () => {
       else process.env.ALLOW_LIVE_META_SEND = previousFlag;
     }
   });
+
+  it("sends hydrated attachment payloads and records them in outbound history", async () => {
+    const previousFlag = process.env.ALLOW_LIVE_META_SEND;
+    const originalFetch = globalThis.fetch;
+    process.env.ALLOW_LIVE_META_SEND = "true";
+    const graphBodies: unknown[] = [];
+    globalThis.fetch = async (_url, init) => {
+      graphBodies.push(JSON.parse(String(init?.body || "{}")));
+      return new Response(JSON.stringify({ message_id: "mid.attachment" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    try {
+      const supabase = fakeDeliveryLifecycleSupabase(
+        [
+          attemptFixture({
+            id: "attachment-send",
+            reply_text: "",
+            status: "queued",
+            attachment_ids: [ATTACHMENT_ID],
+          }),
+        ],
+        [
+          {
+            id: ATTACHMENT_ID,
+            conversation_id: "33333333-3333-4333-8333-333333333333",
+            attachment_type: "image",
+            media_url: "https://storage.example/ring.jpg",
+            meta_attachment_id: null,
+            is_sendable: true,
+          },
+        ],
+      );
+
+      const result = await deliverQueuedMetaInboxSendAttempts({
+        limit: 1,
+        now: NOW,
+        supabase,
+        managedPageResolver: async () => ({
+          pageId: "page-1",
+          accessToken: "page-token",
+          igUserId: null,
+        }),
+      } as never);
+
+      assert.equal(result.delivered, 1);
+      assert.deepEqual(graphBodies[0], {
+        recipient: { id: "customer-1" },
+        message: {
+          attachment: {
+            type: "image",
+            payload: { url: "https://storage.example/ring.jpg", is_reusable: true },
+          },
+        },
+        messaging_type: "RESPONSE",
+      });
+      assert.deepEqual(supabase.messageInserts[0]?.attachments, [
+        {
+          id: ATTACHMENT_ID,
+          type: "image",
+          payload: { url: "https://storage.example/ring.jpg" },
+        },
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousFlag === undefined) delete process.env.ALLOW_LIVE_META_SEND;
+      else process.env.ALLOW_LIVE_META_SEND = previousFlag;
+    }
+  });
 });
 
 function conversationFixture(
@@ -443,8 +514,10 @@ function fakeDeliveryLifecycleSupabase(
     ...attachment,
     environment: ENVIRONMENT,
   }));
+  const messageInserts: Record<string, unknown>[] = [];
 
   return {
+    messageInserts,
     finalStatuses() {
       return Object.fromEntries(
         Array.from(rowsById.entries()).map(([id, row]) => [id, row.status]),
@@ -471,7 +544,12 @@ function fakeDeliveryLifecycleSupabase(
       }
 
       if (table === "meta_social_messages") {
-        return insertChain({ id: "outbound-row-1" });
+        return {
+          insert(row: Record<string, unknown>) {
+            messageInserts.push(row);
+            return selectSingleChain({ id: "outbound-row-1" });
+          },
+        };
       }
 
       if (table === "meta_inbox_attachments") {

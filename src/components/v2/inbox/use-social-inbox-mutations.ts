@@ -26,6 +26,7 @@ import type {
   SocialInboxQaScorecard,
   SocialInboxSavedReply,
   SocialInboxSendAttempt,
+  SocialInboxUploadedAttachment,
 } from "../../../lib/social-inbox.ts";
 import {
   IDLE_COMMENT_ACTION_STATE,
@@ -83,7 +84,8 @@ export type SocialInboxMutationController = {
     method: "POST" | "PATCH" | "DELETE",
     input: MetaInboxContactMethodMutationInput,
   ) => void;
-  handleSendAttemptCreate: (conversationId: string, input: MetaInboxSendAttemptInput) => void;
+  handleAttachmentUpload: (conversationId: string, file: File) => Promise<SocialInboxUploadedAttachment>;
+  handleSendAttemptCreate: (conversationId: string, input: MetaInboxSendAttemptInput) => Promise<void>;
   handleSendAttemptRetry: (conversationId: string, input: MetaInboxRetrySendAttemptInput) => void;
   handleSendAttemptQueue: (conversationId: string, input: MetaInboxQueueSendAttemptInput) => void;
   handleCommentActionCreate: (conversationId: string, input: MetaInboxCommentActionInput) => void;
@@ -295,6 +297,32 @@ export function useSocialInboxMutations({
       }
     },
     [setInboxData, setReplyDraftByConversationId],
+  );
+
+  const handleAttachmentUpload = useCallback(
+    async (conversationId: string, file: File): Promise<SocialInboxUploadedAttachment> => {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await fetch(
+        `/api/social-inbox/conversations/${encodeURIComponent(conversationId)}/attachments`,
+        {
+          method: "POST",
+          body: formData,
+        },
+      );
+      const payload = (await response.json()) as
+        | { attachment: SocialInboxUploadedAttachment }
+        | { error: string };
+      if (!response.ok || "error" in payload) {
+        throw new Error(
+          "error" in payload ? payload.error : "Could not upload attachment.",
+        );
+      }
+
+      return payload.attachment;
+    },
+    [],
   );
 
   const handleSendAttemptRetry = useCallback(
@@ -753,6 +781,7 @@ export function useSocialInboxMutations({
     qaScorecardMutationState,
     handleWorkflowUpdate,
     handleContactMethodMutation,
+    handleAttachmentUpload,
     handleSendAttemptCreate,
     handleSendAttemptRetry,
     handleSendAttemptQueue,

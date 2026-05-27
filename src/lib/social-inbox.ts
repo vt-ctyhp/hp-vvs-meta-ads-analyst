@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { AuthorizationError } from "./app-auth.ts";
 import { ConfigurationError, getMetaApiVersion } from "./env";
 import { safeErrorMessage } from "./error-message";
@@ -7,6 +9,7 @@ import {
 } from "./ads-analyst-db";
 import {
   activeMetaInboxOnConflict,
+  getActiveMetaInboxEnvironment,
   scopeActiveMetaInboxEnvironment,
   withActiveMetaInboxEnvironment,
   withActiveMetaInboxEnvironmentRows,
@@ -60,6 +63,13 @@ import {
   type MetaInboxNormalizedAttachment,
   type MetaInboxSendAttachmentRow,
 } from "./meta-inbox-attachments.ts";
+import {
+  buildMetaInboxAttachmentUploadRow,
+  META_INBOX_ATTACHMENT_BUCKET,
+  planMetaInboxAttachmentUpload,
+  storagePathForMetaInboxAttachment,
+  type MetaInboxAttachmentUploadConversation,
+} from "./meta-inbox-attachment-upload.ts";
 import {
   isMissingMetaInboxSchemaError,
   normalizeMetaInboxSchemaError,
@@ -184,6 +194,7 @@ type DynamicTable = {
 
 type DynamicUpdateFilterQuery = PromiseLike<{ error: Error | null }> & {
   eq: (column: string, value: string | boolean | number) => DynamicUpdateFilterQuery;
+  in: (column: string, values: string[]) => DynamicUpdateFilterQuery;
 };
 
 type DynamicConditionalUpdateQuery = {
@@ -195,6 +206,20 @@ type DynamicConditionalUpdateQuery = {
 
 type DynamicSupabaseClient = {
   from: (table: string) => DynamicTable;
+};
+
+type DynamicStorageSupabaseClient = DynamicSupabaseClient & {
+  storage: {
+    from: (bucket: string) => {
+      upload: (
+        path: string,
+        data: ArrayBuffer | Uint8Array,
+        options?: { contentType?: string; upsert?: boolean; cacheControl?: string },
+      ) => Promise<{ error: Error | null }>;
+      getPublicUrl: (path: string) => { data: { publicUrl: string } };
+      remove: (paths: string[]) => Promise<{ error: Error | null }>;
+    };
+  };
 };
 
 type ManagedPage = {
@@ -388,6 +413,20 @@ export type SocialInboxSendAttempt = {
   updated_at: string | null;
 };
 
+export type SocialInboxUploadedAttachment = {
+  id: string;
+  conversation_id: string;
+  attachment_type: MetaInboxAttachmentType;
+  label: string;
+  name: string | null;
+  mime_type: string | null;
+  media_url: string | null;
+  preview_url: string | null;
+  size_bytes: number | null;
+  is_sendable: boolean;
+  created_at: string | null;
+};
+
 export type SocialInboxCommentAction = {
   id: string;
   conversation_id: string;
@@ -487,6 +526,13 @@ export type MetaInboxSendAttemptInput = {
   replyText?: string | null;
   idempotencyKey?: string | null;
   attachmentIds?: string[] | null;
+};
+
+export type MetaInboxAttachmentUploadInput = {
+  fileName: string;
+  contentType?: string | null;
+  sizeBytes: number;
+  bytes: ArrayBuffer | Uint8Array;
 };
 
 export type MetaInboxRetrySendAttemptInput = {
@@ -1125,6 +1171,24 @@ export async function createSocialInboxSendAttempt(
   if (insert.error) throw normalizeMetaInboxSchemaError(insert.error);
   if (!insert.data) throw new Error("Send attempt did not return after insert.");
 
+  if (mutation.row.attachment_ids) {
+    const attachmentIds = arrayField(mutation.row.attachment_ids).map(String).filter(Boolean);
+    if (attachmentIds.length) {
+      const attachmentUpdate = await updateActiveMetaInboxRows(
+        supabase,
+        "meta_inbox_attachments",
+        {
+          direction: "outbound",
+          send_attempt_id: String(insert.data.id),
+          updated_at: now,
+        },
+      ).in("id", attachmentIds);
+      if (attachmentUpdate.error) {
+        throw normalizeMetaInboxSchemaError(attachmentUpdate.error);
+      }
+    }
+  }
+
   const event = await insertConversationEvent(supabase, conversation.id, actorUserId, now, {
     ...mutation.event,
     newValue: {
@@ -1137,6 +1201,69 @@ export async function createSocialInboxSendAttempt(
     sendAttempt: mapSendAttempt(insert.data),
     events: [event],
   };
+}
+
+export async function createSocialInboxAttachmentUpload(
+  conversationId: string,
+  profile: MetaInboxAccessProfile,
+  input: MetaInboxAttachmentUploadInput,
+): Promise<{ attachment: SocialInboxUploadedAttachment }> {
+  const supabase = dynamicSupabase("web") as DynamicStorageSupabaseClient;
+  const queueAccess = await resolveSocialInboxMutationAccess(supabase, profile);
+  const conversation = await requireMutableConversation(supabase, conversationId, queueAccess);
+  const actorUserId = profile.appUserId && isUuid(profile.appUserId) ? profile.appUserId : null;
+  if (!actorUserId) {
+    throw new AuthorizationError("A valid inbox user is required to upload attachments.", 403);
+  }
+
+  const plan = planMetaInboxAttachmentUpload(
+    conversation as MetaInboxAttachmentUploadConversation,
+    {
+      fileName: input.fileName,
+      contentType: input.contentType,
+      sizeBytes: input.sizeBytes,
+    },
+  );
+  const now = new Date().toISOString();
+  const storagePath = storagePathForMetaInboxAttachment(
+    getActiveMetaInboxEnvironment(),
+    conversation.id,
+    randomUUID(),
+    plan.safeFileName,
+  );
+  const bytes = input.bytes instanceof Uint8Array ? input.bytes : new Uint8Array(input.bytes);
+  const bucket = supabase.storage.from(META_INBOX_ATTACHMENT_BUCKET);
+  const upload = await bucket.upload(storagePath, bytes, {
+    contentType: plan.mimeType,
+    upsert: false,
+    cacheControl: "31536000",
+  });
+  if (upload.error) throw upload.error;
+
+  const { data } = bucket.getPublicUrl(storagePath);
+  const insert = await supabase
+    .from("meta_inbox_attachments")
+    .insert(withActiveMetaInboxEnvironment(
+      buildMetaInboxAttachmentUploadRow(
+        conversation as MetaInboxAttachmentUploadConversation,
+        plan,
+        {
+          actorUserId,
+          now,
+          publicUrl: data.publicUrl,
+          storagePath,
+        },
+      ),
+    ))
+    .select("*")
+    .single();
+  if (insert.error) {
+    await bucket.remove([storagePath]).catch(() => ({ error: null }));
+    throw normalizeMetaInboxSchemaError(insert.error);
+  }
+  if (!insert.data) throw new Error("Attachment did not return after insert.");
+
+  return { attachment: mapUploadedAttachment(insert.data) };
 }
 
 async function validateSendAttemptAttachmentsForApproval(
@@ -4020,6 +4147,24 @@ function mapSendAttachmentRow(row: JsonRecord): MetaInboxSendAttachmentRow {
   };
 }
 
+function mapUploadedAttachment(row: JsonRecord): SocialInboxUploadedAttachment {
+  const attachmentType = attachmentTypeField(row.attachment_type);
+  const name = stringField(row.name);
+  return {
+    id: String(row.id || ""),
+    conversation_id: String(row.conversation_id || ""),
+    attachment_type: attachmentType,
+    label: name || uploadedAttachmentLabel(attachmentType),
+    name,
+    mime_type: stringField(row.mime_type),
+    media_url: stringField(row.media_url),
+    preview_url: stringField(row.preview_url),
+    size_bytes: numberField(row.size_bytes),
+    is_sendable: row.is_sendable === true,
+    created_at: stringField(row.created_at),
+  };
+}
+
 function mapSendAttempt(row: JsonRecord): SocialInboxSendAttempt {
   return {
     id: String(row.id),
@@ -4047,6 +4192,14 @@ function mapSendAttempt(row: JsonRecord): SocialInboxSendAttempt {
     created_at: stringField(row.created_at),
     updated_at: stringField(row.updated_at),
   };
+}
+
+function uploadedAttachmentLabel(type: MetaInboxAttachmentType) {
+  if (type === "image") return "Image attachment";
+  if (type === "video") return "Video attachment";
+  if (type === "audio") return "Audio attachment";
+  if (type === "file") return "File attachment";
+  return "Attachment";
 }
 
 function mapSendAttemptRecord(row: JsonRecord): MetaInboxSendAttemptRecord {

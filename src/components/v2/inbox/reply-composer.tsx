@@ -1,7 +1,7 @@
 "use client";
 
-import { Loader2, Plus, RefreshCw, Send, Tags } from "lucide-react";
-import { useState } from "react";
+import { Loader2, Paperclip, Plus, RefreshCw, Send, Tags, X } from "lucide-react";
+import { useState, type ChangeEvent } from "react";
 
 import type { MetaInboxQueueDisplayItem } from "../../../lib/meta-inbox-queue-view.ts";
 import {
@@ -14,6 +14,7 @@ import type {
   MetaInboxSavedReplyInput,
   MetaInboxSendAttemptInput,
   SocialInboxSendAttempt,
+  SocialInboxUploadedAttachment,
 } from "../../../lib/social-inbox.ts";
 
 export type ReplyAttemptMutationLoadState = {
@@ -37,7 +38,14 @@ type ManagedReplyComposerProps = {
   mutationState: ReplyAttemptMutationLoadState;
   savedReplyMutationState: SavedReplyMutationLoadState;
   replyWindowNow: number;
-  onCreateSendAttempt: (conversationId: string, input: MetaInboxSendAttemptInput) => void;
+  onUploadAttachment: (
+    conversationId: string,
+    file: File,
+  ) => Promise<SocialInboxUploadedAttachment>;
+  onCreateSendAttempt: (
+    conversationId: string,
+    input: MetaInboxSendAttemptInput,
+  ) => void | Promise<void>;
   onQueueSendAttempt: (conversationId: string, input: MetaInboxQueueSendAttemptInput) => void;
   onRetrySendAttempt: (conversationId: string, input: MetaInboxRetrySendAttemptInput) => void;
   onCreateSavedReply: (conversationId: string, input: MetaInboxSavedReplyInput) => void;
@@ -67,6 +75,7 @@ function ManagedReplyComposer({
   mutationState,
   savedReplyMutationState,
   replyWindowNow,
+  onUploadAttachment,
   onCreateSendAttempt,
   onQueueSendAttempt,
   onRetrySendAttempt,
@@ -76,17 +85,31 @@ function ManagedReplyComposer({
   const [savedRepliesOpen, setSavedRepliesOpen] = useState(true);
   const [sendAttemptsOpen, setSendAttemptsOpen] = useState(false);
   const [draftName, setDraftName] = useState("");
+  const [selectedAttachments, setSelectedAttachments] = useState<SocialInboxUploadedAttachment[]>([]);
+  const [attachmentUpload, setAttachmentUpload] = useState<{
+    status: "idle" | "uploading" | "ready" | "error";
+    message: string | null;
+  }>({ status: "idle", message: null });
 
   const conversationId = item?.inboxConversation?.id || null;
   const windowState = item ? resolveReplyWindowState(item, replyWindowNow) : null;
   const replyWindowClosed = Boolean(item && !windowState?.canAttemptSend);
   const sendAttempts = sortSendAttempts(item?.sendAttempts || []);
   const latestAttempt = sendAttempts[0] || null;
+  const hasDraftText = Boolean(draft.trim());
+  const pendingSendAttemptCount = (hasDraftText ? 1 : 0) + selectedAttachments.length;
+  const isUploadingAttachment = attachmentUpload.status === "uploading";
+  const canAttach =
+    Boolean(conversationId) &&
+    canSendInboxReply &&
+    Boolean(windowState?.canAttemptSend) &&
+    !isUploadingAttachment;
   const canSend =
     Boolean(conversationId) &&
     canSendInboxReply &&
     Boolean(windowState?.canAttemptSend) &&
-    Boolean(draft.trim()) &&
+    pendingSendAttemptCount > 0 &&
+    !isUploadingAttachment &&
     mutationState.status !== "saving";
   const canSaveDraft =
     Boolean(item) &&
@@ -122,11 +145,58 @@ function ManagedReplyComposer({
 
   function confirmSend() {
     if (!canSend || !conversationId) return;
-    onCreateSendAttempt(conversationId, {
-      replyText: draft,
-      idempotencyKey: newSendAttemptIdempotencyKey(conversationId, draft),
-    });
+    const attachments = selectedAttachments.slice();
+    if (draft.trim()) {
+      void onCreateSendAttempt(conversationId, {
+        replyText: draft,
+        idempotencyKey: newSendAttemptIdempotencyKey(conversationId, draft),
+      });
+    }
+    for (const attachment of attachments) {
+      void onCreateSendAttempt(conversationId, {
+        replyText: "",
+        attachmentIds: [attachment.id],
+        idempotencyKey: newAttachmentSendAttemptIdempotencyKey(conversationId, attachment.id),
+      });
+    }
     onDraftChange("");
+    setSelectedAttachments([]);
+    setAttachmentUpload({ status: "idle", message: null });
+    setConfirmingSend(false);
+  }
+
+  async function uploadAttachments(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files || []);
+    event.target.value = "";
+    if (!files.length || !conversationId || !canAttach) return;
+
+    setAttachmentUpload({
+      status: "uploading",
+      message: `Uploading ${files.length} attachment${files.length === 1 ? "" : "s"}...`,
+    });
+    try {
+      const uploaded: SocialInboxUploadedAttachment[] = [];
+      for (const file of files) {
+        uploaded.push(await onUploadAttachment(conversationId, file));
+      }
+      setSelectedAttachments((current) => [...current, ...uploaded]);
+      setAttachmentUpload({
+        status: "ready",
+        message: `${uploaded.length} attachment${uploaded.length === 1 ? "" : "s"} ready.`,
+      });
+      setConfirmingSend(false);
+    } catch (error) {
+      setAttachmentUpload({
+        status: "error",
+        message: error instanceof Error ? error.message : "Attachment upload failed.",
+      });
+    }
+  }
+
+  function removeAttachment(attachmentId: string) {
+    setSelectedAttachments((current) =>
+      current.filter((attachment) => attachment.id !== attachmentId),
+    );
     setConfirmingSend(false);
   }
 
@@ -237,7 +307,9 @@ function ManagedReplyComposer({
         value={draft}
         onChange={(event) => {
           onDraftChange(event.target.value);
-          if (!event.target.value.trim()) setConfirmingSend(false);
+          if (!event.target.value.trim() && selectedAttachments.length === 0) {
+            setConfirmingSend(false);
+          }
         }}
         disabled={!item || replyWindowClosed}
         rows={3}
@@ -248,6 +320,82 @@ function ManagedReplyComposer({
         }
         className="w-full resize-none border-0 bg-transparent px-4 py-3 text-sm leading-6 text-hp-ink outline-none placeholder:text-hp-muted disabled:opacity-70"
       />
+
+      <div className="border-t border-hp-rule-soft px-4 py-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+              Attachment
+            </p>
+            {attachmentUpload.message ? (
+              <p
+                className={`mt-1 text-xs leading-5 ${
+                  attachmentUpload.status === "error"
+                    ? "text-signal-danger"
+                    : attachmentUpload.status === "ready"
+                      ? "text-signal-positive"
+                      : "text-hp-muted"
+                }`}
+              >
+                {attachmentUpload.message}
+              </p>
+            ) : null}
+          </div>
+
+          <div className="shrink-0">
+            <input
+              id={attachmentInputId(conversationId)}
+              type="file"
+              multiple
+              onChange={uploadAttachments}
+              disabled={!canAttach}
+              className="sr-only"
+            />
+            <label
+              htmlFor={attachmentInputId(conversationId)}
+              aria-disabled={!canAttach}
+              className={`flex min-h-10 cursor-pointer items-center justify-center gap-2 border px-3 text-[10px] uppercase tracking-[0.14em] transition ${
+                canAttach
+                  ? "border-hp-rule bg-hp-card text-hp-ink hover:border-hp-ink"
+                  : "cursor-not-allowed border-hp-rule bg-hp-inset text-hp-muted opacity-60"
+              }`}
+            >
+              {isUploadingAttachment ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <Paperclip size={13} />
+              )}
+              Attach
+            </label>
+          </div>
+        </div>
+
+        {selectedAttachments.length ? (
+          <ul className="mt-3 grid gap-2">
+            {selectedAttachments.map((attachment) => (
+              <li
+                key={attachment.id}
+                className="flex min-h-10 items-center justify-between gap-3 border border-hp-rule bg-hp-inset px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm text-hp-ink">{attachment.label}</p>
+                  <p className="truncate text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                    {attachment.attachment_type} · {formatBytes(attachment.size_bytes)}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => removeAttachment(attachment.id)}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center border border-hp-rule text-hp-ink hover:border-hp-ink"
+                  aria-label={`Remove ${attachment.label}`}
+                >
+                  <X size={13} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
 
       <div className="grid gap-2 border-t border-hp-rule-soft px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto]">
         <input
@@ -296,7 +444,10 @@ function ManagedReplyComposer({
 
         {confirmingSend ? (
           <div className="flex flex-col gap-3 border-y border-signal-warning bg-signal-warning-bg px-4 py-3 text-xs text-signal-warning sm:flex-row sm:items-center sm:justify-between">
-            <p>Send as {item?.brand || "Unassigned"}? This will record a send attempt.</p>
+            <p>
+              Send as {item?.brand || "Unassigned"}? This will record {pendingSendAttemptCount}{" "}
+              send attempt{pendingSendAttemptCount === 1 ? "" : "s"}.
+            </p>
             <div className="flex gap-2">
               <button
                 type="button"
@@ -318,7 +469,7 @@ function ManagedReplyComposer({
         ) : (
           <div className="flex items-center justify-between gap-2 px-4 py-3">
             <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-              Manual draft
+              Manual draft · {pendingSendAttemptCount} pending
             </span>
             <button
               type="button"
@@ -379,6 +530,12 @@ function SendAttemptCard({
     attempt.status === "approved" &&
     Boolean(windowState?.canAttemptSend) &&
     mutationState.status !== "saving";
+  const attachmentCount = attempt.attachment_ids.length;
+  const bodyLabel =
+    attempt.reply_text ||
+    (attachmentCount
+      ? `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`
+      : attempt.meta_error_message || "No body captured.");
 
   return (
     <article className="border border-hp-rule bg-hp-card p-3">
@@ -388,7 +545,7 @@ function SendAttemptCard({
             {attempt.status.replaceAll("_", " ")}
           </p>
           <p className="mt-1 line-clamp-2 break-words text-sm leading-6 text-hp-ink">
-            {attempt.reply_text || attempt.meta_error_message || "No body captured."}
+            {bodyLabel}
           </p>
           <p className="mt-1 text-xs leading-5 text-hp-muted">
             {attempt.approved_by || "Unknown advisor"} · {formatDateLabel(attempt.created_at)}
@@ -470,6 +627,24 @@ function formatDateLabel(value: string | null | undefined) {
 
 function newSendAttemptIdempotencyKey(conversationId: string, draft: string) {
   return stableIdempotencyKey("send", conversationId, [draft]);
+}
+
+function newAttachmentSendAttemptIdempotencyKey(conversationId: string, attachmentId: string) {
+  return stableIdempotencyKey("attachment", conversationId, [attachmentId]);
+}
+
+function attachmentInputId(conversationId: string | null) {
+  return `reply-attachment-${conversationId || "none"}`;
+}
+
+function formatBytes(value: number | null | undefined) {
+  const bytes = Number(value) || 0;
+  if (bytes <= 0) return "Size unavailable";
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(kb >= 10 ? 0 : 1)} KB`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(mb >= 10 ? 0 : 1)} MB`;
 }
 
 function stableIdempotencyKey(scope: string, conversationId: string, parts: string[]) {

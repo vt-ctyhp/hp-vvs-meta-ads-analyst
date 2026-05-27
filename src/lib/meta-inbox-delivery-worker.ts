@@ -440,7 +440,7 @@ async function recordOutboundDeliveryRow(
           recipient_id: args.target.participantId,
           recipient_name: null,
           body: args.attempt.reply_text,
-          attachments: [],
+          attachments: outboundDeliveryAttachments(args.attempt),
           sent_at: args.sentAt,
           raw_json: {
             source: "meta_inbox_send_attempt",
@@ -483,6 +483,20 @@ async function recordOutboundDeliveryRow(
   } catch (error) {
     return safeErrorMessage(error).slice(0, 1000);
   }
+}
+
+function outboundDeliveryAttachments(attempt: MetaInboxDeliveryAttempt): JsonRecord[] {
+  return attempt.attachments.map((attachment) => {
+    const payload: JsonRecord = {};
+    if (attachment.meta_attachment_id) payload.attachment_id = attachment.meta_attachment_id;
+    if (attachment.media_url) payload.url = attachment.media_url;
+
+    return {
+      id: attachment.meta_attachment_id || attachment.id,
+      type: attachment.attachment_type,
+      payload,
+    };
+  });
 }
 
 function mapDeliveryAttempt(row: JsonRecord): MetaInboxDeliveryAttempt {
