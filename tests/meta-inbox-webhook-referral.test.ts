@@ -59,6 +59,43 @@ describe("webhook referral capture", () => {
     assert.equal(embeddedReferral.ref, "cash-for-gold-may");
   });
 
+  it("extracts thread and referral from an Instagram messaging_referral event", () => {
+    // Instagram uses object='instagram' and singular 'messaging_referral'
+    // field name on the webhook subscription. Field name differs but the
+    // event payload shape is the same as Facebook's (referral block with
+    // ref, ad_id, source, type, ads_context_data). This test guards the
+    // platform-detection branch in webhookReferralRow.
+    const row = webhookReferralRow(
+      "instagram",
+      { id: "ig-user-1" },
+      {
+        sender: { id: "ig-customer-1", username: "agnes_a" },
+        recipient: { id: "ig-user-1" },
+        timestamp: 1748246280000,
+        referral: {
+          ref: "cash-for-gold-may",
+          ad_id: "ad-555",
+          source: "ADS",
+          type: "OPEN_THREAD",
+          ads_context_data: {
+            ad_title: "Cash for Gold – May 2026",
+          },
+        },
+      },
+    );
+
+    assert.ok(row, "should return a row");
+    assert.equal(row.thread.platform, "instagram");
+    assert.equal(row.thread.ig_user_id, "ig-user-1");
+    assert.equal(row.thread.page_id, null);
+    assert.equal(row.thread.participant_id, "ig-customer-1");
+    assert.equal(row.thread.participant_name, "agnes_a");
+    assert.equal(row.thread.thread_id, "instagram:webhook:ig-user-1:ig-customer-1");
+    assert.equal(row.referral.ad_id, "ad-555");
+    assert.equal(row.referral.ref, "cash-for-gold-may");
+    assert.equal(row.referral.source, "ADS");
+  });
+
   it("returns null when no referral block present", () => {
     const row = webhookReferralRow(
       "page",
