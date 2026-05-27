@@ -3132,7 +3132,7 @@ async function upsertMessages({
           recipient_id: recipientId,
           recipient_name: stringField(to.name) || stringField(to.username),
           body: stringField(message.message),
-          attachments: normalizeMetaInboxAttachments(recordField(message.attachments).data),
+          attachments: normalizeMetaInboxAttachments(message.attachments),
           sent_at: stringField(message.created_time),
           raw_json: message,
         };
@@ -3936,7 +3936,7 @@ function mapMessage(row: JsonRecord): SocialInboxMessage {
     recipient_id: stringField(row.recipient_id),
     recipient_name: stringField(row.recipient_name),
     body: stringField(row.body),
-    attachments: normalizeMetaInboxAttachments(row.attachments),
+    attachments: messageAttachmentsFromRow(row),
     sent_at: stringField(row.sent_at),
   };
 }
@@ -3959,6 +3959,15 @@ function mapComment(row: JsonRecord): SocialInboxComment {
     created_time: stringField(row.created_time),
     last_synced_at: stringField(row.last_synced_at),
   };
+}
+
+function messageAttachmentsFromRow(row: JsonRecord) {
+  const attachments = normalizeMetaInboxAttachments(row.attachments);
+  if (attachments.length) return attachments;
+
+  const rawJson = recordField(row.raw_json);
+  const rawMessage = recordField(rawJson.message);
+  return normalizeMetaInboxAttachments(rawMessage.attachments || rawJson.attachments);
 }
 
 function mapCustomerProfile(row: JsonRecord): SocialInboxCustomerProfile {

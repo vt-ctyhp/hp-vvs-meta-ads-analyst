@@ -204,8 +204,15 @@ describe("social inbox UI contract", () => {
   it("surfaces normalized message attachments in conversation history", () => {
     assert.match(SELECTED_ITEM_DETAIL, /MessageAttachmentList/);
     assert.match(SELECTED_ITEM_DETAIL, /message\.attachments\.length/);
+    assert.match(SELECTED_ITEM_DETAIL, /message\.attachments\.length \? null/);
+    assert.doesNotMatch(SELECTED_ITEM_DETAIL, /Attachment or unsupported message/);
     assert.match(MESSAGE_ATTACHMENT_LIST, /attachment\.mediaUrl/);
+    assert.match(MESSAGE_ATTACHMENT_LIST, /attachment\.previewUrl \|\| attachment\.mediaUrl/);
+    assert.match(MESSAGE_ATTACHMENT_LIST, /next\/image/);
+    assert.match(MESSAGE_ATTACHMENT_LIST, /unoptimized/);
     assert.match(SOCIAL_INBOX_LIB, /normalizeMetaInboxAttachments/);
+    assert.match(SOCIAL_INBOX_LIB, /messageAttachmentsFromRow/);
+    assert.match(SOCIAL_INBOX_LIB, /rawMessage\.attachments \|\| rawJson\.attachments/);
     assert.match(SOCIAL_INBOX_LIB, /attachmentIds\?: string\[\] \| null/);
   });
 

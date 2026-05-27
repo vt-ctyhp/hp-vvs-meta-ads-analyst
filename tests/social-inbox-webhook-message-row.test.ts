@@ -57,4 +57,37 @@ describe("webhookMessageRow name extraction", () => {
     assert.equal(row.message.recipient_name, "Darlene C.");
     assert.equal(row.message.direction, "outbound");
   });
+
+  it("normalizes direct webhook attachment arrays on message echoes", () => {
+    const row = webhookMessageRow(
+      "page",
+      { id: "page-1" },
+      {
+        sender: { id: "page-1" },
+        recipient: { id: "customer-1", name: "Darlene C." },
+        message: {
+          mid: "mid.image",
+          is_echo: true,
+          attachments: [
+            {
+              type: "image",
+              payload: {
+                url: "https://scontent.example/photo.jpg",
+              },
+            },
+          ],
+        },
+        timestamp: 1748246280000,
+      },
+    );
+
+    assert.ok(row);
+    const attachments = row.message.attachments as Array<{
+      attachmentType: string;
+      mediaUrl: string | null;
+    }>;
+    assert.equal(attachments.length, 1);
+    assert.equal(attachments[0].attachmentType, "image");
+    assert.equal(attachments[0].mediaUrl, "https://scontent.example/photo.jpg");
+  });
 });
