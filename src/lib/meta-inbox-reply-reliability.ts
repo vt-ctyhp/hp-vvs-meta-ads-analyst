@@ -145,6 +145,9 @@ export function buildMetaInboxSendAttemptDraft(
   const actorUserId = requireUuid(context.actorUserId, "A valid sales user");
   const conversationId = requireUuid(conversation.id, "Conversation");
   const attachmentIds = normalizeAttachmentIds(input.attachmentIds);
+  if (attachmentIds.length > 1) {
+    throw new Error("Send one attachment per send attempt.");
+  }
   const replyText = normalizeReplyText(input.replyText, attachmentIds.length > 0);
   if (replyText && attachmentIds.length > 0) {
     throw new Error("Text and attachments must be sent as separate send attempts.");

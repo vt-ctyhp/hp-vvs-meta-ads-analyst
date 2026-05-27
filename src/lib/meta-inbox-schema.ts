@@ -12,6 +12,7 @@ export const META_INBOX_REQUIRED_MIGRATIONS = [
   "20260524160000_meta_inbox_qa_scorecards.sql",
   "20260524170000_meta_inbox_environment_relationships.sql",
   "20260524170500_meta_inbox_comment_action_idempotency_key_scope.sql",
+  "20260527204830_meta_inbox_attachment_uploads.sql",
 ] as const;
 
 export const META_INBOX_REQUIRED_TABLES = [

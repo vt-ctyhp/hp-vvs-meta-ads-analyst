@@ -39,7 +39,7 @@ test("ReplyComposer records a send attempt only after the second Send click", ()
 
   click(buttonByText(tree, "Send →"));
   tree = render();
-  assert.match(textContent(tree), /Send as HP\? This will record a send attempt\./);
+  assert.match(textContent(tree), /Send as HP\? This will record 1 send attempt\./);
   assert.equal(sendCalls.length, 0);
 
   click(buttonByText(tree, "Send →"));
@@ -50,6 +50,98 @@ test("ReplyComposer records a send attempt only after the second Send click", ()
   assert.equal(sendCalls[0]?.input.replyText, "Can help Saturday.");
   assert.equal(draftChanges.at(-1), "");
   assert.doesNotMatch(textContent(tree), /This will record a send attempt/);
+});
+
+test("ReplyComposer uploads and sends an attachment-only attempt", async () => {
+  const harness = loadReplyComposerHarness();
+  const uploadCalls: Array<{ conversationId: string; file: Record<string, unknown> }> = [];
+  const sendCalls: Array<{ conversationId: string; input: Record<string, unknown> }> = [];
+  const uploadedAttachment = uploadedAttachmentFixture({
+    id: "attachment-1",
+    label: "ring.jpg",
+    attachment_type: "image",
+    size_bytes: 2048,
+  });
+  const render = () =>
+    harness.render(
+      replyComposerProps({
+        onUploadAttachment(conversationId: string, file: Record<string, unknown>) {
+          uploadCalls.push({ conversationId, file });
+          return Promise.resolve(uploadedAttachment);
+        },
+        onCreateSendAttempt(conversationId: string, input: Record<string, unknown>) {
+          sendCalls.push({ conversationId, input });
+        },
+      }),
+    );
+
+  let tree = render();
+  assert.equal(buttonByText(tree, "Send →").props.disabled, true);
+  await changeFiles(inputByType(tree, "file"), [fileFixture("ring.jpg", "image/jpeg", 2048)]);
+
+  tree = render();
+  assert.equal(uploadCalls.length, 1);
+  assert.equal(uploadCalls[0]?.conversationId, "conv-1");
+  assert.match(textContent(tree), /ring\.jpg/);
+  assert.match(textContent(tree), /1 attachment ready/);
+  assert.equal(buttonByText(tree, "Send →").props.disabled, false);
+
+  click(buttonByText(tree, "Send →"));
+  tree = render();
+  assert.match(textContent(tree), /This will record 1 send attempt/);
+  click(buttonByText(tree, "Send →"));
+  tree = render();
+
+  assert.equal(sendCalls.length, 1);
+  assert.deepEqual(Array.from(sendCalls[0]?.input.attachmentIds as string[]), ["attachment-1"]);
+  assert.equal(sendCalls[0]?.input.replyText, "");
+  assert.doesNotMatch(textContent(tree), /ring\.jpg/);
+});
+
+test("ReplyComposer splits draft text and attachments into separate send attempts", async () => {
+  const harness = loadReplyComposerHarness();
+  let draft = "Here are two photos.";
+  let uploadIndex = 0;
+  const sendCalls: Array<{ conversationId: string; input: Record<string, unknown> }> = [];
+  const render = () =>
+    harness.render(
+      replyComposerProps({
+        draft,
+        onDraftChange(value: string) {
+          draft = value;
+        },
+        onUploadAttachment() {
+          uploadIndex += 1;
+          return Promise.resolve(
+            uploadedAttachmentFixture({
+              id: `attachment-${uploadIndex}`,
+              label: `photo-${uploadIndex}.jpg`,
+            }),
+          );
+        },
+        onCreateSendAttempt(conversationId: string, input: Record<string, unknown>) {
+          sendCalls.push({ conversationId, input });
+        },
+      }),
+    );
+
+  let tree = render();
+  await changeFiles(inputByType(tree, "file"), [
+    fileFixture("photo-1.jpg", "image/jpeg", 1024),
+    fileFixture("photo-2.jpg", "image/jpeg", 2048),
+  ]);
+
+  tree = render();
+  click(buttonByText(tree, "Send →"));
+  tree = render();
+  assert.match(textContent(tree), /This will record 3 send attempts/);
+  click(buttonByText(tree, "Send →"));
+
+  assert.equal(sendCalls.length, 3);
+  assert.equal(sendCalls[0]?.input.replyText, "Here are two photos.");
+  assert.deepEqual(Array.from(sendCalls[1]?.input.attachmentIds as string[]), ["attachment-1"]);
+  assert.deepEqual(Array.from(sendCalls[2]?.input.attachmentIds as string[]), ["attachment-2"]);
+  assert.equal(draft, "");
 });
 
 test("ReplyComposer cancel exits confirmation without sending", () => {
@@ -302,6 +394,7 @@ function replyComposerProps(overrides: Record<string, unknown> = {}) {
     },
     replyWindowNow: Date.parse("2026-05-25T18:00:00.000Z"),
     onCreateSendAttempt: () => {},
+    onUploadAttachment: () => Promise.resolve(uploadedAttachmentFixture()),
     onQueueSendAttempt: () => {},
     onRetrySendAttempt: () => {},
     onCreateSavedReply: () => {},
@@ -449,6 +542,12 @@ function inputByPlaceholder(tree: TestElement, placeholder: string) {
   return node;
 }
 
+function inputByType(tree: TestElement, type: string) {
+  const node = elementsByType(tree, "input").find((element) => element.props.type === type);
+  if (!node) throw new Error(`No input found for type ${type}`);
+  return node;
+}
+
 function buttonByText(tree: TestElement, label: string) {
   const button = elementsByType(tree, "button").find((node) => textContent(node).includes(label));
   if (!button) throw new Error(`No button found for ${label}`);
@@ -465,6 +564,33 @@ function change(element: TestElement, value: string) {
   const onChange = element.props.onChange;
   if (typeof onChange !== "function") throw new Error("Element has no change handler");
   onChange({ target: { value } });
+}
+
+async function changeFiles(element: TestElement, files: Array<Record<string, unknown>>) {
+  const onChange = element.props.onChange;
+  if (typeof onChange !== "function") throw new Error("Element has no change handler");
+  await onChange({ target: { files, value: "" } });
+}
+
+function fileFixture(name: string, type: string, size: number) {
+  return { name, type, size };
+}
+
+function uploadedAttachmentFixture(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "attachment-1",
+    conversation_id: "conv-1",
+    attachment_type: "image",
+    label: "ring.jpg",
+    name: "ring.jpg",
+    mime_type: "image/jpeg",
+    media_url: "https://storage.example/ring.jpg",
+    preview_url: "https://storage.example/ring.jpg",
+    size_bytes: 2048,
+    is_sendable: true,
+    created_at: "2026-05-25T17:00:00.000Z",
+    ...overrides,
+  };
 }
 
 function elementsByType(node: unknown, type: string): TestElement[] {
@@ -569,7 +695,8 @@ type TestElement = {
     children?: unknown;
     disabled?: boolean;
     placeholder?: string;
+    type?: string;
     onClick?: () => void;
-    onChange?: (event: { target: { value: string } }) => void;
+    onChange?: (event: unknown) => void | Promise<void>;
   };
 };

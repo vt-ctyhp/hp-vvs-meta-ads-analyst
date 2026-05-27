@@ -146,7 +146,7 @@ describe("social inbox UI contract", () => {
     assert.match(MOBILE_COMPOSER, /Reply as/);
     assert.match(MOBILE_COMPOSER, /Reply window closed/);
     assert.match(MOBILE_COMPOSER, /send attempt/);
-    assert.match(MOBILE_COMPOSER, /This will record a send attempt/);
+    assert.match(MOBILE_COMPOSER, /This will record \{pendingSendAttemptCount\}/);
     assert.match(MOBILE_COMPOSER, /Retry/);
     assert.match(MOBILE_COMPOSER, /Queue Delivery/);
     assert.match(INBOX_MUTATIONS, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/send-attempts/);
@@ -207,6 +207,15 @@ describe("social inbox UI contract", () => {
     assert.match(MESSAGE_ATTACHMENT_LIST, /attachment\.mediaUrl/);
     assert.match(SOCIAL_INBOX_LIB, /normalizeMetaInboxAttachments/);
     assert.match(SOCIAL_INBOX_LIB, /attachmentIds\?: string\[\] \| null/);
+  });
+
+  it("wires operator attachment uploads into approved send attempts", () => {
+    assert.match(MOBILE_COMPOSER, /type="file"/);
+    assert.match(MOBILE_COMPOSER, /onUploadAttachment/);
+    assert.match(INBOX_MUTATIONS, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/attachments/);
+    assert.match(SOCIAL_INBOX_LIB, /createSocialInboxAttachmentUpload/);
+    assert.match(SOCIAL_INBOX_LIB, /meta_inbox_attachments/);
+    assert.match(SOCIAL_INBOX_LIB, /send_attempt_id/);
   });
 
   it("keeps inbox error copy human-readable instead of rendering object strings", () => {
