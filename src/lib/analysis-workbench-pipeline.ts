@@ -1,5 +1,3 @@
-import { format, parseISO, subDays } from "date-fns";
-
 import {
   getAnalysisWorkbenchSemanticCatalog,
   validateAnalysisWorkbenchSemanticIntent,
@@ -24,6 +22,19 @@ import type {
   AnalysisWorkbenchVisualCard,
   JsonValue,
 } from "./analysis-workbench-contract.ts";
+import {
+  dateBucketLimit,
+  dateGrainForDimensions,
+  dateGrainToDimension,
+  inferAnalysisWorkbenchDateIntentFromPrompt,
+  resolveAnalysisWorkbenchDateIntent,
+} from "./analysis-workbench-date-intent.ts";
+import {
+  parseAnalysisWorkbenchIntentWithAI,
+  type AnalysisWorkbenchIntentPlannerResult,
+  type WorkbenchPlannerIntent,
+  type WorkbenchQuestionType,
+} from "./analysis-workbench-intent-planner.ts";
 import type {
   MetaInsightAggregateRow,
   MetaInsightDimension,
@@ -82,6 +93,7 @@ export type AnalysisWorkbenchPipelineIntent = {
   status: "ready" | "blocked";
   rawPrompt: string;
   outputMode: AnalysisOutputMode;
+  questionType?: WorkbenchQuestionType;
   metrics: WorkbenchMetric[];
   dimensions: WorkbenchDimension[];
   filters: MetaInsightFilter[];
@@ -91,12 +103,21 @@ export type AnalysisWorkbenchPipelineIntent = {
     days: number;
     label: string;
   };
+  dateGrain?: WorkbenchDateGrain | null;
   sort: {
     field: WorkbenchMetric | WorkbenchDimension;
     direction: "asc" | "desc";
   };
   limit: number;
   visual: WorkbenchSemanticVisualIntent | null;
+  parser?: {
+    source: "ai";
+    model: string;
+    confidence: WorkbenchPlannerIntent["confidence"];
+    apiCost: OpenAICostBreakdown;
+    assumptions: Array<{ code: string; message: string }>;
+    unsupported: WorkbenchPlannerIntent["unsupported"];
+  };
 };
 
 export type AnalysisWorkbenchPipelineResult = {
@@ -135,6 +156,7 @@ type PipelineInput = {
   latestSyncedInsightDate?: string | null;
   inheritedContext?: AnalysisWorkbenchContextSnapshot | null;
   controlledEdit?: AnalysisWorkbenchControlledEdit | null;
+  parseIntent?: typeof parseAnalysisWorkbenchIntentWithAI;
   executeAggregate: (
     request: AnalysisWorkbenchPipelineAggregateRequest,
   ) => Promise<MetaInsightAggregateRow[]>;
@@ -143,6 +165,9 @@ type PipelineInput = {
 type PlannedIntent = AnalysisWorkbenchPipelineIntent & {
   semanticValidation: ReturnType<typeof validateAnalysisWorkbenchSemanticIntent>;
   filterScopes: MetaInsightFilter[][];
+  questionType: WorkbenchQuestionType;
+  dateGrain: WorkbenchDateGrain | null;
+  dateAssumptions: Array<{ code: string; message: string }>;
 };
 
 const DEFAULT_METRICS: WorkbenchMetric[] = ["spend", "primary_results"];
@@ -173,18 +198,25 @@ const PRIMARY_KPI_PROXY_METRICS = new Set<WorkbenchMetric>([
   "messaging_contacts",
   "new_messaging_contacts",
 ]);
+type WorkbenchTimeDimension = Extract<WorkbenchDimension, "date" | "week" | "month" | "quarter">;
 
 export async function runAnalysisWorkbenchFactsPipeline(
   input: PipelineInput,
 ): Promise<AnalysisWorkbenchPipelineResult> {
   const prompt = normalizePrompt(input.prompt);
   const title = titleFromPrompt(prompt);
+  const plannerResult = await (input.parseIntent || parseAnalysisWorkbenchIntentWithAI)({
+    prompt,
+    latestSyncedInsightDate: input.latestSyncedInsightDate,
+    inheritedContext: input.inheritedContext || null,
+  });
   const planned = planAnalysisWorkbenchIntent({
     prompt,
     outputMode: input.outputMode,
     latestSyncedInsightDate: input.latestSyncedInsightDate,
     inheritedContext: input.inheritedContext || null,
     controlledEdit: input.controlledEdit || null,
+    plannerResult,
   });
 
   if (planned.semanticValidation.status === "blocked") {
@@ -212,13 +244,14 @@ export async function runAnalysisWorkbenchFactsPipeline(
     sortDirection: planned.sort.direction,
     limit: 1,
   });
+  const trendDimension = trendDimensionFor(planned);
   const trendRows = await executeAggregateRequests({
     executeAggregate: input.executeAggregate,
     requests: trendRequests,
-    dimensions: ["date"],
-    sortField: "date",
+    dimensions: trendDimension ? [trendDimension] : ["date"],
+    sortField: trendDimension || "date",
     sortDirection: "asc",
-    limit: Math.min(planned.dateRange.days, 120),
+    limit: trendLimit(planned),
   });
   const sourceNotes = sourceNotesFor(
     planned,
@@ -227,7 +260,7 @@ export async function runAnalysisWorkbenchFactsPipeline(
     input.controlledEdit || null,
   );
   const facts = computeFacts(planned, groupedRows, totalRows, sourceNotes);
-  const answer = withWorkbenchAnswerApiCost(composeAnswer(planned, facts.items, sourceNotes));
+  const answer = withWorkbenchAnswerApiCost(composeAnswer(planned, facts.items, sourceNotes), planned);
   const visualCards = applyAnalysisWorkbenchControlledEditsToVisualCards(
     buildVisualCards(planned, facts.items, groupedRows, trendRows),
     input.controlledEdit,
@@ -252,10 +285,8 @@ export async function runAnalysisWorkbenchFactsPipeline(
     blockers: groundingIssues,
     warnings,
     assumptions: [
-      {
-        code: "relative_date_range",
-        message: "Relative date range ends at the latest complete synced Meta Ads date.",
-      },
+      ...planned.dateAssumptions,
+      ...(planned.parser?.assumptions || []),
       ...planned.semanticValidation.assumptions.map((assumption) => ({
         code: assumption.code,
         message: assumption.message,
@@ -304,6 +335,7 @@ export function validateAnalysisWorkbenchNarrativeGrounding(
     [
       citation.value,
       citation.formattedValue,
+      citation.entityName,
       ...(citation.values || []),
       ...(citation.formattedValues || []),
     ].forEach((value) => {
@@ -314,6 +346,7 @@ export function validateAnalysisWorkbenchNarrativeGrounding(
 
   const scrubbed = summary
     .replace(/\[[A-Z]\d+\]/g, "")
+    .replace(/\b\d{4}-W\d{1,2}\b/g, "")
     .replace(/\b\d{4}-\d{2}-\d{2}\b/g, "");
   const claims = Array.from(scrubbed.matchAll(/[$]?\d[\d,]*(?:\.\d+)?%?/g)).map(
     (match) => match[0],
@@ -334,20 +367,27 @@ function planAnalysisWorkbenchIntent(input: {
   latestSyncedInsightDate?: string | null;
   inheritedContext?: AnalysisWorkbenchContextSnapshot | null;
   controlledEdit?: AnalysisWorkbenchControlledEdit | null;
+  plannerResult?: AnalysisWorkbenchIntentPlannerResult;
 }): PlannedIntent {
   const inheritedContext = input.inheritedContext || null;
   const controlledEdit = input.controlledEdit || null;
+  const plannerIntent = input.plannerResult?.intent || null;
+  const questionType = plannerIntent?.questionType || inferQuestionType(input.prompt);
   const explicitMetrics = detectMetrics(input.prompt, false);
   const explicitDimensions = detectDimensions(input.prompt, false);
   const metrics = controlledEdit?.metrics?.length
     ? controlledEdit.metrics
+    : plannerIntent?.metrics.length
+    ? plannerIntent.metrics
     : explicitMetrics.length
     ? explicitMetrics
     : inheritedContext?.metrics.length
       ? inheritedContext.metrics
       : DEFAULT_METRICS;
-  const dimensions = controlledEdit?.dimensions?.length
+  const baseDimensions = controlledEdit?.dimensions?.length
     ? controlledEdit.dimensions
+    : plannerIntent?.dimensions.length
+    ? plannerIntent.dimensions
     : explicitDimensions.length
     ? explicitDimensions
     : inheritedContext?.dimensions.length
@@ -355,21 +395,33 @@ function planAnalysisWorkbenchIntent(input: {
       : DEFAULT_DIMENSIONS;
   const filters = controlledEdit && Object.hasOwn(controlledEdit, "filters")
     ? controlledEdit.filters || []
-    : uniqueFilters([
+    : normalizeSemanticFilters([
         ...(inheritedContext?.filters || []),
-        ...detectFilters(input.prompt),
+        ...(plannerIntent ? plannerIntent.filters : detectFilters(input.prompt)),
       ]);
   const visual = controlledEdit && Object.hasOwn(controlledEdit, "visual")
     ? controlledEdit.visual || null
-    : detectVisualIntent(input.prompt, metrics, dimensions);
-  const dateRange =
-    controlledEdit?.dateRange ||
-    resolvePromptDateRange(
-      input.prompt,
-      input.latestSyncedInsightDate,
-      inheritedContext?.dateRange || null,
-    );
-  const dateGrain = dateGrainForDimensions(dimensions);
+    : plannerIntent?.visualIntent || detectVisualIntent(input.prompt, metrics, baseDimensions);
+  const inferredDateIntent = inferAnalysisWorkbenchDateIntentFromPrompt(input.prompt);
+  const dateResolution = controlledEdit?.dateRange
+    ? {
+        dateRange: controlledEdit.dateRange,
+        dateGrain: dateGrainForDimensions(controlledEdit.dimensions || baseDimensions),
+        assumptions: [] as Array<{ code: string; message: string }>,
+      }
+    : resolveAnalysisWorkbenchDateIntent({
+        dateIntent: preferredDateIntent(inferredDateIntent, plannerIntent?.dateIntent || null),
+        latestSyncedInsightDate: input.latestSyncedInsightDate,
+        inheritedDateRange: inheritedContext?.dateRange || null,
+      });
+  const dimensions = dimensionsForDateIntent(
+    baseDimensions,
+    dateResolution.dateGrain,
+    questionType,
+    visual,
+  );
+  const dateRange = dateResolution.dateRange;
+  const dateGrain = dateResolution.dateGrain || dateGrainForDimensions(dimensions);
   const semanticValidation = validateAnalysisWorkbenchSemanticIntent({
     prompt: input.prompt,
     metrics,
@@ -380,28 +432,53 @@ function planAnalysisWorkbenchIntent(input: {
   });
   const repairedFilters = semanticValidation.repairedIntent.filters as MetaInsightFilter[];
   const filterScopes = buildFilterScopes(repairedFilters);
-  const sortField = controlledEdit?.sort?.field || metrics[0] || "spend";
-  const sortDirection = controlledEdit?.sort?.direction || detectSortDirection(input.prompt);
+  const timeSortField = trendSortField(questionType, dimensions);
+  const sortField = controlledEdit?.sort?.field || plannerIntent?.sort?.field || timeSortField || metrics[0] || "spend";
+  const sortDirection =
+    controlledEdit?.sort?.direction ||
+    plannerIntent?.sort?.direction ||
+    (timeSortField ? "asc" : detectSortDirection(input.prompt));
   const repairedVisual = semanticValidation.repairedIntent.visual;
   const repairedDimensions = dimensionsForVisual(dimensions, repairedVisual);
-  const limit = controlledEdit?.limit || detectLimit(input.prompt) || MAX_GROUP_ROWS;
+  const requestedLimit = plannerIntent?.limit || detectLimit(input.prompt) || null;
+  const limit = controlledEdit?.limit || defaultLimitForIntent({
+    requestedLimit,
+    dateRange,
+    dateGrain,
+    dimensions: repairedDimensions,
+    questionType,
+  });
+  const parser = input.plannerResult?.source === "ai" && plannerIntent
+    ? {
+        source: "ai" as const,
+        model: input.plannerResult.model,
+        confidence: plannerIntent.confidence,
+        apiCost: input.plannerResult.apiCost,
+        assumptions: plannerIntent.assumptions,
+        unsupported: plannerIntent.unsupported,
+      }
+    : undefined;
 
   return {
     status: semanticValidation.status === "blocked" ? "blocked" : "ready",
     rawPrompt: input.prompt,
     outputMode: input.outputMode,
+    questionType,
     metrics,
     dimensions: repairedDimensions,
     filters: repairedFilters,
     dateRange,
+    dateGrain,
     sort: {
       field: sortField,
       direction: sortDirection,
     },
     limit,
     visual: repairedVisual,
+    ...(parser ? { parser } : {}),
     semanticValidation,
     filterScopes,
+    dateAssumptions: dateResolution.assumptions,
   };
 }
 
@@ -411,6 +488,9 @@ function blockedResult(input: {
   outputMode: AnalysisOutputMode;
   planned: PlannedIntent;
 }): AnalysisWorkbenchPipelineResult {
+  const suggestedRequest = input.planned.semanticValidation.blockers.find(
+    (blocker) => blocker.suggestedRequest,
+  )?.suggestedRequest;
   return {
     status: "failed",
     title: input.title,
@@ -426,7 +506,9 @@ function blockedResult(input: {
       items: [],
     },
     answer: {
-      summary: "Request blocked. This analysis asks for data outside the governed Meta Ads catalog.",
+      summary: suggestedRequest
+        ? `Request blocked. This analysis asks for data outside the governed Meta Ads catalog. Try: "${suggestedRequest}".`
+        : "Request blocked. This analysis asks for data outside the governed Meta Ads catalog.",
       citations: [],
       apiCost: workbenchLocalApiCost(),
     },
@@ -480,9 +562,12 @@ function aggregateRequests(
 }
 
 function trendAggregateRequests(planned: PlannedIntent): AnalysisWorkbenchPipelineAggregateRequest[] {
-  return aggregateRequests(planned, ["date"], Math.min(planned.dateRange.days, 120)).map((request) => ({
+  const dimension = trendDimensionFor(planned);
+  if (!dimension) return [];
+
+  return aggregateRequests(planned, [dimension], trendLimit(planned)).map((request) => ({
     ...request,
-    sortField: "date",
+    sortField: dimension,
     sortDirection: "asc",
   }));
 }
@@ -589,10 +674,11 @@ function composeAnswer(
 
 function withWorkbenchAnswerApiCost<T extends { summary: string; citations: AnalysisWorkbenchCitation[] }>(
   answer: T,
+  planned: PlannedIntent,
 ) {
   return {
     ...answer,
-    apiCost: workbenchLocalApiCost(),
+    apiCost: planned.parser?.apiCost || workbenchLocalApiCost(),
   };
 }
 
@@ -638,10 +724,19 @@ function sourceNotesFor(
       label: "Filters",
       value: filtersSourceNote(planned),
     },
-    ...(controlledEdit && Object.keys(controlledEdit).length
+    ...(planned.parser
       ? [
           {
             id: "S6",
+            label: "Intent parser",
+            value: `AI parser ${planned.parser.model} (${planned.parser.confidence} confidence).`,
+          },
+        ]
+      : []),
+    ...(controlledEdit && Object.keys(controlledEdit).length
+      ? [
+          {
+            id: planned.parser ? "S7" : "S6",
             label: "Controlled edits",
             value: controlledEditSourceNote(controlledEdit),
           },
@@ -702,7 +797,8 @@ function buildVisualCards(
     visualCards.push(scatterChartVisualCard(planned, planned.visual, groupedRows));
   }
 
-  if (trendRows.some((row) => row.date) && metrics[0]) {
+  const trendDimension = trendDimensionFor(planned);
+  if (trendDimension && trendRows.some((row) => row[trendDimension]) && metrics[0]) {
     visualCards.push(lineChartVisualCard(planned, metrics[0], trendRows));
   }
 
@@ -779,18 +875,19 @@ function lineChartVisualCard(
   metric: WorkbenchMetric,
   trendRows: MetaInsightAggregateRow[],
 ): AnalysisWorkbenchVisualCard {
+  const dimension = trendDimensionFor(planned) || "date";
   return {
-    id: `line_date_${metric}`,
+    id: `line_${dimension}_${metric}`,
     type: "line_chart",
     title: `${metricLabel(metric)} trend`,
     metric,
-    dimension: "date",
+    dimension,
     points: trendRows
-      .filter((row) => row.date)
+      .filter((row) => row[dimension])
       .map((row) => {
         const value = metricValue(row, metric);
         return {
-          label: row.date || "",
+          label: String(row[dimension] || ""),
           value,
           formattedValue: formatMetric(value, metric),
         };
@@ -916,7 +1013,8 @@ function shouldBuildVisualCards(outputMode: AnalysisOutputMode) {
 
 function visualAssumptions(planned: PlannedIntent) {
   return [
-    "Relative date range ends at the latest complete synced Meta Ads date.",
+    ...planned.dateAssumptions.map((assumption) => assumption.message),
+    ...(planned.parser?.assumptions || []).map((assumption) => assumption.message),
     ...planned.semanticValidation.assumptions.map((assumption) => assumption.message),
   ];
 }
@@ -1161,6 +1259,83 @@ function detectLimit(prompt: string) {
   return Math.min(Math.max(limit, 1), MAX_GROUP_ROWS);
 }
 
+function inferQuestionType(prompt: string): WorkbenchQuestionType {
+  const lower = prompt.toLowerCase();
+  if (/\b(?:why|drop|dropped|decline|declined|changed|what changed|anomaly|diagnos(?:e|is)|explain)\b/.test(lower)) {
+    return "diagnosis";
+  }
+  if (/\b(?:recommend|should|pause|scale|waste|fatigue|fix first|next action|what to do)\b/.test(lower)) {
+    return "recommendation";
+  }
+  if (/\b(?:compare|versus|vs\.?|against|previous|prior|from .* to)\b/.test(lower)) {
+    return "comparison";
+  }
+  if (/\b(?:trend|over time|week[-\s]?by[-\s]?week|day[-\s]?by[-\s]?day|month[-\s]?by[-\s]?month|daily|weekly|monthly|quarterly)\b/.test(lower)) {
+    return "trend";
+  }
+  return "leaderboard";
+}
+
+function dimensionsForDateIntent(
+  dimensions: WorkbenchDimension[],
+  dateGrain: WorkbenchDateGrain | null,
+  questionType: WorkbenchQuestionType,
+  visual: WorkbenchSemanticVisualIntent | null,
+): WorkbenchDimension[] {
+  const dateDimension = dateGrainToDimension(dateGrain);
+  if (!dateDimension) return dimensions;
+  const wantsTimeSeries =
+    questionType === "trend" ||
+    visual?.type === "line_chart" ||
+    dimensions.some((dimension) => ["date", "week", "month", "quarter"].includes(dimension));
+  if (!wantsTimeSeries || dimensions.includes(dateDimension)) return dimensions;
+  return unique([dateDimension, ...dimensions]).slice(0, 3);
+}
+
+function preferredDateIntent(
+  inferredDateIntent: ReturnType<typeof inferAnalysisWorkbenchDateIntentFromPrompt>,
+  plannerDateIntent: WorkbenchPlannerIntent["dateIntent"] | null,
+) {
+  if (inferredDateIntent && inferredDateIntent.kind !== "inherit_or_default") {
+    return inferredDateIntent;
+  }
+
+  return plannerDateIntent || inferredDateIntent;
+}
+
+function trendSortField(
+  questionType: WorkbenchQuestionType,
+  dimensions: WorkbenchDimension[],
+): WorkbenchTimeDimension | null {
+  if (questionType !== "trend") return null;
+  const timeDimension = dimensions.find(isTimeDimension);
+  return timeDimension || null;
+}
+
+function defaultLimitForIntent(input: {
+  requestedLimit: number | null;
+  dateRange: AnalysisWorkbenchPipelineIntent["dateRange"];
+  dateGrain: WorkbenchDateGrain | null;
+  dimensions: WorkbenchDimension[];
+  questionType: WorkbenchQuestionType;
+}) {
+  const timeSeries = trendSortField(input.questionType, input.dimensions);
+  if (timeSeries) {
+    return Math.max(input.requestedLimit || 0, dateBucketLimit(input.dateRange, input.dateGrain));
+  }
+  return input.requestedLimit || MAX_GROUP_ROWS;
+}
+
+function trendDimensionFor(planned: PlannedIntent): WorkbenchTimeDimension | null {
+  const dateGrainDimension = dateGrainToDimension(planned.dateGrain);
+  if (isTimeDimension(dateGrainDimension)) return dateGrainDimension;
+  return planned.dimensions.find(isTimeDimension) || "date";
+}
+
+function trendLimit(planned: PlannedIntent) {
+  return Math.max(planned.limit, dateBucketLimit(planned.dateRange, planned.dateGrain || "day"));
+}
+
 function detectDimensions(prompt: string, useDefault = true): WorkbenchDimension[] {
   const lower = prompt.toLowerCase();
   const dimensions: WorkbenchDimension[] = [];
@@ -1206,14 +1381,6 @@ function detectDimensions(prompt: string, useDefault = true): WorkbenchDimension
 
   const detected = unique(dimensions).slice(0, 3);
   return detected.length ? detected : useDefault ? DEFAULT_DIMENSIONS : [];
-}
-
-function dateGrainForDimensions(dimensions: WorkbenchDimension[]): WorkbenchDateGrain | null {
-  if (dimensions.includes("date")) return "day";
-  if (dimensions.includes("week")) return "week";
-  if (dimensions.includes("month")) return "month";
-  if (dimensions.includes("quarter")) return "quarter";
-  return null;
 }
 
 function dimensionsForVisual(
@@ -1296,6 +1463,48 @@ function detectFilters(prompt: string): WorkbenchSemanticFilter[] {
   return uniqueFilters(filters);
 }
 
+function normalizeSemanticFilters(filters: WorkbenchSemanticFilter[]) {
+  const deduped = uniqueFilters(
+    filters.map((filter) => {
+      if (filter.field !== "campaign") return filter;
+      const umbrellaAlias = campaignUmbrellaAliasForText(filter.value);
+      return umbrellaAlias
+        ? { field: "campaign_umbrella", operator: "equals", value: umbrellaAlias }
+        : filter;
+    }),
+  );
+  const umbrellaValues = new Set(
+    deduped
+      .filter((filter) => filter.field === "campaign_umbrella" && filter.operator === "equals")
+      .map((filter) => filter.value),
+  );
+  if (!umbrellaValues.size) return deduped;
+
+  return deduped.filter((filter) => {
+    if (filter.field !== "campaign") return true;
+    const umbrellaAlias = campaignUmbrellaAliasForText(filter.value);
+    return !umbrellaAlias || !umbrellaValues.has(umbrellaAlias);
+  });
+}
+
+function campaignUmbrellaAliasForText(value: string) {
+  const normalized = normalizeToken(value);
+  const aliases: Record<string, string> = {
+    "book appt": "Book Appts US",
+    "book appts": "Book Appts US",
+    "book appointment": "Book Appts US",
+    "book appointments": "Book Appts US",
+    appointments: "Book Appts US",
+    "cash for gold": "Cash for Gold US",
+    "facebook us product": "Facebook US Product",
+    "us product": "Facebook US Product",
+    "facebook vn product": "Facebook VN Product",
+    "vn product": "Facebook VN Product",
+  };
+
+  return aliases[normalized] || null;
+}
+
 function buildFilterScopes(filters: MetaInsightFilter[]) {
   const exactFiltersByField = new Map<MetaInsightFilter["field"], MetaInsightFilter[]>();
   filters.forEach((filter) => {
@@ -1330,94 +1539,6 @@ function uniqueMetaInsightFilters(filters: MetaInsightFilter[]) {
   return uniqueFilters(filters) as MetaInsightFilter[];
 }
 
-function resolvePromptDateRange(
-  prompt: string,
-  latestSyncedInsightDate?: string | null,
-  inheritedDateRange?: AnalysisWorkbenchContextSnapshot["dateRange"] | null,
-) {
-  const end = isDateString(latestSyncedInsightDate)
-    ? latestSyncedInsightDate
-    : format(new Date(), "yyyy-MM-dd");
-  const currentPeriodRange = promptCurrentPeriodDateRange(prompt, end);
-  const explicitDays = promptDays(prompt);
-  if (currentPeriodRange) return currentPeriodRange;
-  if (!explicitDays && inheritedDateRange) return inheritedDateRange;
-
-  const days = explicitDays || 30;
-  const start = format(subDays(parseISO(end), days - 1), "yyyy-MM-dd");
-
-  return {
-    start,
-    end,
-    days,
-    label: `Last ${days} days`,
-  };
-}
-
-function promptCurrentPeriodDateRange(prompt: string, end: string) {
-  const lower = prompt.toLowerCase();
-  const endDate = parseISO(end);
-
-  if (/\bthis\s+week\b|\bcurrent\s+week\b|\bweek\s+to\s+date\b|\bwtd\b|\bweek\s+so\s+far\b/.test(lower)) {
-    const daysSinceMonday = (endDate.getDay() + 6) % 7;
-    const days = daysSinceMonday + 1;
-    const start = format(subDays(endDate, daysSinceMonday), "yyyy-MM-dd");
-
-    return {
-      start,
-      end,
-      days,
-      label: "This week",
-    };
-  }
-
-  if (/\bthis\s+month\b|\bcurrent\s+month\b|\bmonth\s+to\s+date\b|\bmtd\b|\bmonth\s+so\s+far\b/.test(lower)) {
-    const start = `${end.slice(0, 8)}01`;
-
-    return {
-      start,
-      end,
-      days: inclusiveDateDays(start, end),
-      label: "This month",
-    };
-  }
-
-  if (/\bthis\s+quarter\b|\bcurrent\s+quarter\b|\bquarter\s+to\s+date\b|\bqtd\b|\bquarter\s+so\s+far\b/.test(lower)) {
-    const month = endDate.getMonth();
-    const quarterStartMonth = Math.floor(month / 3) * 3;
-    const start = format(new Date(Date.UTC(endDate.getFullYear(), quarterStartMonth, 1)), "yyyy-MM-dd");
-
-    return {
-      start,
-      end,
-      days: inclusiveDateDays(start, end),
-      label: "This quarter",
-    };
-  }
-
-  return null;
-}
-
-function promptDays(prompt: string) {
-  const lower = prompt.toLowerCase();
-  const relativeLead = "(?:last|past|previous|prior|recent|trailing)";
-  const dayMatch = lower.match(new RegExp(`\\b${relativeLead}\\s+(${NUMBER_PATTERN})\\s+days?\\b`));
-  if (dayMatch) return wordNumber(dayMatch[1]) || 30;
-  const weekMatch = lower.match(new RegExp(`\\b${relativeLead}\\s+(${NUMBER_PATTERN})\\s+weeks?\\b`));
-  if (weekMatch) return (wordNumber(weekMatch[1]) || 4) * 7;
-  const implicitMatch = lower.match(new RegExp(`\\b${relativeLead}\\s+(day|week|month|quarter)\\b`));
-  if (implicitMatch) {
-    const daysByUnit: Record<string, number> = {
-      day: 1,
-      week: 7,
-      month: 30,
-      quarter: 90,
-    };
-    return daysByUnit[implicitMatch[1]];
-  }
-  return null;
-}
-
 function wordNumber(value: string) {
   const words: Record<string, number> = {
     one: 1,
@@ -1446,17 +1567,11 @@ function wordNumber(value: string) {
   return Number.isFinite(Number(value)) ? Number(value) : words[value];
 }
 
-function inclusiveDateDays(start: string, end: string) {
-  const startTime = Date.parse(`${start}T00:00:00.000Z`);
-  const endTime = Date.parse(`${end}T00:00:00.000Z`);
-  if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime < startTime) return 1;
-  return Math.round((endTime - startTime) / 86_400_000) + 1;
-}
-
 function stripSemanticValidation(planned: PlannedIntent): AnalysisWorkbenchPipelineIntent {
   const intent: Partial<PlannedIntent> = { ...planned };
   delete intent.semanticValidation;
   delete intent.filterScopes;
+  delete intent.dateAssumptions;
   return intent as AnalysisWorkbenchPipelineIntent;
 }
 
@@ -1634,6 +1749,10 @@ function isWorkbenchDimension(value: unknown): value is WorkbenchDimension {
   );
 }
 
+function isTimeDimension(value: unknown): value is WorkbenchTimeDimension {
+  return value === "date" || value === "week" || value === "month" || value === "quarter";
+}
+
 function metricLabel(metric?: WorkbenchMetric) {
   if (!metric) return "Metric";
   return (
@@ -1738,10 +1857,6 @@ function normalizeToken(value: string) {
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-}
-
-function isDateString(value: unknown): value is string {
-  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
 function escapeRegex(value: string) {

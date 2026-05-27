@@ -702,6 +702,246 @@ test("natural language prompt grammar resolves governed query intent across comm
   }
 });
 
+test("AI parser result drives full-year weekly spend trend without recent-date caps", async () => {
+  const requests: AnalysisWorkbenchPipelineAggregateRequest[] = [];
+  const result = await runAnalysisWorkbenchFactsPipeline({
+    prompt: "week by week ad spend for the entire of 2026",
+    outputMode: "answer_visuals",
+    latestSyncedInsightDate: "2026-05-25",
+    parseIntent: async () => ({
+      source: "ai",
+      model: "gpt-5.4",
+      apiCost: {
+        model: "gpt-5.4",
+        inputTokens: 1000,
+        outputTokens: 200,
+        totalTokens: 1200,
+        estimatedCostUsd: 0.01,
+      },
+      intent: {
+        questionType: "trend",
+        metrics: ["spend"],
+        dimensions: ["week"],
+        filters: [],
+        dateIntent: {
+          kind: "calendar_year",
+          year: 2026,
+          month: null,
+          quarter: null,
+          unit: null,
+          count: null,
+          start: null,
+          end: null,
+          grain: "week",
+        },
+        comparison: { mode: "none" },
+        visualIntent: {
+          type: "line_chart",
+          metrics: ["spend"],
+          dimensions: ["week"],
+          rowDimension: null,
+          columnDimension: null,
+          x: "week",
+          y: "spend",
+        },
+        sort: { field: "week", direction: "asc" },
+        limit: null,
+        confidence: "high",
+        assumptions: [],
+        unsupported: [],
+      },
+    }),
+    executeAggregate: async (request) => {
+      requests.push(request);
+      if (request.dimensions.includes("week")) {
+        return [
+          aggregateRow({ week: "2025-12-29", spend: 100, source_rows: 7 }),
+          aggregateRow({ week: "2026-01-05", spend: 200, source_rows: 7 }),
+          aggregateRow({ week: "2026-12-28", spend: 300, source_rows: 4 }),
+        ];
+      }
+      return [aggregateRow({ spend: 600, source_rows: 18 })];
+    },
+  });
+
+  assert.equal(result.status, "completed");
+  const intent = result.intent as AnalysisWorkbenchPipelineIntent;
+  assert.equal(intent.status, "ready");
+  assert.equal(intent.questionType, "trend");
+  assert.equal(intent.parser?.source, "ai");
+  assert.equal(intent.dateRange.start, "2026-01-01");
+  assert.equal(intent.dateRange.end, "2026-12-31");
+  assert.equal(intent.dateRange.days, 365);
+  assert.equal(intent.dateGrain, "week");
+  assert.deepEqual(intent.metrics, ["spend"]);
+  assert.deepEqual(intent.dimensions, ["week"]);
+  assert.equal(intent.limit >= 53, true);
+  assert.deepEqual(
+    requests.map((request) => ({
+      start: request.start,
+      end: request.end,
+      dimensions: request.dimensions,
+      sortField: request.sortField,
+      sortDirection: request.sortDirection,
+      limit: request.limit,
+    })),
+    [
+      {
+        start: "2026-01-01",
+        end: "2026-12-31",
+        dimensions: ["week"],
+        sortField: "week",
+        sortDirection: "asc",
+        limit: 54,
+      },
+      {
+        start: "2026-01-01",
+        end: "2026-12-31",
+        dimensions: [],
+        sortField: "week",
+        sortDirection: "asc",
+        limit: 1,
+      },
+      {
+        start: "2026-01-01",
+        end: "2026-12-31",
+        dimensions: ["week"],
+        sortField: "week",
+        sortDirection: "asc",
+        limit: 54,
+      },
+    ],
+  );
+
+  const line = result.visualCards.find((card) => card.type === "line_chart");
+  assert.ok(line && line.type === "line_chart");
+  assert.equal(line.dimension, "week");
+  assert.deepEqual(
+    line.points.map((point) => point.label),
+    ["2025-12-29", "2026-01-05", "2026-12-28"],
+  );
+  assert.ok(result.sourceNotes.some((note) => note.label === "Intent parser"));
+  assert.deepEqual(result.answer.apiCost, {
+    model: "gpt-5.4",
+    inputTokens: 1000,
+    outputTokens: 200,
+    totalTokens: 1200,
+    estimatedCostUsd: 0.01,
+  });
+});
+
+test("AI parser aliases Book Appts campaign text to the governed campaign group filter", async () => {
+  const requests: AnalysisWorkbenchPipelineAggregateRequest[] = [];
+  const result = await runAnalysisWorkbenchFactsPipeline({
+    prompt:
+      "Which ad creative in the Book Appts campaign performed the best? Organize this week by week. I want to see the results week by week.",
+    outputMode: "answer_visuals",
+    latestSyncedInsightDate: "2026-05-27",
+    parseIntent: async () => ({
+      source: "ai",
+      model: "gpt-5.4",
+      apiCost: {
+        model: "gpt-5.4",
+        inputTokens: 1000,
+        outputTokens: 200,
+        totalTokens: 1200,
+        estimatedCostUsd: 0.01,
+      },
+      intent: {
+        questionType: "leaderboard",
+        metrics: ["primary_results"],
+        dimensions: ["creative", "week"],
+        filters: [
+          { field: "campaign", operator: "contains", value: "Book Appts" },
+        ],
+        dateIntent: {
+          kind: "rolling",
+          year: null,
+          month: null,
+          quarter: null,
+          unit: "day",
+          count: 30,
+          start: null,
+          end: null,
+          grain: "week",
+        },
+        comparison: { mode: "none" },
+        visualIntent: null,
+        sort: { field: "primary_results", direction: "desc" },
+        limit: null,
+        confidence: "medium",
+        assumptions: [
+          {
+            code: "best_defined_by_primary_results",
+            message:
+              "User asked which creative performed best; interpreted best using primary_results.",
+          },
+        ],
+        unsupported: [],
+      },
+    }),
+    executeAggregate: async (request) => {
+      requests.push(request);
+      assert.equal(
+        request.filters.some((filter) => filter.field === "campaign"),
+        false,
+        "campaign text alias should not be ANDed with the campaign group filter",
+      );
+
+      if (request.dimensions.includes("creative")) {
+        return [
+          aggregateRow({
+            creative: "Appointment video",
+            week: "2026-05-25",
+            primary_results: 12,
+            source_rows: 3,
+          }),
+          aggregateRow({
+            creative: "Appointment static",
+            week: "2026-05-25",
+            primary_results: 5,
+            source_rows: 2,
+          }),
+        ];
+      }
+      if (request.dimensions.includes("week")) {
+        return [
+          aggregateRow({
+            week: "2026-05-25",
+            primary_results: 17,
+            source_rows: 5,
+          }),
+        ];
+      }
+      return [aggregateRow({ primary_results: 17, source_rows: 5 })];
+    },
+  });
+
+  assert.equal(result.status, "completed");
+  const intent = result.intent as AnalysisWorkbenchPipelineIntent;
+  assert.equal(intent.parser?.source, "ai");
+  assert.equal(intent.dateRange.start, "2026-05-25");
+  assert.equal(intent.dateRange.end, "2026-05-27");
+  assert.equal(intent.dateGrain, "week");
+  assert.deepEqual(intent.dimensions, ["creative", "week"]);
+  assert.deepEqual(intent.filters, [
+    { field: "campaign_umbrella", operator: "equals", value: "Book Appts US" },
+  ]);
+  assert.deepEqual(
+    requests.map((request) => request.filters),
+    [
+      [{ field: "campaign_umbrella", operator: "equals", value: "Book Appts US" }],
+      [{ field: "campaign_umbrella", operator: "equals", value: "Book Appts US" }],
+      [{ field: "campaign_umbrella", operator: "equals", value: "Book Appts US" }],
+    ],
+  );
+  assert.ok(result.visualCards.some((card) => card.type === "bar_chart"));
+  const line = result.visualCards.find((card) => card.type === "line_chart");
+  assert.ok(line && line.type === "line_chart");
+  assert.equal(line.dimension, "week");
+  assert.doesNotMatch(result.answer.summary, /No matching Meta Ads rows/);
+});
+
 test("full dashboard mode creates a durable dashboard packet snapshot", async () => {
   const result = await runAnalysisWorkbenchFactsPipeline({
     prompt: "Build a full dashboard for spend and primary KPI by campaign group for the last 7 days.",
@@ -929,6 +1169,7 @@ test("follow-up prompts inherit visible date, filters, metrics, and grouping con
     status: "ready",
     rawPrompt: "What changed?",
     outputMode: "answer_visuals",
+    questionType: "diagnosis",
     metrics: ["spend", "primary_results"],
     dimensions: ["campaign_umbrella"],
     filters: [{ field: "campaign_umbrella", operator: "equals", value: "Book Appts US" }],
@@ -938,6 +1179,7 @@ test("follow-up prompts inherit visible date, filters, metrics, and grouping con
       days: 7,
       label: "Last 7 days",
     },
+    dateGrain: null,
     sort: { field: "spend", direction: "desc" },
     limit: 20,
     visual: null,
@@ -1200,6 +1442,23 @@ test("numeric narrative grounding rejects numbers missing from citations", () =>
       (issue) => issue.code,
     ),
     ["uncited_numeric_claim"],
+  );
+  assert.deepEqual(
+    validateAnalysisWorkbenchNarrativeGrounding(
+      "Top creative was 1505461404539090 at 1 [F2].",
+      [
+        ...citations,
+        {
+          id: "F2",
+          kind: "fact",
+          label: "Top creative",
+          value: 1,
+          formattedValue: "1",
+          entityName: "1505461404539090",
+        },
+      ],
+    ),
+    [],
   );
 });
 

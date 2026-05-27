@@ -65,6 +65,7 @@ test("validator blocks unsupported CRM, revenue, ROAS, staff, website, and inbox
     ],
   );
   assert.ok(result.blockers.every((blocker) => blocker.message.includes("not governed")));
+  assert.ok(result.blockers.every((blocker) => blocker.suggestedRequest));
 });
 
 test("validator repairs known filter aliases and blocks hallucinated values", () => {

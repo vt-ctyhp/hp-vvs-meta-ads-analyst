@@ -162,7 +162,7 @@ export type AnalysisWorkbenchLineVisualCard = {
   type: "line_chart";
   title: string;
   metric: WorkbenchMetric;
-  dimension: "date";
+  dimension: Extract<WorkbenchDimension, "date" | "week" | "month" | "quarter">;
   points: Array<{
     label: string;
     value: number;

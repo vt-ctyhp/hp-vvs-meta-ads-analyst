@@ -176,6 +176,7 @@ type UnsupportedBoundary = {
   key: "crm" | "revenue" | "roas" | "staff" | "website" | "social_inbox";
   label: string;
   reason: string;
+  suggestedRequest: string;
   pattern: RegExp;
 };
 
@@ -353,6 +354,7 @@ const UNSUPPORTED_BOUNDARIES: UnsupportedBoundary[] = [
     key: "crm",
     label: "CRM and Sales/ERP",
     reason: "CRM and Sales/ERP data is not governed by the Meta Ads semantic catalog yet.",
+    suggestedRequest: "Show spend, primary results, CPL, or messaging contacts by campaign.",
     pattern:
       /\b(crm|customers?|orders?|closed\s+deals?|sales\s+(?:data|orders?|from|by|team|rep))\b/i,
   },
@@ -360,6 +362,7 @@ const UNSUPPORTED_BOUNDARIES: UnsupportedBoundary[] = [
     key: "revenue",
     label: "Revenue and payments",
     reason: "Revenue, invoices, deposits, and payment data are not governed by the Meta Ads semantic catalog yet.",
+    suggestedRequest: "Show governed Meta Ads spend and primary results by campaign or group.",
     pattern:
       /\b(revenue|sales\s+amount|sales\s+value|gross\s+margin|margin|profit|invoice|deposit|payment|amount\s+paid)\b/i,
   },
@@ -367,18 +370,21 @@ const UNSUPPORTED_BOUNDARIES: UnsupportedBoundary[] = [
     key: "roas",
     label: "ROAS",
     reason: "ROAS is not governed because revenue is outside the Meta Ads semantic catalog.",
+    suggestedRequest: "Show spend, primary results, CPL, CPC, or CTR by campaign.",
     pattern: /\b(roas|return\s+on\s+ad\s+spend)\b/i,
   },
   {
     key: "staff",
     label: "Staff performance",
     reason: "Staff, employee, advisor, and sales-rep data is not governed by the Meta Ads semantic catalog yet.",
+    suggestedRequest: "Show Meta Ads performance by campaign, ad set, ad, creative, brand, or group.",
     pattern: /\b(staff|employees?|team\s+member|sales\s+rep|advisor|agent|owner)\b/i,
   },
   {
     key: "website",
     label: "Website analytics",
     reason: "Website traffic, sessions, funnel, and landing-page data is not governed by the Meta Ads semantic catalog yet.",
+    suggestedRequest: "Show Meta Ads clicks, CTR, CPC, leads, bookings, or primary results by campaign.",
     pattern:
       /\b(website\s+(?:traffic|visitors?|sessions?|events?|funnel)|site\s+visitors?|landing[-\s]?pages?|page\s+views?|sessions?|traffic|utm|checkout|add\s+to\s+cart|funnel)\b/i,
   },
@@ -386,6 +392,7 @@ const UNSUPPORTED_BOUNDARIES: UnsupportedBoundary[] = [
     key: "social_inbox",
     label: "Social inbox",
     reason: "Social inbox messages, comments, and response workflows are not governed by the Meta Ads semantic catalog yet.",
+    suggestedRequest: "Show Meta Ads messaging contacts or new messaging contacts by campaign group.",
     pattern:
       /\b(social\s+inbox|inbox\s+response|dm\s+response|comment\s+response|customer\s+messages?|social\s+messages?)\b/i,
   },
@@ -574,6 +581,7 @@ function unsupportedPromptIssues(prompt: string): WorkbenchSemanticIssue[] {
     (boundary) => ({
       code: `unsupported_${boundary.key}`,
       message: boundary.reason,
+      suggestedRequest: boundary.suggestedRequest,
     }),
   );
 }
