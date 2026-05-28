@@ -45,6 +45,10 @@ const AGGREGATE_ENV_SCOPE_MIGRATION = join(
   REPO_ROOT,
   "supabase/migrations/20260522120000_aggregate_meta_insights_environment_scope.sql",
 );
+const META_API_ENRICHMENT_MIGRATION = join(
+  REPO_ROOT,
+  "supabase/migrations/20260528203430_meta_api_enrichment_sync.sql",
+);
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx"]);
 const SKIPPED_SOURCE_FILES = new Set(["src/lib/database.types.ts"]);
 const MUTATION_METHOD_PATTERN = String.raw`\.(?:insert|upsert|update|delete)\s*\(`;
@@ -448,6 +452,59 @@ describe("aggregate Meta insights environment scoping", () => {
     );
     assert.doesNotMatch(migration, /sum\(leads\)::bigint/);
     assert.doesNotMatch(migration, /sum\(conversions\)::bigint/);
+  });
+});
+
+describe("Meta API enrichment migration", () => {
+  const migration = readFileSync(META_API_ENRICHMENT_MIGRATION, "utf8");
+
+  it("registers new enrichment tables inside the Ads Analyst boundary", () => {
+    const analystTables = new Set<string>(ANALYST_OWNED_TABLES);
+    [
+      "meta_daily_insight_enrichments",
+      "meta_ad_labels",
+      "meta_ad_pixels",
+      "meta_custom_conversions",
+      "meta_insight_breakdown_daily",
+      "meta_insight_breakdown_backfill_chunks",
+    ].forEach((table) => {
+      assert.equal(analystTables.has(table), true);
+    });
+  });
+
+  it("creates environment-aware unique keys for new enrichment tables", () => {
+    [
+      "meta_daily_insight_enrichments",
+      "meta_ad_labels",
+      "meta_ad_pixels",
+      "meta_custom_conversions",
+      "meta_insight_breakdown_daily",
+      "meta_insight_breakdown_backfill_chunks",
+    ].forEach((table) => {
+      assert.match(migration, new RegExp(`create table if not exists public\\.${table}`));
+      assert.match(migration, /environment text not null default 'production'/);
+    });
+
+    assert.match(
+      migration,
+      /unique \(environment, meta_account_id, ad_id, date_start\)/,
+    );
+    assert.match(
+      migration,
+      /unique \(environment, meta_account_id, meta_id\)/,
+    );
+    assert.match(
+      migration,
+      /unique \(environment, meta_account_id, date_start, level, breakdown_set, breakdown_key\)/,
+    );
+  });
+
+  it("claims existing Insights backfill chunks most-recent first without touching stored data", () => {
+    assert.match(migration, /sort_direction text not null default 'desc'/);
+    assert.match(migration, /case when j\.sort_direction = 'desc' then c\.start_date end desc/);
+    assert.doesNotMatch(migration, /\binsert\s+into\s+public\./i);
+    assert.doesNotMatch(migration, /\bdelete\s+from\s+public\./i);
+    assert.doesNotMatch(migration, /\btruncate\s+table\b/i);
   });
 });
 

@@ -99,6 +99,45 @@ test("answer-only requests run through governed intent, query, facts, and cited 
   assert.deepEqual(validateAnalysisWorkbenchNarrativeGrounding(result.answer.summary, result.answer.citations), []);
 });
 
+test("daily budget prompts use daily_budget instead of monthly budget or spend", async () => {
+  const requests: AnalysisWorkbenchPipelineAggregateRequest[] = [];
+  const result = await runAnalysisWorkbenchFactsPipeline({
+    prompt: "What is the daily budget by campaign group?",
+    outputMode: "answer_only",
+    latestSyncedInsightDate: "2026-05-24",
+    executeAggregate: async (request) => {
+      requests.push(request);
+      return request.dimensions.length
+        ? [
+            aggregateRow({
+              campaign_umbrella: "Book Appts US",
+              daily_budget: 100,
+              monthly_budget: 3100,
+              spend: 700,
+              source_rows: 8,
+            }),
+          ]
+        : [
+            aggregateRow({
+              daily_budget: 100,
+              monthly_budget: 3100,
+              spend: 700,
+              source_rows: 8,
+            }),
+          ];
+    },
+  });
+
+  assert.equal(result.status, "completed");
+  assert.deepEqual(result.intent.metrics, ["daily_budget"]);
+  assert.deepEqual(requests.map((request) => request.metrics), [["daily_budget"], ["daily_budget"]]);
+  assert.deepEqual(requests.map((request) => request.sortField), ["daily_budget", "daily_budget"]);
+  assert.match(result.answer.summary, /daily budget/i);
+  assert.match(result.answer.summary, /\$100/);
+  assert.doesNotMatch(result.answer.summary, /\$3,100/);
+  assert.doesNotMatch(result.answer.summary, /\$700/);
+});
+
 test("answer plus visuals creates structured metric, table, bar, and line visual cards", async () => {
   const requests: AnalysisWorkbenchPipelineAggregateRequest[] = [];
   const result = await runAnalysisWorkbenchFactsPipeline({
@@ -1803,7 +1842,10 @@ function aggregateRow(overrides: Partial<MetaInsightAggregateRow> = {}): MetaIns
     creative: null,
     creative_id: null,
     spend: 0,
+    daily_budget: 0,
     monthly_budget: 0,
+    lifetime_budget: 0,
+    budget_remaining: 0,
     impressions: 0,
     reach: 0,
     clicks: 0,

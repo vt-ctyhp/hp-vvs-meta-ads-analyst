@@ -45,6 +45,9 @@ export type MetaInsightAggregateRow = {
   creative_id: string | null;
   spend: number;
   monthly_budget: number;
+  daily_budget: number;
+  lifetime_budget: number;
+  budget_remaining: number;
   impressions: number;
   reach: number;
   clicks: number;
@@ -179,6 +182,9 @@ export function mapAggregateRow(row: Record<string, unknown>): MetaInsightAggreg
     creative_id: stringOrNull(row.creative_id),
     spend: numberValue(row.spend),
     monthly_budget: numberValue(row.monthly_budget),
+    daily_budget: numberValue(row.daily_budget),
+    lifetime_budget: numberValue(row.lifetime_budget),
+    budget_remaining: numberValue(row.budget_remaining),
     impressions: numberValue(row.impressions),
     reach: numberValue(row.reach),
     clicks: numberValue(row.clicks),

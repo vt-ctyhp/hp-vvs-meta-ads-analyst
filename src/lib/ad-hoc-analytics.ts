@@ -15,7 +15,10 @@ import { createAdsAnalystClient, withAdsAnalystEnvironment } from "./ads-analyst
 
 const ANALYSIS_METRICS = [
   "spend",
+  "daily_budget",
   "monthly_budget",
+  "lifetime_budget",
+  "budget_remaining",
   "campaign_count",
   "ad_set_count",
   "ad_count",
@@ -98,7 +101,10 @@ const RPC_SORT_FIELDS = new Set<string>([
   "ad",
   "creative",
   "spend",
+  "daily_budget",
   "monthly_budget",
+  "lifetime_budget",
+  "budget_remaining",
   "impressions",
   "clicks",
   "leads",
@@ -1458,8 +1464,8 @@ async function editSpecWithAI(input: {
             "For since/from/starting a specific date, use preset custom with start as YYYY-MM-DD and omit end unless the user gives one.",
             "For last/previous/prior week, month, and quarter, use the matching complete-calendar preset. For past/recent/trailing month, use last_30_days. For month-to-date or week-to-date, use the matching to-date preset.",
             "For ad spend or spend-only requests, include spend first; if no other metric is requested, use only spend.",
-            "For monthly budget or budget requests, use the monthly_budget metric. Do not substitute CTR, CPC, CPL, impressions, clicks, or leads for budget.",
-            "If the user asks to add budget to a spend table, use metrics ['spend','monthly_budget'] unless they explicitly request more metrics.",
+            "For daily/current/generic budget requests, use daily_budget. For monthly budget requests, use monthly_budget. Do not substitute spend, CTR, CPC, CPL, impressions, clicks, or leads for budget.",
+            "If the user asks to add budget to a spend table, use metrics ['spend','daily_budget'] unless they explicitly request monthly, lifetime, or remaining budget.",
             "For messages, messaging, Messenger conversations, replies, or number of messages from ads, use the messaging_contacts metric. Use new_messaging_contacts only when the user explicitly asks for new messages, first replies, or new messaging contacts.",
             "For campaign result metrics, use primary_results for results, number of results, primary results, primary KPI, or KPI. Use secondary_results only when the user explicitly asks for secondary results or secondary KPI.",
             "For count/how many/number of campaigns, ad sets, ads, or creatives, use campaign_count, ad_set_count, ad_count, or creative_count. Do not list entity IDs unless the user asks to list or group by each entity.",
@@ -3988,7 +3994,10 @@ function aggregateMetrics(row: MetaInsightAggregateRow | undefined): Record<Anal
   if (!row) {
     return {
       spend: 0,
+      daily_budget: 0,
       monthly_budget: 0,
+      lifetime_budget: 0,
+      budget_remaining: 0,
       campaign_count: 0,
       ad_set_count: 0,
       ad_count: 0,
@@ -4014,7 +4023,10 @@ function aggregateMetrics(row: MetaInsightAggregateRow | undefined): Record<Anal
 
   return {
     spend: row.spend,
+    daily_budget: row.daily_budget,
     monthly_budget: row.monthly_budget,
+    lifetime_budget: row.lifetime_budget,
+    budget_remaining: row.budget_remaining,
     campaign_count: 0,
     ad_set_count: 0,
     ad_count: 0,
@@ -4044,7 +4056,10 @@ function sumAggregateRows(rows: MetaInsightAggregateRow[]) {
   const totals = rows.reduce(
     (sum, row) => {
       sum.spend += row.spend;
+      sum.daily_budget += row.daily_budget;
       sum.monthly_budget += row.monthly_budget;
+      sum.lifetime_budget += row.lifetime_budget;
+      sum.budget_remaining += row.budget_remaining;
       sum.impressions += row.impressions;
       sum.reach += row.reach;
       sum.clicks += row.clicks;
@@ -4061,7 +4076,10 @@ function sumAggregateRows(rows: MetaInsightAggregateRow[]) {
     },
     {
       spend: 0,
+      daily_budget: 0,
       monthly_budget: 0,
+      lifetime_budget: 0,
+      budget_remaining: 0,
       impressions: 0,
       reach: 0,
       clicks: 0,
@@ -4095,7 +4113,10 @@ function sumAggregateRows(rows: MetaInsightAggregateRow[]) {
       creative_id: null,
       ...totals,
       spend: round(totals.spend),
+      daily_budget: round(totals.daily_budget),
       monthly_budget: round(totals.monthly_budget),
+      lifetime_budget: round(totals.lifetime_budget),
+      budget_remaining: round(totals.budget_remaining),
       website_bookings: round(totals.website_bookings),
       messaging_contacts: round(totals.messaging_contacts),
       new_messaging_contacts: round(totals.new_messaging_contacts),
@@ -4579,7 +4600,10 @@ function inferPromptIntent(prompt: string): PromptIntent {
   const intendedDimensions: AnalysisDimension[] | undefined = summaryOnly ? ["brand"] : dimensions;
   const intendedMetrics = summaryOnly && !metrics ? DEFAULT_METRICS.slice(0, 4) : metrics;
   const firstDimension = intendedDimensions?.[0];
-  const wantsBudget = metrics?.includes("monthly_budget") || /\bbudgets?\b/.test(lower);
+  const wantsBudget =
+    metrics?.some((metric) =>
+      ["daily_budget", "monthly_budget", "lifetime_budget", "budget_remaining"].includes(metric),
+    ) || /\bbudgets?\b/.test(lower);
   const isMonthlyUmbrella = intendedDimensions?.includes("campaign_umbrella") && intendedDimensions.includes("month");
   const tableLayout = summaryOnly
     ? undefined
@@ -5035,7 +5059,7 @@ function inferDimensionsFromPrompt(
       lower,
     );
   const wantsDay =
-    /\bdays?\s+by\s+days?\b|\bdaily\b|\bby days?\b|day-by-day|\bday\s+over\s+day\b|\b(?:group(?:ed)?|organize(?:d)?|break(?:down| out))\s+by\s+days?\b|\bdays?\s+(?:is|are|as)\s+(?:rows?|columns?|headers?)\b|\b(?:header\s+row|rows?|columns?|headers?)\b[^.?!\n]{0,40}\bdays?\b/.test(
+    /\bdays?\s+by\s+days?\b|\bdaily\b(?!\s+budgets?\b)|\bby days?\b|day-by-day|\bday\s+over\s+day\b|\b(?:group(?:ed)?|organize(?:d)?|break(?:down| out))\s+by\s+days?\b|\bdays?\s+(?:is|are|as)\s+(?:rows?|columns?|headers?)\b|\b(?:header\s+row|rows?|columns?|headers?)\b[^.?!\n]{0,40}\bdays?\b/.test(
       lower,
     );
   const wantsUmbrella =
@@ -5083,7 +5107,19 @@ function inferMetricsFromPrompt(lower: string): AnalysisMetric[] | undefined {
   };
 
   if (/\bad spend\b|\bspend\b|\bspent\b|\bcost\b/.test(metricText)) add("spend");
-  if (/\bmonthly budgets?\b|\bbudgets?\b/.test(metricText)) add("monthly_budget");
+  if (/\bmonthly budgets?\b|\bbudget\s+per\s+month\b/.test(metricText)) add("monthly_budget");
+  if (/\blifetime budgets?\b|\btotal budgets?\b/.test(metricText)) add("lifetime_budget");
+  if (/\bremaining budgets?\b|\bbudget remaining\b|\bbudget left\b/.test(metricText)) {
+    add("budget_remaining");
+  }
+  if (
+    /\bdaily budgets?\b|\bcurrent budgets?\b|\bbudgets?\b/.test(metricText) &&
+    !/\bmonthly budgets?\b|\bbudget\s+per\s+month\b|\blifetime budgets?\b|\btotal budgets?\b|\bremaining budgets?\b|\bbudget remaining\b|\bbudget left\b/.test(
+      metricText,
+    )
+  ) {
+    add("daily_budget");
+  }
   if (/\b(count|number of|how many)\b[^.?!\n]*\bcampaigns?\b/.test(metricText) && !/\bcampaign[-\s]?umbrellas?\b/.test(metricText)) {
     add("campaign_count");
   }
@@ -5261,7 +5297,7 @@ function inferDiagnosisIntent(lower: string):
 function inferGrainFromPrompt(prompt: string): AnalysisGrain | undefined {
   if (/\bmonth(?:\s+by\s+month)?\b|\bby month\b|month-by-month|\bmonthly\b(?!\s+budgets?\b)/i.test(prompt)) return "monthly";
   if (/\bweek(?:\s+by\s+week|ly)?\b|\bby week\b|week-by-week/i.test(prompt)) return "weekly";
-  if (/\bday(?:\s+by\s+day)?\b|\bdaily\b|\bby day\b|day-by-day/i.test(prompt)) return "daily";
+  if (/\bday(?:\s+by\s+day)?\b|\bdaily\b(?!\s+budgets?\b)|\bby day\b|day-by-day/i.test(prompt)) return "daily";
   return undefined;
 }
 
@@ -5466,7 +5502,7 @@ function dimensionFromText(text: string, availableDimensions: AnalysisDimension[
     ["brand", /\bbrands?\b/],
     ["month", /\bmonths?\b|\bmonthly\b/],
     ["week", /\bweeks?\b|\bweekly\b/],
-    ["date", /\bdates?\b|\bdays?\b|\bdaily\b/],
+    ["date", /\bdates?\b|\bdays?\b|\bdaily\b(?!\s+budgets?\b)/],
   ];
 
   return dimensionPatterns.find(([dimension, pattern]) => availableDimensions.includes(dimension) && pattern.test(text))?.[0];
@@ -5482,7 +5518,7 @@ function dimensionPatternSource(dimension: AnalysisDimension) {
     brand: "\\bbrands?\\b",
     month: "\\bmonths?\\b|\\bmonthly\\b",
     week: "\\bweeks?\\b|\\bweekly\\b",
-    date: "\\bdates?\\b|\\bdays?\\b|\\bdaily\\b",
+    date: "\\bdates?\\b|\\bdays?\\b|\\bdaily\\b(?!\\s+budgets?\\b)",
   };
   return dimensionPatterns[dimension];
 }
@@ -5495,7 +5531,10 @@ function pivotMetricFromPrompt(lower: string, metrics: AnalysisMetric[]) {
 
 const metricPromptPatterns: Partial<Record<AnalysisMetric, RegExp>> = {
   spend: /\bad spend\b|\bspend\b|\bspent\b|\bcost\b/,
-  monthly_budget: /\bmonthly budgets?\b|\bbudgets?\b/,
+  daily_budget: /\bdaily budgets?\b|\bcurrent budgets?\b|(?<!monthly\s)(?<!lifetime\s)(?<!remaining\s)\bbudgets?\b(?!\s+(?:remaining|left|per\s+month))/,
+  monthly_budget: /\bmonthly budgets?\b|\bbudget\s+per\s+month\b/,
+  lifetime_budget: /\blifetime budgets?\b|\btotal budgets?\b/,
+  budget_remaining: /\bremaining budgets?\b|\bbudget remaining\b|\bbudget left\b/,
   campaign_count: /\b(count|number of|how many)\b[^.?!\n]*\bcampaigns?\b/,
   ad_set_count: /\b(count|number of|how many)\b[^.?!\n]*\bad sets?\b/,
   ad_count: /\b(count|number of|how many)\b[^.?!\n]*\bads\b/,
@@ -5705,7 +5744,7 @@ function inferQuestionType(prompt: string): AnalysisQuestionType {
   if (/\b(compare|vs\.?|versus|against)\b/.test(lower)) {
     return "comparison";
   }
-  if (/\b(trend|over\s+time|by\s+day|daily|by\s+week|weekly|by\s+month|monthly|day\s+over\s+day|week\s+over\s+week|month\s+over\s+month)\b/.test(lower)) {
+  if (/\b(trend|over\s+time|by\s+day|daily(?!\s+budgets?\b)|by\s+week|weekly|by\s+month|monthly|day\s+over\s+day|week\s+over\s+week|month\s+over\s+month)\b/.test(lower)) {
     return "trend";
   }
   return "leaderboard";
@@ -6030,16 +6069,19 @@ function labelFor(value: string) {
     creative: "Creative",
     creative_count: "Creatives",
     ctr: "CTR",
+    daily_budget: "Daily Budget",
     date: "Date",
     frequency: "Frequency",
     impressions: "Impressions",
     leads: "Leads",
+    lifetime_budget: "Lifetime Budget",
     messaging_contacts: "Messages",
     month: "Month",
     monthly_budget: "Monthly Budget",
     new_messaging_contacts: "New Messages",
     primary_results: "Primary Results",
     reach: "Reach",
+    budget_remaining: "Budget Remaining",
     secondary_results: "Secondary Results",
     spend: "Spend",
     website_bookings: "Website Bookings",
@@ -6056,7 +6098,13 @@ function labelForWidget(type: AnalysisWidgetType) {
 }
 
 function metricType(metric: AnalysisMetric): AnalysisTableColumn["type"] {
-  if (["spend", "monthly_budget", "cpc", "cpl", "cpm"].includes(metric)) return "money";
+  if (
+    ["spend", "daily_budget", "monthly_budget", "lifetime_budget", "budget_remaining", "cpc", "cpl", "cpm"].includes(
+      metric,
+    )
+  ) {
+    return "money";
+  }
   if (["ctr", "frequency"].includes(metric)) return metric === "ctr" ? "percent" : "number";
   return "number";
 }

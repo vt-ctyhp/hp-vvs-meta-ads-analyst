@@ -121,7 +121,10 @@ function sumRows(rows: MetaInsightAggregateRow[], dimensions: MetaInsightDimensi
   const summed = rows.reduce(
     (total, row) => ({
       spend: total.spend + row.spend,
+      daily_budget: total.daily_budget + row.daily_budget,
       monthly_budget: total.monthly_budget + row.monthly_budget,
+      lifetime_budget: total.lifetime_budget + row.lifetime_budget,
+      budget_remaining: total.budget_remaining + row.budget_remaining,
       impressions: total.impressions + row.impressions,
       reach: total.reach + row.reach,
       clicks: total.clicks + row.clicks,
@@ -137,7 +140,10 @@ function sumRows(rows: MetaInsightAggregateRow[], dimensions: MetaInsightDimensi
     }),
     {
       spend: 0,
+      daily_budget: 0,
       monthly_budget: 0,
+      lifetime_budget: 0,
+      budget_remaining: 0,
       impressions: 0,
       reach: 0,
       clicks: 0,
@@ -303,7 +309,10 @@ function aggregateRow(overrides: Partial<MetaInsightAggregateRow> = {}): MetaIns
     creative: null,
     creative_id: null,
     spend: 0,
+    daily_budget: 0,
     monthly_budget: 0,
+    lifetime_budget: 0,
+    budget_remaining: 0,
     impressions: 0,
     reach: 0,
     clicks: 0,
