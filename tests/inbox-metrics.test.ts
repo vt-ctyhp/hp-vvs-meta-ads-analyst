@@ -14,11 +14,13 @@ import {
   userDateString,
   businessSecondsBetween,
   computeUnassignedMetrics,
+  computeClaimsToday,
   type ConversationLike,
   type SendAttemptLike,
   type CommentActionLike,
   type RepliedConversation,
   type MetricsDailyRow,
+  type AssignmentEventLike,
 } from "../src/lib/inbox-metrics.ts";
 
 describe("inbox-metrics constants & window helpers", () => {
@@ -224,6 +226,27 @@ describe("computeUnassignedMetrics (C1/C3)", () => {
     const r = computeUnassignedMetrics([], now, QMAP);
     assert.equal(r.unassigned, 0);
     assert.equal(r.oldestUnassignedSec, null);
+  });
+});
+
+describe("computeClaimsToday (C2)", () => {
+  const userWindow = { tz: "America/Los_Angeles", startHour: 10, endHour: 19 };
+  const now = new Date("2026-05-27T22:00:00Z"); // 15:00 PT
+  it("counts unassigned→me claims within today and the today-arrival denominator", () => {
+    const events: AssignmentEventLike[] = [
+      { event_at: "2026-05-27T18:00:00Z", previousAssignedUserId: null, newAssignedUserId: ME }, // claim ✓
+      { event_at: "2026-05-27T19:00:00Z", previousAssignedUserId: "other", newAssignedUserId: ME }, // reassignment, not a claim ✗
+      { event_at: "2026-05-26T18:00:00Z", previousAssignedUserId: null, newAssignedUserId: ME }, // yesterday ✗
+      { event_at: "2026-05-27T20:00:00Z", previousAssignedUserId: null, newAssignedUserId: "other" }, // someone else ✗
+    ];
+    const arrivals: ConversationLike[] = [
+      { id: "a", assigned_user_id: ME, conversation_status: "needs_reply", needs_reply: true, latest_inbound_at: null, first_inbound_at: "2026-05-27T18:00:00Z", queue_category_key: "us_product" }, // arrived today ✓
+      { id: "b", assigned_user_id: null, conversation_status: "new_inquiry", needs_reply: true, latest_inbound_at: null, first_inbound_at: "2026-05-27T17:30:00Z", queue_category_key: "us_product" }, // arrived today ✓
+      { id: "c", assigned_user_id: ME, conversation_status: "needs_reply", needs_reply: true, latest_inbound_at: null, first_inbound_at: "2026-05-26T18:00:00Z", queue_category_key: "us_product" }, // yesterday ✗
+    ];
+    const r = computeClaimsToday(events, arrivals, ME, userWindow, now);
+    assert.equal(r.claimedByMe, 1);
+    assert.equal(r.todayUnassignedDenominator, 2);
   });
 });
 

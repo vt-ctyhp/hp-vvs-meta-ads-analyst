@@ -151,6 +151,47 @@ export function computeUnassignedMetrics(
   return { unassigned, oldestUnassignedSec: oldest };
 }
 
+// ─── C2: Claims today (assignment_changed events) ────────────────────────────
+//
+// Mirrors the canonical SQL (spec §15.1). The fetcher in
+// getPersonalHeaderMetrics runs the same logic server-side:
+//   SELECT COUNT(*) FROM meta_inbox_conversation_events e
+//    WHERE e.environment = $env AND e.event_type = 'assignment_changed'
+//      AND e.event_at >= $todayBusinessStart
+//      AND (e.previous_value->>'assignedUserId') IS NULL
+//      AND (e.new_value->>'assignedUserId') = $me;
+
+export type AssignmentEventLike = {
+  event_at: string;
+  previousAssignedUserId: string | null;
+  newAssignedUserId: string | null;
+};
+
+export function computeClaimsToday(
+  events: AssignmentEventLike[],
+  arrivals: ConversationLike[],
+  userId: string,
+  userWindow: BusinessWindow,
+  now: Date,
+): { claimedByMe: number; todayUnassignedDenominator: number } {
+  const today = todaysWindow(now, userWindow);
+  let claimedByMe = 0;
+  for (const e of events) {
+    if (
+      e.previousAssignedUserId === null &&
+      e.newAssignedUserId === userId &&
+      inWindow(e.event_at, today.start, today.end)
+    ) {
+      claimedByMe += 1;
+    }
+  }
+  let denominator = 0;
+  for (const c of arrivals) {
+    if (inWindow(c.first_inbound_at, today.start, today.end)) denominator += 1;
+  }
+  return { claimedByMe, todayUnassignedDenominator: denominator };
+}
+
 // ─── B1/B2: Today's avg first-response time and on-time rate ─────────────────
 
 const SEVEN_DAYS_MS = 7 * 86_400_000;
