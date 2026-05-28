@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { TeamMetricsTable } from "@/components/v2/inbox/team-metrics-table";
+import { TeamScheduleSettings } from "@/components/v2/inbox/team-schedule-settings";
 import { getServerAccessProfile } from "@/lib/server-route-auth";
 import { resolvePeriodParam } from "@/lib/inbox-metrics";
 import { getTeamRollup } from "@/lib/inbox-metrics-db";
@@ -37,6 +38,7 @@ export default async function TeamMetricsPage({
           <PeriodSelector period={period} />
         </header>
         <TeamMetricsTable rows={rollup.rows} period={period} />
+        <TeamScheduleSettings />
       </section>
     </main>
   );
