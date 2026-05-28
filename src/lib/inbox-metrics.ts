@@ -342,3 +342,53 @@ export function computeRepliesSentToday(
   }
   return count;
 }
+
+// ─── Task 19: assemblePersonalHeaderMetrics + getPersonalHeaderMetrics ────────
+
+export type PersonalHeaderInput = {
+  userId: string;
+  timezone: string;
+  userWindow: BusinessWindow;
+  now: Date;
+  pipeline: { assigned: number; needsReply: number; atRisk: number };
+  today: { avgResponseSec: number | null; onTimeRate: number | null; repliesSent: number };
+  yesterdayAvgSec: number | null;
+  unassigned: number;
+  oldestUnassignedSec: number | null;
+  claims: { claimedByMe: number; todayUnassignedDenominator: number };
+  teammatesOverSla: number | undefined;
+};
+
+export function assemblePersonalHeaderMetrics(input: PersonalHeaderInput): PersonalHeaderMetrics {
+  const today = todaysWindow(input.now, input.userWindow);
+  const windowState =
+    today.state === "before" ? "before_hours" : today.state === "after" ? "after_hours" : "open";
+  const remaining = Math.max(
+    0,
+    businessSecondsRemainingUntil(today.end, input.now, input.userWindow),
+  );
+  return {
+    windowState,
+    user: {
+      id: input.userId,
+      timezone: input.timezone,
+      businessSecondsRemainingToday: remaining,
+    },
+    pipeline: input.pipeline,
+    today: input.today,
+    yesterday: { avgResponseSec: input.yesterdayAvgSec },
+    team: {
+      unassigned: input.unassigned,
+      claimedByMe: input.claims.claimedByMe,
+      todayUnassignedDenominator: input.claims.todayUnassignedDenominator,
+      oldestUnassignedSec: input.oldestUnassignedSec,
+      ...(input.teammatesOverSla !== undefined
+        ? { teammatesOverSla: input.teammatesOverSla }
+        : {}),
+    },
+  };
+}
+
+// Note: getPersonalHeaderMetrics (server fetcher) lives in inbox-metrics-db.ts
+// to avoid pulling server-only imports (social-inbox, Supabase client) into
+// the pure-compute module that unit tests import directly.

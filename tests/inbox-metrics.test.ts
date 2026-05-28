@@ -16,6 +16,7 @@ import {
   computeUnassignedMetrics,
   computeClaimsToday,
   computeTeammatesOverSla,
+  assemblePersonalHeaderMetrics,
   type ConversationLike,
   type SendAttemptLike,
   type CommentActionLike,
@@ -281,5 +282,62 @@ describe("pickYesterdayAvg", () => {
   });
   it("computes the user-tz calendar date string", () => {
     assert.equal(userDateString(new Date("2026-05-28T02:30:00Z"), userWindow), "2026-05-27"); // 19:30 PT still 05-27
+  });
+});
+
+describe("assemblePersonalHeaderMetrics", () => {
+  const userWindow = { tz: "America/Los_Angeles", startHour: 10, endHour: 19 };
+  it("maps open state and merges all metric groups", () => {
+    const now = new Date("2026-05-27T19:00:00Z"); // 12:00 PT → open
+    const metrics = assemblePersonalHeaderMetrics({
+      userId: ME,
+      timezone: "America/Los_Angeles",
+      userWindow,
+      now,
+      pipeline: { assigned: 50, needsReply: 6, atRisk: 2 },
+      today: { avgResponseSec: 3000, onTimeRate: 0.92, repliesSent: 14 },
+      yesterdayAvgSec: 3900,
+      unassigned: 8,
+      oldestUnassignedSec: 2820,
+      claims: { claimedByMe: 3, todayUnassignedDenominator: 10 },
+      teammatesOverSla: 3,
+    });
+    assert.equal(metrics.windowState, "open");
+    assert.equal(metrics.pipeline.needsReply, 6);
+    assert.equal(metrics.today.repliesSent, 14);
+    assert.equal(metrics.yesterday.avgResponseSec, 3900);
+    assert.equal(metrics.team.unassigned, 8);
+    assert.equal(metrics.team.claimedByMe, 3);
+    assert.equal(metrics.team.teammatesOverSla, 3);
+    assert.equal(metrics.user.id, ME);
+    assert.equal(metrics.user.timezone, "America/Los_Angeles");
+    assert.ok(metrics.user.businessSecondsRemainingToday > 0);
+  });
+  it("maps before state and omits teammatesOverSla when undefined", () => {
+    const now = new Date("2026-05-27T16:00:00Z"); // 09:00 PT → before_hours
+    const metrics = assemblePersonalHeaderMetrics({
+      userId: ME, timezone: "America/Los_Angeles", userWindow, now,
+      pipeline: { assigned: 0, needsReply: 0, atRisk: 0 },
+      today: { avgResponseSec: null, onTimeRate: null, repliesSent: 0 },
+      yesterdayAvgSec: null, unassigned: 0, oldestUnassignedSec: null,
+      claims: { claimedByMe: 0, todayUnassignedDenominator: 0 },
+      teammatesOverSla: undefined,
+    });
+    assert.equal(metrics.windowState, "before_hours");
+    assert.equal(metrics.team.teammatesOverSla, undefined);
+    assert.equal(metrics.user.businessSecondsRemainingToday >= 0, true);
+  });
+  it("maps after state", () => {
+    const now = new Date("2026-05-28T02:30:00Z"); // 19:30 PT → after_hours
+    const metrics = assemblePersonalHeaderMetrics({
+      userId: ME, timezone: "America/Los_Angeles", userWindow, now,
+      pipeline: { assigned: 0, needsReply: 0, atRisk: 0 },
+      today: { avgResponseSec: null, onTimeRate: null, repliesSent: 0 },
+      yesterdayAvgSec: null, unassigned: 0, oldestUnassignedSec: null,
+      claims: { claimedByMe: 0, todayUnassignedDenominator: 0 },
+      teammatesOverSla: undefined,
+    });
+    assert.equal(metrics.windowState, "after_hours");
+    assert.equal(metrics.user.businessSecondsRemainingToday, 0);
   });
 });
