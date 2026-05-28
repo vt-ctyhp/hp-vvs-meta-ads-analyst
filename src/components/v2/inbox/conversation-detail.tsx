@@ -3,6 +3,7 @@
 import Link from "next/link";
 
 import { ReplyComposer } from "@/components/v2/inbox/reply-composer";
+import { useReadOnly } from "./read-only-context.tsx";
 import type { SocialInboxComment, SocialInboxMessage } from "@/lib/social-inbox";
 
 /**
@@ -27,6 +28,8 @@ type Props = {
   commentAt?: string | null;
   canSend: boolean;
   backHref: string;
+  /** Manager peek: hide the reply composer so the thread is view-only. */
+  readOnly?: boolean;
 };
 
 const MSG_FMT = new Intl.DateTimeFormat("en-US", {
@@ -49,7 +52,10 @@ export function ConversationDetail({
   commentAt,
   canSend,
   backHref,
+  readOnly,
 }: Props) {
+  const contextReadOnly = useReadOnly();
+  const isReadOnly = Boolean(readOnly) || contextReadOnly;
   return (
     <div className="space-y-4">
       <header className="flex items-center gap-3 border border-hp-rule bg-hp-card px-4 py-3">
@@ -112,11 +118,13 @@ export function ConversationDetail({
         )}
       </section>
 
-      <ReplyComposer
-        conversationId={conversationId}
-        brand={brand}
-        canSend={canSend}
-      />
+      {!isReadOnly && (
+        <ReplyComposer
+          conversationId={conversationId}
+          brand={brand}
+          canSend={canSend}
+        />
+      )}
     </div>
   );
 }
