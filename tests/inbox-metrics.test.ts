@@ -12,6 +12,7 @@ import {
   computeTodayResponseMetrics,
   pickYesterdayAvg,
   userDateString,
+  businessSecondsBetween,
   type ConversationLike,
   type SendAttemptLike,
   type CommentActionLike,
@@ -138,6 +139,70 @@ describe("computeTodayResponseMetrics (B1/B2)", () => {
     const r = computeTodayResponseMetrics(replied, userWindow, QMAP, now);
     assert.equal(r.avgResponseSec, 3600); // only the fresh one
     assert.equal(r.onTimeRate, 0.5); // both count for on-time; old one late
+  });
+});
+
+describe("computeTodayResponseMetrics – two-clock rule (mixed timezone)", () => {
+  // Regression: a vn_product (ICT = Asia/Ho_Chi_Minh, UTC+7) conversation replied
+  // to by a PT (America/Los_Angeles, UTC-7 PDT) user.
+  //
+  // Setup:
+  //   firstInboundAt  = 2026-05-27T04:00:00Z  →  11:00 ICT on May 27  (21:00 PT on May 26, after-hours)
+  //   firstOutboundAt = 2026-05-27T17:30:00Z  →  00:30 ICT on May 28  (10:30 PT on May 27, inside today)
+  //   now             = 2026-05-27T22:00:00Z  →  15:00 PT on May 27   (user's "today" is 17:00Z-02:00Z)
+  //
+  // Two-clock rule:
+  //   ELAPSED uses the QUEUE's ICT window [10:00,19:00) ICT:
+  //     Overlap of [04:00Z, 17:30Z) with the ICT day-window [03:00Z, 12:00Z) on May 27
+  //     = [04:00Z, 12:00Z) = 8 h = 28 800 s.
+  //   BUCKETING uses the USER's PT window [10:00,19:00) PT = [17:00Z, 02:00Z):
+  //     17:30Z falls inside [17:00Z, 02:00Z(next)) → reply is counted as "today". ✓
+  //
+  // If the implementation wrongly used the PT window for elapsed:
+  //   Overlap of [04:00Z May27, 17:30Z May27) with PT day-window [17:00Z May27, 02:00Z May28)
+  //   = [17:00Z, 17:30Z) = 30 min = 1 800 s.
+  //
+  // The ICT value (28 800) and the PT-window value (1 800) differ by 27 000 s,
+  // so a collapsed-clock implementation would produce the wrong answer.
+
+  const ictQueueMap = buildQueueWindowMap([
+    {
+      key: "vn_product",
+      timezone: "Asia/Ho_Chi_Minh",
+      business_hours_start: "10:00:00",
+      business_hours_end: "19:00:00",
+    },
+  ]);
+  const ptUserWindow = { tz: "America/Los_Angeles", startHour: 10, endHour: 19 };
+  const ictQueueWindow = { tz: "Asia/Ho_Chi_Minh", startHour: 10, endHour: 19 };
+  const now = new Date("2026-05-27T22:00:00Z"); // 15:00 PT
+
+  const inbound = new Date("2026-05-27T04:00:00Z");
+  const outbound = new Date("2026-05-27T17:30:00Z");
+
+  it("uses the queue (ICT) window for elapsed, not the user (PT) window", () => {
+    const replied: RepliedConversation[] = [
+      { firstInboundAt: inbound.toISOString(), firstOutboundAt: outbound.toISOString(), queueKey: "vn_product" },
+    ];
+
+    // Derive expected values directly from businessSecondsBetween to pin behaviour.
+    const expectedIct = businessSecondsBetween(inbound, outbound, ictQueueWindow); // 28 800
+    const wrongPt = businessSecondsBetween(inbound, outbound, ptUserWindow); // 1 800
+
+    // Sanity-check that the two windows actually differ (if equal, the test proves nothing).
+    assert.notEqual(expectedIct, wrongPt, "ICT and PT elapsed values must differ for this test to be meaningful");
+
+    const r = computeTodayResponseMetrics(replied, ptUserWindow, ictQueueMap, now);
+
+    // B1 avg must equal the ICT-window elapsed (28 800 s).
+    // If the implementation collapsed the two clocks and used the PT window for elapsed,
+    // it would return 1 800 instead of 28 800.
+    assert.equal(r.avgResponseSec, expectedIct);
+    assert.notEqual(r.avgResponseSec, wrongPt);
+
+    // B2: 28 800 > SLA_BUSINESS_SECONDS (10 800) → late → on-time rate = 0.
+    assert.equal(r.onTimeRate, 0);
+    assert.equal(r.repliesConsidered, 1);
   });
 });
 
