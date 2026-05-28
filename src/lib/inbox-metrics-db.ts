@@ -252,10 +252,25 @@ export async function getTeamRollup(
   const userWindow = resolveUserWindow(DEFAULT_BUSINESS_WINDOW.tz);
   const ids = Array.from(teamUserIds);
 
-  // Names (users.id == app_user_id; tolerate nulls → "Unknown").
-  const { data: userRows } = await supabase.from("users").select("id,full_name").in("id", ids);
+  // Names via the data-boundary identity view (web role has SELECT here; it has
+  // no grant on public.users under limited-access mode). app_user_id == user id.
+  const { data: userRows } = await (supabase as unknown as {
+    schema: (schema: "analytics") => {
+      from: (table: "ads_analyst_identity_profiles_v1") => {
+        select: (columns: string) => {
+          in: (column: string, values: string[]) => Promise<{ data: { app_user_id: string; full_name: string | null }[] | null }>;
+        };
+      };
+    };
+  })
+    .schema("analytics")
+    .from("ads_analyst_identity_profiles_v1")
+    .select("app_user_id,full_name")
+    .in("app_user_id", ids);
   const nameById = new Map<string, string | null>(
-    ((userRows || []) as { id: string; full_name: string | null }[]).map((u) => [u.id, u.full_name]),
+    ((userRows || []) as { app_user_id: string; full_name: string | null }[]).map(
+      (u) => [u.app_user_id, u.full_name],
+    ),
   );
 
   // Historical aggregates from the rollup (non-today periods).
