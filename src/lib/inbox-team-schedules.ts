@@ -41,9 +41,18 @@ export type SchedulePatch = {
 // Profile shape accepted by the data functions — subset of AccessProfile.
 export type ScheduleSettingsProfile = {
   appUserId: string | null;
+  roles: readonly string[];
   teamLead: boolean;
   teamUserIds: readonly string[];
 };
+
+// Admins manage every inbox team member; team leads manage only their own team.
+function isInboxTeamAdmin(profile: ScheduleSettingsProfile): boolean {
+  return profile.roles.includes("admin");
+}
+function canManageInboxTeam(profile: ScheduleSettingsProfile): boolean {
+  return profile.teamLead || isInboxTeamAdmin(profile);
+}
 
 // ---------------------------------------------------------------------------
 // Part A — pure helper
@@ -99,13 +108,29 @@ function dynamicSupabaseWeb(): DynamicClient {
 export async function loadInboxTeamScheduleSettings(
   profile: ScheduleSettingsProfile,
 ): Promise<TeamMemberScheduleRow[]> {
-  if (!profile.teamLead || profile.teamUserIds.length === 0) {
+  if (!canManageInboxTeam(profile)) {
     return [];
   }
 
   const env = getActiveMetaInboxEnvironment();
   const supabase = dynamicSupabaseWeb();
-  const ids = Array.from(profile.teamUserIds);
+
+  // Admins see every team member; leads see only their own team's members.
+  let ids: string[];
+  if (isInboxTeamAdmin(profile)) {
+    const { data: allMembers } = await supabase
+      .from("meta_inbox_team_members")
+      .select("app_user_id")
+      .eq("environment", env);
+    ids = Array.from(
+      new Set(((allMembers || []) as { app_user_id: string }[]).map((r) => r.app_user_id)),
+    );
+  } else {
+    ids = Array.from(profile.teamUserIds);
+  }
+  if (ids.length === 0) {
+    return [];
+  }
 
   // 1. team_members rows (auto_assign_eligible)
   const { data: memberRows } = await supabase
@@ -201,19 +226,33 @@ export async function saveInboxTeamScheduleSettings(
   profile: ScheduleSettingsProfile,
   patch: SchedulePatch,
 ): Promise<void> {
-  // Authorization: caller must be a lead AND the target must be in their team
-  if (
-    !profile.teamLead ||
-    !profile.teamUserIds.includes(patch.appUserId)
-  ) {
+  // Authorization: admins may manage any inbox team member; leads only their own team.
+  if (!canManageInboxTeam(profile)) {
     throw new AuthorizationError(
-      "Not authorized to manage this team member's schedule settings.",
+      "Not authorized to manage team schedule settings.",
       403,
     );
   }
 
   const env = getActiveMetaInboxEnvironment();
   const supabase = dynamicSupabaseWeb();
+
+  if (isInboxTeamAdmin(profile)) {
+    const { data: memberCheck } = await supabase
+      .from("meta_inbox_team_members")
+      .select("app_user_id")
+      .eq("environment", env)
+      .eq("app_user_id", patch.appUserId)
+      .limit(1);
+    if (!memberCheck || (memberCheck as unknown[]).length === 0) {
+      throw new AuthorizationError("Target is not an inbox team member.", 403);
+    }
+  } else if (!profile.teamUserIds.includes(patch.appUserId)) {
+    throw new AuthorizationError(
+      "Not authorized to manage this team member's schedule settings.",
+      403,
+    );
+  }
 
   // 1. Update auto_assign_eligible if provided
   if (typeof patch.autoAssignEligible === "boolean") {

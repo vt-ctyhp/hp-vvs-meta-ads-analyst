@@ -12,11 +12,12 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   try {
     const profile = await requirePermissionFromRequest(request, "manage_inbox_state");
-    if (!profile.teamLead) {
-      throw new AuthorizationError("Team lead access required.", 403);
+    if (!profile.teamLead && !profile.roles.includes("admin")) {
+      throw new AuthorizationError("Team lead or admin access required.", 403);
     }
     const data = await loadInboxTeamScheduleSettings({
       appUserId: profile.appUserId,
+      roles: profile.roles,
       teamLead: profile.teamLead,
       teamUserIds: profile.teamUserIds,
     });
@@ -29,8 +30,8 @@ export async function GET(request: Request) {
 export async function PATCH(request: Request) {
   try {
     const profile = await requirePermissionFromRequest(request, "manage_inbox_state");
-    if (!profile.teamLead) {
-      throw new AuthorizationError("Team lead access required.", 403);
+    if (!profile.teamLead && !profile.roles.includes("admin")) {
+      throw new AuthorizationError("Team lead or admin access required.", 403);
     }
 
     // Parse and validate body manually — parseJsonObjectBody doesn't support
@@ -90,6 +91,7 @@ export async function PATCH(request: Request) {
     await saveInboxTeamScheduleSettings(
       {
         appUserId: profile.appUserId,
+        roles: profile.roles,
         teamLead: profile.teamLead,
         teamUserIds: profile.teamUserIds,
       },

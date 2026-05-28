@@ -14,21 +14,29 @@ export default async function TeamMetricsPage({
   searchParams: Promise<{ period?: string | string[] }>;
 }) {
   const profile = await getServerAccessProfile();
-  if (!profile?.teamLead) notFound();
+  if (!profile?.teamLead && !profile?.roles.includes("admin")) notFound();
 
   const period = resolvePeriodParam((await searchParams).period);
-  const rollup = await getTeamRollup(
-    {
-      appUserId: profile.appUserId,
-      roles: profile.roles,
-      permissions: profile.permissions,
-      teamLead: profile.teamLead,
-      teamIds: profile.teamIds,
-      teamUserIds: profile.teamUserIds,
-    },
-    period,
-    new Date(),
-  );
+  // Admins may reach this page without belonging to a team (and the local-test
+  // profile uses a non-UUID app id), so the rollup can fail — degrade the metrics
+  // table to empty rather than 500 the whole page (the schedule editor still renders).
+  let rollup: Awaited<ReturnType<typeof getTeamRollup>>;
+  try {
+    rollup = await getTeamRollup(
+      {
+        appUserId: profile.appUserId,
+        roles: profile.roles,
+        permissions: profile.permissions,
+        teamLead: profile.teamLead,
+        teamIds: profile.teamIds,
+        teamUserIds: profile.teamUserIds,
+      },
+      period,
+      new Date(),
+    );
+  } catch {
+    rollup = { period, teamName: "Team", rows: [] };
+  }
 
   return (
     <main className="min-h-screen bg-hp-foundation px-4 py-6 text-hp-body md:px-8">
