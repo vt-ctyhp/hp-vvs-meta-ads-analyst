@@ -22,6 +22,7 @@ import type {
   SocialInboxConversation,
   SocialInboxCustomerContactMethod,
 } from "../../../lib/social-inbox.ts";
+import { AssignToUserPicker } from "./assign-to-user-picker.tsx";
 import { platformOf } from "./conversation-header.tsx";
 import {
   DrawerSection,
@@ -640,6 +641,18 @@ function WorkflowSection({
             or lost update.
           </p>
         ) : null}
+
+        <AssignToUserPicker
+          disabled={!canEditWorkflow || isSaving}
+          onAssign={(targetUserId) => {
+            if (!conversation || !canEditWorkflow) return;
+            onWorkflowUpdate(conversation.id, {
+              assignmentMode: "assign_to_user",
+              targetUserId,
+              changeReason: changeReasonDraft || "Assigned from inbox workflow panel.",
+            });
+          }}
+        />
 
         <div className="grid gap-2 sm:grid-cols-3">
           <button
