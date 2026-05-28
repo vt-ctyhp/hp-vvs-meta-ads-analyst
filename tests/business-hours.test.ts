@@ -11,6 +11,7 @@ import {
   yesterdaysWindow,
   type BusinessWindow,
 } from "../src/lib/business-hours.ts";
+import { BUSINESS_SECONDS_FIXTURES } from "./business-hours-fixtures.ts";
 
 const PT: BusinessWindow = CALIFORNIA_BUSINESS_WINDOW; // 10–19 America/Los_Angeles
 const ICT: BusinessWindow = VN_BUSINESS_WINDOW;        // 10–19 Asia/Ho_Chi_Minh
@@ -175,6 +176,24 @@ describe("businessSecondsBetween", () => {
     const day = todaysWindow(new Date("2026-11-01T20:00:00Z"), CALIFORNIA_BUSINESS_WINDOW);
     assert.equal(businessSecondsBetween(day.start, day.end, CALIFORNIA_BUSINESS_WINDOW), 32400);
   });
+});
+
+describe("businessSecondsBetween fixture parity (JS side)", () => {
+  // Mirrors the cross-check fixtures embedded in the
+  // business_seconds_between_fn migration; staging asserts the SQL fn returns
+  // the same `expected` for each row.
+  for (const f of BUSINESS_SECONDS_FIXTURES) {
+    it(`matches fixture: ${f.label}`, () => {
+      assert.equal(
+        businessSecondsBetween(new Date(f.fromISO), new Date(f.toISO), {
+          tz: f.tz,
+          startHour: f.startHour,
+          endHour: f.endHour,
+        }),
+        f.expected,
+      );
+    });
+  }
 });
 
 describe("businessSecondsRemainingUntil", () => {
