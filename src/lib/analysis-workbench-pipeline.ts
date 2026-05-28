@@ -687,11 +687,13 @@ function withParserUnsupportedBlockers(
 function parserUnsupportedIssues(
   unsupported: WorkbenchPlannerIntent["unsupported"] | undefined,
 ): WorkbenchSemanticIssue[] {
-  return (unsupported || []).map((item) => ({
-    code: item.code,
-    message: item.message,
-    ...(item.suggestedRewrite ? { suggestedRequest: item.suggestedRewrite } : {}),
-  }));
+  return (unsupported || [])
+    .filter((item) => item.code !== "unsupported_daily_budget")
+    .map((item) => ({
+      code: item.code,
+      message: item.message,
+      ...(item.suggestedRewrite ? { suggestedRequest: item.suggestedRewrite } : {}),
+    }));
 }
 
 function dedupeSemanticIssues(issues: WorkbenchSemanticIssue[]): WorkbenchSemanticIssue[] {
@@ -1678,7 +1680,7 @@ function detectMetrics(prompt: string, useDefault = true): WorkbenchMetric[] {
 
 function refineDetectedMetrics(prompt: string, metrics: WorkbenchMetric[]): WorkbenchMetric[] {
   const lower = prompt.toLowerCase();
-  if (/\bmonthly budgets?\b|\bbudget\s+per\s+month\b/.test(lower) && metrics.includes("monthly_budget")) {
+  if (monthlyBudgetRequested(lower) && metrics.includes("monthly_budget")) {
     metrics = metrics.filter((metric) => metric !== "daily_budget");
   }
   if (/\bnew\s+messages?\b|\bnew\s+messaging\s+contacts?\b|\bfirst\s+repl(?:y|ies)\b/.test(lower)) {
@@ -1702,6 +1704,13 @@ function metricBundleForPrompt(input: {
   questionType: WorkbenchQuestionType;
 }): WorkbenchMetric[] {
   const lower = input.prompt.toLowerCase();
+  if (dailyBudgetRequested(lower) && !monthlyBudgetRequested(lower)) {
+    const dailyBudgetMetrics: WorkbenchMetric[] = [
+      "daily_budget",
+      ...input.metrics.filter((metric) => metric !== "monthly_budget"),
+    ];
+    return unique(dailyBudgetMetrics).slice(0, 4);
+  }
   const wantsPerformanceBundle =
     /\bperformance\b|\bwhat\s+changed\b/.test(lower) ||
     input.questionType === "diagnosis" ||
@@ -1735,6 +1744,16 @@ function metricBundleForPrompt(input: {
     ...bundle,
     ...input.metrics.filter((metric) => !bundle.includes(metric)),
   ]).slice(0, 4);
+}
+
+function dailyBudgetRequested(lower: string) {
+  return /\b(?:current\s+)?daily\s+budgets?\b|\bbudgets?\s+per\s+day\b|\bper[-\s]?day\s+budgets?\b/.test(
+    lower,
+  );
+}
+
+function monthlyBudgetRequested(lower: string) {
+  return /\bmonthly budgets?\b|\bbudget\s+per\s+month\b/.test(lower);
 }
 
 function inferAnalysisShape(input: {

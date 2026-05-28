@@ -182,8 +182,7 @@ type UnsupportedBoundary = {
     | "roas"
     | "staff"
     | "website"
-    | "social_inbox"
-    | "daily_budget";
+    | "social_inbox";
   label: string;
   reason: string;
   suggestedRequest: string;
@@ -380,14 +379,6 @@ const CHART_COMPATIBILITY: ChartCompatibilityRule[] = [
 ];
 
 const UNSUPPORTED_BOUNDARIES: UnsupportedBoundary[] = [
-  {
-    key: "daily_budget",
-    label: "Daily budget",
-    reason: "Daily budget is not available in Ask AI yet. Available budget metric is Monthly Budget.",
-    suggestedRequest: "Show monthly budget by campaign group.",
-    pattern:
-      /\b(?:current\s+)?daily\s+budgets?\b|\bbudgets?\s+per\s+day\b|\bper[-\s]?day\s+budgets?\b/i,
-  },
   {
     key: "crm",
     label: "CRM and Sales/ERP",

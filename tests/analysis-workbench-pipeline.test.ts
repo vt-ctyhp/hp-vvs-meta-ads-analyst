@@ -1613,7 +1613,7 @@ test("unsupported requests are blocked before any aggregate query runs", async (
   assert.match(result.answer.summary, /outside the governed Meta Ads catalog/);
 });
 
-test("daily budget requests block before aggregates and do not fall back to monthly budget", async () => {
+test("daily budget requests repair stale parser unsupported entries and do not fall back to monthly budget", async () => {
   let queryCount = 0;
   const result = await runAnalysisWorkbenchFactsPipeline({
     prompt: "What is the daily budget per campaign group currently?",
@@ -1663,19 +1663,18 @@ test("daily budget requests block before aggregates and do not fall back to mont
     }),
     executeAggregate: async () => {
       queryCount += 1;
-      return [];
+      return [aggregateRow({ campaign_umbrella: "Book Appts US", daily_budget: 100, monthly_budget: 3100 })];
     },
   });
 
-  assert.equal(queryCount, 0);
-  assert.equal(result.status, "failed");
-  assert.equal(result.queryPlan.status, "blocked");
-  assert.deepEqual(result.queryPlan.requests, []);
-  assert.deepEqual(result.visualCards, []);
-  assert.ok(
-    result.validation.blockers.some((blocker) => blocker.code === "unsupported_daily_budget"),
-  );
-  assert.match(result.answer.summary, /Daily budget is not available in Ask AI yet/i);
+  assert.equal(queryCount, 3);
+  assert.equal(result.status, "completed");
+  assert.equal(result.queryPlan.status, "ready");
+  assert.deepEqual(result.intent.metrics, ["daily_budget"]);
+  assert.deepEqual(result.validation.blockers, []);
+  assert.match(result.answer.summary, /daily budget/i);
+  assert.match(result.answer.summary, /\$100/);
+  assert.doesNotMatch(result.answer.summary, /\$3,100/);
 });
 
 test("AI parser unsupported entries block even when metrics are governed", async () => {

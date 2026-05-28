@@ -67,16 +67,16 @@ const CHECKS = [
     test: (sql) => /date_trunc\('month',\s*p_end\)/i.test(sql),
   },
   {
-    id: "monthly_budget_counts_ad_set_once",
-    description: "monthly_budget ranks each ad set once per result group, not once per calendar month",
+    id: "monthly_budget_counts_budget_entity_once",
+    description: "monthly_budget ranks each budget entity once per result group, not once per calendar month",
     test: (sql) =>
-      /partition\s+by[\s\S]{0,900}meta_account_id,\s*ad_set_id\s+order\s+by\s+case\s+when\s+delivery_status\s*=\s*'live'\s+then\s+0\s+else\s+1\s+end,\s*date_start\s+asc/i.test(sql),
+      /partition\s+by[\s\S]{0,900}(?:\w+\.)?meta_account_id,\s*(?:(?:\w+\.)?ad_set_id|(?:\w+\.)?daily_budget_entity_key)\s+order\s+by\s+case\s+when\s+(?:\w+\.)?delivery_status\s*=\s*'live'\s+then\s+0\s+else\s+1\s+end,\s*(?:\w+\.)?date_start\s+asc/i.test(sql),
   },
   {
     id: "monthly_budget_live_only",
     description: "monthly_budget counts only live ad sets",
     test: (sql) =>
-      /case\s+when\s+budget_rank\s*=\s*1\s+and\s+delivery_status\s*=\s*'live'\s+and\s+daily_budget\s*>\s*0[\s\S]{0,160}daily_budget\s*\*\s*days_in_month/i.test(sql),
+      /case\s+when\s+(?:\w+\.)?(?:budget_rank|monthly_budget_rank)\s*=\s*1\s+and\s+(?:\w+\.)?delivery_status\s*=\s*'live'\s+and\s+(?:\w+\.)?daily_budget\s*>\s*0[\s\S]{0,180}(?:\w+\.)?daily_budget\s*\*\s*(?:\w+\.)?days_in_month/i.test(sql),
   },
 ];
 
@@ -201,8 +201,8 @@ function runSelfTest() {
       select coalesce((select 1), (select 2), 0) as messaging_contacts_raw;
       select coalesce((select 1), (select 2), 0) as leads_raw;
       select extract(day from (date_trunc('month', p_end)::date + interval '1 month - 1 day'))::numeric as days_in_month;
-      select row_number() over (partition by meta_account_id, ad_set_id order by case when delivery_status = 'live' then 0 else 1 end, date_start asc) as budget_rank;
-      select round(sum(case when budget_rank = 1 and delivery_status = 'live' and daily_budget > 0 then daily_budget * days_in_month else 0 end), 2) as monthly_budget;
+      select row_number() over (partition by f.meta_account_id, f.daily_budget_entity_key order by case when f.delivery_status = 'live' then 0 else 1 end, f.date_start asc) as monthly_budget_rank;
+      select round(sum(case when r.monthly_budget_rank = 1 and r.delivery_status = 'live' and r.daily_budget > 0 then r.daily_budget * r.days_in_month else 0 end), 2) as monthly_budget;
     $$ language sql;
   `;
   const badSql = goodSql.replace("where i.environment = r.environment", "where true");
