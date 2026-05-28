@@ -118,3 +118,44 @@ export function todaysWindow(
 export function yesterdaysWindow(now: Date, w: BusinessWindow): { start: Date; end: Date } {
   return dayWindow(now, w, -1);
 }
+
+// Sum of wall-clock seconds in [startHour,endHour) local to w.tz between
+// `from` and `to`. Iterates day-by-day in the tz; safe across DST because
+// each day's window is recomputed via zonedTimeToUtc.
+export function businessSecondsBetween(from: Date, to: Date, w: BusinessWindow): number {
+  if (from.getTime() >= to.getTime()) return 0;
+
+  let total = 0;
+  // Start from the calendar day of `from` in tz, walk forward until past `to`.
+  const startParts = zonedParts(from, w.tz);
+  let cursorBase = Date.UTC(startParts.year, startParts.month - 1, startParts.day);
+  const guardEnd = to.getTime();
+
+  // Cap iterations defensively (years of span would still terminate).
+  for (let i = 0; i < 4000; i += 1) {
+    const shifted = new Date(cursorBase);
+    const y = shifted.getUTCFullYear();
+    const m = shifted.getUTCMonth() + 1;
+    const d = shifted.getUTCDate();
+    const dayStart = zonedTimeToUtc(w.tz, y, m, d, w.startHour);
+    const endDayOffset = w.endHour <= w.startHour ? 1 : 0;
+    const endShift = new Date(Date.UTC(y, m - 1, d) + endDayOffset * 86_400_000);
+    const dayEnd = zonedTimeToUtc(
+      w.tz,
+      endShift.getUTCFullYear(),
+      endShift.getUTCMonth() + 1,
+      endShift.getUTCDate(),
+      w.endHour,
+    );
+
+    const overlapStart = Math.max(from.getTime(), dayStart.getTime());
+    const overlapEnd = Math.min(to.getTime(), dayEnd.getTime());
+    if (overlapEnd > overlapStart) {
+      total += Math.round((overlapEnd - overlapStart) / 1000);
+    }
+
+    if (dayStart.getTime() > guardEnd) break;
+    cursorBase += 86_400_000;
+  }
+  return total;
+}

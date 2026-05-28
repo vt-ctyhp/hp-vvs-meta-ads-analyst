@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  businessSecondsBetween,
   CALIFORNIA_BUSINESS_WINDOW,
   VN_BUSINESS_WINDOW,
   todaysWindow,
@@ -128,5 +129,48 @@ describe("yesterdaysWindow across a DST seam (spring-forward)", () => {
   it("end of Mar 8 window is 02:00Z on Mar 9 (PDT offset)", () => {
     const w = yesterdaysWindow(nowAfterSpring, PT);
     assert.equal(w.end.toISOString(), "2026-03-09T02:00:00.000Z");
+  });
+});
+
+describe("businessSecondsBetween", () => {
+  it("counts only in-window seconds within one PT day", () => {
+    // 11:00 PT → 13:30 PT = 2h30m = 9000s
+    const from = new Date("2026-05-27T18:00:00Z"); // 11:00 PDT
+    const to = new Date("2026-05-27T20:30:00Z");   // 13:30 PDT
+    assert.equal(businessSecondsBetween(from, to, CALIFORNIA_BUSINESS_WINDOW), 9000);
+  });
+  it("clamps to business hours when arrival precedes open", () => {
+    // 08:00 PT (before 10:00) → 11:00 PT = counts 10:00→11:00 = 3600s
+    const from = new Date("2026-05-27T15:00:00Z"); // 08:00 PDT
+    const to = new Date("2026-05-27T18:00:00Z");   // 11:00 PDT
+    assert.equal(businessSecondsBetween(from, to, CALIFORNIA_BUSINESS_WINDOW), 3600);
+  });
+  it("excludes the overnight closed gap across two days", () => {
+    // 18:00 PT day1 → 11:00 PT day2: 1h (18→19) + 1h (10→11) = 7200s
+    const from = new Date("2026-05-28T01:00:00Z"); // 18:00 PDT day1
+    const to = new Date("2026-05-28T18:00:00Z");   // 11:00 PDT day2
+    assert.equal(businessSecondsBetween(from, to, CALIFORNIA_BUSINESS_WINDOW), 7200);
+  });
+  it("returns 0 when from >= to", () => {
+    const t = new Date("2026-05-27T18:00:00Z");
+    assert.equal(businessSecondsBetween(t, t, CALIFORNIA_BUSINESS_WINDOW), 0);
+  });
+  it("counts ICT seconds independently", () => {
+    // 11:00 ICT → 12:00 ICT = 3600s
+    const from = new Date("2026-05-27T04:00:00Z");
+    const to = new Date("2026-05-27T05:00:00Z");
+    assert.equal(businessSecondsBetween(from, to, VN_BUSINESS_WINDOW), 3600);
+  });
+  it("handles the spring-forward DST boundary (Mar 8 2026, PT)", () => {
+    // PT springs forward 02:00→03:00 on 2026-03-08, outside 10–19 window,
+    // so a full business day still measures 9h = 32400s.
+    const from = new Date("2026-03-08T17:00:00Z"); // 10:00 PDT (UTC-7: 17:00Z)
+    const to = new Date("2026-03-09T02:00:00Z");   // 19:00 PDT (UTC-7: 02:00Z next day)
+    assert.equal(businessSecondsBetween(from, to, CALIFORNIA_BUSINESS_WINDOW), 32400);
+  });
+  it("handles the fall-back DST boundary (Nov 1 2026, PT)", () => {
+    // Full business day Nov 1 (fall back 02:00 happens outside window).
+    const day = todaysWindow(new Date("2026-11-01T20:00:00Z"), CALIFORNIA_BUSINESS_WINDOW);
+    assert.equal(businessSecondsBetween(day.start, day.end, CALIFORNIA_BUSINESS_WINDOW), 32400);
   });
 });
