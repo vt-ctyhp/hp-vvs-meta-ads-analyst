@@ -13,4 +13,4 @@ alter table public.meta_inbox_team_members
   add column if not exists auto_assign_eligible boolean not null default false;
 
 comment on column public.meta_inbox_team_members.auto_assign_eligible is
-  'When true, this member joins the round-robin auto-assign pool for the categories their team covers (spec 2026-05-28-inbox-auto-assign-design).';
+  'When true, this member joins the round-robin auto-assign pool for the categories their team covers (spec 2026-05-28-auto-assign-design).';
