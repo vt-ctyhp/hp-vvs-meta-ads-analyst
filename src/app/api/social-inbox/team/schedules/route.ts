@@ -1,6 +1,5 @@
-import { requirePermissionFromRequest } from "@/lib/app-auth";
+import { AuthorizationError, requirePermissionFromRequest } from "@/lib/app-auth";
 import { jsonError } from "@/lib/http";
-import { AuthorizationError } from "@/lib/app-auth";
 import {
   loadInboxTeamScheduleSettings,
   saveInboxTeamScheduleSettings,

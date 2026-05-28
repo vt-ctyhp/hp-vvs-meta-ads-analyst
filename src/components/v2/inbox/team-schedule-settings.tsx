@@ -21,6 +21,7 @@ type State = {
   error: string | null;
   members: MemberRow[];
   saving: Record<string, boolean>; // appUserId -> saving
+  saveErr: Record<string, boolean>; // appUserId -> save failed
 };
 
 type Action =
@@ -30,7 +31,8 @@ type Action =
   | { type: "patch_eligible"; appUserId: string; value: boolean }
   | { type: "patch_time"; appUserId: string; weekday: number; field: "startTime" | "endTime"; value: string }
   | { type: "save_start"; appUserId: string }
-  | { type: "save_done"; appUserId: string };
+  | { type: "save_done"; appUserId: string }
+  | { type: "save_err"; appUserId: string };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -69,15 +71,17 @@ function reducer(state: State, action: Action): State {
       };
     }
     case "save_start":
-      return { ...state, saving: { ...state.saving, [action.appUserId]: true } };
+      return { ...state, saving: { ...state.saving, [action.appUserId]: true }, saveErr: { ...state.saveErr, [action.appUserId]: false } };
     case "save_done":
       return { ...state, saving: { ...state.saving, [action.appUserId]: false } };
+    case "save_err":
+      return { ...state, saving: { ...state.saving, [action.appUserId]: false }, saveErr: { ...state.saveErr, [action.appUserId]: true } };
     default:
       return state;
   }
 }
 
-const INITIAL_STATE: State = { loading: true, error: null, members: [], saving: {} };
+const INITIAL_STATE: State = { loading: true, error: null, members: [], saving: {}, saveErr: {} };
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -119,13 +123,15 @@ export function TeamScheduleSettings() {
               endTime: entry?.endTime ?? null,
             };
           });
-          await fetch("/api/social-inbox/team/schedules", {
+          const response = await fetch("/api/social-inbox/team/schedules", {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ appUserId: uid, schedules }),
           });
-        } finally {
+          if (!response.ok) throw new Error(`Save failed (${response.status})`);
           dispatch({ type: "save_done", appUserId: uid });
+        } catch {
+          dispatch({ type: "save_err", appUserId: uid });
         }
       }, 600);
     },
@@ -136,13 +142,15 @@ export function TeamScheduleSettings() {
     dispatch({ type: "patch_eligible", appUserId, value });
     dispatch({ type: "save_start", appUserId });
     try {
-      await fetch("/api/social-inbox/team/schedules", {
+      const response = await fetch("/api/social-inbox/team/schedules", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ appUserId, autoAssignEligible: value }),
       });
-    } finally {
+      if (!response.ok) throw new Error(`Save failed (${response.status})`);
       dispatch({ type: "save_done", appUserId });
+    } catch {
+      dispatch({ type: "save_err", appUserId });
     }
   }, []);
 
@@ -181,11 +189,13 @@ export function TeamScheduleSettings() {
       <div className="mt-4 divide-y divide-hp-rule border border-hp-rule">
         {state.members.map((member) => {
           const isSaving = state.saving[member.appUserId] ?? false;
+          const hasSaveErr = state.saveErr[member.appUserId] ?? false;
           return (
             <MemberScheduleRow
               key={member.appUserId}
               member={member}
               isSaving={isSaving}
+              hasSaveErr={hasSaveErr}
               onEligibilityChange={(value) => eligibilityPatch(member.appUserId, value)}
               onTimeChange={(weekday, field, value) => {
                 dispatch({ type: "patch_time", appUserId: member.appUserId, weekday, field, value });
@@ -223,11 +233,13 @@ export function TeamScheduleSettings() {
 function MemberScheduleRow({
   member,
   isSaving,
+  hasSaveErr,
   onEligibilityChange,
   onTimeChange,
 }: {
   member: MemberRow;
   isSaving: boolean;
+  hasSaveErr: boolean;
   onEligibilityChange: (value: boolean) => void;
   onTimeChange: (weekday: number, field: "startTime" | "endTime", value: string) => void;
 }) {
@@ -242,6 +254,9 @@ function MemberScheduleRow({
           )}
           {isSaving && (
             <span className="text-[10px] smallcaps text-hp-muted">saving…</span>
+          )}
+          {!isSaving && hasSaveErr && (
+            <span className="text-[10px] smallcaps text-signal-warning border border-signal-warning px-1">Save failed</span>
           )}
         </div>
         {/* Eligibility toggle */}
