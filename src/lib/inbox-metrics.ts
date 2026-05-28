@@ -178,6 +178,45 @@ export function computeTodayResponseMetrics(
   return { avgResponseSec, onTimeRate, repliesConsidered: total };
 }
 
+// ─── Yesterday avg from metrics_daily rollup ──────────────────────────────────
+
+export type MetricsDailyRow = {
+  user_id: string;
+  date: string; // YYYY-MM-DD
+  avg_response_seconds: number | null;
+  on_time_replies?: number;
+  total_replies?: number;
+  team_claims?: number;
+};
+
+export function userDateString(now: Date, userWindow: BusinessWindow): string {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: userWindow.tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return fmt.format(now); // en-CA → YYYY-MM-DD
+}
+
+export function userYesterdayDateString(now: Date, userWindow: BusinessWindow): string {
+  const today = userDateString(now, userWindow);
+  const [y, m, d] = today.split("-").map(Number);
+  const prev = new Date(Date.UTC(y, m - 1, d) - 86_400_000);
+  return `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, "0")}-${String(prev.getUTCDate()).padStart(2, "0")}`;
+}
+
+export function pickYesterdayAvg(
+  rows: MetricsDailyRow[],
+  userId: string,
+  now: Date,
+  userWindow: BusinessWindow,
+): number | null {
+  const yesterday = userYesterdayDateString(now, userWindow);
+  const row = rows.find((r) => r.user_id === userId && r.date === yesterday);
+  return row ? row.avg_response_seconds : null;
+}
+
 // ─── B3: Replies sent today (send_attempts + comment_actions) ─────────────────
 
 export type SendAttemptLike = {

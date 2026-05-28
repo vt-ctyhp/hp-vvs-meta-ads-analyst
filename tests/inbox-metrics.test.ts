@@ -10,10 +10,13 @@ import {
   computePipelineMetrics,
   computeRepliesSentToday,
   computeTodayResponseMetrics,
+  pickYesterdayAvg,
+  userDateString,
   type ConversationLike,
   type SendAttemptLike,
   type CommentActionLike,
   type RepliedConversation,
+  type MetricsDailyRow,
 } from "../src/lib/inbox-metrics.ts";
 
 describe("inbox-metrics constants & window helpers", () => {
@@ -135,5 +138,24 @@ describe("computeTodayResponseMetrics (B1/B2)", () => {
     const r = computeTodayResponseMetrics(replied, userWindow, QMAP, now);
     assert.equal(r.avgResponseSec, 3600); // only the fresh one
     assert.equal(r.onTimeRate, 0.5); // both count for on-time; old one late
+  });
+});
+
+describe("pickYesterdayAvg", () => {
+  const userWindow = { tz: "America/Los_Angeles", startHour: 10, endHour: 19 };
+  it("returns the avg_response_seconds for the user's yesterday date", () => {
+    const now = new Date("2026-05-27T19:00:00Z"); // 12:00 PT today=05-27, yesterday=05-26
+    const rows: MetricsDailyRow[] = [
+      { user_id: ME, date: "2026-05-26", avg_response_seconds: 2400 },
+      { user_id: ME, date: "2026-05-25", avg_response_seconds: 9999 },
+    ];
+    assert.equal(pickYesterdayAvg(rows, ME, now, userWindow), 2400);
+  });
+  it("returns null when there is no row for yesterday", () => {
+    const now = new Date("2026-05-27T19:00:00Z");
+    assert.equal(pickYesterdayAvg([], ME, now, userWindow), null);
+  });
+  it("computes the user-tz calendar date string", () => {
+    assert.equal(userDateString(new Date("2026-05-28T02:30:00Z"), userWindow), "2026-05-27"); // 19:30 PT still 05-27
   });
 });
