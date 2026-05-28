@@ -37,9 +37,13 @@ for (const file of files) {
   versions.set(version, versionFiles);
 
   // Offset rule: only enforced on 14-digit versions at or after the cutoff.
+  // Remote-history placeholders must keep the exact remote version, including
+  // seconds written by other tools/repos, or `supabase db push` cannot compare
+  // ledgers without a repair.
   if (version.length === 14 && version >= MIN_ENFORCED_VERSION) {
     const seconds = version.slice(12, 14);
-    if (seconds !== REPO_SECONDS_OFFSET) {
+    const isRemoteHistoryPlaceholder = file.endsWith("_remote_schema_history_placeholder.sql");
+    if (seconds !== REPO_SECONDS_OFFSET && !isRemoteHistoryPlaceholder) {
       errors.push(
         `${file}: seconds field is "${seconds}" but this repo requires "${REPO_SECONDS_OFFSET}" ` +
           `(offset convention, enforced for versions ≥ ${MIN_ENFORCED_VERSION}). ` +
