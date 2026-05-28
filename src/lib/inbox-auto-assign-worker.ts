@@ -160,14 +160,10 @@ async function saveRotationPointer(
   categoryKey: string,
   nextPointer: string,
 ): Promise<void> {
-  // Build the rotation row without triggering the assignment-guard regex.
-  // "last_assigned_user_id" is the rotation pointer column (not a mutation target).
-  // Using a computed key avoids the substring match in the guard.
-  const rotationRow = Object.assign(
-    { environment: env, queue_category_key: categoryKey },
-    { ["last_" + "assigned_user_id"]: nextPointer },
-  );
   await supabase
     .from("meta_inbox_assign_rotation")
-    .upsert(rotationRow, { onConflict: "environment,queue_category_key" });
+    .upsert(
+      { environment: env, queue_category_key: categoryKey, last_assigned_user_id: nextPointer },
+      { onConflict: "environment,queue_category_key" },
+    );
 }

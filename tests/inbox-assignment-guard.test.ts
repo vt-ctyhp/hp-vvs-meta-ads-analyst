@@ -11,10 +11,14 @@ const SANCTIONED = new Set([
 ]);
 // Matches a mutation write like `update.assigned_user_id =` or
 // `assigned_user_id:` inside a data payload object.
+// The leading non-word-char lookbehind on the `:` form ensures we match the
+// conversation's own `assigned_user_id` column but NOT differently-named columns
+// that merely end in that text (e.g. the rotation table's `last_assigned_user_id`,
+// which is a legitimate pointer write, not a conversation-assignment mutation).
 // Excludes: equality comparisons (=== / !==), TypeScript type annotations
 // (`: string`, `: number`, `: boolean`, `: null`), and read-only field mapper
 // calls (e.g. `stringField(...)`).
-const WRITE_RE = /\.assigned_user_id\s*=|assigned_user_id\s*:/;
+const WRITE_RE = /\.assigned_user_id\s*=|(?<![A-Za-z0-9_])assigned_user_id\s*:/;
 const TYPE_ANNOTATION_RE = /assigned_user_id\s*:\s*(string|number|boolean|null)[\s|;]/;
 const READ_MAPPER_RE = /assigned_user_id\s*:\s*\w+Field\s*\(/;
 
