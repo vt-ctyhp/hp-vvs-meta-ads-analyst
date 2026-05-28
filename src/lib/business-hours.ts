@@ -160,6 +160,44 @@ export function businessSecondsBetween(from: Date, to: Date, w: BusinessWindow):
   return total;
 }
 
+// The instant `slaSeconds` of business time after `arrivedAt`. Walks
+// forward day-by-day consuming each day's open window until the budget
+// is spent. If arrival is before open, the clock starts at open.
+export function breachAt(arrivedAt: Date, slaSeconds: number, w: BusinessWindow): Date {
+  let remaining = slaSeconds;
+  const startParts = zonedParts(arrivedAt, w.tz);
+  let cursorBase = Date.UTC(startParts.year, startParts.month - 1, startParts.day);
+
+  for (let i = 0; i < 4000; i += 1) {
+    const shifted = new Date(cursorBase);
+    const y = shifted.getUTCFullYear();
+    const m = shifted.getUTCMonth() + 1;
+    const d = shifted.getUTCDate();
+    const dayStart = zonedTimeToUtc(w.tz, y, m, d, w.startHour);
+    const endDayOffset = w.endHour <= w.startHour ? 1 : 0;
+    const endShift = new Date(Date.UTC(y, m - 1, d) + endDayOffset * 86_400_000);
+    const dayEnd = zonedTimeToUtc(
+      w.tz,
+      endShift.getUTCFullYear(),
+      endShift.getUTCMonth() + 1,
+      endShift.getUTCDate(),
+      w.endHour,
+    );
+
+    const clockStart = Math.max(arrivedAt.getTime(), dayStart.getTime());
+    if (clockStart < dayEnd.getTime()) {
+      const available = Math.round((dayEnd.getTime() - clockStart) / 1000);
+      if (remaining <= available) {
+        return new Date(clockStart + remaining * 1000);
+      }
+      remaining -= available;
+    }
+    cursorBase += 86_400_000;
+  }
+  // Defensive fallback: should never hit with positive slaSeconds.
+  return new Date(arrivedAt.getTime() + slaSeconds * 1000);
+}
+
 // Signed business seconds from `now` to `deadline`. Negative = breached
 // (deadline already past in business time).
 export function businessSecondsRemainingUntil(

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  breachAt,
   businessSecondsBetween,
   businessSecondsRemainingUntil,
   CALIFORNIA_BUSINESS_WINDOW,
@@ -194,5 +195,21 @@ describe("businessSecondsRemainingUntil", () => {
       businessSecondsRemainingUntil(deadline, now, CALIFORNIA_BUSINESS_WINDOW),
       -7200,
     );
+  });
+});
+
+describe("breachAt", () => {
+  it("adds SLA business seconds to arrival, skipping the overnight gap", () => {
+    // arrive 18:00 PT, SLA 3 business hours: 1h today (→19:00) + 2h next day
+    // (10:00→12:00) = breach at 12:00 PT next day.
+    const arrived = new Date("2026-05-28T01:00:00Z"); // 18:00 PDT day1
+    const result = breachAt(arrived, 3 * 3600, CALIFORNIA_BUSINESS_WINDOW);
+    assert.equal(result.toISOString(), "2026-05-28T19:00:00.000Z"); // 12:00 PDT day2
+  });
+  it("starts the clock at open when arrival precedes business hours", () => {
+    // arrive 07:00 PT, SLA 3h → clock starts 10:00, breach 13:00 PT
+    const arrived = new Date("2026-05-27T14:00:00Z"); // 07:00 PDT
+    const result = breachAt(arrived, 3 * 3600, CALIFORNIA_BUSINESS_WINDOW);
+    assert.equal(result.toISOString(), "2026-05-27T20:00:00.000Z"); // 13:00 PDT
   });
 });
