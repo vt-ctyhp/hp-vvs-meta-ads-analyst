@@ -10,6 +10,7 @@ import {
   type MetaInboxQueueCategoryKey,
 } from "../../../lib/meta-inbox-vocabulary.ts";
 import { QueueRow } from "./queue-row.tsx";
+import { ReadOnlyProvider } from "./read-only-context.tsx";
 import type {
   AttributionFilterOptions,
   ItemTypeFilter,
@@ -43,6 +44,7 @@ export function QueueRail({
   queueCategories,
   onSelect,
   now,
+  readOnly,
 }: {
   queue: MetaInboxQueueDisplayItem[];
   selectedId: string | null;
@@ -64,8 +66,11 @@ export function QueueRail({
   queueCategories: readonly QueueCategoryOption[];
   onSelect: (item: MetaInboxQueueDisplayItem) => void;
   now?: Date | number;
+  // Selection-only rail; readOnly provides ReadOnly context for the peek
+  // subtree. The rail has no mutation controls of its own to hide.
+  readOnly?: boolean;
 }) {
-  return (
+  const content = (
     <aside
       data-component="queue-rail"
       className="flex min-h-[720px] min-w-0 flex-col bg-hp-card"
@@ -237,6 +242,8 @@ export function QueueRail({
       </div>
     </aside>
   );
+
+  return readOnly ? <ReadOnlyProvider value>{content}</ReadOnlyProvider> : content;
 }
 
 function FilterRow({

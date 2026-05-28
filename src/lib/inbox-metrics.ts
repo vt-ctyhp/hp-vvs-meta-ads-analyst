@@ -1,0 +1,456 @@
+import {
+  CALIFORNIA_BUSINESS_WINDOW,
+  businessSecondsBetween,
+  businessSecondsRemainingUntil,
+  breachAt,
+  todaysWindow,
+  yesterdaysWindow,
+  type BusinessWindow,
+} from "./business-hours.ts";
+import type { MetaInboxManagerDashboardAssigneeRow } from "./meta-inbox-manager-dashboard.ts";
+export const SLA_BUSINESS_SECONDS = 3 * 3600; // 10800
+export const AT_RISK_REMAINING_SECONDS = 1800; // 30 min
+export const DEFAULT_BUSINESS_WINDOW: BusinessWindow = CALIFORNIA_BUSINESS_WINDOW;
+
+export type Period = "today" | "yesterday" | "7d" | "30d";
+
+export type QueueCategoryWindowRow = {
+  key: string;
+  timezone: string | null;
+  business_hours_start: string | null; // "HH:MM:SS"
+  business_hours_end: string | null;
+};
+
+export type QueueWindowMap = Map<string, BusinessWindow>;
+
+export type PersonalHeaderMetrics = {
+  windowState: "before_hours" | "open" | "after_hours";
+  user: { id: string; timezone: string; businessSecondsRemainingToday: number };
+  pipeline: { assigned: number; needsReply: number; atRisk: number };
+  today: { avgResponseSec: number | null; onTimeRate: number | null; repliesSent: number };
+  yesterday: { avgResponseSec: number | null };
+  team: {
+    unassigned: number;
+    claimedByMe: number;
+    todayUnassignedDenominator: number;
+    oldestUnassignedSec: number | null;
+    teammatesOverSla?: number;
+  };
+};
+
+export type TeamRow = {
+  userId: string;
+  name: string;
+  role: string;
+  assigned: number;
+  needsReply: number;
+  atRisk: number;
+  avgResponseSec: number | null;
+  onTimeRate: number | null;
+  repliesSent: number;
+  teamClaims: number;
+  oldestUnansweredSec: number | null;
+  lastActiveAt: Date | null;
+};
+
+export type TeamRollup = { period: Period; teamName: string; rows: TeamRow[] };
+
+export type DailyHistoryRow = { date: string; avgResponseSec: number | null };
+
+function hourFromTime(value: string | null, fallback: number): number {
+  if (!value) return fallback;
+  const hour = Number(value.split(":")[0]);
+  return Number.isFinite(hour) ? hour : fallback;
+}
+
+export function buildQueueWindowMap(rows: QueueCategoryWindowRow[]): QueueWindowMap {
+  const map: QueueWindowMap = new Map();
+  for (const row of rows) {
+    map.set(row.key, {
+      tz: row.timezone || DEFAULT_BUSINESS_WINDOW.tz,
+      startHour: hourFromTime(row.business_hours_start, DEFAULT_BUSINESS_WINDOW.startHour),
+      endHour: hourFromTime(row.business_hours_end, DEFAULT_BUSINESS_WINDOW.endHour),
+    });
+  }
+  return map;
+}
+
+export function getQueueWindow(map: QueueWindowMap, key: string | null | undefined): BusinessWindow {
+  return (key && map.get(key)) || DEFAULT_BUSINESS_WINDOW;
+}
+
+export function resolveUserWindow(timezone: string | null | undefined): BusinessWindow {
+  if (!timezone) return DEFAULT_BUSINESS_WINDOW;
+  return { tz: timezone, startHour: DEFAULT_BUSINESS_WINDOW.startHour, endHour: DEFAULT_BUSINESS_WINDOW.endHour };
+}
+
+// Re-export the business-hours fns the compute layer uses, so tests import
+// everything from one module.
+export { businessSecondsBetween, businessSecondsRemainingUntil, breachAt, todaysWindow, yesterdaysWindow };
+
+// ─── A1/A2/A3 Pipeline metrics (pure compute) ────────────────────────────────
+
+const CLOSED_STATUSES = new Set(["closed", "lost_lead"]);
+
+export type ConversationLike = {
+  id: string;
+  assigned_user_id: string | null;
+  conversation_status: string;
+  needs_reply: boolean;
+  latest_inbound_at: string | null;
+  first_inbound_at: string | null;
+  queue_category_key: string;
+};
+
+export function isOpenConversation(c: ConversationLike): boolean {
+  return !CLOSED_STATUSES.has(c.conversation_status);
+}
+
+export function computePipelineMetrics(
+  conversations: ConversationLike[],
+  userId: string,
+  now: Date,
+  queueWindows: QueueWindowMap,
+): { assigned: number; needsReply: number; atRisk: number } {
+  let assigned = 0;
+  let needsReply = 0;
+  let atRisk = 0;
+
+  for (const c of conversations) {
+    if (c.assigned_user_id !== userId || !isOpenConversation(c)) continue;
+    assigned += 1;
+    if (!c.needs_reply) continue;
+    needsReply += 1;
+
+    const arrived = c.latest_inbound_at ? new Date(c.latest_inbound_at) : null;
+    if (!arrived || Number.isNaN(arrived.getTime())) continue;
+    const w = getQueueWindow(queueWindows, c.queue_category_key);
+    const deadline = breachAt(arrived, SLA_BUSINESS_SECONDS, w);
+    const remaining = businessSecondsRemainingUntil(deadline, now, w);
+    if (remaining <= AT_RISK_REMAINING_SECONDS) atRisk += 1;
+  }
+
+  return { assigned, needsReply, atRisk };
+}
+
+// ─── C1/C3: Unassigned count and oldest unassigned age ───────────────────────
+
+export function computeUnassignedMetrics(
+  conversations: ConversationLike[],
+  now: Date,
+  queueWindows: QueueWindowMap,
+): { unassigned: number; oldestUnassignedSec: number | null } {
+  let unassigned = 0;
+  let oldest: number | null = null;
+  for (const c of conversations) {
+    if (c.assigned_user_id !== null || !isOpenConversation(c)) continue;
+    unassigned += 1;
+    const arrived = c.first_inbound_at ? new Date(c.first_inbound_at) : null;
+    if (!arrived || Number.isNaN(arrived.getTime())) continue;
+    const w = getQueueWindow(queueWindows, c.queue_category_key);
+    const ageSec = businessSecondsBetween(arrived, now, w);
+    if (oldest === null || ageSec > oldest) oldest = ageSec;
+  }
+  return { unassigned, oldestUnassignedSec: oldest };
+}
+
+// ─── C2: Claims today (assignment_changed events) ────────────────────────────
+//
+// Mirrors the canonical SQL (spec §15.1). The fetcher in
+// getPersonalHeaderMetrics runs the same logic server-side:
+//   SELECT COUNT(*) FROM meta_inbox_conversation_events e
+//    WHERE e.environment = $env AND e.event_type = 'assignment_changed'
+//      AND e.event_at >= $todayBusinessStart
+//      AND (e.previous_value->>'assignedUserId') IS NULL
+//      AND (e.new_value->>'assignedUserId') = $me;
+
+export type AssignmentEventLike = {
+  event_at: string;
+  previousAssignedUserId: string | null;
+  newAssignedUserId: string | null;
+};
+
+export function computeClaimsToday(
+  events: AssignmentEventLike[],
+  arrivals: ConversationLike[],
+  userId: string,
+  userWindow: BusinessWindow,
+  now: Date,
+): { claimedByMe: number; todayUnassignedDenominator: number } {
+  const today = todaysWindow(now, userWindow);
+  let claimedByMe = 0;
+  for (const e of events) {
+    if (
+      e.previousAssignedUserId === null &&
+      e.newAssignedUserId === userId &&
+      inWindow(e.event_at, today.start, today.end)
+    ) {
+      claimedByMe += 1;
+    }
+  }
+  let denominator = 0;
+  for (const c of arrivals) {
+    if (inWindow(c.first_inbound_at, today.start, today.end)) denominator += 1;
+  }
+  return { claimedByMe, todayUnassignedDenominator: denominator };
+}
+
+// ─── C2 (cont.) / C — teammatesOverSla (lead-only) ──────────────────────────
+
+export function computeTeammatesOverSla(
+  conversations: ConversationLike[],
+  teamUserIds: ReadonlySet<string>,
+  now: Date,
+  queueWindows: QueueWindowMap,
+): number {
+  const flagged = new Set<string>();
+  for (const c of conversations) {
+    const uid = c.assigned_user_id;
+    if (!uid || !teamUserIds.has(uid) || !c.needs_reply || !isOpenConversation(c)) continue;
+    if (flagged.has(uid)) continue;
+    const arrived = c.latest_inbound_at ? new Date(c.latest_inbound_at) : null;
+    if (!arrived || Number.isNaN(arrived.getTime())) continue;
+    const w = getQueueWindow(queueWindows, c.queue_category_key);
+    const remaining = businessSecondsRemainingUntil(breachAt(arrived, SLA_BUSINESS_SECONDS, w), now, w);
+    if (remaining <= AT_RISK_REMAINING_SECONDS) flagged.add(uid);
+  }
+  return flagged.size;
+}
+
+// ─── B1/B2: Today's avg first-response time and on-time rate ─────────────────
+
+const SEVEN_DAYS_MS = 7 * 86_400_000;
+
+export type RepliedConversation = {
+  firstInboundAt: string | null;
+  firstOutboundAt: string | null;
+  queueKey: string;
+};
+
+export function computeTodayResponseMetrics(
+  replied: RepliedConversation[],
+  userWindow: BusinessWindow,
+  queueWindows: QueueWindowMap,
+  now: Date,
+): { avgResponseSec: number | null; onTimeRate: number | null; repliesConsidered: number } {
+  const today = todaysWindow(now, userWindow);
+  const avgSamples: number[] = [];
+  let onTime = 0;
+  let total = 0;
+
+  for (const r of replied) {
+    if (!r.firstInboundAt || !r.firstOutboundAt) continue;
+    const inbound = new Date(r.firstInboundAt);
+    const outbound = new Date(r.firstOutboundAt);
+    if (Number.isNaN(inbound.getTime()) || Number.isNaN(outbound.getTime())) continue;
+    // Bucket by reply time in user's window (two-clock rule: user tz for bucketing).
+    if (!inWindow(r.firstOutboundAt, today.start, today.end)) continue;
+
+    // Elapsed business seconds use the queue's timezone window (two-clock rule).
+    const w = getQueueWindow(queueWindows, r.queueKey);
+    const responseSec = businessSecondsBetween(inbound, outbound, w);
+    total += 1;
+    if (responseSec <= SLA_BUSINESS_SECONDS) onTime += 1;
+
+    // B1 avg excludes threads older than 7 days at reply time.
+    if (outbound.getTime() - inbound.getTime() <= SEVEN_DAYS_MS) {
+      avgSamples.push(responseSec);
+    }
+  }
+
+  const avgResponseSec = avgSamples.length
+    ? Math.round(avgSamples.reduce((a, b) => a + b, 0) / avgSamples.length)
+    : null;
+  const onTimeRate = total ? onTime / total : null;
+  return { avgResponseSec, onTimeRate, repliesConsidered: total };
+}
+
+// ─── Yesterday avg from metrics_daily rollup ──────────────────────────────────
+
+export type MetricsDailyRow = {
+  user_id: string;
+  date: string; // YYYY-MM-DD
+  avg_response_seconds: number | null;
+  on_time_replies?: number;
+  total_replies?: number;
+  team_claims?: number;
+};
+
+export function userDateString(now: Date, userWindow: BusinessWindow): string {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: userWindow.tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return fmt.format(now); // en-CA → YYYY-MM-DD
+}
+
+export function userYesterdayDateString(now: Date, userWindow: BusinessWindow): string {
+  const today = userDateString(now, userWindow);
+  const [y, m, d] = today.split("-").map(Number);
+  const prev = new Date(Date.UTC(y, m - 1, d) - 86_400_000);
+  return `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, "0")}-${String(prev.getUTCDate()).padStart(2, "0")}`;
+}
+
+export function pickYesterdayAvg(
+  rows: MetricsDailyRow[],
+  userId: string,
+  now: Date,
+  userWindow: BusinessWindow,
+): number | null {
+  const yesterday = userYesterdayDateString(now, userWindow);
+  const row = rows.find((r) => r.user_id === userId && r.date === yesterday);
+  return row ? row.avg_response_seconds : null;
+}
+
+// ─── B3: Replies sent today (send_attempts + comment_actions) ─────────────────
+
+export type SendAttemptLike = {
+  approved_by: string | null;
+  status: string;
+  sent_at: string | null;
+};
+
+export type CommentActionLike = {
+  requested_by: string | null;
+  status: string;
+  completed_at: string | null;
+};
+
+function inWindow(iso: string | null, start: Date, end: Date): boolean {
+  if (!iso) return false;
+  const t = Date.parse(iso);
+  return Number.isFinite(t) && t >= start.getTime() && t < end.getTime();
+}
+
+export function computeRepliesSentToday(
+  sendAttempts: SendAttemptLike[],
+  commentActions: CommentActionLike[],
+  userId: string,
+  userWindow: BusinessWindow,
+  now: Date,
+): number {
+  const today = todaysWindow(now, userWindow);
+  let count = 0;
+  for (const s of sendAttempts) {
+    if (s.approved_by === userId && s.status === "sent" && inWindow(s.sent_at, today.start, today.end)) {
+      count += 1;
+    }
+  }
+  for (const c of commentActions) {
+    if (c.requested_by === userId && c.status === "succeeded" && inWindow(c.completed_at, today.start, today.end)) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+// ─── Task 19: assemblePersonalHeaderMetrics + getPersonalHeaderMetrics ────────
+
+export type PersonalHeaderInput = {
+  userId: string;
+  timezone: string;
+  userWindow: BusinessWindow;
+  now: Date;
+  pipeline: { assigned: number; needsReply: number; atRisk: number };
+  today: { avgResponseSec: number | null; onTimeRate: number | null; repliesSent: number };
+  yesterdayAvgSec: number | null;
+  unassigned: number;
+  oldestUnassignedSec: number | null;
+  claims: { claimedByMe: number; todayUnassignedDenominator: number };
+  teammatesOverSla: number | undefined;
+};
+
+export function assemblePersonalHeaderMetrics(input: PersonalHeaderInput): PersonalHeaderMetrics {
+  const today = todaysWindow(input.now, input.userWindow);
+  const windowState =
+    today.state === "before" ? "before_hours" : today.state === "after" ? "after_hours" : "open";
+  const remaining = Math.max(
+    0,
+    businessSecondsRemainingUntil(today.end, input.now, input.userWindow),
+  );
+  return {
+    windowState,
+    user: {
+      id: input.userId,
+      timezone: input.timezone,
+      businessSecondsRemainingToday: remaining,
+    },
+    pipeline: input.pipeline,
+    today: input.today,
+    yesterday: { avgResponseSec: input.yesterdayAvgSec },
+    team: {
+      unassigned: input.unassigned,
+      claimedByMe: input.claims.claimedByMe,
+      todayUnassignedDenominator: input.claims.todayUnassignedDenominator,
+      oldestUnassignedSec: input.oldestUnassignedSec,
+      ...(input.teammatesOverSla !== undefined
+        ? { teammatesOverSla: input.teammatesOverSla }
+        : {}),
+    },
+  };
+}
+
+// Note: getPersonalHeaderMetrics (server fetcher) lives in inbox-metrics-db.ts
+// to avoid pulling server-only imports (social-inbox, Supabase client) into
+// the pure-compute module that unit tests import directly.
+
+// ─── Task 33: team rollup (pure mapper + period helper) ──────────────────────
+//
+// The async getTeamRollup fetcher lives in inbox-metrics-db.ts (same split as
+// getPersonalHeaderMetrics) so this module stays server-free for unit tests.
+
+export type AssigneeRowLike = MetaInboxManagerDashboardAssigneeRow;
+
+const PERIODS: ReadonlySet<string> = new Set(["today", "yesterday", "7d", "30d"]);
+export function resolvePeriodParam(value: string | string[] | undefined): Period {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return raw && PERIODS.has(raw) ? (raw as Period) : "today";
+}
+
+export function periodToDays(period: Period): number {
+  switch (period) {
+    case "today":
+      return 1;
+    case "yesterday":
+      return 2; // window includes yesterday
+    case "7d":
+      return 7;
+    case "30d":
+      return 30;
+  }
+}
+
+export type TeamRowAdjuncts = {
+  name: string;
+  role: string;
+  atRisk: number;
+  avgResponseSec: number | null;
+  onTimeRate: number | null;
+  teamClaims: number;
+  oldestUnansweredSec: number | null;
+  lastActiveAt: Date | null;
+  repliesSent: number;
+};
+
+export function mapAssigneeRowToTeamRow(
+  row: AssigneeRowLike,
+  adjuncts: TeamRowAdjuncts,
+): TeamRow | null {
+  if (!row.assigneeUserId) return null; // unassigned bucket excluded from team rows
+  return {
+    userId: row.assigneeUserId,
+    name: adjuncts.name,
+    role: adjuncts.role,
+    assigned: row.totalConversations,
+    needsReply: row.needsReply,
+    atRisk: adjuncts.atRisk,
+    avgResponseSec: adjuncts.avgResponseSec,
+    onTimeRate: adjuncts.onTimeRate,
+    repliesSent: adjuncts.repliesSent,
+    teamClaims: adjuncts.teamClaims,
+    oldestUnansweredSec: adjuncts.oldestUnansweredSec,
+    lastActiveAt: adjuncts.lastActiveAt,
+  };
+}

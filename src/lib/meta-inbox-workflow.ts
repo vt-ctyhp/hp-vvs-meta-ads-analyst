@@ -16,11 +16,12 @@ import {
 
 type JsonRecord = Record<string, unknown>;
 
-export type MetaInboxAssignmentMode = "claim_self" | "team_queue";
+export type MetaInboxAssignmentMode = "claim_self" | "team_queue" | "assign_to_user";
 
 export type MetaInboxWorkflowPatchInput = {
   assignmentMode?: MetaInboxAssignmentMode;
   assignedTeamId?: string | null;
+  targetUserId?: string | null;
   queueCategoryKey?: MetaInboxQueueCategoryKey | null;
   conversationStatus?: MetaInboxConversationStatusKey | null;
   followUpAt?: string | null;
@@ -108,6 +109,12 @@ function applyAssignment(
       throw new Error("A valid sales user is required to claim a conversation.");
     }
     next.assigned_user_id = context.actorUserId;
+  } else if (input.assignmentMode === "assign_to_user") {
+    const target = normalizeOptionalUuid(input.targetUserId ?? null, "Assigned User");
+    if (!target) {
+      throw new Error("A target user is required to assign a conversation.");
+    }
+    next.assigned_user_id = target;
   } else {
     next.assigned_user_id = null;
   }

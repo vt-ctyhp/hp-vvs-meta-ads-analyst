@@ -13,6 +13,11 @@ import { InboxEyebrow } from "./v2/inbox/inbox-eyebrow";
 import { InboxHealthRow } from "./v2/inbox/inbox-health-row";
 import { InboxLayoutShell } from "./v2/inbox/inbox-layout-shell";
 import { InboxStatusSentence } from "./v2/inbox/inbox-status-sentence";
+import { InboxMetricsHeaderLede } from "./v2/inbox/metrics-header-lede";
+import { InboxMetricsHeaderStrip } from "./v2/inbox/metrics-header-strip";
+import { LeadNudge } from "./v2/inbox/lead-nudge";
+import { shouldRenderMetricsHeader } from "./v2/inbox/metrics-header-gate";
+import type { PersonalHeaderMetrics } from "@/lib/inbox-metrics";
 import { ConversationPane } from "./v2/inbox/conversation-pane";
 import { AuditDrawerPanel } from "./v2/inbox/audit-drawer-panel";
 import { DetailsDrawerPanel } from "./v2/inbox/details-drawer-panel";
@@ -67,6 +72,9 @@ export function SocialInboxClient({
   canManageInboxState,
   canSendInboxReply,
   canCreateManagerCoaching,
+  metricsHeaderEnabled = false,
+  headerMetrics = null,
+  teamLead = false,
 }: {
   status: SocialInboxStatus;
   initialData: SocialInboxData;
@@ -74,6 +82,9 @@ export function SocialInboxClient({
   canManageInboxState: boolean;
   canSendInboxReply: boolean;
   canCreateManagerCoaching: boolean;
+  metricsHeaderEnabled?: boolean;
+  headerMetrics?: PersonalHeaderMetrics | null;
+  teamLead?: boolean;
 }) {
   const [inboxData, setInboxData] = useState(initialData);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -391,15 +402,35 @@ export function SocialInboxClient({
   return (
     <main className="min-h-screen bg-hp-foundation px-4 py-6 text-hp-body md:px-8">
       <section className="mx-auto max-w-7xl">
-        <InboxEyebrow
-          dashboard={managerDashboard}
-          syncRun={inboxData.syncRuns[0] || null}
-          onSync={mutations.handleSync}
-          isSyncing={isSyncing}
-          syncDisabled={!status.readiness.socialInbox}
-        />
-        <InboxHealthRow status={status} syncRun={inboxData.syncRuns[0] || null} />
-        <InboxStatusSentence queue={queue} />
+        {shouldRenderMetricsHeader(metricsHeaderEnabled, headerMetrics) && headerMetrics ? (
+          <>
+            <InboxMetricsHeaderLede metrics={headerMetrics} />
+            <InboxMetricsHeaderStrip
+              metrics={headerMetrics}
+              onSync={mutations.handleSync}
+              isSyncing={isSyncing}
+              syncDisabled={!status.readiness.socialInbox}
+              syncRun={inboxData.syncRuns[0] || null}
+              now={replyWindowNow}
+            />
+            <InboxHealthRow status={status} syncRun={inboxData.syncRuns[0] || null} />
+            {teamLead && (headerMetrics.team.teammatesOverSla ?? 0) > 0 ? (
+              <LeadNudge teammatesOverSla={headerMetrics.team.teammatesOverSla ?? 0} />
+            ) : null}
+          </>
+        ) : (
+          <>
+            <InboxEyebrow
+              dashboard={managerDashboard}
+              syncRun={inboxData.syncRuns[0] || null}
+              onSync={mutations.handleSync}
+              isSyncing={isSyncing}
+              syncDisabled={!status.readiness.socialInbox}
+            />
+            <InboxHealthRow status={status} syncRun={inboxData.syncRuns[0] || null} />
+            <InboxStatusSentence queue={queue} />
+          </>
+        )}
       </section>
 
       <InboxLayoutShell
