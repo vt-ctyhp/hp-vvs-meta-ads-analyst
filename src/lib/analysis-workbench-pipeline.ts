@@ -1,5 +1,6 @@
 import {
   getAnalysisWorkbenchSemanticCatalog,
+  getPrimaryKpiRule,
   validateAnalysisWorkbenchSemanticIntent,
   type WorkbenchDateGrain,
   type WorkbenchDimension,
@@ -19,6 +20,8 @@ import type {
   AnalysisWorkbenchControlledEdit,
   AnalysisWorkbenchContextSnapshot,
   AnalysisWorkbenchDashboardPacket,
+  AnalysisWorkbenchEntityDisplay,
+  AnalysisWorkbenchShape,
   AnalysisWorkbenchVisualCard,
   JsonValue,
 } from "./analysis-workbench-contract.ts";
@@ -35,6 +38,7 @@ import {
   type WorkbenchPlannerIntent,
   type WorkbenchQuestionType,
 } from "./analysis-workbench-intent-planner.ts";
+import { composeAnalysisWorkbenchNarrativeWithAI } from "./analysis-workbench-narrative.ts";
 import type {
   MetaInsightAggregateRow,
   MetaInsightDimension,
@@ -73,7 +77,17 @@ export type AnalysisWorkbenchSourceNote = {
 
 export type AnalysisWorkbenchComputedFact = {
   id: string;
-  type: "total" | "rank" | "comparison" | "source_note";
+  type:
+    | "total"
+    | "rank"
+    | "comparison"
+    | "delta"
+    | "winner"
+    | "loser"
+    | "anomaly"
+    | "recommendation"
+    | "period_comparison"
+    | "source_note";
   label: string;
   metric?: WorkbenchMetric;
   dimension?: WorkbenchDimension;
@@ -85,6 +99,8 @@ export type AnalysisWorkbenchComputedFact = {
   formattedBaselineValue?: string;
   deltaValue?: number;
   formattedDeltaValue?: string;
+  percentDelta?: number | null;
+  formattedPercentDelta?: string;
   citationId: string;
   caveat?: string;
 };
@@ -93,6 +109,7 @@ export type AnalysisWorkbenchPipelineIntent = {
   status: "ready" | "blocked";
   rawPrompt: string;
   outputMode: AnalysisOutputMode;
+  analysisShape: AnalysisWorkbenchShape;
   questionType?: WorkbenchQuestionType;
   metrics: WorkbenchMetric[];
   dimensions: WorkbenchDimension[];
@@ -157,10 +174,31 @@ type PipelineInput = {
   inheritedContext?: AnalysisWorkbenchContextSnapshot | null;
   controlledEdit?: AnalysisWorkbenchControlledEdit | null;
   parseIntent?: typeof parseAnalysisWorkbenchIntentWithAI;
+  composeNarrative?: AnalysisWorkbenchNarrativeComposer;
+  loadEntityDisplays?: (
+    request: AnalysisWorkbenchEntityDisplayRequest,
+  ) => Promise<AnalysisWorkbenchEntityDisplay[]>;
   executeAggregate: (
     request: AnalysisWorkbenchPipelineAggregateRequest,
   ) => Promise<MetaInsightAggregateRow[]>;
 };
+
+export type AnalysisWorkbenchEntityDisplayRequest = {
+  dimensions: WorkbenchDimension[];
+  rows: MetaInsightAggregateRow[];
+};
+
+export type AnalysisWorkbenchNarrativeInput = {
+  planned: AnalysisWorkbenchPipelineIntent;
+  facts: AnalysisWorkbenchComputedFact[];
+  sourceNotes: AnalysisWorkbenchSourceNote[];
+  visualCards: AnalysisWorkbenchVisualCard[];
+  fallbackSummary: string;
+};
+
+export type AnalysisWorkbenchNarrativeComposer = (
+  input: AnalysisWorkbenchNarrativeInput,
+) => Promise<{ summary: string; apiCost?: OpenAICostBreakdown } | null>;
 
 type PlannedIntent = AnalysisWorkbenchPipelineIntent & {
   semanticValidation: ReturnType<typeof validateAnalysisWorkbenchSemanticIntent>;
@@ -173,6 +211,7 @@ type PlannedIntent = AnalysisWorkbenchPipelineIntent & {
 const DEFAULT_METRICS: WorkbenchMetric[] = ["spend", "primary_results"];
 const DEFAULT_DIMENSIONS: WorkbenchDimension[] = ["campaign_umbrella"];
 const MAX_GROUP_ROWS = 20;
+const MAX_WOW_ENTITY_ROWS = 8;
 const NUMBER_PATTERN =
   "\\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|ninety";
 const MONEY_METRICS = new Set<WorkbenchMetric>([
@@ -184,6 +223,7 @@ const MONEY_METRICS = new Set<WorkbenchMetric>([
 ]);
 const RATE_METRICS = new Set<WorkbenchMetric>(["ctr"]);
 const RATIO_METRICS = new Set<WorkbenchMetric>(["frequency"]);
+const TIME_DIMENSIONS = new Set<WorkbenchDimension>(["date", "week", "month", "quarter"]);
 const ENTITY_DIMENSIONS = new Set<WorkbenchDimension>([
   "brand",
   "campaign_umbrella",
@@ -192,6 +232,12 @@ const ENTITY_DIMENSIONS = new Set<WorkbenchDimension>([
   "ad",
   "creative",
 ]);
+const ENTITY_ID_FIELDS: Partial<Record<WorkbenchDimension, keyof MetaInsightAggregateRow>> = {
+  campaign: "campaign_id",
+  ad_set: "ad_set_id",
+  ad: "ad_id",
+  creative: "creative_id",
+};
 const PRIMARY_KPI_PROXY_METRICS = new Set<WorkbenchMetric>([
   "bookings",
   "website_bookings",
@@ -199,6 +245,7 @@ const PRIMARY_KPI_PROXY_METRICS = new Set<WorkbenchMetric>([
   "new_messaging_contacts",
 ]);
 type WorkbenchTimeDimension = Extract<WorkbenchDimension, "date" | "week" | "month" | "quarter">;
+type EntityDisplayMap = Map<string, AnalysisWorkbenchEntityDisplay>;
 
 export async function runAnalysisWorkbenchFactsPipeline(
   input: PipelineInput,
@@ -253,17 +300,31 @@ export async function runAnalysisWorkbenchFactsPipeline(
     sortDirection: "asc",
     limit: trendLimit(planned),
   });
+  const entityDisplays = await loadEntityDisplayMap({
+    planned,
+    rows: [...groupedRows, ...trendRows],
+    loadEntityDisplays: input.loadEntityDisplays,
+  });
   const sourceNotes = sourceNotesFor(
     planned,
     groupedRows,
     totalRows,
     input.controlledEdit || null,
   );
-  const facts = computeFacts(planned, groupedRows, totalRows, sourceNotes);
-  const answer = withWorkbenchAnswerApiCost(composeAnswer(planned, facts.items, sourceNotes), planned);
+  const facts = computeFacts(planned, groupedRows, totalRows, sourceNotes, entityDisplays);
   const visualCards = applyAnalysisWorkbenchControlledEditsToVisualCards(
-    buildVisualCards(planned, facts.items, groupedRows, trendRows),
+    buildVisualCards(planned, facts.items, groupedRows, trendRows, entityDisplays),
     input.controlledEdit,
+  );
+  const answer = withWorkbenchAnswerApiCost(
+    await composeAnswerWithNarrative({
+      planned,
+      facts: facts.items,
+      sourceNotes,
+      visualCards,
+      composeNarrative: input.composeNarrative,
+    }),
+    planned,
   );
   const groundingIssues = validateAnalysisWorkbenchNarrativeGrounding(
     answer.summary,
@@ -375,7 +436,7 @@ function planAnalysisWorkbenchIntent(input: {
   const questionType = plannerIntent?.questionType || inferQuestionType(input.prompt);
   const explicitMetrics = detectMetrics(input.prompt, false);
   const explicitDimensions = detectDimensions(input.prompt, false);
-  const metrics = controlledEdit?.metrics?.length
+  const baseMetrics = controlledEdit?.metrics?.length
     ? controlledEdit.metrics
     : plannerIntent?.metrics.length
     ? plannerIntent.metrics
@@ -393,13 +454,19 @@ function planAnalysisWorkbenchIntent(input: {
     : inheritedContext?.dimensions.length
       ? inheritedContext.dimensions
       : DEFAULT_DIMENSIONS;
-  const filters = controlledEdit && Object.hasOwn(controlledEdit, "filters")
+  const filters = (controlledEdit && Object.hasOwn(controlledEdit, "filters")
     ? controlledEdit.filters || []
     : normalizeSemanticFilters([
         ...(inheritedContext?.filters || []),
         ...(plannerIntent ? plannerIntent.filters : detectFilters(input.prompt)),
-      ]);
-  const visual = controlledEdit && Object.hasOwn(controlledEdit, "visual")
+      ])) as MetaInsightFilter[];
+  const metrics = metricBundleForPrompt({
+    prompt: input.prompt,
+    metrics: baseMetrics,
+    filters,
+    questionType,
+  });
+  const rawVisual = controlledEdit && Object.hasOwn(controlledEdit, "visual")
     ? controlledEdit.visual || null
     : plannerIntent?.visualIntent || detectVisualIntent(input.prompt, metrics, baseDimensions);
   const inferredDateIntent = inferAnalysisWorkbenchDateIntentFromPrompt(input.prompt);
@@ -418,8 +485,24 @@ function planAnalysisWorkbenchIntent(input: {
     baseDimensions,
     dateResolution.dateGrain,
     questionType,
-    visual,
+    rawVisual,
   );
+  const analysisShape = inferAnalysisShape({
+    prompt: input.prompt,
+    questionType,
+    metrics,
+    dimensions,
+    filters,
+  });
+  const visual =
+    controlledEdit && Object.hasOwn(controlledEdit, "visual")
+      ? rawVisual
+      : visualForAnalysisShape({
+          analysisShape,
+          visual: rawVisual,
+          metrics,
+          dimensions,
+        });
   const dateRange = dateResolution.dateRange;
   const dateGrain = dateResolution.dateGrain || dateGrainForDimensions(dimensions);
   const semanticValidation = validateAnalysisWorkbenchSemanticIntent({
@@ -463,6 +546,7 @@ function planAnalysisWorkbenchIntent(input: {
     status: semanticValidation.status === "blocked" ? "blocked" : "ready",
     rawPrompt: input.prompt,
     outputMode: input.outputMode,
+    analysisShape,
     questionType,
     metrics,
     dimensions: repairedDimensions,
@@ -480,6 +564,57 @@ function planAnalysisWorkbenchIntent(input: {
     filterScopes,
     dateAssumptions: dateResolution.assumptions,
   };
+}
+
+function visualForAnalysisShape(input: {
+  analysisShape: AnalysisWorkbenchShape;
+  visual: WorkbenchSemanticVisualIntent | null;
+  metrics: WorkbenchMetric[];
+  dimensions: WorkbenchDimension[];
+}): WorkbenchSemanticVisualIntent | null {
+  const { analysisShape, visual, metrics, dimensions } = input;
+  const timeDimension = dimensions.find((dimension) => TIME_DIMENSIONS.has(dimension));
+  const entityDimension = dimensions.find((dimension) => ENTITY_DIMENSIONS.has(dimension));
+
+  if (
+    analysisShape === "entity_week_over_week" &&
+    timeDimension &&
+    entityDimension &&
+    (!visual || visual.type !== "pivot_table" || !visual.rowDimension || !visual.columnDimension)
+  ) {
+    return {
+      type: "pivot_table",
+      metrics,
+      dimensions,
+      rowDimension: entityDimension,
+      columnDimension: timeDimension,
+    };
+  }
+
+  if (visual?.type === "pivot_table") {
+    const hasRowAndColumn = Boolean(visual.rowDimension && visual.columnDimension);
+    const hasTwoDimensions = new Set(dimensions).size >= 2;
+    if (!hasRowAndColumn || !hasTwoDimensions) {
+      return {
+        type: "flat_table",
+        metrics,
+        dimensions,
+      };
+    }
+  }
+
+  if (
+    (analysisShape === "budget_recommendation" || analysisShape === "performance_diagnosis") &&
+    visual?.type === "pivot_table"
+  ) {
+    return {
+      type: "flat_table",
+      metrics,
+      dimensions,
+    };
+  }
+
+  return visual;
 }
 
 function blockedResult(input: {
@@ -590,11 +725,59 @@ async function executeAggregateRequests(input: {
   ).slice(0, input.limit);
 }
 
+async function loadEntityDisplayMap(input: {
+  planned: PlannedIntent;
+  rows: MetaInsightAggregateRow[];
+  loadEntityDisplays?: PipelineInput["loadEntityDisplays"];
+}): Promise<EntityDisplayMap> {
+  const fallbackDisplays = fallbackEntityDisplays(input.planned.dimensions, input.rows);
+  if (!input.loadEntityDisplays) return fallbackDisplays;
+
+  try {
+    const loadedDisplays = await input.loadEntityDisplays({
+      dimensions: input.planned.dimensions,
+      rows: input.rows,
+    });
+    loadedDisplays.forEach((display) => {
+      if (display.sourceType === "fallback") return;
+      const sourceDimension = display.sourceType as WorkbenchDimension;
+      fallbackDisplays.set(displayMapKey(sourceDimension, display.id), sanitizeEntityDisplay(display, sourceDimension));
+    });
+  } catch {
+    return fallbackDisplays;
+  }
+
+  return fallbackDisplays;
+}
+
+function fallbackEntityDisplays(
+  dimensions: WorkbenchDimension[],
+  rows: MetaInsightAggregateRow[],
+): EntityDisplayMap {
+  const displays: EntityDisplayMap = new Map();
+  dimensions
+    .filter((dimension) => ENTITY_DIMENSIONS.has(dimension))
+    .forEach((dimension) => {
+      rows.forEach((row) => {
+        const key = entityKey(row, dimension);
+        if (!key || displays.has(displayMapKey(dimension, key))) return;
+        displays.set(displayMapKey(dimension, key), {
+          id: key,
+          label: fallbackEntityLabel(row, dimension),
+          sourceType: entitySourceType(dimension),
+          hiddenId: technicalEntityId(row, dimension),
+        });
+      });
+    });
+  return displays;
+}
+
 function computeFacts(
   planned: PlannedIntent,
   groupedRows: MetaInsightAggregateRow[],
   totalRows: MetaInsightAggregateRow[],
   sourceNotes: AnalysisWorkbenchSourceNote[],
+  entityDisplays: EntityDisplayMap,
 ) {
   const sourceRows = sourceRowCount(groupedRows, totalRows);
   if (!groupedRows.length && !sourceRows) {
@@ -608,9 +791,15 @@ function computeFacts(
   const facts: AnalysisWorkbenchComputedFact[] = planned.metrics
     .slice(0, 2)
     .map((metric, index) => totalFact(metric, metricValue(totals, metric), index + 1));
-  const rankFact = firstRankFact(planned, groupedRows, facts.length + 1);
+  const shapeFacts = shapeComputedFacts(planned, groupedRows, facts.length + 1, entityDisplays);
+  facts.push(...shapeFacts);
+  const rankFact = shapeFacts.some((fact) => fact.type === "rank" || fact.type === "winner")
+    ? null
+    : firstRankFact(planned, groupedRows, facts.length + 1, entityDisplays);
   if (rankFact) facts.push(rankFact);
-  const comparisonFact = firstComparisonFact(planned, groupedRows, facts.length + 1);
+  const comparisonFact = shapeFacts.some((fact) => fact.type === "comparison" || fact.type === "period_comparison")
+    ? null
+    : firstComparisonFact(planned, groupedRows, facts.length + 1, entityDisplays);
   if (comparisonFact) facts.push(comparisonFact);
   facts.push(sourceNoteFact(sourceNotes[0]));
 
@@ -638,6 +827,9 @@ function composeAnswer(
   const totals = numericFacts.filter((fact) => fact.type === "total");
   const rank = numericFacts.find((fact) => fact.type === "rank");
   const comparison = numericFacts.find((fact) => fact.type === "comparison");
+  const periodComparison = numericFacts.find((fact) => fact.type === "period_comparison");
+  const winner = numericFacts.find((fact) => fact.type === "winner");
+  const recommendation = numericFacts.find((fact) => fact.type === "recommendation");
   const totalSentence = totals
     .map(
       (fact) =>
@@ -654,14 +846,26 @@ function composeAnswer(
         comparison.citationId
       }].`
     : "";
+  const periodSentence = periodComparison
+    ? `${periodComparison.entityName} was ${periodComparison.formattedDeltaValue} (${periodComparison.formattedPercentDelta}) versus ${periodComparison.baselineLabel} ${periodComparison.formattedBaselineValue} [${periodComparison.citationId}].`
+    : "";
+  const winnerSentence = winner
+    ? `Best ${dimensionLabel(winner.dimension)} was ${winner.entityName} at ${winner.formattedValue} [${winner.citationId}].`
+    : "";
+  const recommendationSentence = recommendation
+    ? `Next action: inspect ${recommendation.entityName}; it posted ${recommendation.formattedValue} versus ${recommendation.formattedBaselineValue} average ${metricLabel(recommendation.metric).toLowerCase()} [${recommendation.citationId}].`
+    : "";
   const caveat = totals.find((fact) => fact.caveat)?.caveat;
   const caveatSentence = caveat ? `Caveat: ${caveat} [${totals.find((fact) => fact.caveat)?.citationId}].` : "";
 
   return {
     summary: [
       `${outputModeLabel(planned.outputMode)} mode used governed Meta Ads facts. Totals: ${totalSentence}.`,
+      periodSentence,
+      winnerSentence,
       rankSentence,
       comparisonSentence,
+      recommendationSentence,
       "Assumption: relative range ends at latest synced Meta Ads day [S1].",
       caveatSentence,
       "Source notes: Meta Ads daily insights [S1].",
@@ -672,13 +876,45 @@ function composeAnswer(
   };
 }
 
+async function composeAnswerWithNarrative(input: {
+  planned: PlannedIntent;
+  facts: AnalysisWorkbenchComputedFact[];
+  sourceNotes: AnalysisWorkbenchSourceNote[];
+  visualCards: AnalysisWorkbenchVisualCard[];
+  composeNarrative?: AnalysisWorkbenchNarrativeComposer;
+}) {
+  const fallback = composeAnswer(input.planned, input.facts, input.sourceNotes);
+  const composer = input.composeNarrative || composeAnalysisWorkbenchNarrativeWithAI;
+  const narrative = await composer({
+    planned: stripSemanticValidation(input.planned),
+    facts: input.facts,
+    sourceNotes: input.sourceNotes,
+    visualCards: input.visualCards,
+    fallbackSummary: fallback.summary,
+  });
+  if (!narrative?.summary.trim()) return fallback;
+
+  const candidate = {
+    summary: narrative.summary.trim(),
+    citations: fallback.citations,
+    ...(narrative.apiCost ? { apiCost: narrative.apiCost } : {}),
+  };
+  const groundingIssues = validateAnalysisWorkbenchNarrativeGrounding(
+    candidate.summary,
+    candidate.citations,
+  );
+  return groundingIssues.length ? fallback : candidate;
+}
+
 function withWorkbenchAnswerApiCost<T extends { summary: string; citations: AnalysisWorkbenchCitation[] }>(
   answer: T,
   planned: PlannedIntent,
 ) {
   return {
     ...answer,
-    apiCost: planned.parser?.apiCost || workbenchLocalApiCost(),
+    apiCost: "apiCost" in answer && answer.apiCost
+      ? (answer.apiCost as OpenAICostBreakdown)
+      : planned.parser?.apiCost || workbenchLocalApiCost(),
   };
 }
 
@@ -763,6 +999,7 @@ function buildVisualCards(
   facts: AnalysisWorkbenchComputedFact[],
   groupedRows: MetaInsightAggregateRow[],
   trendRows: MetaInsightAggregateRow[],
+  entityDisplays: EntityDisplayMap,
 ): AnalysisWorkbenchVisualCard[] {
   if (!shouldBuildVisualCards(planned.outputMode)) return [];
   const totalFacts = facts.filter((fact) => fact.type === "total" && fact.metric);
@@ -784,17 +1021,17 @@ function buildVisualCards(
   const dimension = primaryEntityDimension(planned.dimensions);
   const metrics = planned.metrics.slice(0, 4);
   if (dimension && groupedRows.length && metrics.length) {
-    visualCards.push(flatTableVisualCard(planned, dimension, metrics, groupedRows));
-    visualCards.push(barChartVisualCard(planned, dimension, metrics[0], groupedRows));
+    visualCards.push(flatTableVisualCard(planned, dimension, metrics, groupedRows, entityDisplays));
+    visualCards.push(barChartVisualCard(planned, dimension, metrics[0], groupedRows, entityDisplays));
   }
 
   const pivotVisual = pivotVisualIntent(planned);
   if (pivotVisual && groupedRows.length) {
-    visualCards.push(pivotTableVisualCard(planned, pivotVisual, groupedRows));
+    visualCards.push(pivotTableVisualCard(planned, pivotVisual, groupedRows, entityDisplays));
   }
 
   if (planned.visual?.type === "scatter_chart" && groupedRows.length) {
-    visualCards.push(scatterChartVisualCard(planned, planned.visual, groupedRows));
+    visualCards.push(scatterChartVisualCard(planned, planned.visual, groupedRows, entityDisplays));
   }
 
   const trendDimension = trendDimensionFor(planned);
@@ -810,7 +1047,10 @@ function flatTableVisualCard(
   dimension: WorkbenchDimension,
   metrics: WorkbenchMetric[],
   groupedRows: MetaInsightAggregateRow[],
+  entityDisplays: EntityDisplayMap,
 ): AnalysisWorkbenchVisualCard {
+  const includeCostPerPrimary = shouldIncludeCostPerPrimary(planned);
+  const displayRows = rollupRowsForDimension(groupedRows, dimension, planned.metrics[0]);
   return {
     id: `table_${dimension}`,
     type: "flat_table",
@@ -823,9 +1063,18 @@ function flatTableVisualCard(
         kind: "metric" as const,
         metric,
       })),
+      ...(includeCostPerPrimary
+        ? [
+            {
+              key: "cost_per_primary",
+              label: costPerPrimaryLabel(planned),
+              kind: "metric" as const,
+            },
+          ]
+        : []),
     ],
-    rows: groupedRows.slice(0, 10).map((row) => ({
-      entity: entityName(row, dimension),
+    rows: displayRows.slice(0, 10).map((row) => ({
+      entity: entityVisualCell(row, dimension, entityDisplays),
       ...Object.fromEntries(
         metrics.map((metric) => [
           metric,
@@ -836,6 +1085,14 @@ function flatTableVisualCard(
           },
         ]),
       ),
+      ...(includeCostPerPrimary
+        ? {
+            cost_per_primary: {
+              value: costPerPrimaryValue(planned, row),
+              formattedValue: formatMoney(costPerPrimaryValue(planned, row)),
+            },
+          }
+        : {}),
     })),
     sourceNoteIds: ["S1", "S2", "S3", "S4"],
     assumptions: visualAssumptions(planned),
@@ -847,6 +1104,7 @@ function barChartVisualCard(
   dimension: WorkbenchDimension,
   metric: WorkbenchMetric,
   groupedRows: MetaInsightAggregateRow[],
+  entityDisplays: EntityDisplayMap,
 ): AnalysisWorkbenchVisualCard {
   return {
     id: `bar_${dimension}_${metric}`,
@@ -854,15 +1112,17 @@ function barChartVisualCard(
     title: `${metricLabel(metric)} by ${visualDimensionLabel(dimension)}`,
     metric,
     dimension,
-    bars: [...groupedRows]
+    bars: rollupRowsForDimension(groupedRows, dimension, metric)
       .sort((a, b) => metricValue(b, metric) - metricValue(a, metric))
       .slice(0, 8)
       .map((row) => {
         const value = metricValue(row, metric);
+        const entity = entityDisplayFor(row, dimension, entityDisplays);
         return {
-          label: entityName(row, dimension),
+          label: entity.label,
           value,
           formattedValue: formatMetric(value, metric),
+          entity,
         };
       }),
     sourceNoteIds: ["S1", "S2", "S3", "S4"],
@@ -904,13 +1164,14 @@ function pivotTableVisualCard(
     columnDimension: WorkbenchDimension;
   },
   groupedRows: MetaInsightAggregateRow[],
+  entityDisplays: EntityDisplayMap,
 ): AnalysisWorkbenchVisualCard {
   const metric = visual.metrics?.find(isWorkbenchMetric) || planned.metrics[0] || "spend";
   const columnLabels = unique(
-    groupedRows.map((row) => dimensionValue(row, visual.columnDimension)),
+    groupedRows.map((row) => dimensionKey(row, visual.columnDimension)),
   ).slice(0, 12);
   const rowLabels = unique(
-    groupedRows.map((row) => dimensionValue(row, visual.rowDimension)),
+    groupedRows.map((row) => dimensionKey(row, visual.rowDimension)),
   ).slice(0, 10);
 
   return {
@@ -922,15 +1183,25 @@ function pivotTableVisualCard(
     rowDimension: visual.rowDimension,
     columnDimension: visual.columnDimension,
     metric,
-    columns: columnLabels.map((label) => ({ key: label, label })),
+    columns: columnLabels.map((label) => {
+      const sourceRow = groupedRows.find((row) => dimensionKey(row, visual.columnDimension) === label);
+      const entity = sourceRow && ENTITY_DIMENSIONS.has(visual.columnDimension)
+        ? entityDisplayFor(sourceRow, visual.columnDimension, entityDisplays)
+        : undefined;
+      return { key: label, label: entity?.label || label, ...(entity ? { entity } : {}) };
+    }),
     rows: rowLabels.map((rowLabel) => {
+      const rowSource = groupedRows.find((row) => dimensionKey(row, visual.rowDimension) === rowLabel);
+      const rowEntity = rowSource && ENTITY_DIMENSIONS.has(visual.rowDimension)
+        ? entityDisplayFor(rowSource, visual.rowDimension, entityDisplays)
+        : undefined;
       const cells = Object.fromEntries(
         columnLabels.map((columnLabel) => {
           const value = groupedRows
             .filter(
               (row) =>
-                dimensionValue(row, visual.rowDimension) === rowLabel &&
-                dimensionValue(row, visual.columnDimension) === columnLabel,
+                dimensionKey(row, visual.rowDimension) === rowLabel &&
+                dimensionKey(row, visual.columnDimension) === columnLabel,
             )
             .reduce((sum, row) => sum + metricValue(row, metric), 0);
 
@@ -950,7 +1221,8 @@ function pivotTableVisualCard(
       );
 
       return {
-        rowLabel,
+        rowLabel: rowEntity?.label || rowLabel,
+        ...(rowEntity ? { rowEntity } : {}),
         cells,
         total: {
           value: totalValue,
@@ -969,6 +1241,7 @@ function scatterChartVisualCard(
   planned: PlannedIntent,
   visual: WorkbenchSemanticVisualIntent,
   groupedRows: MetaInsightAggregateRow[],
+  entityDisplays: EntityDisplayMap,
 ): AnalysisWorkbenchVisualCard {
   const dimension =
     visual.dimensions?.find(
@@ -993,12 +1266,14 @@ function scatterChartVisualCard(
     points: groupedRows.slice(0, 20).map((row) => {
       const x = metricValue(row, xMetric);
       const y = metricValue(row, yMetric);
+      const entity = entityDisplayFor(row, dimension, entityDisplays);
       return {
-        label: dimensionValue(row, dimension),
+        label: entity.label,
         x,
         y,
         formattedX: formatMetric(x, xMetric),
         formattedY: formatMetric(y, yMetric),
+        entity,
       };
     }),
     sourceNoteIds: ["S1", "S2", "S3", "S4"],
@@ -1060,10 +1335,194 @@ function totalFact(
   };
 }
 
+function shapeComputedFacts(
+  planned: PlannedIntent,
+  groupedRows: MetaInsightAggregateRow[],
+  startCitationIndex: number,
+  entityDisplays: EntityDisplayMap,
+): AnalysisWorkbenchComputedFact[] {
+  const metric = planned.metrics[0];
+  if (!metric || !groupedRows.length) return [];
+
+  if (
+    planned.analysisShape === "week_over_week_performance" ||
+    planned.analysisShape === "entity_week_over_week" ||
+    planned.analysisShape === "generic_trend"
+  ) {
+    return weekOverWeekFacts(planned, groupedRows, metric, startCitationIndex, entityDisplays);
+  }
+
+  if (planned.analysisShape === "budget_recommendation") {
+    return recommendationFacts(planned, groupedRows, metric, startCitationIndex, entityDisplays);
+  }
+
+  if (planned.analysisShape === "performance_diagnosis") {
+    return diagnosisFacts(planned, groupedRows, metric, startCitationIndex, entityDisplays);
+  }
+
+  return [];
+}
+
+function weekOverWeekFacts(
+  planned: PlannedIntent,
+  groupedRows: MetaInsightAggregateRow[],
+  metric: WorkbenchMetric,
+  startCitationIndex: number,
+  entityDisplays: EntityDisplayMap,
+): AnalysisWorkbenchComputedFact[] {
+  const timeDimension = planned.dimensions.find(isTimeDimension) || "week";
+  const weeklyRows = sortAggregateRows(
+    mergeAggregateRowsByDimensions(groupedRows, [timeDimension]),
+    timeDimension,
+    "asc",
+  ).filter((row) => row[timeDimension]);
+  if (!weeklyRows.length) return [];
+
+  const facts: AnalysisWorkbenchComputedFact[] = [];
+  const last = weeklyRows[weeklyRows.length - 1];
+  const previous = weeklyRows[weeklyRows.length - 2] || null;
+  if (previous) {
+    const lastValue = metricValue(last, metric);
+    const previousValue = metricValue(previous, metric);
+    const deltaValue = lastValue - previousValue;
+    const percentDelta = previousValue ? deltaValue / previousValue : null;
+    facts.push({
+      id: `fact_${timeDimension}_${metric}_latest_delta`,
+      type: "period_comparison",
+      label: `${metricLabel(metric)} latest ${dimensionLabel(timeDimension)} change`,
+      metric,
+      dimension: timeDimension,
+      entityName: String(last[timeDimension] || "Latest week"),
+      value: lastValue,
+      formattedValue: formatMetric(lastValue, metric),
+      baselineLabel: String(previous[timeDimension] || "prior week"),
+      baselineValue: previousValue,
+      formattedBaselineValue: formatMetric(previousValue, metric),
+      deltaValue,
+      formattedDeltaValue: formatMetric(deltaValue, metric),
+      percentDelta,
+      formattedPercentDelta: formatPercentDelta(percentDelta),
+      citationId: `F${startCitationIndex}`,
+    });
+  }
+
+  const best = [...weeklyRows].sort((a, b) => metricValue(b, metric) - metricValue(a, metric))[0];
+  facts.push({
+    id: `fact_best_${timeDimension}_${metric}`,
+    type: "winner",
+    label: `Best ${dimensionLabel(timeDimension)} by ${metricLabel(metric)}`,
+    metric,
+    dimension: timeDimension,
+    entityName: String(best[timeDimension] || "Best week"),
+    value: metricValue(best, metric),
+    formattedValue: formatMetric(metricValue(best, metric), metric),
+    citationId: `F${startCitationIndex + facts.length}`,
+  });
+
+  const entityDimension = primaryEntityDimension(planned.dimensions.filter((dimension) => !isTimeDimension(dimension)));
+  if (entityDimension) {
+    const entityRows = sortAggregateRows(
+      mergeAggregateRowsByDimensions(groupedRows, [entityDimension]),
+      metric,
+      "desc",
+    );
+    const winner = entityRows[0];
+    if (winner) {
+      facts.push({
+        id: `fact_top_${entityDimension}_${metric}_overall`,
+        type: "rank",
+        label: `Top ${dimensionLabel(entityDimension)} by ${metricLabel(metric)}`,
+        metric,
+        dimension: entityDimension,
+        entityName: displayEntityName(winner, entityDimension, entityDisplays),
+        value: metricValue(winner, metric),
+        formattedValue: formatMetric(metricValue(winner, metric), metric),
+        citationId: `F${startCitationIndex + facts.length}`,
+      });
+    }
+  }
+
+  return facts;
+}
+
+function recommendationFacts(
+  planned: PlannedIntent,
+  groupedRows: MetaInsightAggregateRow[],
+  metric: WorkbenchMetric,
+  startCitationIndex: number,
+  entityDisplays: EntityDisplayMap,
+): AnalysisWorkbenchComputedFact[] {
+  const dimension = primaryEntityDimension(planned.dimensions);
+  if (!dimension) return [];
+  const average = groupedRows.reduce((sum, row) => sum + metricValue(row, metric), 0) / groupedRows.length;
+  const candidate =
+    [...groupedRows]
+      .filter((row) => metricValue(row, metric) <= average)
+      .sort((a, b) => metricValue(b, "spend") - metricValue(a, "spend"))[0] ||
+    [...groupedRows].sort((a, b) => metricValue(b, metric) - metricValue(a, metric))[0];
+  if (!candidate) return [];
+
+  return [
+    {
+      id: `fact_recommend_${dimension}_${metric}`,
+      type: "recommendation",
+      label: `Inspect ${dimensionLabel(dimension)} with high spend or weak ${metricLabel(metric)}`,
+      metric,
+      dimension,
+      entityName: displayEntityName(candidate, dimension, entityDisplays),
+      value: metricValue(candidate, metric),
+      formattedValue: formatMetric(metricValue(candidate, metric), metric),
+      baselineLabel: `average ${dimensionLabel(dimension)}`,
+      baselineValue: average,
+      formattedBaselineValue: formatMetric(average, metric),
+      citationId: `F${startCitationIndex}`,
+    },
+  ];
+}
+
+function diagnosisFacts(
+  planned: PlannedIntent,
+  groupedRows: MetaInsightAggregateRow[],
+  metric: WorkbenchMetric,
+  startCitationIndex: number,
+  entityDisplays: EntityDisplayMap,
+): AnalysisWorkbenchComputedFact[] {
+  const dimension = primaryEntityDimension(planned.dimensions);
+  if (!dimension || groupedRows.length < 2) return [];
+  const sorted = [...groupedRows].sort((a, b) => metricValue(b, metric) - metricValue(a, metric));
+  const winner = sorted[0];
+  const loser = sorted[sorted.length - 1];
+  return [
+    {
+      id: `fact_diagnosis_winner_${dimension}_${metric}`,
+      type: "winner",
+      label: `Strongest ${dimensionLabel(dimension)} by ${metricLabel(metric)}`,
+      metric,
+      dimension,
+      entityName: displayEntityName(winner, dimension, entityDisplays),
+      value: metricValue(winner, metric),
+      formattedValue: formatMetric(metricValue(winner, metric), metric),
+      citationId: `F${startCitationIndex}`,
+    },
+    {
+      id: `fact_diagnosis_loser_${dimension}_${metric}`,
+      type: "loser",
+      label: `Weakest ${dimensionLabel(dimension)} by ${metricLabel(metric)}`,
+      metric,
+      dimension,
+      entityName: displayEntityName(loser, dimension, entityDisplays),
+      value: metricValue(loser, metric),
+      formattedValue: formatMetric(metricValue(loser, metric), metric),
+      citationId: `F${startCitationIndex + 1}`,
+    },
+  ];
+}
+
 function firstRankFact(
   planned: PlannedIntent,
   groupedRows: MetaInsightAggregateRow[],
   citationIndex: number,
+  entityDisplays: EntityDisplayMap,
 ): AnalysisWorkbenchComputedFact | null {
   const metric = planned.metrics[0];
   const dimension = primaryEntityDimension(planned.dimensions);
@@ -1077,7 +1536,7 @@ function firstRankFact(
     label: `Top ${dimensionLabel(dimension)} by ${metricLabel(metric)}`,
     metric,
     dimension,
-    entityName: entityName(topRow, dimension),
+    entityName: displayEntityName(topRow, dimension, entityDisplays),
     value,
     formattedValue: formatMetric(value, metric),
     citationId: `F${citationIndex}`,
@@ -1088,6 +1547,7 @@ function firstComparisonFact(
   planned: PlannedIntent,
   groupedRows: MetaInsightAggregateRow[],
   citationIndex: number,
+  entityDisplays: EntityDisplayMap,
 ): AnalysisWorkbenchComputedFact | null {
   const metric = planned.metrics[0];
   const dimension = primaryEntityDimension(planned.dimensions);
@@ -1103,7 +1563,7 @@ function firstComparisonFact(
     label: `${dimensionLabel(dimension)} ${metricLabel(metric)} vs average`,
     metric,
     dimension,
-    entityName: entityName(topRow, dimension),
+    entityName: displayEntityName(topRow, dimension, entityDisplays),
     value,
     formattedValue: formatMetric(value, metric),
     baselineLabel: `average ${dimensionLabel(dimension)}`,
@@ -1138,6 +1598,7 @@ function citationForFact(fact: AnalysisWorkbenchComputedFact): AnalysisWorkbench
       fact.formattedValue || "",
       fact.formattedBaselineValue || "",
       fact.formattedDeltaValue || "",
+      fact.formattedPercentDelta || "",
     ].filter(Boolean),
     metric: fact.metric,
     entityName: fact.entityName,
@@ -1183,6 +1644,75 @@ function refineDetectedMetrics(prompt: string, metrics: WorkbenchMetric[]): Work
     ];
   }
   return metrics;
+}
+
+function metricBundleForPrompt(input: {
+  prompt: string;
+  metrics: WorkbenchMetric[];
+  filters: MetaInsightFilter[];
+  questionType: WorkbenchQuestionType;
+}): WorkbenchMetric[] {
+  const lower = input.prompt.toLowerCase();
+  const wantsPerformanceBundle =
+    /\bperformance\b|\bwhat\s+changed\b/.test(lower) ||
+    input.questionType === "diagnosis" ||
+    input.questionType === "recommendation";
+  if (!wantsPerformanceBundle) return unique(input.metrics).slice(0, 4);
+  const exactUmbrellas = unique(
+    input.filters
+      .filter((filter) => filter.field === "campaign_umbrella" && filter.operator === "equals")
+      .map((filter) => filter.value),
+  );
+  if (input.metrics.length >= 3 && !(exactUmbrellas.length === 1 && /\bperformance\b/.test(lower))) {
+    return unique(input.metrics).slice(0, 4);
+  }
+  const primaryRule = getPrimaryKpiRule(exactUmbrellas);
+  const primaryMetric = primaryRule.metric;
+  const bundle: WorkbenchMetric[] = [];
+
+  if (exactUmbrellas.length === 1 && primaryMetric !== "primary_results") {
+    bundle.push(primaryMetric);
+  } else {
+    bundle.push("primary_results");
+  }
+  if (!bundle.includes("spend")) bundle.push("spend");
+
+  if (primaryMetric !== "messaging_contacts" && !bundle.includes("cpl")) bundle.push("cpl");
+  if ((input.questionType === "diagnosis" || input.questionType === "recommendation") && !bundle.includes("ctr")) {
+    bundle.push("ctr");
+  }
+
+  return unique([
+    ...bundle,
+    ...input.metrics.filter((metric) => !bundle.includes(metric)),
+  ]).slice(0, 4);
+}
+
+function inferAnalysisShape(input: {
+  prompt: string;
+  questionType: WorkbenchQuestionType;
+  metrics: WorkbenchMetric[];
+  dimensions: WorkbenchDimension[];
+  filters: MetaInsightFilter[];
+}): AnalysisWorkbenchShape {
+  const lower = input.prompt.toLowerCase();
+  const wantsWeekOverWeek =
+    /\bweek[-\s]?over[-\s]?week\b|\bweek\s+by\s+week\b|\bweekly\b|\bby\s+week\b|\beach\s+week\b/.test(
+      lower,
+    );
+  const hasTimeDimension = input.dimensions.some(isTimeDimension);
+  const hasEntityDimension = input.dimensions.some((dimension) => ENTITY_DIMENSIONS.has(dimension));
+
+  if (input.questionType === "recommendation") return "budget_recommendation";
+  if (input.questionType === "diagnosis") return "performance_diagnosis";
+  if (hasEntityDimension && (wantsWeekOverWeek || hasTimeDimension)) return "entity_week_over_week";
+  if (wantsWeekOverWeek || hasTimeDimension) {
+    return /\bperformance\b|\bprimary\s+kpi\b|\bkpi\b|\bmessages?\b|\bmessaging\b|\bspend\b/.test(lower)
+      ? "week_over_week_performance"
+      : "generic_trend";
+  }
+  if (hasEntityDimension) return "entity_leaderboard";
+  return input.questionType === "trend" ? "generic_trend" : "generic_breakdown";
 }
 
 function primaryKpiRankingRequested(lower: string) {
@@ -1321,7 +1851,9 @@ function defaultLimitForIntent(input: {
 }) {
   const timeSeries = trendSortField(input.questionType, input.dimensions);
   if (timeSeries) {
-    return Math.max(input.requestedLimit || 0, dateBucketLimit(input.dateRange, input.dateGrain));
+    const buckets = dateBucketLimit(input.dateRange, input.dateGrain);
+    const hasEntity = input.dimensions.some((dimension) => ENTITY_DIMENSIONS.has(dimension));
+    return Math.max(input.requestedLimit || 0, hasEntity ? buckets * MAX_WOW_ENTITY_ROWS : buckets);
   }
   return input.requestedLimit || MAX_GROUP_ROWS;
 }
@@ -1342,7 +1874,7 @@ function detectDimensions(prompt: string, useDefault = true): WorkbenchDimension
   if (/\bby\s+(?:day|date)\b|\band\s+(?:day|date)\b|\bdaily\b|\bper\s+day\b|\bevery\s+day\b|\beach\s+day\b|\bday[-\s]?by[-\s]?day\b/.test(lower)) {
     dimensions.push("date");
   }
-  if (/\bby\s+week\b|\band\s+week\b|\bweekly\b|\bper\s+week\b|\beach\s+week\b/.test(lower)) dimensions.push("week");
+  if (/\bby\s+week\b|\band\s+week\b|\bweekly\b|\bper\s+week\b|\beach\s+week\b|\bweek[-\s]?(?:by|over)[-\s]?week\b/.test(lower)) dimensions.push("week");
   if (/\bby\s+month\b|\band\s+month\b|\bmonthly\b(?!\s+budget)|\bper\s+month\b|\beach\s+month\b/.test(lower)) dimensions.push("month");
   if (/\bby\s+quarter\b|\band\s+quarter\b|\bquarterly\b|\bper\s+quarter\b|\beach\s+quarter\b/.test(lower)) dimensions.push("quarter");
   if (/\bby\s+brands?\b|\bper\s+brands?\b|\bacross\s+brands?\b|\bwhich\s+brands?\b|\bcompare\s+brands?\b|\bbrands?\s+by\b|\bbrands?\s+(?:rows?|columns?)\b/.test(lower)) {
@@ -1627,6 +2159,17 @@ function mergeAggregateRowsByDimensions(
   });
 }
 
+function rollupRowsForDimension(
+  rows: MetaInsightAggregateRow[],
+  dimension: WorkbenchDimension,
+  sortMetric: WorkbenchMetric = "spend",
+) {
+  const rolledUp = mergeAggregateRowsByDimensions(rows, [dimension]);
+  return isTimeDimension(dimension)
+    ? sortAggregateRows(rolledUp, dimension, "asc")
+    : sortAggregateRows(rolledUp, sortMetric, "desc");
+}
+
 function copyDimensionValue(
   target: MetaInsightAggregateRow,
   source: MetaInsightAggregateRow,
@@ -1724,11 +2267,136 @@ function entityName(row: MetaInsightAggregateRow, dimension: WorkbenchDimension)
   return "All Meta Ads";
 }
 
+function displayEntityName(
+  row: MetaInsightAggregateRow,
+  dimension: WorkbenchDimension,
+  entityDisplays: EntityDisplayMap,
+) {
+  return entityDisplayFor(row, dimension, entityDisplays).label;
+}
+
+function entityVisualCell(
+  row: MetaInsightAggregateRow,
+  dimension: WorkbenchDimension,
+  entityDisplays: EntityDisplayMap,
+) {
+  const entity = entityDisplayFor(row, dimension, entityDisplays);
+  return {
+    value: entity.id,
+    formattedValue: entity.label,
+    entity,
+    hiddenId: entity.hiddenId || technicalEntityId(row, dimension),
+  };
+}
+
+function entityDisplayFor(
+  row: MetaInsightAggregateRow,
+  dimension: WorkbenchDimension,
+  entityDisplays: EntityDisplayMap,
+): AnalysisWorkbenchEntityDisplay {
+  const key = entityKey(row, dimension);
+  const display = key ? entityDisplays.get(displayMapKey(dimension, key)) : null;
+  if (display) return sanitizeEntityDisplay(display, dimension);
+  return {
+    id: key || "unknown",
+    label: fallbackEntityLabel(row, dimension),
+    sourceType: entitySourceType(dimension),
+    hiddenId: technicalEntityId(row, dimension),
+  };
+}
+
+function entitySourceType(dimension: WorkbenchDimension): AnalysisWorkbenchEntityDisplay["sourceType"] {
+  return dimension === "brand" ||
+    dimension === "campaign_umbrella" ||
+    dimension === "campaign" ||
+    dimension === "ad_set" ||
+    dimension === "ad" ||
+    dimension === "creative"
+    ? dimension
+    : "fallback";
+}
+
+function entityKey(row: MetaInsightAggregateRow, dimension: WorkbenchDimension) {
+  const idField = ENTITY_ID_FIELDS[dimension];
+  const id = idField ? row[idField] : null;
+  return String(id || row[dimension] || "").trim();
+}
+
+function technicalEntityId(row: MetaInsightAggregateRow, dimension: WorkbenchDimension) {
+  const idField = ENTITY_ID_FIELDS[dimension];
+  const id = idField ? row[idField] : null;
+  return typeof id === "string" && id ? id : null;
+}
+
+function displayMapKey(dimension: WorkbenchDimension, key: string) {
+  return `${dimension}:${key}`;
+}
+
+function fallbackEntityLabel(row: MetaInsightAggregateRow, dimension: WorkbenchDimension) {
+  const value = row[dimension];
+  const fallback = unknownEntityLabel(dimension);
+  if (typeof value === "string" && value.trim() && !looksTechnicalId(value)) {
+    return sanitizeVisibleEntityLabel(value, fallback);
+  }
+  if (dimension === "campaign_umbrella") return "Needs review";
+  if (dimension === "campaign") return "Unknown campaign";
+  if (dimension === "ad_set") return "Unknown ad set";
+  if (dimension === "ad") return "Unknown ad";
+  if (dimension === "creative") return "Unknown creative";
+  return entityName(row, dimension);
+}
+
+function looksTechnicalId(value: string) {
+  return /^\d{8,}$/.test(value.trim()) || /^[a-f0-9-]{18,}$/i.test(value.trim());
+}
+
+function sanitizeEntityDisplay(
+  display: AnalysisWorkbenchEntityDisplay,
+  dimension: WorkbenchDimension,
+): AnalysisWorkbenchEntityDisplay {
+  const fallback = unknownEntityLabel(dimension);
+  const label = sanitizeVisibleEntityLabel(display.label, fallback);
+  const subtitle = display.subtitle
+    ? sanitizeVisibleEntityLabel(display.subtitle, "")
+    : undefined;
+
+  return {
+    ...display,
+    label,
+    ...(subtitle ? { subtitle } : { subtitle: undefined }),
+  };
+}
+
+function sanitizeVisibleEntityLabel(value: string, fallback: string) {
+  let label = String(value || "").replace(/\s+/g, " ").trim();
+  label = label
+    .replace(/\s+\d{4}-\d{2}-\d{2}[-_][A-Za-z0-9-]{8,}\s*$/u, "")
+    .replace(/(?:[-_\s]+)(?:\d{8,}|[a-f0-9]{12,}|[A-Za-z0-9]{18,})\s*$/iu, "")
+    .trim();
+
+  if (!label || looksTechnicalId(label)) return fallback;
+  return label;
+}
+
+function unknownEntityLabel(dimension: WorkbenchDimension) {
+  if (dimension === "campaign_umbrella") return "Needs review";
+  if (dimension === "campaign") return "Unknown campaign";
+  if (dimension === "ad_set") return "Unknown ad set";
+  if (dimension === "ad") return "Unknown ad";
+  if (dimension === "creative") return "Unknown creative";
+  return "Unknown entity";
+}
+
 function dimensionValue(row: MetaInsightAggregateRow, dimension: WorkbenchDimension) {
   const value = row[dimension];
   if (value) return String(value);
   if (ENTITY_DIMENSIONS.has(dimension)) return entityName(row, dimension);
   return "Unspecified";
+}
+
+function dimensionKey(row: MetaInsightAggregateRow, dimension: WorkbenchDimension) {
+  if (ENTITY_DIMENSIONS.has(dimension)) return entityKey(row, dimension) || entityName(row, dimension);
+  return dimensionValue(row, dimension);
 }
 
 function primaryEntityDimension(dimensions: WorkbenchDimension[]) {
@@ -1794,6 +2462,37 @@ function sentenceCase(value: string) {
   return value ? `${value[0].toUpperCase()}${value.slice(1)}` : value;
 }
 
+function shouldIncludeCostPerPrimary(planned: PlannedIntent) {
+  const metric = primaryMetricForCost(planned);
+  return Boolean(metric && planned.metrics.includes("spend") && planned.metrics.includes(metric));
+}
+
+function primaryMetricForCost(planned: PlannedIntent): WorkbenchMetric | null {
+  const exactUmbrellas = planned.filters
+    .filter((filter) => filter.field === "campaign_umbrella" && filter.operator === "equals")
+    .map((filter) => filter.value);
+  const rule = getPrimaryKpiRule(exactUmbrellas);
+  if (planned.metrics.includes(rule.metric)) return rule.metric;
+  if (planned.metrics.includes("primary_results")) return "primary_results";
+  if (planned.metrics.includes("messaging_contacts")) return "messaging_contacts";
+  if (planned.metrics.includes("website_bookings")) return "website_bookings";
+  return null;
+}
+
+function costPerPrimaryValue(planned: PlannedIntent, row: MetaInsightAggregateRow) {
+  const metric = primaryMetricForCost(planned);
+  if (!metric) return null;
+  const denominator = metricValue(row, metric);
+  return denominator > 0 ? metricValue(row, "spend") / denominator : null;
+}
+
+function costPerPrimaryLabel(planned: PlannedIntent) {
+  const metric = primaryMetricForCost(planned);
+  if (metric === "messaging_contacts") return "Cost / messaging contact";
+  if (metric === "website_bookings" || metric === "bookings") return "Cost / booking";
+  return "Cost / primary KPI";
+}
+
 function formatMetric(value: number | null | undefined, metric: WorkbenchMetric) {
   if (value === null || value === undefined) return "n/a";
   if (MONEY_METRICS.has(metric)) return formatMoney(value);
@@ -1802,12 +2501,19 @@ function formatMetric(value: number | null | undefined, metric: WorkbenchMetric)
   return formatNumber(value);
 }
 
-function formatMoney(value: number) {
+function formatMoney(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "n/a";
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
     maximumFractionDigits: Number.isInteger(value) ? 0 : 2,
   }).format(value);
+}
+
+function formatPercentDelta(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "n/a";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${formatNumber(value * 100)}%`;
 }
 
 function formatNumber(value: number) {
@@ -1818,7 +2524,7 @@ function formatNumber(value: number) {
 
 function normalizeNumericClaim(value: unknown) {
   if (value === null || value === undefined || value === "") return null;
-  const normalized = String(value).replace(/[$,%]/g, "").replace(/,/g, "").trim();
+  const normalized = String(value).replace(/[$,%]/g, "").replace(/,/g, "").trim().replace(/^[+-]/, "");
   const parsed = Number(normalized);
   if (!Number.isFinite(parsed)) return null;
   return String(Number(parsed.toFixed(4)));

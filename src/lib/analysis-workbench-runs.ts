@@ -7,13 +7,17 @@ import {
   removeAnalysisContextChips,
   resolveAnalysisRunContext,
   type AnalysisOutputMode,
+  type AnalysisWorkbenchEntityDisplay,
   type AnalysisWorkbenchControlledEdit,
   type AnalysisWorkbenchContextSnapshot,
   type AnalysisRunRecord,
   type AnalysisWorkbenchRun,
   type JsonValue,
 } from "./analysis-workbench-contract.ts";
-import { runAnalysisWorkbenchFactsPipeline } from "./analysis-workbench-pipeline.ts";
+import {
+  runAnalysisWorkbenchFactsPipeline,
+  type AnalysisWorkbenchEntityDisplayRequest,
+} from "./analysis-workbench-pipeline.ts";
 import { createAdsAnalystClient, withAdsAnalystEnvironment } from "./ads-analyst-db.ts";
 import { ConfigurationError, getMissingDashboardEnv } from "./env.ts";
 import { aggregateMetaInsights } from "./meta-insight-aggregates.ts";
@@ -80,6 +84,7 @@ export async function createAnalysisWorkbenchRun(input: {
         sortDirection: request.sortDirection,
         limit: request.limit,
       }),
+    loadEntityDisplays: loadAnalysisWorkbenchEntityDisplays,
   });
 
   const run = buildAnalysisRunInsert({
@@ -177,6 +182,7 @@ export async function rerunAnalysisWorkbenchRun(
         sortDirection: request.sortDirection,
         limit: request.limit,
       }),
+    loadEntityDisplays: loadAnalysisWorkbenchEntityDisplays,
   });
   const run = buildAnalysisRunInsert({
     prompt: sourceRun.prompt,
@@ -195,6 +201,132 @@ export async function rerunAnalysisWorkbenchRun(
 
   if (response.error) throw response.error;
   return mapAnalysisRunRecord(response.data as AnalysisRunRecord);
+}
+
+async function loadAnalysisWorkbenchEntityDisplays(
+  request: AnalysisWorkbenchEntityDisplayRequest,
+): Promise<AnalysisWorkbenchEntityDisplay[]> {
+  const dimensions = new Set(request.dimensions);
+  const rows = request.rows;
+  const supabase = createAdsAnalystClient("web") as unknown as EntityMetadataClient;
+  const displays: AnalysisWorkbenchEntityDisplay[] = [];
+
+  if (dimensions.has("campaign")) {
+    const campaigns = await selectRowsById(
+      supabase,
+      "meta_campaigns",
+      "campaign_id,name",
+      "campaign_id",
+      uniqueStrings(rows.map((row) => row.campaign_id)),
+    );
+    campaigns.forEach((campaign) => {
+      const id = stringValue(campaign.campaign_id);
+      const label = stringValue(campaign.name);
+      if (id && label) displays.push({ id, label, sourceType: "campaign", hiddenId: id });
+    });
+  }
+
+  if (dimensions.has("ad_set")) {
+    const adSets = await selectRowsById(
+      supabase,
+      "meta_ad_sets",
+      "ad_set_id,name,campaign_id",
+      "ad_set_id",
+      uniqueStrings(rows.map((row) => row.ad_set_id)),
+    );
+    adSets.forEach((adSet) => {
+      const id = stringValue(adSet.ad_set_id);
+      const label = stringValue(adSet.name);
+      if (id && label) {
+        displays.push({
+          id,
+          label,
+          subtitle: stringValue(adSet.campaign_id),
+          sourceType: "ad_set",
+          hiddenId: id,
+        });
+      }
+    });
+  }
+
+  const adIds = uniqueStrings(rows.map((row) => row.ad_id));
+  const creativeIds = uniqueStrings(rows.map((row) => row.creative_id));
+  const [adsByAdId, adsByCreativeId, creatives] = await Promise.all([
+    dimensions.has("ad")
+      ? selectRowsById(
+          supabase,
+          "meta_ads",
+          "ad_id,name,creative_id,ad_set_id,campaign_id,preview_url,preview_html,preview_source",
+          "ad_id",
+          adIds,
+        )
+      : Promise.resolve([]),
+    dimensions.has("creative")
+      ? selectRowsById(
+          supabase,
+          "meta_ads",
+          "ad_id,name,creative_id,ad_set_id,campaign_id,preview_url,preview_html,preview_source",
+          "creative_id",
+          creativeIds,
+        )
+      : Promise.resolve([]),
+    dimensions.has("creative")
+      ? selectRowsById(
+          supabase,
+          "meta_creatives",
+          "creative_id,name,title,body,supabase_thumbnail_url,supabase_image_url,thumbnail_url,image_url,video_thumbnail_url,preview_url,preview_html,preview_source",
+          "creative_id",
+          creativeIds,
+        )
+      : Promise.resolve([]),
+  ]);
+
+  adsByAdId.forEach((ad) => {
+    const id = stringValue(ad.ad_id);
+    const label = stringValue(ad.name);
+    if (!id || !label) return;
+    displays.push({
+      id,
+      label,
+      subtitle: stringValue(ad.ad_set_id) || stringValue(ad.campaign_id),
+      previewHtml: stringValue(ad.preview_html),
+      previewUrl: stringValue(ad.preview_url),
+      sourceType: "ad",
+      hiddenId: id,
+    });
+  });
+
+  const adByCreativeId = new Map(
+    adsByCreativeId
+      .map((ad) => [stringValue(ad.creative_id), ad] as const)
+      .filter(([id]) => Boolean(id)),
+  );
+  creatives.forEach((creative) => {
+    const id = stringValue(creative.creative_id);
+    if (!id) return;
+    const ad = adByCreativeId.get(id);
+    const label =
+      stringValue(creative.name) ||
+      stringValue(creative.title) ||
+      stringValue(ad?.name) ||
+      "Unknown creative";
+    displays.push({
+      id,
+      label,
+      subtitle: stringValue(ad?.name) || stringValue(creative.body),
+      thumbnailUrl:
+        stringValue(creative.supabase_thumbnail_url) ||
+        stringValue(creative.thumbnail_url) ||
+        stringValue(creative.video_thumbnail_url),
+      imageUrl: stringValue(creative.supabase_image_url) || stringValue(creative.image_url),
+      previewHtml: stringValue(creative.preview_html) || stringValue(ad?.preview_html),
+      previewUrl: stringValue(creative.preview_url) || stringValue(ad?.preview_url),
+      sourceType: "creative",
+      hiddenId: id,
+    });
+  });
+
+  return displays;
 }
 
 function refreshAnalysisContextDateRange(
@@ -217,6 +349,38 @@ function refreshAnalysisContextDateRange(
       end: latestSyncedInsightDate,
     },
   };
+}
+
+type EntityMetadataClient = {
+  from: (table: string) => {
+    select: (columns: string) => {
+      in: (
+        column: string,
+        values: string[],
+      ) => Promise<{ data: Record<string, unknown>[] | null; error: Error | null }>;
+    };
+  };
+};
+
+async function selectRowsById(
+  client: EntityMetadataClient,
+  table: string,
+  columns: string,
+  column: string,
+  ids: string[],
+) {
+  if (!ids.length) return [];
+  const response = await client.from(table).select(columns).in(column, ids);
+  if (response.error) return [];
+  return response.data || [];
+}
+
+function uniqueStrings(values: Array<string | null | undefined>) {
+  return Array.from(new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0)));
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" && value.length ? value : null;
 }
 
 async function fetchLatestSyncedInsightDate() {

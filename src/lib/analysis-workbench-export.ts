@@ -105,10 +105,23 @@ export function buildAnalysisWorkbenchPdfReportExport({
 
 function tableRows(card: AnalysisWorkbenchTableExportCard): string[][] {
   if (card.type === "flat_table") {
+    const columnInfo = card.columns.map((column) => ({
+      column,
+      hasHiddenIds:
+        column.kind === "dimension" &&
+        card.rows.some((row) => hiddenVisualCellId(row[column.key])),
+    }));
+    const columns = columnInfo.flatMap(({ column, hasHiddenIds }) =>
+      hasHiddenIds ? [column.label, `${column.label} ID`] : [column.label],
+    );
     return [
-      card.columns.map((column) => column.label),
+      columns,
       ...card.rows.map((row) =>
-        card.columns.map((column) => formattedVisualCell(row[column.key])),
+        columnInfo.flatMap(({ column, hasHiddenIds }) => {
+          const cell = row[column.key];
+          const id = hiddenVisualCellId(cell);
+          return hasHiddenIds ? [formattedVisualCell(cell), id || ""] : [formattedVisualCell(cell)];
+        }),
       ),
     ];
   }
@@ -460,6 +473,12 @@ function formattedVisualCell(cell: AnalysisWorkbenchVisualCell | undefined) {
     return typeof cell.formattedValue === "string" ? cell.formattedValue : String(cell.value ?? "");
   }
   return String(cell);
+}
+
+function hiddenVisualCellId(cell: AnalysisWorkbenchVisualCell | undefined) {
+  if (!cell || typeof cell !== "object" || Array.isArray(cell)) return null;
+  const id = cell.hiddenId || cell.entity?.hiddenId;
+  return typeof id === "string" && id ? id : null;
 }
 
 function visualTypeLabel(type: AnalysisWorkbenchVisualCard["type"]) {

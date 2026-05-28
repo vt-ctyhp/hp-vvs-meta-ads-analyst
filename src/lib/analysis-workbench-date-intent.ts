@@ -142,7 +142,7 @@ export function inferWorkbenchDateGrainFromPrompt(
   if (/\bby\s+(?:day|date)\b|\band\s+(?:day|date)\b|\bdaily\b|\bper\s+day\b|\bevery\s+day\b|\beach\s+day\b|\bday[-\s]?by[-\s]?day\b/.test(lower)) {
     return "day";
   }
-  if (/\bby\s+week\b|\band\s+week\b|\bweekly\b|\bper\s+week\b|\beach\s+week\b|\bweek[-\s]?by[-\s]?week\b/.test(lower)) {
+  if (/\bby\s+week\b|\band\s+week\b|\bweekly\b|\bper\s+week\b|\beach\s+week\b|\bweek[-\s]?(?:by|over)[-\s]?week\b/.test(lower)) {
     return "week";
   }
   if (/\bby\s+month\b|\band\s+month\b|\bmonthly\b(?!\s+budget)|\bper\s+month\b|\beach\s+month\b|\bmonth[-\s]?by[-\s]?month\b/.test(lower)) {
