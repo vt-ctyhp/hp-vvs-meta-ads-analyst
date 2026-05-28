@@ -40,6 +40,7 @@ import {
   type Period,
   type TeamRollup,
   type TeamRow,
+  type DailyHistoryRow,
 } from "./inbox-metrics.ts";
 
 // Minimal dynamic client type — mirrors the private DynamicSupabaseClient in
@@ -387,6 +388,30 @@ function lastActiveForAssignee(
     if (Number.isFinite(t) && (latest === null || t > latest)) latest = t;
   }
   return latest === null ? null : new Date(latest);
+}
+
+// Daily avg-response history for one user over the period window, from the
+// rollup. Integration-verified (DB-backed). Environment is pinned via the
+// scoped client + the explicit filter, matching getPersonalHeaderMetrics.
+export async function getUserDailyHistory(
+  userId: string,
+  period: Period,
+): Promise<DailyHistoryRow[]> {
+  const supabase = dynamicSupabaseWeb();
+  const since = new Date(Date.now() - periodToDays(period) * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+  const { data } = await supabase
+    .from("meta_inbox_metrics_daily")
+    .select("date,avg_response_seconds")
+    .eq("environment", getActiveMetaInboxEnvironment())
+    .eq("user_id", userId)
+    .gte("date", since)
+    .order("date", { ascending: true });
+  return ((data || []) as { date: string; avg_response_seconds: number | null }[]).map((r) => ({
+    date: r.date,
+    avgResponseSec: r.avg_response_seconds,
+  }));
 }
 
 // User-local date string N days before now (YYYY-MM-DD), for rollup range starts.

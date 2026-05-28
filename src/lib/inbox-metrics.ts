@@ -55,6 +55,8 @@ export type TeamRow = {
 
 export type TeamRollup = { period: Period; teamName: string; rows: TeamRow[] };
 
+export type DailyHistoryRow = { date: string; avgResponseSec: number | null };
+
 function hourFromTime(value: string | null, fallback: number): number {
   if (!value) return fallback;
   const hour = Number(value.split(":")[0]);
