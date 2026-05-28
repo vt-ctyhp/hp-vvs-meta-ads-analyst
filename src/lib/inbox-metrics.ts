@@ -129,3 +129,45 @@ export function computePipelineMetrics(
 
   return { assigned, needsReply, atRisk };
 }
+
+// ─── B3: Replies sent today (send_attempts + comment_actions) ─────────────────
+
+export type SendAttemptLike = {
+  approved_by: string | null;
+  status: string;
+  sent_at: string | null;
+};
+
+export type CommentActionLike = {
+  requested_by: string | null;
+  status: string;
+  completed_at: string | null;
+};
+
+function inWindow(iso: string | null, start: Date, end: Date): boolean {
+  if (!iso) return false;
+  const t = Date.parse(iso);
+  return Number.isFinite(t) && t >= start.getTime() && t < end.getTime();
+}
+
+export function computeRepliesSentToday(
+  sendAttempts: SendAttemptLike[],
+  commentActions: CommentActionLike[],
+  userId: string,
+  userWindow: BusinessWindow,
+  now: Date,
+): number {
+  const today = todaysWindow(now, userWindow);
+  let count = 0;
+  for (const s of sendAttempts) {
+    if (s.approved_by === userId && s.status === "sent" && inWindow(s.sent_at, today.start, today.end)) {
+      count += 1;
+    }
+  }
+  for (const c of commentActions) {
+    if (c.requested_by === userId && c.status === "succeeded" && inWindow(c.completed_at, today.start, today.end)) {
+      count += 1;
+    }
+  }
+  return count;
+}

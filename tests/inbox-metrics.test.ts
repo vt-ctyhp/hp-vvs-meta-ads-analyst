@@ -8,7 +8,10 @@ import {
   resolveUserWindow,
   DEFAULT_BUSINESS_WINDOW,
   computePipelineMetrics,
+  computeRepliesSentToday,
   type ConversationLike,
+  type SendAttemptLike,
+  type CommentActionLike,
 } from "../src/lib/inbox-metrics.ts";
 
 describe("inbox-metrics constants & window helpers", () => {
@@ -80,5 +83,24 @@ describe("computePipelineMetrics (A1/A2/A3)", () => {
     const rows = [conv({ latest_inbound_at: "2026-05-27T16:00:00Z" })];
     const result = computePipelineMetrics(rows, ME, new Date("2026-05-27T21:00:00Z"), QMAP);
     assert.equal(result.atRisk, 1);
+  });
+});
+
+describe("computeRepliesSentToday (B3)", () => {
+  // user window: PT today = 2026-05-27 10:00→19:00 PT == 17:00Z→02:00Z(next).
+  const userWindow = { tz: "America/Los_Angeles", startHour: 10, endHour: 19 };
+  const now = new Date("2026-05-27T19:00:00Z"); // 12:00 PT, inside today
+  it("counts sent send-attempts and succeeded comment actions within the window", () => {
+    const sends: SendAttemptLike[] = [
+      { approved_by: ME, status: "sent", sent_at: "2026-05-27T18:00:00Z" }, // 11:00 PT ✓
+      { approved_by: ME, status: "sent", sent_at: "2026-05-27T16:00:00Z" }, // 09:00 PT (before open) ✗
+      { approved_by: ME, status: "queued", sent_at: "2026-05-27T18:30:00Z" }, // not sent ✗
+      { approved_by: "other", status: "sent", sent_at: "2026-05-27T18:30:00Z" }, // not me ✗
+    ];
+    const comments: CommentActionLike[] = [
+      { requested_by: ME, status: "succeeded", completed_at: "2026-05-27T20:00:00Z" }, // 13:00 PT ✓
+      { requested_by: ME, status: "failed", completed_at: "2026-05-27T20:30:00Z" }, // ✗
+    ];
+    assert.equal(computeRepliesSentToday(sends, comments, ME, userWindow, now), 2);
   });
 });
