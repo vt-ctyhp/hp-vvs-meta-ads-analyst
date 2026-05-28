@@ -7,6 +7,15 @@ export type MetaInboxAccessProfile = {
   permissions?: readonly string[];
 };
 
+// Used by the auto-assign cron worker. appUserId === null => the workflow records
+// actor_user_id = NULL, the v1 marker that distinguishes auto from manual assigns.
+// roles ["admin"] grants full queue-write access (mode: "all").
+export const SYSTEM_INBOX_PROFILE: MetaInboxAccessProfile = {
+  appUserId: null,
+  roles: ["admin"],
+  permissions: ["manage_inbox_state"],
+};
+
 export type MetaInboxQueueAccessDecision =
   | {
       mode: "all";
