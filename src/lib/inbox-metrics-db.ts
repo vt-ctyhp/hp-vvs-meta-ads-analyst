@@ -6,6 +6,7 @@
 import { createAdsAnalystClient } from "./ads-analyst-db.ts";
 import { getSocialInboxData } from "./social-inbox.ts";
 import type { MetaInboxAccessProfile } from "./meta-inbox-access.ts";
+import { getActiveMetaInboxEnvironment } from "./meta-inbox-environment.ts";
 
 import {
   DEFAULT_BUSINESS_WINDOW,
@@ -76,13 +77,15 @@ export async function getPersonalHeaderMetrics(
   // Queue windows.
   const { data: queueRows } = await supabase
     .from("meta_inbox_queue_categories")
-    .select("key,timezone,business_hours_start,business_hours_end");
+    .select("key,timezone,business_hours_start,business_hours_end")
+    .eq("environment", getActiveMetaInboxEnvironment());
   const queueWindows = buildQueueWindowMap((queueRows || []) as QueueCategoryWindowRow[]);
 
   // User timezone preference (default PT).
   const { data: prefRow } = await supabase
     .from("meta_inbox_user_preferences")
     .select("timezone")
+    .eq("environment", getActiveMetaInboxEnvironment())
     .eq("user_id", userId)
     .maybeSingle();
   const timezone = (prefRow?.timezone as string | undefined) || DEFAULT_BUSINESS_WINDOW.tz;
@@ -111,6 +114,7 @@ export async function getPersonalHeaderMetrics(
   const { data: dailyRows } = await supabase
     .from("meta_inbox_metrics_daily")
     .select("user_id,date,avg_response_seconds")
+    .eq("environment", getActiveMetaInboxEnvironment())
     .eq("user_id", userId)
     .order("date", { ascending: false })
     .limit(7);
@@ -129,6 +133,7 @@ export async function getPersonalHeaderMetrics(
   const { data: eventRows } = await supabase
     .from("meta_inbox_conversation_events")
     .select("event_at,previous_value,new_value")
+    .eq("environment", getActiveMetaInboxEnvironment())
     .eq("event_type", "assignment_changed")
     .gte("event_at", today.start.toISOString());
   const events: AssignmentEventLike[] = (eventRows || []).map((e: Record<string, unknown>) => ({
