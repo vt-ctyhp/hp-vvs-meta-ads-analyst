@@ -29,7 +29,18 @@ export const ANALYSIS_OUTPUT_MODES = [
   "full_dashboard",
 ] as const;
 
+export const ANALYSIS_WORKBENCH_SHAPES = [
+  "week_over_week_performance",
+  "entity_leaderboard",
+  "entity_week_over_week",
+  "performance_diagnosis",
+  "budget_recommendation",
+  "generic_trend",
+  "generic_breakdown",
+] as const;
+
 export type AnalysisOutputMode = (typeof ANALYSIS_OUTPUT_MODES)[number];
+export type AnalysisWorkbenchShape = (typeof ANALYSIS_WORKBENCH_SHAPES)[number];
 export type AnalysisRunStatus = "created" | "running" | "completed" | "failed";
 
 export type AnalysisRunAnswer = {
@@ -107,7 +118,21 @@ export type AnalysisWorkbenchVisualCell =
       formattedValue: string;
       metric?: WorkbenchMetric;
       citationId?: string;
+      entity?: AnalysisWorkbenchEntityDisplay;
+      hiddenId?: string | null;
     };
+
+export type AnalysisWorkbenchEntityDisplay = {
+  id: string;
+  label: string;
+  subtitle?: string | null;
+  thumbnailUrl?: string | null;
+  imageUrl?: string | null;
+  previewHtml?: string | null;
+  previewUrl?: string | null;
+  sourceType: "brand" | "campaign_umbrella" | "campaign" | "ad_set" | "ad" | "creative" | "fallback";
+  hiddenId?: string | null;
+};
 
 export type AnalysisWorkbenchVisualColumn = {
   key: string;
@@ -151,6 +176,7 @@ export type AnalysisWorkbenchBarVisualCard = {
     value: number;
     formattedValue: string;
     citationId?: string;
+    entity?: AnalysisWorkbenchEntityDisplay;
   }>;
   sourceNoteIds: string[];
   caveats?: string[];
@@ -162,7 +188,7 @@ export type AnalysisWorkbenchLineVisualCard = {
   type: "line_chart";
   title: string;
   metric: WorkbenchMetric;
-  dimension: "date";
+  dimension: Extract<WorkbenchDimension, "date" | "week" | "month" | "quarter">;
   points: Array<{
     label: string;
     value: number;
@@ -184,9 +210,11 @@ export type AnalysisWorkbenchPivotVisualCard = {
   columns: Array<{
     key: string;
     label: string;
+    entity?: AnalysisWorkbenchEntityDisplay;
   }>;
   rows: Array<{
     rowLabel: string;
+    rowEntity?: AnalysisWorkbenchEntityDisplay;
     cells: Record<string, AnalysisWorkbenchVisualCell>;
     total: AnalysisWorkbenchVisualCell;
   }>;
@@ -209,6 +237,7 @@ export type AnalysisWorkbenchScatterVisualCard = {
     formattedX: string;
     formattedY: string;
     citationId?: string;
+    entity?: AnalysisWorkbenchEntityDisplay;
   }>;
   sourceNoteIds: string[];
   caveats?: string[];
@@ -909,9 +938,7 @@ function insightsFromEvidenceTable(
     .map((row) => {
       const cell = row[metricColumn.key];
       return {
-        entity: String(
-          (dimensionColumn ? row[dimensionColumn.key] : row.entity) || "Unspecified",
-        ),
+        entity: formattedVisualCell(dimensionColumn ? row[dimensionColumn.key] : row.entity),
         value: numberFromVisualCell(cell),
         formattedValue: formattedVisualCell(cell),
         citationId: citationFromVisualCell(cell),

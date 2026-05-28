@@ -28,6 +28,7 @@ import {
   type AnalysisWorkbenchContextChip,
   type AnalysisWorkbenchContextFilter,
   type AnalysisWorkbenchControlledEdit,
+  type AnalysisWorkbenchEntityDisplay,
   type AnalysisRunStatus,
   type AnalysisWorkbenchVisualCard,
   type AnalysisWorkbenchVisualCell,
@@ -1318,7 +1319,7 @@ function TableVisualCard({
                         : "px-3 py-3 text-hp-ink"
                     }
                   >
-                    {formatVisualCell(row[column.key])}
+                    <VisualCellValue cell={row[column.key]} />
                   </td>
                 ))}
               </tr>
@@ -1356,7 +1357,9 @@ function BarVisualCard({
       <div className="mt-4 space-y-3">
         {card.bars.map((bar) => (
           <div key={bar.label} className="grid grid-cols-[minmax(90px,0.8fr)_minmax(120px,1.2fr)_auto] items-center gap-3">
-            <span className="truncate text-sm text-hp-ink">{bar.label}</span>
+            <span className="min-w-0 text-sm text-hp-ink">
+              {bar.entity ? <VisualEntity entity={bar.entity} compact /> : <span className="truncate">{bar.label}</span>}
+            </span>
             <span className="h-3 bg-hp-inset">
               <span
                 className="block h-3 bg-hp-ink"
@@ -1466,14 +1469,16 @@ function PivotVisualCard({
           <tbody>
             {card.rows.map((row) => (
               <tr key={row.rowLabel} className="border-b border-hp-rule last:border-b-0">
-                <td className="px-3 py-3 text-hp-ink">{row.rowLabel}</td>
+                <td className="px-3 py-3 text-hp-ink">
+                  {row.rowEntity ? <VisualEntity entity={row.rowEntity} /> : row.rowLabel}
+                </td>
                 {card.columns.map((column) => (
                   <td key={column.key} className="px-3 py-3 text-right tabular-nums text-hp-ink">
-                    {formatVisualCell(row.cells[column.key])}
+                    <VisualCellValue cell={row.cells[column.key]} />
                   </td>
                 ))}
                 <td className="px-3 py-3 text-right tabular-nums text-hp-ink">
-                  {formatVisualCell(row.total)}
+                  <VisualCellValue cell={row.total} />
                 </td>
               </tr>
             ))}
@@ -1767,6 +1772,50 @@ function isEditFilterField(value: string): value is EditFilterField {
 
 function validEditFilterValue(field: EditFilterField, value: string) {
   return EDIT_FILTER_VALUE_OPTIONS[field].some((option) => option.value === value) ? value : "";
+}
+
+function VisualCellValue({ cell }: { cell: AnalysisWorkbenchVisualCell | undefined }) {
+  if (cell && typeof cell === "object" && !Array.isArray(cell) && "entity" in cell && cell.entity) {
+    return <VisualEntity entity={cell.entity} />;
+  }
+  return <>{formatVisualCell(cell)}</>;
+}
+
+function VisualEntity({
+  entity,
+  compact = false,
+}: {
+  entity: AnalysisWorkbenchEntityDisplay;
+  compact?: boolean;
+}) {
+  const imageSrc = entity.thumbnailUrl || entity.imageUrl;
+  const size = compact ? "h-8 w-8" : "h-11 w-11";
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      {entity.previewHtml ? (
+        <iframe
+          title={`${entity.label} preview`}
+          srcDoc={entity.previewHtml}
+          sandbox=""
+          className={`${size} shrink-0 border border-hp-rule bg-hp-card`}
+        />
+      ) : imageSrc ? (
+        <img
+          src={imageSrc}
+          alt={entity.label}
+          className={`${size} shrink-0 border border-hp-rule object-cover`}
+          loading="lazy"
+          referrerPolicy="no-referrer"
+        />
+      ) : null}
+      <span className="min-w-0">
+        <span className="block truncate text-hp-ink">{entity.label}</span>
+        {entity.subtitle ? (
+          <span className="block truncate text-[10px] leading-4 text-hp-muted">{entity.subtitle}</span>
+        ) : null}
+      </span>
+    </span>
+  );
 }
 
 function formatVisualCell(cell: AnalysisWorkbenchVisualCell | undefined) {

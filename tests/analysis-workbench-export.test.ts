@@ -47,6 +47,40 @@ test("table CSV export uses displayed labels, displayed values, and source notes
   assert.match(csv.content, /"Book Appts US","\$2,500"/);
 });
 
+test("table CSV export keeps human entity labels with hidden ID audit columns", () => {
+  const table: Extract<AnalysisWorkbenchVisualCard, { type: "flat_table" }> = {
+    id: "table_creative",
+    type: "flat_table",
+    title: "Creative evidence",
+    columns: [
+      { key: "entity", label: "Creative", kind: "dimension" },
+      { key: "primary_results", label: "Primary KPI", kind: "metric", metric: "primary_results" },
+    ],
+    rows: [
+      {
+        entity: {
+          value: "1653854429202572",
+          formattedValue: "Consultation Offer Video",
+          hiddenId: "1653854429202572",
+          entity: {
+            id: "1653854429202572",
+            label: "Consultation Offer Video",
+            sourceType: "creative",
+            hiddenId: "1653854429202572",
+          },
+        },
+        primary_results: { value: 8, formattedValue: "8" },
+      },
+    ],
+    sourceNoteIds: ["S1"],
+  };
+
+  const csv = buildAnalysisWorkbenchTableCsvExport({ card: table, runId: "run-1", sourceNotes });
+
+  assert.match(csv.content, /"Creative","Creative ID","Primary KPI"/);
+  assert.match(csv.content, /"Consultation Offer Video","1653854429202572","8"/);
+});
+
 test("pivot CSV export uses displayed columns and totals", () => {
   const pivot: Extract<AnalysisWorkbenchVisualCard, { type: "pivot_table" }> = {
     id: "pivot_campaign_umbrella_week_spend",

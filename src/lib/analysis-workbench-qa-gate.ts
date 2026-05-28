@@ -45,8 +45,10 @@ export type AnalysisWorkbenchQaCase = {
     seniorInsight?: {
       needsAction?: boolean;
       needsComparison?: boolean;
+      needsDelta?: boolean;
       needsNumbers?: boolean;
       needsSpecificEntity?: boolean;
+      forbidsRawIds?: boolean;
     };
   };
 };
@@ -79,7 +81,7 @@ export const ANALYSIS_WORKBENCH_QA_CASES: AnalysisWorkbenchQaCase[] = [
       requiredDimensions: ["campaign_umbrella"],
       requiredVisuals: [
         { type: "flat_table", metrics: ["spend", "primary_results"], minRows: 1 },
-        { type: "bar_chart", metrics: ["spend"], dimension: "campaign_umbrella" },
+        { type: "bar_chart", metrics: ["primary_results"], dimension: "campaign_umbrella" },
       ],
       minTableRows: 1,
       requirePageObjects: true,
@@ -128,6 +130,87 @@ export const ANALYSIS_WORKBENCH_QA_CASES: AnalysisWorkbenchQaCase[] = [
       minTableRows: 1,
       requirePageObjects: true,
       seniorInsight: { needsNumbers: true, needsSpecificEntity: true },
+    },
+  },
+  {
+    id: "marketing-creative-week-over-week",
+    persona: "marketing",
+    requestType: "creative_week_over_week",
+    mode: "answer_visuals",
+    prompt:
+      "Which ad creative in the Book Appointments campaign performed the best week-over-week? Organize this by week and specific ad creative name. Do this for the past four weeks.",
+    expected: {
+      status: "ready",
+      requiredDimensions: ["week", "creative"],
+      requiredFilters: [
+        { field: "campaign_umbrella", operator: "equals", value: "Book Appts US" },
+      ],
+      requiredVisuals: [
+        { type: "flat_table", minRows: 1 },
+        { type: "pivot_table", minRows: 1 },
+      ],
+      minTableRows: 1,
+      requirePageObjects: true,
+      seniorInsight: {
+        needsComparison: true,
+        needsDelta: true,
+        needsNumbers: true,
+        needsSpecificEntity: true,
+        forbidsRawIds: true,
+      },
+    },
+  },
+  {
+    id: "marketing-cash-for-gold-weekly-performance",
+    persona: "marketing",
+    requestType: "cash_for_gold_week_over_week",
+    mode: "answer_visuals",
+    prompt:
+      "I want a week-over-week analysis of Cash for Gold ad performance in terms of the primary KPI, messaging contacts and spend.",
+    expected: {
+      status: "ready",
+      requiredMetrics: ["messaging_contacts", "spend"],
+      requiredDimensions: ["week"],
+      requiredFilters: [
+        { field: "campaign_umbrella", operator: "equals", value: "Cash for Gold US" },
+      ],
+      requiredVisuals: [
+        { type: "flat_table", metrics: ["messaging_contacts", "spend"], minRows: 1 },
+        { type: "line_chart", metrics: ["messaging_contacts"], dimension: "week" },
+      ],
+      minTableRows: 1,
+      requirePageObjects: true,
+      seniorInsight: { needsComparison: true, needsDelta: true, needsNumbers: true },
+    },
+  },
+  {
+    id: "analyst-weekly-spend-2026-entire",
+    persona: "analyst",
+    requestType: "natural_language_weekly_trend",
+    mode: "answer_visuals",
+    prompt: "week by week ad spend for the entire of 2026",
+    expected: {
+      status: "ready",
+      requiredMetrics: ["spend"],
+      requiredDimensions: ["week"],
+      requiredVisuals: [{ type: "line_chart", metrics: ["spend"], dimension: "week" }],
+      requirePageObjects: true,
+      seniorInsight: { needsNumbers: true },
+    },
+  },
+  {
+    id: "analyst-weekly-spend-2026-variant",
+    persona: "analyst",
+    requestType: "natural_language_weekly_trend",
+    mode: "answer_visuals",
+    prompt: "break down our 2026 ad spend by week",
+    expected: {
+      status: "ready",
+      requiredMetrics: ["spend"],
+      requiredDimensions: ["week"],
+      requiredVisuals: [{ type: "line_chart", metrics: ["spend"], dimension: "week" }],
+      requirePageObjects: true,
+      seniorInsight: { needsNumbers: true },
     },
   },
   {
@@ -386,11 +469,17 @@ function evaluateSeniorUsefulness(
   if (expected.needsComparison && !/\b(top|above average|below average|average|versus|vs)\b/.test(text)) {
     noteFailure("senior insight missing comparison language");
   }
+  if (expected.needsDelta && !/\b(?:above|below|versus|vs|change|changed|delta|[+-]\$?\d|[+-]\d)/.test(text)) {
+    noteFailure("senior insight missing week-over-week delta");
+  }
   if (expected.needsSpecificEntity && !/(book appts|cash for gold|gold story|offer test|facebook us product)/i.test(text)) {
     noteFailure("senior insight missing specific entity name");
   }
   if (expected.needsAction && !/\b(inspect|review|scale|pause|shift|move|monitor|test)\b/.test(text)) {
     noteFailure("senior insight missing action recommendation");
+  }
+  if (expected.forbidsRawIds && /\b\d{10,}\b/.test(text)) {
+    fail("visible output includes raw technical entity ID", 20, "entity display enrichment");
   }
 }
 
