@@ -159,3 +159,16 @@ export function businessSecondsBetween(from: Date, to: Date, w: BusinessWindow):
   }
   return total;
 }
+
+// Signed business seconds from `now` to `deadline`. Negative = breached
+// (deadline already past in business time).
+export function businessSecondsRemainingUntil(
+  deadline: Date,
+  now: Date,
+  w: BusinessWindow,
+): number {
+  if (deadline.getTime() >= now.getTime()) {
+    return businessSecondsBetween(now, deadline, w);
+  }
+  return -businessSecondsBetween(deadline, now, w);
+}

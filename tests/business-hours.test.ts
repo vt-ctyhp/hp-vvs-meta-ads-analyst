@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   businessSecondsBetween,
+  businessSecondsRemainingUntil,
   CALIFORNIA_BUSINESS_WINDOW,
   VN_BUSINESS_WINDOW,
   todaysWindow,
@@ -172,5 +173,26 @@ describe("businessSecondsBetween", () => {
     // Full business day Nov 1 (fall back 02:00 happens outside window).
     const day = todaysWindow(new Date("2026-11-01T20:00:00Z"), CALIFORNIA_BUSINESS_WINDOW);
     assert.equal(businessSecondsBetween(day.start, day.end, CALIFORNIA_BUSINESS_WINDOW), 32400);
+  });
+});
+
+describe("businessSecondsRemainingUntil", () => {
+  it("is positive business seconds when deadline is ahead", () => {
+    const now = new Date("2026-05-27T18:00:00Z");      // 11:00 PDT
+    const deadline = new Date("2026-05-27T20:00:00Z"); // 13:00 PDT
+    assert.equal(
+      businessSecondsRemainingUntil(deadline, now, CALIFORNIA_BUSINESS_WINDOW),
+      7200,
+    );
+  });
+  it("is 0 or negative when the deadline has passed (breached)", () => {
+    const now = new Date("2026-05-27T21:00:00Z");      // 14:00 PDT
+    const deadline = new Date("2026-05-27T19:00:00Z"); // 12:00 PDT
+    // 2 business hours elapsed (12:00→14:00 PDT, both within window) → -7200
+    // NOTE: plan comment said "1 business hour → -3600" but timestamps span 2h.
+    assert.equal(
+      businessSecondsRemainingUntil(deadline, now, CALIFORNIA_BUSINESS_WINDOW),
+      -7200,
+    );
   });
 });
