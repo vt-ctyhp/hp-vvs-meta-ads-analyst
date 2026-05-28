@@ -13,7 +13,9 @@ function migrationContaining(snippet: string): string {
 }
 
 describe("inbox auto-assign cron schedule migration", () => {
-  const sql = () => migrationContaining("inbox-auto-assign");
+  // Anchor on the dispatch function name, unique to this migration, so the
+  // lookup can't accidentally match other files that merely mention the feature.
+  const sql = () => migrationContaining("run_inbox_auto_assign_dispatch");
   it("schedules a recurring job that posts to the sweep route", () => {
     assert.match(sql(), /cron\.schedule\(/i);
     assert.match(sql(), /\/api\/cron\/inbox-auto-assign/);
