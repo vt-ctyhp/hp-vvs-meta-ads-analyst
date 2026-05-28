@@ -61,6 +61,23 @@ const CHECKS = [
     description: "RPC exposes source_rows for reconciliation",
     test: (sql) => /\bsource_rows\s+bigint\b/i.test(sql) && /count\(\*\)::bigint\s+as\s+source_rows/i.test(sql),
   },
+  {
+    id: "monthly_budget_uses_end_month",
+    description: "monthly_budget monthlyizes with days in the p_end month",
+    test: (sql) => /date_trunc\('month',\s*p_end\)/i.test(sql),
+  },
+  {
+    id: "monthly_budget_counts_ad_set_once",
+    description: "monthly_budget ranks each ad set once per result group, not once per calendar month",
+    test: (sql) =>
+      /partition\s+by[\s\S]{0,900}meta_account_id,\s*ad_set_id\s+order\s+by\s+case\s+when\s+delivery_status\s*=\s*'live'\s+then\s+0\s+else\s+1\s+end,\s*date_start\s+asc/i.test(sql),
+  },
+  {
+    id: "monthly_budget_live_only",
+    description: "monthly_budget counts only live ad sets",
+    test: (sql) =>
+      /case\s+when\s+budget_rank\s*=\s*1\s+and\s+delivery_status\s*=\s*'live'\s+and\s+daily_budget\s*>\s*0[\s\S]{0,160}daily_budget\s*\*\s*days_in_month/i.test(sql),
+  },
 ];
 
 async function main() {
@@ -183,6 +200,9 @@ function runSelfTest() {
       select coalesce((select 1), (select 2), 0) as website_bookings_raw;
       select coalesce((select 1), (select 2), 0) as messaging_contacts_raw;
       select coalesce((select 1), (select 2), 0) as leads_raw;
+      select extract(day from (date_trunc('month', p_end)::date + interval '1 month - 1 day'))::numeric as days_in_month;
+      select row_number() over (partition by meta_account_id, ad_set_id order by case when delivery_status = 'live' then 0 else 1 end, date_start asc) as budget_rank;
+      select round(sum(case when budget_rank = 1 and delivery_status = 'live' and daily_budget > 0 then daily_budget * days_in_month else 0 end), 2) as monthly_budget;
     $$ language sql;
   `;
   const badSql = goodSql.replace("where i.environment = r.environment", "where true");

@@ -513,7 +513,11 @@ function planAnalysisWorkbenchIntent(input: {
     dateGrain: dateGrain || null,
     ...(visual ? { visual } : {}),
   });
-  const repairedFilters = semanticValidation.repairedIntent.filters as MetaInsightFilter[];
+  const governedSemanticValidation = withParserUnsupportedBlockers(
+    semanticValidation,
+    plannerIntent?.unsupported,
+  );
+  const repairedFilters = governedSemanticValidation.repairedIntent.filters as MetaInsightFilter[];
   const filterScopes = buildFilterScopes(repairedFilters);
   const timeSortField = trendSortField(questionType, dimensions);
   const sortField = controlledEdit?.sort?.field || plannerIntent?.sort?.field || timeSortField || metrics[0] || "spend";
@@ -521,7 +525,7 @@ function planAnalysisWorkbenchIntent(input: {
     controlledEdit?.sort?.direction ||
     plannerIntent?.sort?.direction ||
     (timeSortField ? "asc" : detectSortDirection(input.prompt));
-  const repairedVisual = semanticValidation.repairedIntent.visual;
+  const repairedVisual = governedSemanticValidation.repairedIntent.visual;
   const repairedDimensions = dimensionsForVisual(dimensions, repairedVisual);
   const requestedLimit = plannerIntent?.limit || detectLimit(input.prompt) || null;
   const limit = controlledEdit?.limit || defaultLimitForIntent({
@@ -543,7 +547,7 @@ function planAnalysisWorkbenchIntent(input: {
     : undefined;
 
   return {
-    status: semanticValidation.status === "blocked" ? "blocked" : "ready",
+    status: governedSemanticValidation.status === "blocked" ? "blocked" : "ready",
     rawPrompt: input.prompt,
     outputMode: input.outputMode,
     analysisShape,
@@ -560,7 +564,7 @@ function planAnalysisWorkbenchIntent(input: {
     limit,
     visual: repairedVisual,
     ...(parser ? { parser } : {}),
-    semanticValidation,
+    semanticValidation: governedSemanticValidation,
     filterScopes,
     dateAssumptions: dateResolution.assumptions,
   };
@@ -623,9 +627,6 @@ function blockedResult(input: {
   outputMode: AnalysisOutputMode;
   planned: PlannedIntent;
 }): AnalysisWorkbenchPipelineResult {
-  const suggestedRequest = input.planned.semanticValidation.blockers.find(
-    (blocker) => blocker.suggestedRequest,
-  )?.suggestedRequest;
   return {
     status: "failed",
     title: input.title,
@@ -641,9 +642,7 @@ function blockedResult(input: {
       items: [],
     },
     answer: {
-      summary: suggestedRequest
-        ? `Request blocked. This analysis asks for data outside the governed Meta Ads catalog. Try: "${suggestedRequest}".`
-        : "Request blocked. This analysis asks for data outside the governed Meta Ads catalog.",
+      summary: blockedAnswerSummary(input.planned.semanticValidation.blockers),
       citations: [],
       apiCost: workbenchLocalApiCost(),
     },
@@ -666,6 +665,50 @@ function blockedResult(input: {
     visualCards: [],
     dashboardPacket: null,
   };
+}
+
+function withParserUnsupportedBlockers(
+  semanticValidation: ReturnType<typeof validateAnalysisWorkbenchSemanticIntent>,
+  unsupported: WorkbenchPlannerIntent["unsupported"] | undefined,
+) {
+  const parserBlockers = parserUnsupportedIssues(unsupported);
+  if (!parserBlockers.length) return semanticValidation;
+
+  return {
+    ...semanticValidation,
+    status: "blocked" as const,
+    blockers: dedupeSemanticIssues([...semanticValidation.blockers, ...parserBlockers]),
+  };
+}
+
+function parserUnsupportedIssues(
+  unsupported: WorkbenchPlannerIntent["unsupported"] | undefined,
+): WorkbenchSemanticIssue[] {
+  return (unsupported || []).map((item) => ({
+    code: item.code,
+    message: item.message,
+    ...(item.suggestedRewrite ? { suggestedRequest: item.suggestedRewrite } : {}),
+  }));
+}
+
+function dedupeSemanticIssues(issues: WorkbenchSemanticIssue[]): WorkbenchSemanticIssue[] {
+  const seen = new Set<string>();
+  return issues.filter((issue) => {
+    const key = `${issue.code}|${issue.message}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function blockedAnswerSummary(blockers: WorkbenchSemanticIssue[]) {
+  const dailyBudgetBlocker = blockers.find((blocker) => blocker.code === "unsupported_daily_budget");
+  if (dailyBudgetBlocker) return dailyBudgetBlocker.message;
+
+  const suggestedRequest = blockers.find((blocker) => blocker.suggestedRequest)?.suggestedRequest;
+  return suggestedRequest
+    ? `Request blocked. This analysis asks for data outside the governed Meta Ads catalog. Try: "${suggestedRequest}".`
+    : "Request blocked. This analysis asks for data outside the governed Meta Ads catalog.";
 }
 
 function aggregateRequest(

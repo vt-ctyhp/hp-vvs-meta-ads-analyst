@@ -180,6 +180,33 @@ describe("Meta Ads live end-to-end truth", () => {
     );
   });
 
+  liveIt("monthly_budget uses current live ad-set budget while spend remains historical", async () => {
+    const supabase = createSupabaseClient();
+    const rows = await fetchRpcRows(supabase, {
+      start: "2026-04-29",
+      end: "2026-05-28",
+      dimensions: ["campaign_umbrella"],
+      filters: [],
+      sortField: "monthly_budget",
+      sortDirection: "desc",
+      limit: 100,
+    });
+    const byGroup = new Map(rows.map((row) => [row.campaign_umbrella, row]));
+
+    const bookAppts = byGroup.get("Book Appts US");
+    assert.ok(bookAppts, "Expected Book Appts US row");
+    assert.notEqual(bookAppts.monthly_budget, 12250);
+    assert.equal(bookAppts.monthly_budget, 3100);
+
+    assert.equal(byGroup.get("Cash for Gold US")?.monthly_budget, 2480);
+    assert.equal(byGroup.get("Facebook US Product")?.monthly_budget, 465);
+    assert.equal(byGroup.get("US Promotions (WKDS / OOAK)")?.monthly_budget, 418.5);
+    assert.equal(byGroup.get("Facebook VN Product")?.monthly_budget, 0);
+    assert.equal(byGroup.get("VN Promotions (WKDS / OOAK)")?.monthly_budget, 0);
+    assert.ok(numberValue(byGroup.get("Facebook VN Product")?.spend) > 0);
+    assert.ok(numberValue(byGroup.get("VN Promotions (WKDS / OOAK)")?.spend) > 0);
+  });
+
   liveIt("keeps campaign, ad-set, and creative rollups additive for the same date/filter scope", async () => {
     const supabase = createSupabaseClient();
     const latest = await latestInsightDate(supabase);

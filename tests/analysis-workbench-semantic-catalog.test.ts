@@ -68,6 +68,21 @@ test("validator blocks unsupported CRM, revenue, ROAS, staff, website, and inbox
   assert.ok(result.blockers.every((blocker) => blocker.suggestedRequest));
 });
 
+test("validator blocks daily budget without substituting monthly budget", () => {
+  const result = validateAnalysisWorkbenchSemanticIntent({
+    prompt: "What is the current daily budget per campaign group?",
+    metrics: ["monthly_budget"],
+    dimensions: ["campaign_umbrella"],
+  });
+
+  assert.equal(result.status, "blocked");
+  assert.deepEqual(
+    result.blockers.map((blocker) => blocker.code),
+    ["unsupported_daily_budget"],
+  );
+  assert.match(result.blockers[0]?.message || "", /Daily budget is not available/i);
+});
+
 test("validator repairs known filter aliases and blocks hallucinated values", () => {
   const result = validateAnalysisWorkbenchSemanticIntent({
     metrics: ["spend"],

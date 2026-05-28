@@ -1574,6 +1574,160 @@ test("unsupported requests are blocked before any aggregate query runs", async (
   assert.match(result.answer.summary, /outside the governed Meta Ads catalog/);
 });
 
+test("daily budget requests block before aggregates and do not fall back to monthly budget", async () => {
+  let queryCount = 0;
+  const result = await runAnalysisWorkbenchFactsPipeline({
+    prompt: "What is the daily budget per campaign group currently?",
+    outputMode: "answer_visuals",
+    latestSyncedInsightDate: "2026-05-28",
+    parseIntent: async () => ({
+      source: "ai",
+      model: "test-model",
+      apiCost: {
+        model: "test-model",
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        estimatedCostUsd: 0,
+      },
+      intent: {
+        questionType: "leaderboard",
+        metrics: ["monthly_budget"],
+        dimensions: ["campaign_umbrella"],
+        filters: [],
+        dateIntent: {
+          kind: "inherit_or_default",
+          year: null,
+          month: null,
+          quarter: null,
+          unit: null,
+          count: null,
+          start: null,
+          end: null,
+          grain: null,
+        },
+        comparison: { mode: "none" },
+        visualIntent: null,
+        sort: { field: "monthly_budget", direction: "desc" },
+        limit: null,
+        confidence: "high",
+        assumptions: [],
+        unsupported: [
+          {
+            code: "unsupported_daily_budget",
+            message:
+              "Daily budget is not available in Ask AI yet. Available budget metric is Monthly Budget.",
+            suggestedRewrite: "Show monthly budget by campaign group.",
+          },
+        ],
+      },
+    }),
+    executeAggregate: async () => {
+      queryCount += 1;
+      return [];
+    },
+  });
+
+  assert.equal(queryCount, 0);
+  assert.equal(result.status, "failed");
+  assert.equal(result.queryPlan.status, "blocked");
+  assert.deepEqual(result.queryPlan.requests, []);
+  assert.deepEqual(result.visualCards, []);
+  assert.ok(
+    result.validation.blockers.some((blocker) => blocker.code === "unsupported_daily_budget"),
+  );
+  assert.match(result.answer.summary, /Daily budget is not available in Ask AI yet/i);
+});
+
+test("AI parser unsupported entries block even when metrics are governed", async () => {
+  let queryCount = 0;
+  const result = await runAnalysisWorkbenchFactsPipeline({
+    prompt: "Show budget pacing by campaign group.",
+    outputMode: "answer_only",
+    latestSyncedInsightDate: "2026-05-28",
+    parseIntent: async () => ({
+      source: "ai",
+      model: "test-model",
+      apiCost: {
+        model: "test-model",
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        estimatedCostUsd: 0,
+      },
+      intent: {
+        questionType: "leaderboard",
+        metrics: ["spend"],
+        dimensions: ["campaign_umbrella"],
+        filters: [],
+        dateIntent: {
+          kind: "inherit_or_default",
+          year: null,
+          month: null,
+          quarter: null,
+          unit: null,
+          count: null,
+          start: null,
+          end: null,
+          grain: null,
+        },
+        comparison: { mode: "none" },
+        visualIntent: null,
+        sort: { field: "spend", direction: "desc" },
+        limit: null,
+        confidence: "medium",
+        assumptions: [],
+        unsupported: [
+          {
+            code: "unsupported_budget_pacing",
+            message: "Budget pacing is not governed by the Meta Ads semantic catalog yet.",
+            suggestedRewrite: "Show spend and monthly budget by campaign group.",
+          },
+        ],
+      },
+    }),
+    executeAggregate: async () => {
+      queryCount += 1;
+      return [];
+    },
+  });
+
+  assert.equal(queryCount, 0);
+  assert.equal(result.status, "failed");
+  assert.deepEqual(
+    result.validation.blockers.map((blocker) => blocker.code),
+    ["unsupported_budget_pacing"],
+  );
+  assert.match(result.answer.summary, /Show spend and monthly budget by campaign group/);
+});
+
+test("monthly budget prompts still run through the aggregate RPC", async () => {
+  const requests: AnalysisWorkbenchPipelineAggregateRequest[] = [];
+  const result = await runAnalysisWorkbenchFactsPipeline({
+    prompt: "Show monthly budget by campaign group.",
+    outputMode: "answer_only",
+    latestSyncedInsightDate: "2026-05-28",
+    executeAggregate: async (request) => {
+      requests.push(request);
+      return request.dimensions.length
+        ? [
+            aggregateRow({
+              campaign_umbrella: "Book Appts US",
+              monthly_budget: 3100,
+              source_rows: 10,
+            }),
+          ]
+        : [aggregateRow({ monthly_budget: 3100, source_rows: 10 })];
+    },
+  });
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.queryPlan.status, "ready");
+  assert.ok(requests.length > 0);
+  assert.ok(requests.every((request) => request.metrics.includes("monthly_budget")));
+  assert.match(result.answer.summary, /\$3,100/);
+});
+
 test("zero-row answers keep source notes and avoid invented numbers", async () => {
   const result = await runAnalysisWorkbenchFactsPipeline({
     prompt: "Show spend by campaign for the last 7 days.",

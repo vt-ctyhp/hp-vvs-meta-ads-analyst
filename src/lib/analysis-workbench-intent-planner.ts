@@ -456,7 +456,7 @@ function plannerMessages(input: {
           "For trend prompts, use a time grain dimension and line_chart visual when useful.",
           "For leaderboard prompts, prefer entity dimensions such as campaign_umbrella, campaign, ad_set, ad, or creative.",
           "For diagnosis and recommendation prompts, include spend, primary_results, and an efficiency metric when the user did not name metrics.",
-          "For unsupported revenue, ROAS, CRM, staff, website, landing page, or social inbox requests, add unsupported entries and keep only a minimal safe Meta Ads intent.",
+          "For unsupported daily budget, revenue, ROAS, CRM, staff, website, landing page, or social inbox requests, add unsupported entries and keep only a minimal safe Meta Ads intent.",
           "Recommendation wording must remain advisory; never claim the system will pause, edit, create, or mutate campaigns.",
         ],
         requiredExample: {
