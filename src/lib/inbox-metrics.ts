@@ -84,3 +84,48 @@ export function resolveUserWindow(timezone: string | null | undefined): Business
 // Re-export the business-hours fns the compute layer uses, so tests import
 // everything from one module.
 export { businessSecondsBetween, businessSecondsRemainingUntil, breachAt, todaysWindow, yesterdaysWindow };
+
+// ─── A1/A2/A3 Pipeline metrics (pure compute) ────────────────────────────────
+
+const CLOSED_STATUSES = new Set(["closed", "lost_lead"]);
+
+export type ConversationLike = {
+  id: string;
+  assigned_user_id: string | null;
+  conversation_status: string;
+  needs_reply: boolean;
+  latest_inbound_at: string | null;
+  first_inbound_at: string | null;
+  queue_category_key: string;
+};
+
+export function isOpenConversation(c: ConversationLike): boolean {
+  return !CLOSED_STATUSES.has(c.conversation_status);
+}
+
+export function computePipelineMetrics(
+  conversations: ConversationLike[],
+  userId: string,
+  now: Date,
+  queueWindows: QueueWindowMap,
+): { assigned: number; needsReply: number; atRisk: number } {
+  let assigned = 0;
+  let needsReply = 0;
+  let atRisk = 0;
+
+  for (const c of conversations) {
+    if (c.assigned_user_id !== userId || !isOpenConversation(c)) continue;
+    assigned += 1;
+    if (!c.needs_reply) continue;
+    needsReply += 1;
+
+    const arrived = c.latest_inbound_at ? new Date(c.latest_inbound_at) : null;
+    if (!arrived || Number.isNaN(arrived.getTime())) continue;
+    const w = getQueueWindow(queueWindows, c.queue_category_key);
+    const deadline = breachAt(arrived, SLA_BUSINESS_SECONDS, w);
+    const remaining = businessSecondsRemainingUntil(deadline, now, w);
+    if (remaining <= AT_RISK_REMAINING_SECONDS) atRisk += 1;
+  }
+
+  return { assigned, needsReply, atRisk };
+}
