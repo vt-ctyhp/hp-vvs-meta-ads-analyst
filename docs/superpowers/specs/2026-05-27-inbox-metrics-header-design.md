@@ -55,7 +55,7 @@ Architecture: live snapshot reads for "right now" metrics, live aggregation for 
 - Conversation statuses: `new_inquiry | needs_reply | waiting_on_customer | follow_up_needed | appointment_scheduled | closed | lost_lead`.
 
 ### What this spec changes
-- 4 new tables / 1 new index / 1 column-set addition (Section 6).
+- 3 new tables / 1 new index / 1 column-set addition (Section 6 — superseded down from 4; see §15.1).
 - 3 new lib modules + 8 new components/routes (Section 8).
 - 1 modified page + 2 lightly-modified components + 1 modified auth helper (Section 8).
 - 1 daily cron + 2 backfill scripts (Section 7).
@@ -182,7 +182,7 @@ Each metric specifies source, business-hours rule, compute time, edge cases.
 
 ### C2 — Of today's unassigned arrivals, how many you claimed
 - **Denominator:** conversations with `first_inbound_at` in user's tz today business window AND no assignment event before `first_inbound_at`.
-- **Numerator:** subset where `meta_inbox_assignment_events` has a row with `prior_user_id IS NULL AND assigned_user_id=me AND assigned_at` within today's business window.
+- **Numerator:** subset where `meta_inbox_conversation_events` has a row with `event_type='assignment_changed'`, `(previous_value->>'assignedUserId') IS NULL`, `(new_value->>'assignedUserId')=me`, and `event_at` within today's business window. (See §15.1 for the canonical SQL.)
 - **Display:** "3 of 10". If denominator = 0, hide the line.
 - Today: live (joins). Yesterday/historical: rollup.
 
@@ -200,7 +200,9 @@ Same definitions as A1-A3, B1-B3, C2, applied per teammate. Period selector ∈ 
 
 Five migrations, all named with `XX`-second offset to coexist with sales-standalone-app-V1's `00`-second migrations on the shared ledger.
 
-### 6.1 New table `meta_inbox_assignment_events`
+### 6.1 ~~New table `meta_inbox_assignment_events`~~ — superseded
+
+> ⚠ **Superseded by §15.1.** The existing `meta_inbox_conversation_events` table with `event_type = 'assignment_changed'` already covers this. No new table; no migration to write. The original definition below is preserved for historical context only — do **not** implement it.
 
 Audit trail for assignment changes. Drives C2 and the manager view's history.
 
@@ -253,20 +255,11 @@ CREATE TABLE meta_inbox_user_preferences (
 );
 ```
 
-**Identity note:** `user_id` here is the `app_user_id` (matches `meta_inbox_team_members.app_user_id`, `meta_inbox_assignment_events.assigned_user_id`, etc. — every inbox table keyed by user uses `app_user_id`). It is **not** `auth.uid()` directly; `auth.uid()` returns `auth_user_id`. The mapping lives in `analytics.ads_analyst_identity_profiles_v1` (columns `auth_user_id`, `app_user_id`).
+**Identity note:** `user_id` here is the `app_user_id` (matches `meta_inbox_team_members.app_user_id` and every inbox table keyed by user). It is **not** `auth.uid()` directly.
 
-A small helper (defined once in a migration) bridges the gap:
+> ⚠ **See §15.2.** Do not create a new identity helper. Use the existing `public.current_app_user_id()` defined at [supabase/migrations/0001_identity.sql:33-44](../../../supabase/migrations/0001_identity.sql). Same file also exposes `public.current_user_has_role(p_role)` and `public.current_user_has_any_role(p_roles)` for permission checks.
 
-```sql
-CREATE OR REPLACE FUNCTION auth_app_user_id() RETURNS uuid
-  LANGUAGE sql STABLE SECURITY INVOKER AS $$
-    SELECT app_user_id
-      FROM analytics.ads_analyst_identity_profiles_v1
-     WHERE auth_user_id = auth.uid()
-$$;
-```
-
-All RLS predicates that reference "this user" use `auth_app_user_id()` instead of `auth.uid()`.
+All RLS predicates that reference "this user" use `public.current_app_user_id()`.
 
 Read pattern from app code: `LEFT JOIN meta_inbox_user_preferences ON user_id = profile.id`, default `'America/Los_Angeles'` applied in app code if no row (`profile.id` is the app_user_id, already resolved by `getServerAccessProfile()`).
 
@@ -376,7 +369,7 @@ export async function updateAssignment(
 ): Promise<void>;
 ```
 
-Performs an UPDATE on `meta_inbox_conversations` + an INSERT on `meta_inbox_assignment_events` in a single transaction. Every existing assignment mutation site is migrated to call this.
+> ⚠ **Adapted per §15.1.** The existing workflow at [src/lib/meta-inbox-workflow.ts:131-141](../../../src/lib/meta-inbox-workflow.ts) already writes an `assignment_changed` event into `meta_inbox_conversation_events` on every assignment mutation. `updateAssignment()` therefore is a thin facade that delegates to the workflow's mutation function and asserts the event was emitted — it does **not** write to a parallel audit table. Every existing assignment mutation site is migrated to route through this facade.
 
 ### 7.2 Page wiring
 
@@ -426,6 +419,8 @@ return <TeamMetricsDashboard rollup={rollup} period={period} />;
 
 ## 8. UI components & file structure
 
+> ⚠ **See §15.3 for the concrete render diff.** `InboxEyebrow` and `InboxStatusSentence` are **replaced** (not built alongside). `InboxHealthRow` and `InboxLayoutShell` are **kept**. The new `InboxMetricsHeaderStrip` **must absorb the sync button** currently inside `InboxEyebrow` or production loses the sync affordance. `metrics-header.tsx` as a wrapper component is dropped — the Lede + Strip render directly in `social-inbox-client.tsx`.
+
 ### 8.1 New files
 
 | Path | Purpose |
@@ -468,29 +463,28 @@ A `ReadOnlyContext` + `useReadOnly()` hook. Every mutation button in the inbox t
 
 ## 9. Permissions & RLS
 
-### `meta_inbox_assignment_events`
-- **SELECT:** any user with `view_inbox` (copy the predicate from `meta_inbox_conversations`).
-- **INSERT:** via `SECURITY DEFINER` function called from `updateAssignment()`; the function asserts `auth_app_user_id() = assigned_by` so a user can't forge an event for someone else.
-- **UPDATE / DELETE:** forbidden. Append-only audit.
+### `meta_inbox_conversation_events` (used for assignment audit per §15.1)
+
+> ⚠ **Use existing table.** Original spec proposed a new `meta_inbox_assignment_events` table; superseded — see §15.1. RLS for the existing table is already in place from migration `20260523090000`. No new policies needed. The existing workflow at [src/lib/meta-inbox-workflow.ts:131-141](../../../src/lib/meta-inbox-workflow.ts) is the sanctioned writer; the `inbox-assignment.ts` facade ensures all assignment mutation sites route through it (§7.1).
 
 ### `meta_inbox_user_preferences`
 - **SELECT:** caller owns the row OR caller is a lead in the target's team:
   ```sql
-  user_id = auth_app_user_id()
+  user_id = public.current_app_user_id()
   OR EXISTS (
     SELECT 1
       FROM meta_inbox_team_members lead
       JOIN meta_inbox_team_members target ON target.team_id = lead.team_id
-     WHERE lead.app_user_id = auth_app_user_id()
+     WHERE lead.app_user_id = public.current_app_user_id()
        AND lead.role = 'lead'
        AND target.app_user_id = meta_inbox_user_preferences.user_id
   )
   ```
-- **INSERT / UPDATE:** `user_id = auth_app_user_id()` only.
+- **INSERT / UPDATE:** `user_id = public.current_app_user_id()` only.
 - **DELETE:** forbidden in v1.
 
 ### `meta_inbox_metrics_daily`
-- **SELECT:** caller owns the row OR caller is *any* lead (`EXISTS (SELECT 1 FROM meta_inbox_team_members WHERE app_user_id = auth_app_user_id() AND role = 'lead')`). Team narrowing happens in the server action layer (`getTeamRollup` filters by `profile.teamIds`) — keeps the RLS predicate simple and fast.
+- **SELECT:** caller owns the row OR caller is *any* lead (`EXISTS (SELECT 1 FROM meta_inbox_team_members WHERE app_user_id = public.current_app_user_id() AND role = 'lead')`). Team narrowing happens in the server action layer (`getTeamRollup` filters by `profile.teamIds`) — keeps the RLS predicate simple and fast.
 - **INSERT / UPDATE:** `service_role` only (cron + backfill).
 - **DELETE:** forbidden.
 
@@ -599,3 +593,199 @@ Rollback per phase: revert PR. Migrations are additive (no drops); even if every
 | § | User table is read-only — new `meta_inbox_user_preferences` owned here | Cross-app boundary with sales-standalone-app-V1 |
 | § | Unread/read_at removal already shipped (commit eff9e78); out of scope here | Verified against main |
 | § | pg_cron available and confirmed | Will be enabled via migration |
+| §15 | Reuse `meta_inbox_conversation_events` instead of new table | Verified existing infra |
+| §15 | Reuse `public.current_app_user_id()` instead of new helper | Verified existing infra |
+| §15 | Replace `InboxEyebrow` + `InboxStatusSentence`; keep `InboxHealthRow` + `InboxLayoutShell` | Verified current chrome |
+| §15 | Reuse `buildMetaInboxManagerDashboard.byAssignee` for team rollup | Avoids parallel aggregation |
+
+---
+
+## 15. Amendments after schema verification (2026-05-27)
+
+After §1–§14 were approved, a deeper Opus-grade schema/code verification turned up existing infrastructure that supersedes parts of §6–§9. **Where §15 conflicts with earlier sections, §15 wins.** Affected sections carry inline notes pointing here.
+
+### 15.1 Reuse `meta_inbox_conversation_events` — do not create `meta_inbox_assignment_events`
+
+[supabase/migrations/20260523090000_meta_inbox_foundation.sql:276-302](../../../supabase/migrations/20260523090000_meta_inbox_foundation.sql) already defines an append-only audit table whose `event_type` CHECK constraint includes `'assignment_changed'`. Schema:
+
+```sql
+public.meta_inbox_conversation_events (
+  id uuid PRIMARY KEY,
+  environment text NOT NULL,                  -- 'production' | 'staging'
+  conversation_id uuid NOT NULL REFERENCES meta_inbox_conversations(id) ON DELETE CASCADE,
+  event_type text NOT NULL CHECK (event_type IN (
+    'conversation_created', 'assignment_changed', 'status_changed',
+    'lead_quality_changed', 'inbox_outcome_changed', 'routing_changed',
+    'follow_up_changed', 'contact_method_changed', 'comment_action',
+    'send_attempt', 'note_added', 'qa_scorecard_added'
+  )),
+  actor_user_id uuid,                         -- = assigned_by for assignment events
+  dedupe_key text,
+  event_at timestamptz NOT NULL DEFAULT now(),
+  previous_value jsonb,                       -- { assignedUserId, assignedTeamId } for assignment
+  new_value jsonb,                            -- { assignedUserId, assignedTeamId } for assignment
+  metadata jsonb NOT NULL DEFAULT '{}'
+)
+```
+
+Existing indexes:
+- `meta_inbox_conversation_events_dedupe_idx` UNIQUE `(environment, dedupe_key)`
+- `meta_inbox_conversation_events_lookup_idx` `(environment, conversation_id, event_at DESC)`
+- `meta_inbox_conversation_events_type_idx` `(environment, event_type, event_at DESC)` — **covers C2's "claims today" query**
+
+Existing writer: [src/lib/meta-inbox-workflow.ts:131-141](../../../src/lib/meta-inbox-workflow.ts) emits an `assignment_changed` event on every assignment mutation with `previous_value = {assignedUserId, assignedTeamId}` and `new_value = {assignedUserId, assignedTeamId}`. The audit drawer [src/components/v2/inbox/audit-drawer-panel.tsx:103-109](../../../src/components/v2/inbox/audit-drawer-panel.tsx) already renders these.
+
+**Amendments to §6.1:** drop the migration. The substrate exists.
+
+**Amendments to §7.1's `inbox-assignment.ts`:** still build the helper, but its job changes — instead of writing to a new audit table, it ensures every caller routes through `meta-inbox-workflow`'s existing event-emission path. Concretely, `updateAssignment()` becomes a thin facade that calls the workflow's mutation function and asserts the event was emitted.
+
+**Canonical C2 query** (replaces §5/C2's pseudo-SQL):
+
+```sql
+SELECT COUNT(*)
+  FROM meta_inbox_conversation_events e
+ WHERE e.environment = $1
+   AND e.event_type  = 'assignment_changed'
+   AND e.event_at >= $2                              -- user's today business-start in user's tz
+   AND (e.previous_value->>'assignedUserId') IS NULL
+   AND (e.new_value->>'assignedUserId') = $3;        -- target user
+```
+
+**Deferred:** if JSONB extraction shows up as slow under production load, add a partial expression index:
+```sql
+CREATE INDEX meta_inbox_conv_events_new_user_idx
+  ON meta_inbox_conversation_events ((new_value->>'assignedUserId'), event_at)
+  WHERE event_type = 'assignment_changed';
+```
+This is a non-breaking follow-up — not required for v1.
+
+### 15.2 Reuse `public.current_app_user_id()` — do not create a new identity helper
+
+[supabase/migrations/0001_identity.sql:33-44](../../../supabase/migrations/0001_identity.sql) already provides three helpers:
+
+```sql
+public.current_app_user_id() RETURNS uuid                       -- = app_user_id for auth.uid()'s user
+public.current_user_has_role(p_role text) RETURNS boolean
+public.current_user_has_any_role(p_roles text[]) RETURNS boolean
+```
+
+**Amendments to §6.3:** drop the previously-spec'd new helper. Use `public.current_app_user_id()` everywhere.
+
+**Amendments to §9 (RLS):** all predicates that reference "this user" use `public.current_app_user_id()`. The revised `meta_inbox_user_preferences.SELECT` predicate is:
+
+```sql
+user_id = public.current_app_user_id()
+OR EXISTS (
+  SELECT 1
+    FROM meta_inbox_team_members lead
+    JOIN meta_inbox_team_members target ON target.team_id = lead.team_id
+   WHERE lead.app_user_id  = public.current_app_user_id()
+     AND lead.role         = 'lead'
+     AND target.app_user_id = meta_inbox_user_preferences.user_id
+)
+```
+
+`meta_inbox_metrics_daily.SELECT` mirrors with the lead clause `EXISTS (SELECT 1 FROM meta_inbox_team_members WHERE app_user_id = public.current_app_user_id() AND role = 'lead')`.
+
+### 15.3 Header replacement target — concrete render diff
+
+Current render at [src/components/social-inbox-client.tsx:393-403](../../../src/components/social-inbox-client.tsx):
+
+```
+<section max-w-7xl>
+  <InboxEyebrow dashboard syncRun ... />        ← REPLACE
+  <InboxHealthRow status syncRun />              ← KEEP (sync-health, orthogonal to metrics)
+  <InboxStatusSentence queue={queue} />          ← REPLACE
+</section>
+<InboxLayoutShell ... />                          ← KEEP (pure grid)
+```
+
+After this design lands:
+
+```
+<section max-w-7xl>
+  <InboxMetricsHeaderLede metrics={metrics} />                          ← NEW
+  <InboxMetricsHeaderStrip metrics={metrics}
+    onSync={onSync} isSyncing={isSyncing} syncDisabled={syncDisabled}
+    syncRun={syncRun} />                                                ← NEW (absorbs sync button)
+  <InboxHealthRow status={status} syncRun={syncRun} />                  ← KEEP
+  {profile.teamLead && metrics.team.teammatesOverSla > 0 && (
+    <LeadNudge teammatesOverSla={metrics.team.teammatesOverSla} />      ← NEW
+  )}
+</section>
+<InboxLayoutShell ... />                                                 ← KEEP
+```
+
+**Critical constraint:** the sync button currently lives inside `InboxEyebrow`. The new strip MUST absorb its props (`onSync`, `isSyncing`, `syncDisabled`, `syncRun`) and render the sync affordance. Losing it would regress production. Suggested placement: right edge of the strip, label like "Sync · last 2m ago".
+
+**Amendments to §8.1:** the new components are `InboxMetricsHeaderLede`, `InboxMetricsHeaderStrip`, `LeadNudge`. The old `InboxEyebrow` and `InboxStatusSentence` are deleted (along with their imports in `social-inbox-client.tsx`). `InboxHealthRow` and `InboxLayoutShell` are untouched.
+
+### 15.4 Reuse `buildMetaInboxManagerDashboard` for `/m/inbox/team`
+
+The team route does NOT build a parallel rollup. It calls existing `buildMetaInboxManagerDashboard(data, options)` to get `byAssignee[]` rows (already grouped by `assigned_user_id`) with:
+
+```ts
+type ManagerDashboardAssigneeRow = {
+  assigneeUserId: string | "unassigned";
+  totalConversations: number;
+  needsReply: number;
+  missedFollowUps: number;
+  failedSends: number;
+  averageFirstResponseMinutes: number | null;   // wall-clock — see §15.6
+};
+```
+
+`inbox-metrics.ts/getTeamRollup` adds adjunct, business-hours-aware fields on top:
+
+```ts
+async function getTeamRollup(profile, period, now): Promise<TeamRollup> {
+  const dashboard = await buildMetaInboxManagerDashboard(data, { period });
+
+  return {
+    period,
+    teamName: ...,
+    rows: dashboard.byAssignee.map(row => ({
+      ...row,
+      avgResponseSec:    await businessHoursAvgResponse(row.assigneeUserId, period),
+      onTimeRate:        await onTimeRate(row.assigneeUserId, period),
+      teamClaims:        await claimsCount(row.assigneeUserId, period),
+      oldestUnansweredSec: oldestForAssignee(row.assigneeUserId),
+      atRisk:            await atRiskCount(row.assigneeUserId),
+    })),
+  };
+}
+```
+
+Net effect: `getTeamRollup` shrinks from ~250 lines to ~50.
+
+### 15.5 `meta_inbox_team_members.app_user_id` is bare uuid; no seed members
+
+Verified schema:
+
+```sql
+public.meta_inbox_team_members (
+  id uuid PRIMARY KEY,
+  environment text,
+  team_id uuid NOT NULL REFERENCES meta_inbox_teams(id) ON DELETE CASCADE,
+  app_user_id uuid NOT NULL,                       -- NOT a FK
+  role text NOT NULL CHECK (role IN ('member','lead')) DEFAULT 'member',
+  created_at timestamptz, updated_at timestamptz,
+  UNIQUE (team_id, app_user_id)
+)
+```
+
+`app_user_id` does not reference `public.users`. The team route must `LEFT JOIN public.users ON public.users.id = meta_inbox_team_members.app_user_id` and tolerate join-nulls (display "Unknown" / placeholder).
+
+No `meta_inbox_team_members` seed exists. `/m/inbox/team` must render a distinct empty-state when zero team rows return (acceptance test required).
+
+### 15.6 Existing 5 eyebrow metrics are wall-clock — preserve elsewhere, replace on `/m/inbox`
+
+`InboxEyebrow`'s `needsReply / unassigned / stale / medianFirst / qaAvg` computed in [src/lib/meta-inbox-manager-dashboard.ts:193-213](../../../src/lib/meta-inbox-manager-dashboard.ts) are wall-clock over the filter range (default 30 days), no business-hours adjustment. Our new metrics replace them on `/m/inbox`. The dashboard module itself stays — used on `/m/inbox/team` for aggregate panels (e.g., "stale" remains a useful 48h-wall-clock signal in the team rollup's top strip).
+
+### 15.7 `business-hours.ts` is greenfield (unchanged)
+
+Grep for `businessHours / businessTime / slaClock / business_hours` returns zero hits in `src/`. The module is greenfield as originally specified in §7.1.
+
+### 15.8 `california-time.ts` co-locates
+
+Existing [src/lib/california-time.ts](../../../src/lib/california-time.ts) (39 lines) provides `CALIFORNIA_TIME_ZONE`, `formatCaliforniaDateTime`, `californiaDateString`. New `src/lib/business-hours.ts` lives next to it and imports `CALIFORNIA_TIME_ZONE` as the default `tz` constant for `BusinessWindow`.
