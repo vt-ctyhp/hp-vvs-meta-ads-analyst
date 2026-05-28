@@ -463,6 +463,8 @@ A `ReadOnlyContext` + `useReadOnly()` hook. Every mutation button in the inbox t
 
 ## 9. Permissions & RLS
 
+> ⚠ **Superseded model — see §15.9.** DB-layer RLS scopes by role + environment only (matching existing inbox tables); the per-user/per-team predicates below are advisory defense-in-depth. The authoritative boundary is the server-action layer. This was a deliberate user decision to stay consistent with the codebase's auth model.
+
 ### `meta_inbox_conversation_events` (used for assignment audit per §15.1)
 
 > ⚠ **Use existing table.** Original spec proposed a new `meta_inbox_assignment_events` table; superseded — see §15.1. RLS for the existing table is already in place from migration `20260523090000`. No new policies needed. The existing workflow at [src/lib/meta-inbox-workflow.ts:131-141](../../../src/lib/meta-inbox-workflow.ts) is the sanctioned writer; the `inbox-assignment.ts` facade ensures all assignment mutation sites route through it (§7.1).
@@ -567,6 +569,8 @@ Rollback per phase: revert PR. Migrations are additive (no drops); even if every
 - "VN Promotions" clarification — is it a real queue category or a campaign tag?
 - Versioned SLA config so historical on-time math survives policy changes.
 - Per-team queue scoping (v1 = global team queue; v2 might scope by team membership).
+- **Mobile metrics header** — render the header on the mobile `src/app/m/inbox/page.tsx` list surface (v1 is desktop-only per §15.10).
+- **True DB-layer per-user RLS** — if the auth model ever moves to `authenticated` + `auth.uid()` JWTs, revisit §15.9 to push per-user enforcement into the database.
 
 ---
 
@@ -789,3 +793,28 @@ Grep for `businessHours / businessTime / slaClock / business_hours` returns zero
 ### 15.8 `california-time.ts` co-locates
 
 Existing [src/lib/california-time.ts](../../../src/lib/california-time.ts) (39 lines) provides `CALIFORNIA_TIME_ZONE`, `formatCaliforniaDateTime`, `californiaDateString`. New `src/lib/business-hours.ts` lives next to it and imports `CALIFORNIA_TIME_ZONE` as the default `tz` constant for `BusinessWindow`.
+
+### 15.9 RLS is role+environment scoped at the DB; per-user/per-team narrowing is enforced in the app layer (user decision 2026-05-27)
+
+**Verified reality:** existing inbox tables are not protected by `authenticated` + `auth.uid()` policies. They use scoped JWT roles (`ads_analyst_web`, `ads_analyst_worker`, `ads_analyst_ingest`) plus `analytics.ads_analyst_environment_matches(environment)`. In those connections `public.current_app_user_id()` returns `NULL`, so a `user_id = public.current_app_user_id()` policy would deny everything rather than scope per-user — DB-layer per-user RLS as described in §9/§15.2 **does not work in this codebase's auth model.**
+
+**User decision (approved 2026-05-27):** match the existing pattern. The new tables (`meta_inbox_user_preferences`, `meta_inbox_metrics_daily`) get RLS policies that:
+- Grant `SELECT` to the scoped roles with `analytics.ads_analyst_environment_matches(environment)` (same as `meta_inbox_conversations`).
+- Restrict `INSERT`/`UPDATE` on `meta_inbox_metrics_daily` to the worker/service role (cron + backfill).
+- Allow `INSERT`/`UPDATE` on `meta_inbox_user_preferences` from the web role.
+
+**Per-user and per-team narrowing is enforced in the server-action layer**, not RLS:
+- `getPersonalHeaderMetrics` only ever queries `user_id = profile.appUserId`.
+- `getTeamRollup` filters to `profile.teamIds` and asserts `profile.teamLead`.
+- `getInboxForUser` (peek) asserts `profile.teamLead && targetUser ∈ profile.teamIds` before running.
+- The `/m/inbox/team` route calls `notFound()` for non-leads.
+
+The spec's `public.current_app_user_id()`-based predicates in §9/§15.2 are retained **only as harmless defense-in-depth** where they don't break access; the authoritative guarantee is the app layer. This is consistent with how every other inbox surface in the codebase is secured.
+
+> **Amendment to §9 and §15.2:** the DB layer no longer claims per-user enforcement. Treat §9's per-user/per-team predicates as advisory; the real boundary is the server-action assertions listed above.
+
+### 15.10 v1 is desktop-only; mobile header is a fast follow-up (user decision 2026-05-27)
+
+The metrics header replaces `InboxEyebrow` + `InboxStatusSentence` on the **desktop** surface ([src/components/social-inbox-client.tsx:394-402](../../../src/components/social-inbox-client.tsx)). The separate **mobile** list surface ([src/app/m/inbox/page.tsx](../../../src/app/m/inbox/page.tsx)) keeps its current sentence for v1 and is **out of scope for this plan.**
+
+The "stat strip wraps gracefully on narrow viewport" testing note in §11 refers to the desktop header's responsive behavior (the desktop inbox can be viewed at narrow widths), not the mobile list surface. Adding the header to the mobile `m/inbox` list is a tracked follow-up (see §13 Open follow-ups).
