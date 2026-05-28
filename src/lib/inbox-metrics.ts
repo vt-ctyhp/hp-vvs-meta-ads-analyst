@@ -192,6 +192,28 @@ export function computeClaimsToday(
   return { claimedByMe, todayUnassignedDenominator: denominator };
 }
 
+// ─── C2 (cont.) / C — teammatesOverSla (lead-only) ──────────────────────────
+
+export function computeTeammatesOverSla(
+  conversations: ConversationLike[],
+  teamUserIds: ReadonlySet<string>,
+  now: Date,
+  queueWindows: QueueWindowMap,
+): number {
+  const flagged = new Set<string>();
+  for (const c of conversations) {
+    const uid = c.assigned_user_id;
+    if (!uid || !teamUserIds.has(uid) || !c.needs_reply || !isOpenConversation(c)) continue;
+    if (flagged.has(uid)) continue;
+    const arrived = c.latest_inbound_at ? new Date(c.latest_inbound_at) : null;
+    if (!arrived || Number.isNaN(arrived.getTime())) continue;
+    const w = getQueueWindow(queueWindows, c.queue_category_key);
+    const remaining = businessSecondsRemainingUntil(breachAt(arrived, SLA_BUSINESS_SECONDS, w), now, w);
+    if (remaining <= AT_RISK_REMAINING_SECONDS) flagged.add(uid);
+  }
+  return flagged.size;
+}
+
 // ─── B1/B2: Today's avg first-response time and on-time rate ─────────────────
 
 const SEVEN_DAYS_MS = 7 * 86_400_000;

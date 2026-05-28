@@ -15,6 +15,7 @@ import {
   businessSecondsBetween,
   computeUnassignedMetrics,
   computeClaimsToday,
+  computeTeammatesOverSla,
   type ConversationLike,
   type SendAttemptLike,
   type CommentActionLike,
@@ -247,6 +248,20 @@ describe("computeClaimsToday (C2)", () => {
     const r = computeClaimsToday(events, arrivals, ME, userWindow, now);
     assert.equal(r.claimedByMe, 1);
     assert.equal(r.todayUnassignedDenominator, 2);
+  });
+});
+
+describe("computeTeammatesOverSla", () => {
+  const now = new Date("2026-05-27T21:00:00Z"); // 14:00 PT (breach@13:00 cases are over)
+  const U1 = "aaaaaaaa-1111-4111-8111-111111111111";
+  const U2 = "bbbbbbbb-2222-4222-8222-222222222222";
+  it("counts distinct teammates with an at-risk/breached needs-reply conv", () => {
+    const rows: ConversationLike[] = [
+      { id: "x", assigned_user_id: U1, conversation_status: "needs_reply", needs_reply: true, latest_inbound_at: "2026-05-27T16:00:00Z", first_inbound_at: "2026-05-27T16:00:00Z", queue_category_key: "us_product" }, // arrived 09:00 PT → breach 13:00 PT (20:00Z) → at 14:00 PT already breached → at-risk ✓
+      { id: "y", assigned_user_id: U1, conversation_status: "needs_reply", needs_reply: true, latest_inbound_at: "2026-05-27T16:00:00Z", first_inbound_at: "2026-05-27T16:00:00Z", queue_category_key: "us_product" }, // same user, still 1 distinct
+      { id: "z", assigned_user_id: U2, conversation_status: "needs_reply", needs_reply: true, latest_inbound_at: "2026-05-27T20:30:00Z", first_inbound_at: "2026-05-27T20:30:00Z", queue_category_key: "us_product" }, // arrived 13:30, breach 16:30, plenty left → not at risk
+    ];
+    assert.equal(computeTeammatesOverSla(rows, new Set([U1, U2]), now, QMAP), 1);
   });
 });
 
