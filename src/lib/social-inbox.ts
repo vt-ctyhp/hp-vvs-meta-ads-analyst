@@ -631,6 +631,15 @@ export async function syncSocialInbox(
     )
       .eq("id", syncRunId);
 
+    // Arrival hook: assign any freshly-categorized, still-unassigned conversations
+    // to on-shift coverers. Best-effort — never block or fail a sync on assignment.
+    try {
+      const { runInboxAutoAssignSweep } = await import("./inbox-auto-assign-worker.ts");
+      await runInboxAutoAssignSweep();
+    } catch (hookError) {
+      console.error("inbox auto-assign arrival hook failed", hookError);
+    }
+
     return { status, metrics, errors, syncRunId };
   } catch (error) {
     errors.push(errorToMessage(error));
