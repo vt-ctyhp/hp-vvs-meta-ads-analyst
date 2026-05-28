@@ -130,6 +130,27 @@ export function computePipelineMetrics(
   return { assigned, needsReply, atRisk };
 }
 
+// ─── C1/C3: Unassigned count and oldest unassigned age ───────────────────────
+
+export function computeUnassignedMetrics(
+  conversations: ConversationLike[],
+  now: Date,
+  queueWindows: QueueWindowMap,
+): { unassigned: number; oldestUnassignedSec: number | null } {
+  let unassigned = 0;
+  let oldest: number | null = null;
+  for (const c of conversations) {
+    if (c.assigned_user_id !== null || !isOpenConversation(c)) continue;
+    unassigned += 1;
+    const arrived = c.first_inbound_at ? new Date(c.first_inbound_at) : null;
+    if (!arrived || Number.isNaN(arrived.getTime())) continue;
+    const w = getQueueWindow(queueWindows, c.queue_category_key);
+    const ageSec = businessSecondsBetween(arrived, now, w);
+    if (oldest === null || ageSec > oldest) oldest = ageSec;
+  }
+  return { unassigned, oldestUnassignedSec: oldest };
+}
+
 // ─── B1/B2: Today's avg first-response time and on-time rate ─────────────────
 
 const SEVEN_DAYS_MS = 7 * 86_400_000;

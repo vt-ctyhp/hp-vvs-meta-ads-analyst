@@ -13,6 +13,7 @@ import {
   pickYesterdayAvg,
   userDateString,
   businessSecondsBetween,
+  computeUnassignedMetrics,
   type ConversationLike,
   type SendAttemptLike,
   type CommentActionLike,
@@ -203,6 +204,26 @@ describe("computeTodayResponseMetrics – two-clock rule (mixed timezone)", () =
     // B2: 28 800 > SLA_BUSINESS_SECONDS (10 800) → late → on-time rate = 0.
     assert.equal(r.onTimeRate, 0);
     assert.equal(r.repliesConsidered, 1);
+  });
+});
+
+describe("computeUnassignedMetrics (C1/C3)", () => {
+  const now = new Date("2026-05-27T19:00:00Z"); // 12:00 PT
+  it("counts unassigned open convs and oldest business-age", () => {
+    const rows: ConversationLike[] = [
+      { id: "a", assigned_user_id: null, conversation_status: "needs_reply", needs_reply: true, latest_inbound_at: null, first_inbound_at: "2026-05-27T18:00:00Z", queue_category_key: "us_product" }, // 11:00 PT → 60 biz-min old
+      { id: "b", assigned_user_id: null, conversation_status: "new_inquiry", needs_reply: true, latest_inbound_at: null, first_inbound_at: "2026-05-27T17:00:00Z", queue_category_key: "us_product" }, // 10:00 PT → 120 biz-min old (oldest)
+      { id: "c", assigned_user_id: null, conversation_status: "closed", needs_reply: false, latest_inbound_at: null, first_inbound_at: "2026-05-27T16:00:00Z", queue_category_key: "us_product" }, // closed → ignored
+      { id: "d", assigned_user_id: ME, conversation_status: "needs_reply", needs_reply: true, latest_inbound_at: null, first_inbound_at: "2026-05-27T17:00:00Z", queue_category_key: "us_product" }, // assigned → ignored
+    ];
+    const r = computeUnassignedMetrics(rows, now, QMAP);
+    assert.equal(r.unassigned, 2);
+    assert.equal(r.oldestUnassignedSec, 7200); // 120 min from 10:00→12:00 PT
+  });
+  it("returns null oldest when no unassigned open convs", () => {
+    const r = computeUnassignedMetrics([], now, QMAP);
+    assert.equal(r.unassigned, 0);
+    assert.equal(r.oldestUnassignedSec, null);
   });
 });
 
