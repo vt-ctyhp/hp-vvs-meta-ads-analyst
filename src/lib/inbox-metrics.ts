@@ -401,6 +401,12 @@ export function assemblePersonalHeaderMetrics(input: PersonalHeaderInput): Perso
 
 export type AssigneeRowLike = MetaInboxManagerDashboardAssigneeRow;
 
+const PERIODS: ReadonlySet<string> = new Set(["today", "yesterday", "7d", "30d"]);
+export function resolvePeriodParam(value: string | string[] | undefined): Period {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return raw && PERIODS.has(raw) ? (raw as Period) : "today";
+}
+
 export function periodToDays(period: Period): number {
   switch (period) {
     case "today":
