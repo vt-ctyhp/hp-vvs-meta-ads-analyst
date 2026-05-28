@@ -1,6 +1,7 @@
 import { SocialInboxClient, type SocialInboxStatus } from "@/components/social-inbox-client";
-import { getMissingRequiredEnv } from "@/lib/env";
+import { getMissingRequiredEnv, isTruthyEnv } from "@/lib/env";
 import { safeErrorMessage } from "@/lib/error-message";
+import { getPersonalHeaderMetrics } from "@/lib/inbox-metrics-db";
 import { getMetaPermissionHealth, validateConfiguredMetaAccounts } from "@/lib/meta";
 import { requirePagePermission } from "@/lib/server-route-auth";
 import {
@@ -13,10 +14,24 @@ export const dynamic = "force-dynamic";
 
 export default async function InboxPage() {
   const profile = await requirePagePermission("view_inbox", "/convert/inbox");
+  const metricsHeaderEnabled = isTruthyEnv("INBOX_METRICS_HEADER_ENABLED");
 
-  const [status, inboxData] = await Promise.all([
+  const [status, inboxData, headerMetrics] = await Promise.all([
     getSocialInboxStatus(),
     getSafeSocialInboxData(profile),
+    metricsHeaderEnabled
+      ? getPersonalHeaderMetrics(
+          {
+            appUserId: profile.appUserId,
+            roles: profile.roles,
+            permissions: profile.permissions,
+            teamLead: profile.teamLead,
+            teamIds: profile.teamIds,
+            teamUserIds: profile.teamUserIds,
+          },
+          new Date(),
+        ).catch(() => null)
+      : Promise.resolve(null),
   ]);
   return (
     <SocialInboxClient
@@ -28,6 +43,9 @@ export default async function InboxPage() {
       canCreateManagerCoaching={
         profile.roles.includes("admin") || profile.roles.includes("sales_lead")
       }
+      metricsHeaderEnabled={metricsHeaderEnabled}
+      headerMetrics={headerMetrics}
+      teamLead={profile.teamLead}
     />
   );
 }
