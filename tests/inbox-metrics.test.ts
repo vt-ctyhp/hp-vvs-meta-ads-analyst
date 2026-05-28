@@ -9,9 +9,11 @@ import {
   DEFAULT_BUSINESS_WINDOW,
   computePipelineMetrics,
   computeRepliesSentToday,
+  computeTodayResponseMetrics,
   type ConversationLike,
   type SendAttemptLike,
   type CommentActionLike,
+  type RepliedConversation,
 } from "../src/lib/inbox-metrics.ts";
 
 describe("inbox-metrics constants & window helpers", () => {
@@ -102,5 +104,36 @@ describe("computeRepliesSentToday (B3)", () => {
       { requested_by: ME, status: "failed", completed_at: "2026-05-27T20:30:00Z" }, // ✗
     ];
     assert.equal(computeRepliesSentToday(sends, comments, ME, userWindow, now), 2);
+  });
+});
+
+describe("computeTodayResponseMetrics (B1/B2)", () => {
+  const userWindow = { tz: "America/Los_Angeles", startHour: 10, endHour: 19 };
+  const now = new Date("2026-05-27T22:00:00Z"); // 15:00 PT
+  it("averages business-seconds to first response and computes on-time rate", () => {
+    const replied: RepliedConversation[] = [
+      // arrived 10:00 PT (17:00Z), first reply 11:00 PT (18:00Z) → 3600s, on-time
+      { firstInboundAt: "2026-05-27T17:00:00Z", firstOutboundAt: "2026-05-27T18:00:00Z", queueKey: "us_product" },
+      // arrived 10:00 PT, first reply 14:00 PT (21:00Z) → 14400s > 10800 → late
+      { firstInboundAt: "2026-05-27T17:00:00Z", firstOutboundAt: "2026-05-27T21:00:00Z", queueKey: "us_product" },
+    ];
+    const r = computeTodayResponseMetrics(replied, userWindow, QMAP, now);
+    assert.equal(r.avgResponseSec, 9000); // (3600 + 14400)/2
+    assert.equal(r.onTimeRate, 0.5);
+    assert.equal(r.repliesConsidered, 2);
+  });
+  it("returns nulls when there are no replies today", () => {
+    const r = computeTodayResponseMetrics([], userWindow, QMAP, now);
+    assert.equal(r.avgResponseSec, null);
+    assert.equal(r.onTimeRate, null);
+  });
+  it("excludes >7-day-old threads from the avg but keeps them in on-time rate", () => {
+    const replied: RepliedConversation[] = [
+      { firstInboundAt: "2026-05-27T17:00:00Z", firstOutboundAt: "2026-05-27T18:00:00Z", queueKey: "us_product" }, // 3600s on-time
+      { firstInboundAt: "2026-05-10T17:00:00Z", firstOutboundAt: "2026-05-27T18:00:00Z", queueKey: "us_product" }, // >7d old, always late
+    ];
+    const r = computeTodayResponseMetrics(replied, userWindow, QMAP, now);
+    assert.equal(r.avgResponseSec, 3600); // only the fresh one
+    assert.equal(r.onTimeRate, 0.5); // both count for on-time; old one late
   });
 });

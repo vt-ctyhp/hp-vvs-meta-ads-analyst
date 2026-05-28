@@ -130,6 +130,54 @@ export function computePipelineMetrics(
   return { assigned, needsReply, atRisk };
 }
 
+// ─── B1/B2: Today's avg first-response time and on-time rate ─────────────────
+
+const SEVEN_DAYS_MS = 7 * 86_400_000;
+
+export type RepliedConversation = {
+  firstInboundAt: string | null;
+  firstOutboundAt: string | null;
+  queueKey: string;
+};
+
+export function computeTodayResponseMetrics(
+  replied: RepliedConversation[],
+  userWindow: BusinessWindow,
+  queueWindows: QueueWindowMap,
+  now: Date,
+): { avgResponseSec: number | null; onTimeRate: number | null; repliesConsidered: number } {
+  const today = todaysWindow(now, userWindow);
+  const avgSamples: number[] = [];
+  let onTime = 0;
+  let total = 0;
+
+  for (const r of replied) {
+    if (!r.firstInboundAt || !r.firstOutboundAt) continue;
+    const inbound = new Date(r.firstInboundAt);
+    const outbound = new Date(r.firstOutboundAt);
+    if (Number.isNaN(inbound.getTime()) || Number.isNaN(outbound.getTime())) continue;
+    // Bucket by reply time in user's window (two-clock rule: user tz for bucketing).
+    if (!inWindow(r.firstOutboundAt, today.start, today.end)) continue;
+
+    // Elapsed business seconds use the queue's timezone window (two-clock rule).
+    const w = getQueueWindow(queueWindows, r.queueKey);
+    const responseSec = businessSecondsBetween(inbound, outbound, w);
+    total += 1;
+    if (responseSec <= SLA_BUSINESS_SECONDS) onTime += 1;
+
+    // B1 avg excludes threads older than 7 days at reply time.
+    if (outbound.getTime() - inbound.getTime() <= SEVEN_DAYS_MS) {
+      avgSamples.push(responseSec);
+    }
+  }
+
+  const avgResponseSec = avgSamples.length
+    ? Math.round(avgSamples.reduce((a, b) => a + b, 0) / avgSamples.length)
+    : null;
+  const onTimeRate = total ? onTime / total : null;
+  return { avgResponseSec, onTimeRate, repliesConsidered: total };
+}
+
 // ─── B3: Replies sent today (send_attempts + comment_actions) ─────────────────
 
 export type SendAttemptLike = {
