@@ -5,7 +5,6 @@ import {
   buildCreativeDiagnostics,
   type CreativeDiagnostic,
   type CreativeScoreInput,
-  type CreativeStatus,
 } from "./creative-score";
 import { classifyCampaignUmbrella } from "./campaign-umbrellas";
 import { ConfigurationError, getMissingDashboardEnv } from "./env";
@@ -1151,11 +1150,7 @@ function errorToMessage(error: unknown) {
   return String(error);
 }
 
-export const CREATIVE_STATUS_OPTIONS: CreativeStatus[] = [
-  "Scale Candidate",
-  "Needs Hook Improvement",
-  "Needs Retention Improvement",
-  "Clickbait Risk",
-  "Fatigue Watch",
-  "Brand Fit Review",
-];
+// Re-exported from a client-safe module so "use client" components can import
+// this list without pulling creative-analysis.ts's server-only deps (./meta ->
+// node:async_hooks). See creative-analysis-options.ts.
+export { CREATIVE_STATUS_OPTIONS } from "./creative-analysis-options";

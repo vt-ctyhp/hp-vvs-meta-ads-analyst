@@ -12,10 +12,10 @@ import {
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import {
-  CREATIVE_STATUS_OPTIONS,
-  type CreativeAnalysisPayload,
-  type CreativeAnalysisRow,
+import { CREATIVE_STATUS_OPTIONS } from "@/lib/creative-analysis-options";
+import type {
+  CreativeAnalysisPayload,
+  CreativeAnalysisRow,
 } from "@/lib/creative-analysis";
 import { formatMetaStatus, formatRanking, TERMS, translateError } from "@/lib/glossary";
 import { buildCreativeAnalysisFilterSummary } from "@/lib/active-filter-summary";
