@@ -16,6 +16,7 @@ type Params = {
 const WORKFLOW_BODY_FIELDS = {
   assignmentMode: { type: "string", nullable: true },
   assignedTeamId: { type: "string", nullable: true },
+  targetUserId: { type: "string", nullable: true },
   queueCategoryKey: { type: "string", nullable: true },
   conversationStatus: { type: "string", nullable: true },
   followUpAt: { type: "string", nullable: true },
