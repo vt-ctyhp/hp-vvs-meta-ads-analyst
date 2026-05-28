@@ -75,6 +75,16 @@ test("hides the You-claimed stat when denominator is 0", () => {
   assert.doesNotMatch(markup, /claimed/);
 });
 
+test("strip uses flex-wrap so stats reflow on narrow viewports", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(InboxMetricsHeaderStrip, {
+      metrics: metrics(), onSync: () => {}, isSyncing: false, syncDisabled: false, syncRun,
+      now: new Date("2026-05-27T19:00:00Z"),
+    }),
+  );
+  assert.match(markup, /flex-wrap/);
+});
+
 function loadModule(filePath: string, stubs: Record<string, unknown> = {}) {
   const cache = new Map<string, Record<string, unknown>>();
   return load(resolve(filePath));

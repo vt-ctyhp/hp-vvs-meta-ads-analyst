@@ -54,7 +54,7 @@ export function InboxMetricsHeaderLede({ metrics }: { metrics: PersonalHeaderMet
       data-component="inbox-metrics-header-lede"
       className="border-b border-hp-rule px-1 pb-4 pt-4"
     >
-      <h1 className="font-title text-[26px] leading-tight text-hp-ink oldstyle-nums">
+      <h1 className="font-title text-[20px] leading-tight text-hp-ink oldstyle-nums sm:text-[26px]">
         {selectLede(metrics)}
       </h1>
     </div>
