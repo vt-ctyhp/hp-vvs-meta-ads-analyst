@@ -5,10 +5,11 @@ import {
   permissionsForRoles,
   type AppPermission,
   type UserRole,
-} from "./access-control";
-import { createAdsAnalystClient, usesLimitedAdsAnalystDbAccess } from "./ads-analyst-db";
-import { ConfigurationError, isTruthyEnv } from "./env";
-import { createServerAuthClient, createServiceClient } from "./supabase";
+} from "./access-control.ts";
+import { createAdsAnalystClient, usesLimitedAdsAnalystDbAccess } from "./ads-analyst-db.ts";
+import { ConfigurationError, isTruthyEnv } from "./env.ts";
+import { getActiveMetaInboxEnvironment } from "./meta-inbox-environment.ts";
+import { createServerAuthClient, createServiceClient } from "./supabase.ts";
 
 export type AccessProfile = {
   authenticated: boolean;
@@ -21,6 +22,9 @@ export type AccessProfile = {
   roles: UserRole[];
   permissions: AppPermission[];
   missingAppProfile: boolean;
+  teamLead: boolean;
+  teamIds: string[];
+  teamUserIds: string[];
 };
 
 export const AUTH_ACCESS_COOKIE = "hp_vvs_app_access";
@@ -153,6 +157,9 @@ export function getLocalTestAccessProfileForToken(accessToken: string): AccessPr
     roles,
     permissions: permissionsForRoles(roles),
     missingAppProfile: false,
+    teamLead: false,
+    teamIds: [],
+    teamUserIds: [],
   };
 }
 
@@ -196,6 +203,9 @@ async function getAccessProfileForAuthUser(user: User): Promise<AccessProfile> {
       roles,
       permissions: permissionsForRoles(roles),
       missingAppProfile: !profile,
+      teamLead: false,
+      teamIds: [],
+      teamUserIds: [],
     };
   }
 
@@ -203,6 +213,11 @@ async function getAccessProfileForAuthUser(user: User): Promise<AccessProfile> {
     ...metadataRoles,
     ...rolesFromView(profile.roles),
   ]);
+
+  const membership = await loadTeamMembership(
+    supabase as unknown as SupabaseTeamClient,
+    profile.app_user_id,
+  );
 
   return {
     authenticated: true,
@@ -215,6 +230,7 @@ async function getAccessProfileForAuthUser(user: User): Promise<AccessProfile> {
     roles,
     permissions: permissionsForRoles(roles),
     missingAppProfile: false,
+    ...membership,
   };
 }
 
@@ -243,6 +259,9 @@ async function getLegacyAccessProfileForAuthUser(user: User): Promise<AccessProf
       roles,
       permissions: permissionsForRoles(roles),
       missingAppProfile: !profile,
+      teamLead: false,
+      teamIds: [],
+      teamUserIds: [],
     };
   }
 
@@ -258,6 +277,11 @@ async function getLegacyAccessProfileForAuthUser(user: User): Promise<AccessProf
     ...((roleRows || []) as UserRoleRow[]).map((row) => row.role),
   ]);
 
+  const legacyMembership = await loadTeamMembership(
+    supabase as unknown as SupabaseTeamClient,
+    profile.id,
+  );
+
   return {
     authenticated: true,
     authUserId: user.id,
@@ -269,6 +293,7 @@ async function getLegacyAccessProfileForAuthUser(user: User): Promise<AccessProf
     roles,
     permissions: permissionsForRoles(roles),
     missingAppProfile: false,
+    ...legacyMembership,
   };
 }
 
@@ -315,7 +340,83 @@ function anonymousProfile(): AccessProfile {
     roles: [],
     permissions: [],
     missingAppProfile: false,
+    teamLead: false,
+    teamIds: [],
+    teamUserIds: [],
   };
+}
+
+// ---------------------------------------------------------------------------
+// Team membership derivation — pure helper, exported for unit testing
+// ---------------------------------------------------------------------------
+
+export type TeamMemberRow = { team_id: string; app_user_id: string; role: string };
+
+export function deriveTeamMembership(
+  rows: TeamMemberRow[],
+  appUserId: string | null,
+): { teamLead: boolean; teamIds: string[]; teamUserIds: string[] } {
+  if (!appUserId) return { teamLead: false, teamIds: [], teamUserIds: [] };
+
+  // Teams where the current user is a lead
+  const ledTeamIds = new Set<string>();
+  // All teams the current user belongs to (any role)
+  const memberTeamIds = new Set<string>();
+
+  for (const row of rows) {
+    if (row.app_user_id === appUserId) {
+      memberTeamIds.add(row.team_id);
+      if (row.role === "lead") ledTeamIds.add(row.team_id);
+    }
+  }
+
+  const teamLead = ledTeamIds.size > 0;
+  const teamIds = Array.from(memberTeamIds);
+
+  // teamUserIds: app_user_ids of members in the teams where ME is lead, excluding ME
+  const teamUserIds: string[] = [];
+  if (teamLead) {
+    const seen = new Set<string>();
+    for (const row of rows) {
+      if (ledTeamIds.has(row.team_id) && row.app_user_id !== appUserId) {
+        if (!seen.has(row.app_user_id)) {
+          seen.add(row.app_user_id);
+          teamUserIds.push(row.app_user_id);
+        }
+      }
+    }
+  }
+
+  return { teamLead, teamIds, teamUserIds };
+}
+
+// ---------------------------------------------------------------------------
+// DB helper — loads team membership for a real app user
+// ---------------------------------------------------------------------------
+
+type SupabaseTeamClient = {
+  from: (table: string) => {
+    select: (columns: string) => {
+      eq: (column: string, value: string) => Promise<{ data: unknown[] | null; error: unknown }>;
+    };
+  };
+};
+
+async function loadTeamMembership(
+  supabase: SupabaseTeamClient,
+  appUserId: string | null,
+): Promise<{ teamLead: boolean; teamIds: string[]; teamUserIds: string[] }> {
+  if (!appUserId) return { teamLead: false, teamIds: [], teamUserIds: [] };
+  try {
+    const { data } = await supabase
+      .from("meta_inbox_team_members")
+      .select("team_id,app_user_id,role")
+      .eq("environment", getActiveMetaInboxEnvironment());
+    return deriveTeamMembership((data || []) as TeamMemberRow[], appUserId);
+  } catch {
+    // Never hard-fail auth due to a metrics table read error
+    return { teamLead: false, teamIds: [], teamUserIds: [] };
+  }
 }
 
 function rolesFromMetadata(value: unknown): UserRole[] {
