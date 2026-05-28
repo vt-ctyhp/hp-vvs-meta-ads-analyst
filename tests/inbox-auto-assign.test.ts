@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { isOnShift, type ScheduleRow } from "../src/lib/inbox-auto-assign.ts";
+import { isOnShift, pickAssignee, type Candidate, type ScheduleRow } from "../src/lib/inbox-auto-assign.ts";
 
 // weekday: 0=Sun..6=Sat. Times "HH:MM".
 const PT = "America/Los_Angeles";
@@ -42,5 +42,41 @@ describe("isOnShift", () => {
     assert.equal(isOnShift(rows, PT, new Date("2026-05-29T07:30:00Z")), true);
     // Thu 23:00 PT: 2026-05-29 06:00Z == 23:00 PT Thu -> on (evening portion).
     assert.equal(isOnShift(rows, PT, new Date("2026-05-29T06:00:00Z")), true);
+  });
+});
+
+const NOW = new Date("2026-05-28T18:00:00Z"); // Thu 11:00 PT
+const SHIFT: ScheduleRow[] = [{ weekday: 4, startTime: "10:00", endTime: "19:00" }];
+
+function cand(id: string, over: Partial<Candidate> = {}): Candidate {
+  return { appUserId: id, coversCategory: true, eligible: true, scheduleRows: SHIFT, tz: PT, ...over };
+}
+
+describe("pickAssignee", () => {
+  it("returns null when the on-shift, eligible, covering pool is empty", () => {
+    assert.equal(pickAssignee({ candidates: [cand("a", { eligible: false })], now: NOW, lastAssignedUserId: null }), null);
+    assert.equal(pickAssignee({ candidates: [cand("a", { coversCategory: false })], now: NOW, lastAssignedUserId: null }), null);
+    assert.equal(pickAssignee({ candidates: [cand("a", { scheduleRows: [] })], now: NOW, lastAssignedUserId: null }), null);
+    assert.equal(pickAssignee({ candidates: [], now: NOW, lastAssignedUserId: null }), null);
+  });
+
+  it("picks the first in stable order when there is no pointer", () => {
+    const r = pickAssignee({ candidates: [cand("b"), cand("a")], now: NOW, lastAssignedUserId: null });
+    assert.deepEqual(r, { assignedUserId: "a", nextPointer: "a" });
+  });
+
+  it("advances strictly to the next user after the pointer", () => {
+    const r = pickAssignee({ candidates: [cand("a"), cand("b"), cand("c")], now: NOW, lastAssignedUserId: "a" });
+    assert.deepEqual(r, { assignedUserId: "b", nextPointer: "b" });
+  });
+
+  it("wraps around at the end of the pool", () => {
+    const r = pickAssignee({ candidates: [cand("a"), cand("b"), cand("c")], now: NOW, lastAssignedUserId: "c" });
+    assert.deepEqual(r, { assignedUserId: "a", nextPointer: "a" });
+  });
+
+  it("starts from the first when the pointer is now off-shift / not in the pool", () => {
+    const r = pickAssignee({ candidates: [cand("a"), cand("b")], now: NOW, lastAssignedUserId: "zzz-gone" });
+    assert.deepEqual(r, { assignedUserId: "a", nextPointer: "a" });
   });
 });

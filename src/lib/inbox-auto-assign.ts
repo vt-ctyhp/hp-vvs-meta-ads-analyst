@@ -47,3 +47,34 @@ export function isOnShift(rows: readonly ScheduleRow[], tz: string, now: Date): 
   }
   return false;
 }
+
+export type Candidate = {
+  appUserId: string;
+  coversCategory: boolean;
+  eligible: boolean; // auto_assign_eligible (the worker's pool gate)
+  scheduleRows: readonly ScheduleRow[];
+  tz: string;
+};
+
+export type PickAssigneeInput = {
+  candidates: readonly Candidate[];
+  now: Date;
+  lastAssignedUserId: string | null;
+};
+
+export type PickAssigneeResult = { assignedUserId: string; nextPointer: string } | null;
+
+// Strict round-robin over the on-shift, eligible, covering candidates in a stable
+// (app_user_id-sorted) order. Returns the chosen user and the new rotation pointer,
+// or null when the pool is empty.
+export function pickAssignee(input: PickAssigneeInput): PickAssigneeResult {
+  const pool = input.candidates
+    .filter((c) => c.coversCategory && c.eligible && isOnShift(c.scheduleRows, c.tz, input.now))
+    .map((c) => c.appUserId)
+    .sort();
+  if (pool.length === 0) return null;
+  const lastIdx = input.lastAssignedUserId ? pool.indexOf(input.lastAssignedUserId) : -1;
+  const nextIdx = (lastIdx + 1) % pool.length; // lastIdx === -1 -> 0
+  const chosen = pool[nextIdx];
+  return { assignedUserId: chosen, nextPointer: chosen };
+}
