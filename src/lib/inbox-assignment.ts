@@ -24,7 +24,8 @@ export async function updateAssignment(
 ): Promise<void> {
   const { updateSocialInboxConversationWorkflow } = await import("./social-inbox.ts");
   const result = await updateSocialInboxConversationWorkflow(conversationId, profile, {
-    assignmentMode: next.user_id ? "claim_self" : "team_queue",
+    assignmentMode: next.user_id ? "assign_to_user" : "team_queue",
+    targetUserId: next.user_id,
     assignedTeamId: next.team_id,
   });
   const emitted = result.events.some((event) => event["event_type"] === "assignment_changed");

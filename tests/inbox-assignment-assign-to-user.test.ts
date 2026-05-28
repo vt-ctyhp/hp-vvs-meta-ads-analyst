@@ -5,6 +5,7 @@ import {
   buildMetaInboxWorkflowMutation,
   type MetaInboxWorkflowPatchInput,
 } from "../src/lib/meta-inbox-workflow.ts";
+import { assertAssignmentEventEmitted } from "../src/lib/inbox-assignment.ts";
 
 type Conversation = Parameters<typeof buildMetaInboxWorkflowMutation>[0];
 
@@ -95,5 +96,25 @@ describe("assign_to_user workflow mode", () => {
         ),
       /target user/i,
     );
+  });
+});
+
+describe("facade assignment-event guard", () => {
+  it("passes for an assign_to_user mutation (an assignment_changed event was emitted)", () => {
+    const mutation = buildMetaInboxWorkflowMutation(
+      conversationFixture(),
+      { assignmentMode: "assign_to_user", targetUserId: TARGET_ID } as MetaInboxWorkflowPatchInput,
+      { actorUserId: null, now: "2026-05-28T18:00:00.000Z" },
+    );
+    assert.doesNotThrow(() => assertAssignmentEventEmitted(mutation));
+  });
+
+  it("throws for a no-op assignment (no event emitted)", () => {
+    const mutation = buildMetaInboxWorkflowMutation(
+      conversationFixture({ assigned_user_id: TARGET_ID } as Partial<Parameters<typeof buildMetaInboxWorkflowMutation>[0]>),
+      { assignmentMode: "assign_to_user", targetUserId: TARGET_ID } as MetaInboxWorkflowPatchInput,
+      { actorUserId: null, now: "2026-05-28T18:00:00.000Z" },
+    );
+    assert.throws(() => assertAssignmentEventEmitted(mutation), /assignment_changed/);
   });
 });
