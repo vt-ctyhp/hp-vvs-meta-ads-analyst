@@ -7,6 +7,7 @@ import {
   yesterdaysWindow,
   type BusinessWindow,
 } from "./business-hours.ts";
+import type { MetaInboxManagerDashboardAssigneeRow } from "./meta-inbox-manager-dashboard.ts";
 export const SLA_BUSINESS_SECONDS = 3 * 3600; // 10800
 export const AT_RISK_REMAINING_SECONDS = 1800; // 30 min
 export const DEFAULT_BUSINESS_WINDOW: BusinessWindow = CALIFORNIA_BUSINESS_WINDOW;
@@ -392,3 +393,56 @@ export function assemblePersonalHeaderMetrics(input: PersonalHeaderInput): Perso
 // Note: getPersonalHeaderMetrics (server fetcher) lives in inbox-metrics-db.ts
 // to avoid pulling server-only imports (social-inbox, Supabase client) into
 // the pure-compute module that unit tests import directly.
+
+// ─── Task 33: team rollup (pure mapper + period helper) ──────────────────────
+//
+// The async getTeamRollup fetcher lives in inbox-metrics-db.ts (same split as
+// getPersonalHeaderMetrics) so this module stays server-free for unit tests.
+
+export type AssigneeRowLike = MetaInboxManagerDashboardAssigneeRow;
+
+export function periodToDays(period: Period): number {
+  switch (period) {
+    case "today":
+      return 1;
+    case "yesterday":
+      return 2; // window includes yesterday
+    case "7d":
+      return 7;
+    case "30d":
+      return 30;
+  }
+}
+
+export type TeamRowAdjuncts = {
+  name: string;
+  role: string;
+  atRisk: number;
+  avgResponseSec: number | null;
+  onTimeRate: number | null;
+  teamClaims: number;
+  oldestUnansweredSec: number | null;
+  lastActiveAt: Date | null;
+  repliesSent: number;
+};
+
+export function mapAssigneeRowToTeamRow(
+  row: AssigneeRowLike,
+  adjuncts: TeamRowAdjuncts,
+): TeamRow | null {
+  if (!row.assigneeUserId) return null; // unassigned bucket excluded from team rows
+  return {
+    userId: row.assigneeUserId,
+    name: adjuncts.name,
+    role: adjuncts.role,
+    assigned: row.totalConversations,
+    needsReply: row.needsReply,
+    atRisk: adjuncts.atRisk,
+    avgResponseSec: adjuncts.avgResponseSec,
+    onTimeRate: adjuncts.onTimeRate,
+    repliesSent: adjuncts.repliesSent,
+    teamClaims: adjuncts.teamClaims,
+    oldestUnansweredSec: adjuncts.oldestUnansweredSec,
+    lastActiveAt: adjuncts.lastActiveAt,
+  };
+}
