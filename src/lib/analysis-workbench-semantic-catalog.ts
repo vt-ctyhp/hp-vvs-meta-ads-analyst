@@ -2,7 +2,10 @@ import { CAMPAIGN_UMBRELLAS, isCampaignUmbrella } from "./campaign-umbrellas.ts"
 
 export const WORKBENCH_METRICS = [
   "spend",
+  "daily_budget",
   "monthly_budget",
+  "lifetime_budget",
+  "budget_remaining",
   "campaign_count",
   "ad_set_count",
   "ad_count",
@@ -190,7 +193,27 @@ export type PrimaryKpiRule = {
 
 const METRIC_DEFINITIONS: MetricDefinition[] = [
   metric("spend", "Spend", "spend", "money", ["ad spend", "spent", "cost"]),
-  metric("monthly_budget", "Monthly Budget", "monthly_budget", "money", ["budget"]),
+  metric("daily_budget", "Daily Budget", "daily_budget", "money", [
+    "budget",
+    "daily budget",
+    "current budget",
+    "campaign daily budget",
+    "ad set daily budget",
+  ], "Daily budget is the current Meta campaign/ad-set daily budget, not spend."),
+  metric("monthly_budget", "Monthly Budget", "monthly_budget", "money", [
+    "monthly budget",
+    "estimated monthly budget",
+    "budget per month",
+  ], "Monthly budget is estimated from current daily budget x days in month; it is not spend."),
+  metric("lifetime_budget", "Lifetime Budget", "lifetime_budget", "money", [
+    "lifetime budget",
+    "total budget",
+  ], "Lifetime budget is the current Meta lifetime budget when one exists."),
+  metric("budget_remaining", "Budget Remaining", "budget_remaining", "money", [
+    "remaining budget",
+    "budget remaining",
+    "budget left",
+  ], "Budget remaining is the current Meta remaining configured budget, not remaining spend capacity inferred from performance."),
   metric("campaign_count", "Campaign Count", "campaign_id", "count", ["number of campaigns"]),
   metric("ad_set_count", "Ad Set Count", "ad_set_id", "count", ["number of ad sets"]),
   metric("ad_count", "Ad Count", "ad_id", "count", ["number of ads"]),

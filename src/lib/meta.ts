@@ -1,14 +1,15 @@
-import { ConfigurationError, getMetaApiVersion } from "./env";
+import { ConfigurationError, getMetaApiVersion } from "./env.ts";
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   cacheThumbnailBatch,
   type ThumbnailBatchResult,
-} from "./creative-thumbnail-batch";
+} from "./creative-thumbnail-batch.ts";
 import {
   classifyCampaignUmbrella,
   isCampaignUmbrella,
   type CampaignUmbrellaClassification,
   type CampaignUmbrellaOverride,
-} from "./campaign-umbrellas";
+} from "./campaign-umbrellas.ts";
 import {
   buildInsightDateParams,
   finalizedInsightCutoffDate,
@@ -16,13 +17,13 @@ import {
   incrementalSyncDays,
   todayString,
   type InsightDateRange,
-} from "./meta-backfill-utils";
-import { resolveMetaKpi } from "./meta-kpi";
+} from "./meta-backfill-utils.ts";
+import { resolveMetaKpi } from "./meta-kpi.ts";
 import {
   shouldCacheCreativeThumbnailsAfterSync,
   syncOptionsForTrigger,
   type MetaAdsSyncTrigger,
-} from "./meta-sync-options";
+} from "./meta-sync-options.ts";
 import {
   adsAnalystOnConflict,
   createAdsAnalystClient,
@@ -30,7 +31,8 @@ import {
   usesLimitedAdsAnalystDbAccess,
   withAdsAnalystEnvironment,
   withAdsAnalystEnvironmentRows,
-} from "./ads-analyst-db";
+} from "./ads-analyst-db.ts";
+import type { Json } from "./database.types.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -50,6 +52,28 @@ type MetaPaging<T> = {
 type PageOptions = {
   maxPages?: number;
   signal?: AbortSignal;
+};
+
+export type MetaUsageSample = {
+  path: string;
+  maxPercent: number;
+  observedAt: string;
+  app?: JsonRecord;
+  adAccount?: JsonRecord;
+  businessUseCase?: JsonRecord;
+};
+
+export type MetaUsageSummary = {
+  maxPercent: number;
+  thresholdPercent: number;
+  overThreshold: boolean;
+  byPath: Record<string, { maxPercent: number; samples: number }>;
+  samples: MetaUsageSample[];
+};
+
+export type MetaUsageCollector = {
+  record: (sample: MetaUsageSample) => void;
+  summary: () => MetaUsageSummary;
 };
 
 type MetaPermission = {
@@ -79,8 +103,18 @@ type SyncMetrics = {
   creatives: number;
   insightRows: number;
   previewRefreshes: number;
+  enrichment?: SyncEnrichmentMetrics;
+  metaUsage?: MetaUsageSummary;
   audit?: SyncAuditSummary;
   thumbnailCache?: ThumbnailBatchResult;
+};
+
+type SyncEnrichmentMetrics = {
+  insightSidecarRows: number;
+  adLabels: number;
+  adPixels: number;
+  customConversions: number;
+  skipped: Array<{ account: string; group: string; reason: string }>;
 };
 
 type InsightAggregateSnapshot = {
@@ -132,6 +166,219 @@ type SyncAuditSummary = {
   accounts: AccountSyncAudit[];
   warnings: string[];
 };
+
+export const META_CAMPAIGN_CATALOG_FIELDS = [
+  "id",
+  "name",
+  "objective",
+  "status",
+  "effective_status",
+  "buying_type",
+  "daily_budget",
+  "lifetime_budget",
+  "budget_remaining",
+  "bid_strategy",
+  "pacing_type",
+  "budget_rebalance_flag",
+  "start_time",
+  "stop_time",
+  "created_time",
+  "updated_time",
+] as const;
+
+export const META_AD_SET_CATALOG_FIELDS = [
+  "id",
+  "name",
+  "campaign_id",
+  "status",
+  "effective_status",
+  "optimization_goal",
+  "billing_event",
+  "bid_strategy",
+  "daily_budget",
+  "lifetime_budget",
+  "budget_remaining",
+  "learning_stage_info",
+  "attribution_spec",
+  "promoted_object",
+  "destination_type",
+  "targeting_optimization_types",
+  "is_dynamic_creative",
+  "is_budget_schedule_enabled",
+  "start_time",
+  "end_time",
+  "created_time",
+  "updated_time",
+  "targeting",
+] as const;
+
+const META_AD_CREATIVE_CORE_CATALOG_FIELDS = [
+  "id",
+  "name",
+  "title",
+  "body",
+  "thumbnail_url",
+  "image_url",
+  "image_hash",
+  "object_type",
+  "object_story_id",
+  "effective_object_story_id",
+  "object_story_spec",
+  "asset_feed_spec",
+  "call_to_action_type",
+  "video_id",
+] as const;
+
+export const META_AD_CREATIVE_CATALOG_FIELDS = [
+  ...META_AD_CREATIVE_CORE_CATALOG_FIELDS,
+  "call_to_action",
+  "url_tags",
+  "instagram_permalink_url",
+  "effective_instagram_media_id",
+  "degrees_of_freedom_spec",
+] as const;
+
+const META_AD_CORE_CATALOG_FIELDS = [
+  "id",
+  "name",
+  "campaign_id",
+  "adset_id",
+  "status",
+  "configured_status",
+  "effective_status",
+  "created_time",
+  "updated_time",
+  `creative{${META_AD_CREATIVE_CORE_CATALOG_FIELDS.join(",")}}`,
+] as const;
+
+export const META_AD_CATALOG_FIELDS = [
+  "id",
+  "name",
+  "campaign_id",
+  "adset_id",
+  "status",
+  "configured_status",
+  "effective_status",
+  "tracking_specs",
+  "tracking_and_conversion_with_defaults",
+  "preview_shareable_link",
+  "ad_active_time",
+  "created_time",
+  "updated_time",
+  `creative{${META_AD_CREATIVE_CATALOG_FIELDS.join(",")}}`,
+] as const;
+
+const META_AD_STATUS_FIELDS = [
+  "id",
+  "name",
+  "campaign_id",
+  "adset_id",
+  "status",
+  "configured_status",
+  "effective_status",
+  "created_time",
+  "updated_time",
+  "creative{id}",
+] as const;
+
+const META_CAMPAIGN_STATUS_FIELDS = [
+  "id",
+  "name",
+  "status",
+  "effective_status",
+  "created_time",
+  "updated_time",
+] as const;
+
+const META_AD_SET_STATUS_FIELDS = [
+  "id",
+  "name",
+  "campaign_id",
+  "status",
+  "effective_status",
+  "created_time",
+  "updated_time",
+] as const;
+
+export const META_INSIGHT_CORE_FIELDS = [
+  "campaign_id",
+  "campaign_name",
+  "objective",
+  "adset_id",
+  "adset_name",
+  "optimization_goal",
+  "ad_id",
+  "ad_name",
+  "date_start",
+  "date_stop",
+  "spend",
+  "impressions",
+  "reach",
+  "frequency",
+  "cpm",
+  "cpc",
+  "ctr",
+  "clicks",
+  "inline_link_clicks",
+  "inline_link_click_ctr",
+  "unique_clicks",
+  "actions",
+  "action_values",
+  "cost_per_action_type",
+] as const;
+
+export const META_INSIGHT_ENRICHMENT_FIELDS = [
+  "account_currency",
+  "attribution_setting",
+  "cost_per_result",
+  "result_rate",
+  "outbound_clicks",
+  "unique_outbound_clicks",
+  "cost_per_outbound_click",
+  "website_ctr",
+  "landing_page_view_per_link_click",
+  "landing_page_view_actions_per_link_click",
+  "inline_post_engagement",
+  "instagram_profile_visits",
+  "social_spend",
+  "cost_per_inline_link_click",
+  "cost_per_inline_post_engagement",
+  "conversions",
+] as const;
+
+export const META_INSIGHT_BREAKDOWN_SETS = [
+  "demographic",
+  "geo",
+  "placement",
+  "device",
+  "hourly_advertiser",
+  "hourly_audience",
+] as const;
+
+export type MetaInsightBreakdownSet = (typeof META_INSIGHT_BREAKDOWN_SETS)[number];
+
+export const META_INSIGHT_BREAKDOWN_FIELDS_BY_SET: Record<MetaInsightBreakdownSet, string[]> = {
+  demographic: ["age", "gender"],
+  geo: ["country", "region", "dma"],
+  placement: ["publisher_platform", "platform_position"],
+  device: ["impression_device"],
+  hourly_advertiser: ["hourly_stats_aggregated_by_advertiser_time_zone"],
+  hourly_audience: ["hourly_stats_aggregated_by_audience_time_zone"],
+};
+
+const META_INSIGHT_BREAKDOWN_CORE_FIELDS = [
+  "campaign_id",
+  "adset_id",
+  "ad_id",
+  "date_start",
+  "date_stop",
+  "spend",
+  "impressions",
+  "reach",
+  "clicks",
+  "inline_link_clicks",
+  "actions",
+] as const;
 
 export type MetaAccountInsightTotals = {
   brandCode: SyncAccountConfig["brandCode"];
@@ -255,7 +502,9 @@ export async function syncMetaAds(trigger: MetaAdsSyncTrigger = "manual") {
     creatives: 0,
     insightRows: 0,
     previewRefreshes: 0,
+    enrichment: emptyEnrichmentMetrics(),
   };
+  const metaUsageCollector = createMetaUsageCollector();
   const auditSummary: SyncAuditSummary = {
     incrementalRefreshDays: incrementalSyncDays(),
     finalizedCutoffDate: finalizedInsightCutoffDate(),
@@ -265,63 +514,68 @@ export async function syncMetaAds(trigger: MetaAdsSyncTrigger = "manual") {
   const errors: string[] = [];
 
   try {
-    await validateMetaAdsSyncPermissions();
-    const brandRows = await ensureBrands(accounts);
-    const brandByCode = new Map(brandRows.map((brand) => [String(brand.code), String(brand.id)]));
+    return await withMetaUsageCollector(metaUsageCollector, async () => {
+      await validateMetaAdsSyncPermissions();
+      const brandRows = await ensureBrands(accounts);
+      const brandByCode = new Map(brandRows.map((brand) => [String(brand.code), String(brand.id)]));
 
-    for (const account of accounts) {
-      try {
-        const result = await syncAccount(
-          account,
-          brandByCode.get(account.brandCode) || null,
-          syncOptionsForTrigger(trigger),
-        );
-        metrics.accounts += 1;
-        metrics.campaigns += result.campaigns;
-        metrics.adSets += result.adSets;
-        metrics.ads += result.ads;
-        metrics.creatives += result.creatives;
-        metrics.insightRows += result.insightRows;
-        metrics.previewRefreshes += result.previewRefreshes;
-        auditSummary.accounts.push(result.audit);
-        auditSummary.warnings.push(...result.audit.warnings);
-      } catch (error) {
-        errors.push(`${account.brandCode}: ${errorToMessage(error)}`);
+      for (const account of accounts) {
+        try {
+          const result = await syncAccount(
+            account,
+            brandByCode.get(account.brandCode) || null,
+            syncOptionsForTrigger(trigger),
+          );
+          metrics.accounts += 1;
+          metrics.campaigns += result.campaigns;
+          metrics.adSets += result.adSets;
+          metrics.ads += result.ads;
+          metrics.creatives += result.creatives;
+          metrics.insightRows += result.insightRows;
+          metrics.previewRefreshes += result.previewRefreshes;
+          mergeEnrichmentMetrics(metrics.enrichment!, result.enrichment);
+          auditSummary.accounts.push(result.audit);
+          auditSummary.warnings.push(...result.audit.warnings);
+        } catch (error) {
+          errors.push(`${account.brandCode}: ${errorToMessage(error)}`);
+        }
       }
-    }
 
-    if (shouldCacheCreativeThumbnailsAfterSync(trigger) && metrics.creatives > 0) {
-      try {
-        metrics.thumbnailCache = await cacheThumbnailBatch({
-          limit: catalogThumbnailCacheLimit(),
-        });
-      } catch (error) {
-        errors.push(`creative_thumbnail_cache: ${errorToMessage(error)}`);
+      if (shouldCacheCreativeThumbnailsAfterSync(trigger) && metrics.creatives > 0) {
+        try {
+          metrics.thumbnailCache = await cacheThumbnailBatch({
+            limit: catalogThumbnailCacheLimit(),
+          });
+        } catch (error) {
+          errors.push(`creative_thumbnail_cache: ${errorToMessage(error)}`);
+        }
       }
-    }
 
-    metrics.audit = auditSummary;
-    const status = errors.length ? (metrics.accounts > 0 ? "partial" : "failed") : "success";
-    await supabase
-      .from("sync_runs")
-      .update(withAdsAnalystEnvironment({
-        status,
-        completed_at: new Date().toISOString(),
-        metrics,
-        errors,
-      }))
-      .eq("id", syncRunId);
+      metrics.audit = auditSummary;
+      metrics.metaUsage = metaUsageCollector.summary();
+      const status = errors.length ? (metrics.accounts > 0 ? "partial" : "failed") : "success";
+      await supabase
+        .from("sync_runs")
+        .update(withAdsAnalystEnvironment({
+          status,
+          completed_at: new Date().toISOString(),
+          metrics: metrics as unknown as Json,
+          errors,
+        }))
+        .eq("id", syncRunId);
 
-    return { status, metrics, errors, syncRunId } satisfies SyncResult;
+      return { status, metrics, errors, syncRunId } satisfies SyncResult;
+    });
   } catch (error) {
     errors.push(errorToMessage(error));
     metrics.audit = auditSummary;
+    metrics.metaUsage = metaUsageCollector.summary();
     await supabase
       .from("sync_runs")
       .update(withAdsAnalystEnvironment({
         status: "failed",
         completed_at: new Date().toISOString(),
-        metrics,
+        metrics: metrics as unknown as Json,
         errors,
       }))
       .eq("id", syncRunId);
@@ -415,19 +669,27 @@ export async function syncMetaAdsAccountRange(input: {
   since: string;
   until: string;
 }) {
+  const metaUsageCollector = createMetaUsageCollector();
   const brandRows = await ensureBrands([input.account]);
   const brandId = String(
     brandRows.find((brand) => String(brand.code) === input.account.brandCode)?.id || "",
   ) || null;
 
-  return syncAccount(input.account, brandId, {
-    insights: { kind: "range", since: input.since, until: input.until },
-    refreshPreviews: false,
-    refreshAdCatalog: false,
-    refreshAdStatusesOnly: false,
-    refreshRankingDiagnostics: false,
-    includeCreativeDiagnostics: false,
-    allowFinalizedInsightUpdates: true,
+  return withMetaUsageCollector(metaUsageCollector, async () => {
+    const result = await syncAccount(input.account, brandId, {
+      insights: { kind: "range", since: input.since, until: input.until },
+      refreshPreviews: false,
+      refreshAdCatalog: false,
+      refreshAdStatusesOnly: false,
+      refreshRankingDiagnostics: false,
+      includeCreativeDiagnostics: false,
+      allowFinalizedInsightUpdates: true,
+    });
+
+    return {
+      ...result,
+      metaUsage: metaUsageCollector.summary(),
+    };
   });
 }
 
@@ -622,52 +884,106 @@ function activeInventoryFilter() {
   ]);
 }
 
-async function fetchMetaAdsForCatalogRefresh(metaAccountId: string) {
-  return graphPages<JsonRecord>(`${metaAccountId}/ads`, {
-    fields:
-      "id,name,campaign_id,adset_id,status,effective_status,created_time,updated_time,creative{id,name,title,body,thumbnail_url,image_url,image_hash,object_type,object_story_id,effective_object_story_id,object_story_spec,asset_feed_spec,call_to_action_type,video_id}",
-    limit: "50",
-    filtering: activeInventoryFilter(),
-  }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_PAGES", 100) });
+async function fetchMetaAdsForCatalogRefresh(
+  metaAccountId: string,
+  fallback?: { enrichment: SyncEnrichmentMetrics; account: string },
+) {
+  try {
+    return await graphPages<JsonRecord>(`${metaAccountId}/ads`, {
+      fields: META_AD_CATALOG_FIELDS.join(","),
+      limit: "50",
+      filtering: activeInventoryFilter(),
+    }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_PAGES", 100) });
+  } catch (error) {
+    if (!(error instanceof MetaGraphError)) throw error;
+    if (fallback) {
+      recordSkippedEnrichment(fallback.enrichment, fallback.account, "ad_catalog_fields", errorToMessage(error));
+    }
+    return graphPages<JsonRecord>(`${metaAccountId}/ads`, {
+      fields: META_AD_CORE_CATALOG_FIELDS.join(","),
+      limit: "50",
+      filtering: activeInventoryFilter(),
+    }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_PAGES", 100) });
+  }
 }
 
 async function fetchMetaAdsForStatusRefresh(metaAccountId: string) {
   return graphPages<JsonRecord>(`${metaAccountId}/ads`, {
-    fields:
-      "id,name,campaign_id,adset_id,status,effective_status,created_time,updated_time,creative{id}",
+    fields: META_AD_STATUS_FIELDS.join(","),
     limit: "100",
     filtering: activeInventoryFilter(),
   }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_STATUS_PAGES", 100) });
 }
 
-async function fetchMetaCampaignsForCatalogRefresh(metaAccountId: string) {
-  return graphPages<JsonRecord>(`${metaAccountId}/campaigns`, {
-    fields:
-      "id,name,objective,status,effective_status,buying_type,start_time,stop_time,created_time,updated_time",
-    limit: "100",
-  }, { maxPages: getSyncMaxPages("META_SYNC_MAX_CAMPAIGN_PAGES", 12) });
+async function fetchMetaCampaignsForCatalogRefresh(
+  metaAccountId: string,
+  fallback?: { enrichment: SyncEnrichmentMetrics; account: string },
+) {
+  try {
+    return await graphPages<JsonRecord>(`${metaAccountId}/campaigns`, {
+      fields: META_CAMPAIGN_CATALOG_FIELDS.join(","),
+      limit: "100",
+    }, { maxPages: getSyncMaxPages("META_SYNC_MAX_CAMPAIGN_PAGES", 12) });
+  } catch (error) {
+    if (!(error instanceof MetaGraphError)) throw error;
+    if (fallback) {
+      recordSkippedEnrichment(fallback.enrichment, fallback.account, "campaign_catalog_fields", errorToMessage(error));
+    }
+    return fetchMetaCampaignsForStatusRefresh(metaAccountId);
+  }
 }
 
 async function fetchMetaCampaignsForStatusRefresh(metaAccountId: string) {
   return graphPages<JsonRecord>(`${metaAccountId}/campaigns`, {
-    fields: "id,name,status,effective_status,created_time,updated_time",
+    fields: META_CAMPAIGN_STATUS_FIELDS.join(","),
     limit: "100",
   }, { maxPages: getSyncMaxPages("META_SYNC_MAX_CAMPAIGN_STATUS_PAGES", 12) });
 }
 
-async function fetchMetaAdSetsForCatalogRefresh(metaAccountId: string) {
-  return graphPages<JsonRecord>(`${metaAccountId}/adsets`, {
-    fields:
-      "id,name,campaign_id,status,effective_status,optimization_goal,billing_event,bid_strategy,daily_budget,lifetime_budget,start_time,end_time,created_time,updated_time,targeting",
-    limit: "100",
-  }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_SET_PAGES", 12) });
+async function fetchMetaAdSetsForCatalogRefresh(
+  metaAccountId: string,
+  fallback?: { enrichment: SyncEnrichmentMetrics; account: string },
+) {
+  try {
+    return await graphPages<JsonRecord>(`${metaAccountId}/adsets`, {
+      fields: META_AD_SET_CATALOG_FIELDS.join(","),
+      limit: "100",
+    }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_SET_PAGES", 12) });
+  } catch (error) {
+    if (!(error instanceof MetaGraphError)) throw error;
+    if (fallback) {
+      recordSkippedEnrichment(fallback.enrichment, fallback.account, "ad_set_catalog_fields", errorToMessage(error));
+    }
+    return fetchMetaAdSetsForStatusRefresh(metaAccountId);
+  }
 }
 
 async function fetchMetaAdSetsForStatusRefresh(metaAccountId: string) {
   return graphPages<JsonRecord>(`${metaAccountId}/adsets`, {
-    fields: "id,name,campaign_id,status,effective_status,created_time,updated_time",
+    fields: META_AD_SET_STATUS_FIELDS.join(","),
     limit: "100",
   }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_SET_STATUS_PAGES", 12) });
+}
+
+async function fetchMetaAdLabels(metaAccountId: string) {
+  return graphPages<JsonRecord>(`${metaAccountId}/adlabels`, {
+    fields: "id,name",
+    limit: "100",
+  }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_LABEL_PAGES", 25) });
+}
+
+async function fetchMetaAdPixels(metaAccountId: string) {
+  return graphPages<JsonRecord>(`${metaAccountId}/adspixels`, {
+    fields: "id,name,last_fired_time,is_unavailable",
+    limit: "100",
+  }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_PIXEL_PAGES", 10) });
+}
+
+async function fetchMetaCustomConversions(metaAccountId: string) {
+  return graphPages<JsonRecord>(`${metaAccountId}/customconversions`, {
+    fields: "id,name,custom_event_type,event_source_type,creation_time,last_fired_time,is_archived,is_unavailable",
+    limit: "100",
+  }, { maxPages: getSyncMaxPages("META_SYNC_MAX_CUSTOM_CONVERSION_PAGES", 10) });
 }
 
 async function syncAccount(
@@ -691,6 +1007,7 @@ async function syncAccount(
   const refreshAdStatusesOnly = options.refreshAdStatusesOnly ?? false;
   const refreshRankingDiagnostics = options.refreshRankingDiagnostics ?? true;
   const includeCreativeDiagnostics = options.includeCreativeDiagnostics ?? true;
+  const enrichment = emptyEnrichmentMetrics();
 
   const accountProfile = await graphFetch<JsonRecord>(metaAccountId, {
     fields: "id,name,currency,timezone_name,account_status,business_name",
@@ -709,11 +1026,17 @@ async function syncAccount(
 
   const campaigns = refreshAdStatusesOnly
     ? await fetchMetaCampaignsForStatusRefresh(metaAccountId)
-    : await fetchMetaCampaignsForCatalogRefresh(metaAccountId);
+    : await fetchMetaCampaignsForCatalogRefresh(metaAccountId, {
+        enrichment,
+        account: account.brandCode,
+      });
 
   const adSets = refreshAdStatusesOnly
     ? await fetchMetaAdSetsForStatusRefresh(metaAccountId)
-    : await fetchMetaAdSetsForCatalogRefresh(metaAccountId);
+    : await fetchMetaAdSetsForCatalogRefresh(metaAccountId, {
+        enrichment,
+        account: account.brandCode,
+      });
 
   const overrides = await fetchCampaignUmbrellaOverrides(metaAccountId);
   const campaignRawByMetaId = new Map(campaigns.map((campaign) => [String(campaign.id), campaign]));
@@ -759,10 +1082,18 @@ async function syncAccount(
 
       return {
         ...baseRow,
-        objective: stringField(campaign.objective),
-        buying_type: stringField(campaign.buying_type),
-        start_time: stringField(campaign.start_time),
-        stop_time: stringField(campaign.stop_time),
+        ...(hasMetaField(campaign, "objective") ? { objective: stringField(campaign.objective) } : {}),
+        ...(hasMetaField(campaign, "buying_type") ? { buying_type: stringField(campaign.buying_type) } : {}),
+        ...(hasMetaField(campaign, "daily_budget") ? { daily_budget: moneyCents(campaign.daily_budget) } : {}),
+        ...(hasMetaField(campaign, "lifetime_budget") ? { lifetime_budget: moneyCents(campaign.lifetime_budget) } : {}),
+        ...(hasMetaField(campaign, "budget_remaining") ? { budget_remaining: moneyCents(campaign.budget_remaining) } : {}),
+        ...(hasMetaField(campaign, "bid_strategy") ? { bid_strategy: stringField(campaign.bid_strategy) } : {}),
+        ...(hasMetaField(campaign, "pacing_type") ? { pacing_type: arrayField(campaign.pacing_type) } : {}),
+        ...(hasMetaField(campaign, "budget_rebalance_flag")
+          ? { budget_rebalance_flag: booleanField(campaign.budget_rebalance_flag) }
+          : {}),
+        ...(hasMetaField(campaign, "start_time") ? { start_time: stringField(campaign.start_time) } : {}),
+        ...(hasMetaField(campaign, "stop_time") ? { stop_time: stringField(campaign.stop_time) } : {}),
       };
     }),
     "meta_account_id,campaign_id",
@@ -813,14 +1144,28 @@ async function syncAccount(
 
       return {
         ...baseRow,
-        optimization_goal: stringField(adSet.optimization_goal),
-        billing_event: stringField(adSet.billing_event),
-        bid_strategy: stringField(adSet.bid_strategy),
-        daily_budget: moneyCents(adSet.daily_budget),
-        lifetime_budget: moneyCents(adSet.lifetime_budget),
-        start_time: stringField(adSet.start_time),
-        end_time: stringField(adSet.end_time),
-        targeting: recordField(adSet.targeting),
+        ...(hasMetaField(adSet, "optimization_goal") ? { optimization_goal: stringField(adSet.optimization_goal) } : {}),
+        ...(hasMetaField(adSet, "billing_event") ? { billing_event: stringField(adSet.billing_event) } : {}),
+        ...(hasMetaField(adSet, "bid_strategy") ? { bid_strategy: stringField(adSet.bid_strategy) } : {}),
+        ...(hasMetaField(adSet, "daily_budget") ? { daily_budget: moneyCents(adSet.daily_budget) } : {}),
+        ...(hasMetaField(adSet, "lifetime_budget") ? { lifetime_budget: moneyCents(adSet.lifetime_budget) } : {}),
+        ...(hasMetaField(adSet, "budget_remaining") ? { budget_remaining: moneyCents(adSet.budget_remaining) } : {}),
+        ...(hasMetaField(adSet, "learning_stage_info") ? { learning_stage_info: recordField(adSet.learning_stage_info) } : {}),
+        ...(hasMetaField(adSet, "attribution_spec") ? { attribution_spec: arrayField(adSet.attribution_spec) } : {}),
+        ...(hasMetaField(adSet, "promoted_object") ? { promoted_object: recordField(adSet.promoted_object) } : {}),
+        ...(hasMetaField(adSet, "destination_type") ? { destination_type: stringField(adSet.destination_type) } : {}),
+        ...(hasMetaField(adSet, "targeting_optimization_types")
+          ? { targeting_optimization_types: arrayField(adSet.targeting_optimization_types) }
+          : {}),
+        ...(hasMetaField(adSet, "is_dynamic_creative")
+          ? { is_dynamic_creative: booleanField(adSet.is_dynamic_creative) }
+          : {}),
+        ...(hasMetaField(adSet, "is_budget_schedule_enabled")
+          ? { is_budget_schedule_enabled: booleanField(adSet.is_budget_schedule_enabled) }
+          : {}),
+        ...(hasMetaField(adSet, "start_time") ? { start_time: stringField(adSet.start_time) } : {}),
+        ...(hasMetaField(adSet, "end_time") ? { end_time: stringField(adSet.end_time) } : {}),
+        ...(hasMetaField(adSet, "targeting") ? { targeting: recordField(adSet.targeting) } : {}),
       };
     }),
     "meta_account_id,ad_set_id",
@@ -837,7 +1182,10 @@ async function syncAccount(
   // meta_daily_insights — they're fetched via the /insights endpoint which
   // doesn't honor this filter. The backfill flow is unaffected.
   const ads = refreshAdCatalog
-    ? await fetchMetaAdsForCatalogRefresh(metaAccountId)
+    ? await fetchMetaAdsForCatalogRefresh(metaAccountId, {
+        enrichment,
+        account: account.brandCode,
+      })
     : refreshAdStatusesOnly
       ? await fetchMetaAdsForStatusRefresh(metaAccountId)
       : [];
@@ -875,6 +1223,17 @@ async function syncAccount(
             title: stringField(creative.title),
             body: stringField(creative.body),
             call_to_action_type: stringField(creative.call_to_action_type),
+            ...(hasMetaField(creative, "call_to_action") ? { call_to_action: recordField(creative.call_to_action) } : {}),
+            ...(hasMetaField(creative, "url_tags") ? { url_tags: stringField(creative.url_tags) } : {}),
+            ...(hasMetaField(creative, "instagram_permalink_url")
+              ? { instagram_permalink_url: stringField(creative.instagram_permalink_url) }
+              : {}),
+            ...(hasMetaField(creative, "effective_instagram_media_id")
+              ? { effective_instagram_media_id: stringField(creative.effective_instagram_media_id) }
+              : {}),
+            ...(hasMetaField(creative, "degrees_of_freedom_spec")
+              ? { degrees_of_freedom_spec: recordField(creative.degrees_of_freedom_spec) }
+              : {}),
             object_type: stringField(creative.object_type),
             object_story_id: stringField(creative.object_story_id),
             effective_object_story_id: stringField(creative.effective_object_story_id),
@@ -965,7 +1324,20 @@ async function syncAccount(
             creative_id: creativeId,
             name: stringField(ad.name),
             status: stringField(ad.status),
+            configured_status: stringField(ad.configured_status),
             effective_status: stringField(ad.effective_status),
+            ...(hasMetaField(ad, "tracking_specs") ? { tracking_specs: arrayField(ad.tracking_specs) } : {}),
+            ...(hasMetaField(ad, "tracking_and_conversion_with_defaults")
+              ? {
+                  tracking_and_conversion_with_defaults: recordField(
+                    ad.tracking_and_conversion_with_defaults,
+                  ),
+                }
+              : {}),
+            ...(hasMetaField(ad, "preview_shareable_link")
+              ? { preview_shareable_link: stringField(ad.preview_shareable_link) }
+              : {}),
+            ...(hasMetaField(ad, "ad_active_time") ? { ad_active_time: stringField(ad.ad_active_time) } : {}),
             ...(refreshPreviews
               ? {
                   preview_source: preview?.previewSource || "fallback",
@@ -1006,6 +1378,7 @@ async function syncAccount(
                 creative_id: creativeId,
                 name: stringField(ad.name),
                 status: stringField(ad.status),
+                configured_status: stringField(ad.configured_status),
                 effective_status: stringField(ad.effective_status),
                 created_time: stringField(ad.created_time),
                 updated_time: stringField(ad.updated_time),
@@ -1020,6 +1393,10 @@ async function syncAccount(
         )
     : storedAdRows;
   const adByMetaId = new Map(adRows.map((row) => [String(row.ad_id), row]));
+
+  if (refreshAdCatalog) {
+    await syncOptionalCatalogEnrichments(metaAccountId, now, enrichment);
+  }
 
   const insightRange = options.insights || getSyncInsightDateRange();
   const [insights, rankingByAdId] = await Promise.all([
@@ -1059,6 +1436,7 @@ async function syncAccount(
   const beforeBuckets = await insightBucketSnapshots(metaAccountId, affectedRange);
 
   await replaceStoredInsightRows(metaAccountId, affectedRange, dedupedInsightRows);
+  await upsertInsightEnrichments(dedupedInsightRows, enrichment, account.brandCode, metaAccountId);
 
   const after = await insightAggregateSnapshot(metaAccountId, affectedRange);
   const afterBuckets = await insightBucketSnapshots(metaAccountId, affectedRange);
@@ -1088,6 +1466,7 @@ async function syncAccount(
     creatives: creativeRows.length,
     insightRows: insights.length,
     previewRefreshes: refreshPreviews ? previewByAdId.size + creativeRows.length : 0,
+    enrichment,
     audit,
   };
 }
@@ -1288,6 +1667,73 @@ async function replaceStoredInsightRows(
   await upsertMany("meta_daily_insights", rowsToInsert, "meta_account_id,ad_id,date_start");
 }
 
+async function upsertInsightEnrichments(
+  insightRows: JsonRecord[],
+  enrichment: SyncEnrichmentMetrics,
+  account: string,
+  metaAccountId: string,
+) {
+  const rowsToInsert = insightRows
+    .map(mapInsightToEnrichmentRow)
+    .filter((row) => row.meta_account_id && row.ad_id && row.date_start);
+
+  if (!rowsToInsert.length) return;
+
+  try {
+    const rows = await upsertMany(
+      "meta_daily_insight_enrichments",
+      rowsToInsert,
+      "environment,meta_account_id,ad_id,date_start",
+    );
+    enrichment.insightSidecarRows += rows.length;
+  } catch (error) {
+    recordSkippedEnrichment(
+      enrichment,
+      account,
+      "daily_insight_enrichments",
+      `Sidecar upsert failed for ${metaAccountId}: ${errorToMessage(error)}`,
+    );
+  }
+}
+
+export function mapInsightToEnrichmentRow(row: JsonRecord) {
+  const raw = recordField(row.raw_json);
+
+  return {
+    brand_id: row.brand_id || null,
+    account_id: row.account_id || null,
+    campaign_ref_id: row.campaign_ref_id || null,
+    ad_set_ref_id: row.ad_set_ref_id || null,
+    ad_ref_id: row.ad_ref_id || null,
+    creative_ref_id: row.creative_ref_id || null,
+    meta_account_id: stringField(row.meta_account_id),
+    campaign_id: stringField(row.campaign_id),
+    ad_set_id: stringField(row.ad_set_id),
+    ad_id: stringField(row.ad_id),
+    creative_id: stringField(row.creative_id),
+    date_start: stringField(row.date_start),
+    date_stop: stringField(row.date_stop),
+    account_currency: stringField(raw.account_currency),
+    attribution_setting: stringField(raw.attribution_setting),
+    cost_per_result: arrayField(raw.cost_per_result),
+    result_rate: arrayField(raw.result_rate),
+    outbound_clicks: arrayField(raw.outbound_clicks),
+    unique_outbound_clicks: arrayField(raw.unique_outbound_clicks),
+    cost_per_outbound_click: arrayField(raw.cost_per_outbound_click),
+    website_ctr: arrayField(raw.website_ctr),
+    landing_page_view_per_link_click: numberField(raw.landing_page_view_per_link_click),
+    landing_page_view_actions_per_link_click: numberField(raw.landing_page_view_actions_per_link_click),
+    inline_post_engagement: numberField(raw.inline_post_engagement),
+    instagram_profile_visits: numberField(raw.instagram_profile_visits),
+    social_spend: numberField(raw.social_spend),
+    cost_per_inline_link_click: numberField(raw.cost_per_inline_link_click),
+    cost_per_inline_post_engagement: numberField(raw.cost_per_inline_post_engagement),
+    meta_conversions: arrayField(raw.conversions),
+    raw_json: raw,
+    last_synced_at: new Date().toISOString(),
+  };
+}
+
 async function insightAggregateSnapshot(
   metaAccountId: string,
   range: { start: string | null; end: string | null },
@@ -1413,6 +1859,117 @@ async function fetchStoredCreativeRows(metaAccountId: string) {
   }
 
   return output;
+}
+
+async function syncOptionalCatalogEnrichments(
+  metaAccountId: string,
+  now: string,
+  enrichment: SyncEnrichmentMetrics,
+) {
+  if (shouldSkipOptionalMetaWork()) {
+    recordSkippedEnrichment(
+      enrichment,
+      metaAccountId,
+      "catalog_edges",
+      `Meta usage crossed ${getMetaApiUsageWarnPercent()}%; optional catalog edges skipped.`,
+    );
+    return;
+  }
+
+  enrichment.adLabels += await syncOptionalCatalogEdge({
+    account: metaAccountId,
+    group: "ad_labels",
+    fetchRows: () => fetchMetaAdLabels(metaAccountId),
+    mapRow: (row) => ({
+      meta_account_id: metaAccountId,
+      meta_id: stringField(row.id),
+      name: stringField(row.name),
+      raw_json: row,
+      last_synced_at: now,
+    }),
+    table: "meta_ad_labels",
+    onConflict: "environment,meta_account_id,meta_id",
+    enrichment,
+  });
+
+  if (shouldSkipOptionalMetaWork()) {
+    recordSkippedEnrichment(
+      enrichment,
+      metaAccountId,
+      "ad_pixels_custom_conversions",
+      `Meta usage crossed ${getMetaApiUsageWarnPercent()}%; remaining catalog edges skipped.`,
+    );
+    return;
+  }
+
+  enrichment.adPixels += await syncOptionalCatalogEdge({
+    account: metaAccountId,
+    group: "ad_pixels",
+    fetchRows: () => fetchMetaAdPixels(metaAccountId),
+    mapRow: (row) => ({
+      meta_account_id: metaAccountId,
+      meta_id: stringField(row.id),
+      name: stringField(row.name),
+      last_fired_time: stringField(row.last_fired_time),
+      is_unavailable: booleanField(row.is_unavailable),
+      raw_json: row,
+      last_synced_at: now,
+    }),
+    table: "meta_ad_pixels",
+    onConflict: "environment,meta_account_id,meta_id",
+    enrichment,
+  });
+
+  if (shouldSkipOptionalMetaWork()) {
+    recordSkippedEnrichment(
+      enrichment,
+      metaAccountId,
+      "custom_conversions",
+      `Meta usage crossed ${getMetaApiUsageWarnPercent()}%; custom conversions skipped.`,
+    );
+    return;
+  }
+
+  enrichment.customConversions += await syncOptionalCatalogEdge({
+    account: metaAccountId,
+    group: "custom_conversions",
+    fetchRows: () => fetchMetaCustomConversions(metaAccountId),
+    mapRow: (row) => ({
+      meta_account_id: metaAccountId,
+      meta_id: stringField(row.id),
+      name: stringField(row.name),
+      custom_event_type: stringField(row.custom_event_type),
+      event_source_type: stringField(row.event_source_type),
+      creation_time: stringField(row.creation_time),
+      last_fired_time: stringField(row.last_fired_time),
+      is_archived: booleanField(row.is_archived),
+      is_unavailable: booleanField(row.is_unavailable),
+      raw_json: row,
+      last_synced_at: now,
+    }),
+    table: "meta_custom_conversions",
+    onConflict: "environment,meta_account_id,meta_id",
+    enrichment,
+  });
+}
+
+async function syncOptionalCatalogEdge(input: {
+  account: string;
+  group: string;
+  fetchRows: () => Promise<JsonRecord[]>;
+  mapRow: (row: JsonRecord) => JsonRecord;
+  table: string;
+  onConflict: string;
+  enrichment: SyncEnrichmentMetrics;
+}) {
+  try {
+    const rows = (await input.fetchRows()).map(input.mapRow).filter((row) => row.meta_id);
+    const storedRows = await upsertMany(input.table, rows, input.onConflict);
+    return storedRows.length;
+  } catch (error) {
+    recordSkippedEnrichment(input.enrichment, input.account, input.group, errorToMessage(error));
+    return 0;
+  }
 }
 
 function aggregateStoredInsightRows(inputRows: JsonRecord[]) {
@@ -1567,32 +2124,6 @@ async function fetchInsights(
   range?: InsightDateRange,
   options: { includeCreativeDiagnostics?: boolean } = {},
 ) {
-  const coreFields = [
-    "campaign_id",
-    "campaign_name",
-    "objective",
-    "adset_id",
-    "adset_name",
-    "optimization_goal",
-    "ad_id",
-    "ad_name",
-    "date_start",
-    "date_stop",
-    "spend",
-    "impressions",
-    "reach",
-    "frequency",
-    "cpm",
-    "cpc",
-    "ctr",
-    "clicks",
-    "inline_link_clicks",
-    "inline_link_click_ctr",
-    "unique_clicks",
-    "actions",
-    "action_values",
-    "cost_per_action_type",
-  ];
   const creativeDiagnosticFields = [
     "video_play_actions",
     "video_30_sec_watched_actions",
@@ -1605,7 +2136,8 @@ async function fetchInsights(
     "video_thruplay_watched_actions",
   ];
   const fields = [
-    ...coreFields,
+    ...META_INSIGHT_CORE_FIELDS,
+    ...META_INSIGHT_ENRICHMENT_FIELDS,
     ...(options.includeCreativeDiagnostics === false ? [] : creativeDiagnosticFields),
   ].join(",");
 
@@ -1715,6 +2247,94 @@ async function fetchAccountInsightsTotal(
     }
     throw error;
   }
+}
+
+export async function fetchMetaInsightBreakdownDailyRows(input: {
+  metaAccountId: string;
+  since: string;
+  until: string;
+  breakdownSet: MetaInsightBreakdownSet;
+}) {
+  const breakdownFields = metaInsightBreakdownFieldsForSet(input.breakdownSet);
+  const rows = await graphPages<JsonRecord>(`${input.metaAccountId}/insights`, {
+    level: "ad",
+    time_increment: "1",
+    ...buildInsightDateParams({ kind: "range", since: input.since, until: input.until }),
+    breakdowns: breakdownFields.join(","),
+    fields: [...META_INSIGHT_BREAKDOWN_CORE_FIELDS, ...breakdownFields].join(","),
+    limit: "100",
+  }, { maxPages: getSyncMaxPages("META_BREAKDOWN_MAX_INSIGHT_PAGES", 30) });
+
+  const now = new Date().toISOString();
+  return rows.map((row) => mapMetaInsightBreakdownRow(input.metaAccountId, input.breakdownSet, row, now));
+}
+
+export function metaInsightBreakdownFieldsForSet(set: MetaInsightBreakdownSet) {
+  return META_INSIGHT_BREAKDOWN_FIELDS_BY_SET[set];
+}
+
+export function mapMetaInsightBreakdownRow(
+  metaAccountId: string,
+  breakdownSet: MetaInsightBreakdownSet,
+  row: JsonRecord,
+  now = new Date().toISOString(),
+) {
+  const breakdownValues = metaInsightBreakdownValues(breakdownSet, row);
+
+  return {
+    meta_account_id: metaAccountId,
+    level: "ad",
+    breakdown_set: breakdownSet,
+    breakdown_key: stableMetaInsightBreakdownKey({
+      campaignId: stringField(row.campaign_id),
+      adSetId: stringField(row.adset_id),
+      adId: stringField(row.ad_id),
+      breakdownValues,
+    }),
+    breakdown_values: breakdownValues,
+    date_start: stringField(row.date_start),
+    date_stop: stringField(row.date_stop),
+    campaign_id: stringField(row.campaign_id),
+    ad_set_id: stringField(row.adset_id),
+    ad_id: stringField(row.ad_id),
+    spend: numberField(row.spend) || 0,
+    impressions: Math.round(numberField(row.impressions) || 0),
+    reach: Math.round(numberField(row.reach) || 0),
+    clicks: Math.round(numberField(row.clicks) || 0),
+    inline_link_clicks: Math.round(numberField(row.inline_link_clicks) || 0),
+    actions: arrayField(row.actions),
+    raw_json: row,
+    last_synced_at: now,
+  };
+}
+
+function metaInsightBreakdownValues(
+  breakdownSet: MetaInsightBreakdownSet,
+  row: JsonRecord,
+) {
+  return metaInsightBreakdownFieldsForSet(breakdownSet).reduce<JsonRecord>((values, field) => {
+    values[field] = stringField(row[field]);
+    return values;
+  }, {});
+}
+
+export function stableMetaInsightBreakdownKey(input: {
+  campaignId: string | null;
+  adSetId: string | null;
+  adId: string | null;
+  breakdownValues: JsonRecord;
+}) {
+  const entityKey = [
+    input.campaignId || "unknown_campaign",
+    input.adSetId || "unknown_ad_set",
+    input.adId || "unknown_ad",
+  ].join("|");
+  const breakdownKey = Object.keys(input.breakdownValues)
+    .sort()
+    .map((key) => `${key}:${String(input.breakdownValues[key] || "")}`)
+    .join("|");
+
+  return `${entityKey}|${breakdownKey}`;
 }
 
 async function fetchCreativeAnalysisInsights(
@@ -1866,6 +2486,161 @@ function chooseStoredPreview(
  * they fail fast so the operator sees them.
  */
 const META_RETRYABLE_CODES = new Set([4, 17, 32, 613, 368, 80004]);
+const META_USAGE_PERCENT_KEYS = new Set([
+  "call_count",
+  "total_cputime",
+  "total_time",
+  "acc_id_util_pct",
+]);
+const metaUsageStorage = new AsyncLocalStorage<MetaUsageCollector[]>();
+
+function emptyEnrichmentMetrics(): SyncEnrichmentMetrics {
+  return {
+    insightSidecarRows: 0,
+    adLabels: 0,
+    adPixels: 0,
+    customConversions: 0,
+    skipped: [],
+  };
+}
+
+function mergeEnrichmentMetrics(target: SyncEnrichmentMetrics, source: SyncEnrichmentMetrics) {
+  target.insightSidecarRows += source.insightSidecarRows;
+  target.adLabels += source.adLabels;
+  target.adPixels += source.adPixels;
+  target.customConversions += source.customConversions;
+  target.skipped.push(...source.skipped);
+}
+
+function recordSkippedEnrichment(
+  enrichment: SyncEnrichmentMetrics,
+  account: string,
+  group: string,
+  reason: string,
+) {
+  enrichment.skipped.push({ account, group, reason });
+}
+
+export function createMetaUsageCollector(): MetaUsageCollector {
+  const samples: MetaUsageSample[] = [];
+
+  return {
+    record(sample) {
+      samples.push(sample);
+    },
+    summary() {
+      return summarizeMetaUsage(samples);
+    },
+  };
+}
+
+export function withMetaUsageCollector<T>(
+  collector: MetaUsageCollector,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const current = metaUsageStorage.getStore() || [];
+  return metaUsageStorage.run([...current, collector], fn);
+}
+
+function recordMetaUsageFromResponse(path: string, response: Response) {
+  const sample = parseMetaUsageHeaders(path, response.headers);
+  if (!sample) return;
+
+  for (const collector of metaUsageStorage.getStore() || []) {
+    collector.record(sample);
+  }
+}
+
+export function parseMetaUsageHeaders(path: string, headers: Pick<Headers, "get">) {
+  const app = parseMetaUsageHeader(headers.get("x-app-usage"));
+  const adAccount = parseMetaUsageHeader(headers.get("x-ad-account-usage"));
+  const businessUseCase = parseMetaUsageHeader(headers.get("x-business-use-case-usage"));
+  const maxPercent = Math.max(
+    maxMetaUsagePercent(app),
+    maxMetaUsagePercent(adAccount),
+    maxMetaUsagePercent(businessUseCase),
+  );
+
+  if (!app && !adAccount && !businessUseCase) return null;
+
+  return {
+    path,
+    maxPercent,
+    observedAt: new Date().toISOString(),
+    ...(app ? { app } : {}),
+    ...(adAccount ? { adAccount } : {}),
+    ...(businessUseCase ? { businessUseCase } : {}),
+  } satisfies MetaUsageSample;
+}
+
+function parseMetaUsageHeader(value: string | null) {
+  if (!value) return null;
+
+  try {
+    const parsed = JSON.parse(value);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function maxMetaUsagePercent(value: unknown): number {
+  if (Array.isArray(value)) {
+    return value.reduce((max, item) => Math.max(max, maxMetaUsagePercent(item)), 0);
+  }
+
+  if (!isRecord(value)) return 0;
+
+  return Object.entries(value).reduce((max, [key, nestedValue]) => {
+    const direct =
+      META_USAGE_PERCENT_KEYS.has(key) && typeof nestedValue === "number" && Number.isFinite(nestedValue)
+        ? nestedValue
+        : 0;
+    return Math.max(max, direct, maxMetaUsagePercent(nestedValue));
+  }, 0);
+}
+
+function summarizeMetaUsage(samples: MetaUsageSample[]): MetaUsageSummary {
+  const byPath = samples.reduce<Record<string, { maxPercent: number; samples: number }>>(
+    (summary, sample) => {
+      const current = summary[sample.path] || { maxPercent: 0, samples: 0 };
+      summary[sample.path] = {
+        maxPercent: Math.max(current.maxPercent, sample.maxPercent),
+        samples: current.samples + 1,
+      };
+      return summary;
+    },
+    {},
+  );
+  const maxPercent = samples.reduce((max, sample) => Math.max(max, sample.maxPercent), 0);
+  const thresholdPercent = getMetaApiUsageWarnPercent();
+
+  return {
+    maxPercent,
+    thresholdPercent,
+    overThreshold: maxPercent >= thresholdPercent,
+    byPath,
+    samples: samples.slice(-100),
+  };
+}
+
+export function getMetaApiUsageWarnPercent(env: Record<string, string | undefined> = process.env) {
+  const value = Number(env.META_API_USAGE_WARN_PERCENT);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 80;
+}
+
+function currentMetaUsageSummary() {
+  const collectors = metaUsageStorage.getStore() || [];
+  return collectors.length ? collectors[collectors.length - 1].summary() : summarizeMetaUsage([]);
+}
+
+export function isMetaUsageOverThreshold(summary: Pick<MetaUsageSummary, "maxPercent" | "thresholdPercent">) {
+  return summary.maxPercent >= summary.thresholdPercent;
+}
+
+function shouldSkipOptionalMetaWork() {
+  return isMetaUsageOverThreshold(currentMetaUsageSummary());
+}
 
 function isMetaRetryable(json: unknown): boolean {
   if (!isRecord(json)) return false;
@@ -1890,6 +2665,7 @@ async function graphFetch<T>(
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const response = await fetch(url, { cache: "no-store" });
+    recordMetaUsageFromResponse(path, response);
     const json = (await response.json()) as MetaPaging<T> | T;
 
     const ok = response.ok && !(isRecord(json) && "error" in json);
@@ -1964,6 +2740,7 @@ async function graphPages<T>(
 
   while (nextUrl && (!options.maxPages || page < options.maxPages)) {
     const response = await fetch(nextUrl, { cache: "no-store", signal: options.signal });
+    recordMetaUsageFromResponse(path, response);
     const json = (await response.json()) as MetaPaging<T>;
 
     if (!response.ok || json.error) {
@@ -2234,9 +3011,26 @@ function recordField(value: unknown): JsonRecord {
   return isRecord(value) ? value : {};
 }
 
+function hasMetaField(row: JsonRecord, field: string) {
+  return Object.prototype.hasOwnProperty.call(row, field);
+}
+
+function arrayField(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
 function stringField(value: unknown): string | null {
   if (typeof value === "string" && value.length) return value;
   if (typeof value === "number") return String(value);
+  return null;
+}
+
+function booleanField(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    if (value === "true") return true;
+    if (value === "false") return false;
+  }
   return null;
 }
 
@@ -2295,7 +3089,7 @@ function isRecord(value: unknown): value is JsonRecord {
 // thrown value (Supabase client errors are plain objects, not Error
 // instances). Using the centralized helper keeps every error path human-
 // readable.
-import { safeErrorMessage as errorToMessage } from "./error-message";
+import { safeErrorMessage as errorToMessage } from "./error-message.ts";
 
 function isAbortError(error: unknown) {
   return error instanceof Error && error.name === "AbortError";

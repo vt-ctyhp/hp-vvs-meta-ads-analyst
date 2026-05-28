@@ -1,6 +1,7 @@
 import { isAuthorizedCronRequest, jsonError } from "@/lib/http";
 import { revalidateAndWarmMetaInsightAggregateCache } from "@/lib/meta-insight-cache-warmup";
 import { runMetaAdsBackfillBatch } from "@/lib/meta-backfill";
+import { runMetaInsightBreakdownBackfillBatch } from "@/lib/meta-breakdown-backfill";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,8 +14,9 @@ export async function GET(request: Request) {
 
   try {
     const result = await runMetaAdsBackfillBatch();
+    const breakdownBackfill = await runMetaInsightBreakdownBackfillBatch();
     await revalidateAndWarmMetaInsightAggregateCache();
-    return Response.json(result);
+    return Response.json({ ...result, breakdownBackfill });
   } catch (error) {
     return jsonError(error);
   }

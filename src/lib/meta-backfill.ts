@@ -48,6 +48,8 @@ export type MetaAdsBackfillChunk = {
   status: ChunkStatus;
   attempts: number;
   insightRows: number;
+  enrichmentRows: number;
+  metrics: unknown;
   error: string | null;
   lockedAt: string | null;
   retryAfter: string | null;
@@ -201,12 +203,13 @@ export async function createMetaAdsBackfillJob(input: {
       status: "pending",
       requested_start: start,
       requested_end: end,
+      sort_direction: "desc",
       accounts: accounts.map((account) => ({
         brandCode: account.brandCode,
         metaAccountId: account.metaAccountId,
       })),
       total_chunks: chunkRows.length,
-      metrics: { insightRows: 0 },
+      metrics: { insightRows: 0, enrichmentRows: 0 },
     }))
     .select("*")
     .single();
@@ -299,6 +302,7 @@ export async function runMetaAdsBackfillBatch(input: { limit?: number } = {}) {
     chunkId: string;
     status: "success" | "failed" | "deferred";
     insightRows: number;
+    enrichmentRows?: number;
     error?: string;
   }> = [];
 
@@ -315,12 +319,22 @@ export async function runMetaAdsBackfillBatch(input: { limit?: number } = {}) {
         .update({
           status: "success",
           insight_rows: result.insightRows,
+          enrichment_rows: result.enrichment.insightSidecarRows,
+          metrics: {
+            enrichment: result.enrichment,
+            metaUsage: result.metaUsage,
+          },
           error: null,
           completed_at: new Date().toISOString(),
         })
         .eq("id", chunk.id);
       if (update.error) throw update.error;
-      results.push({ chunkId: chunk.id, status: "success", insightRows: result.insightRows });
+      results.push({
+        chunkId: chunk.id,
+        status: "success",
+        insightRows: result.insightRows,
+        enrichmentRows: result.enrichment.insightSidecarRows,
+      });
     } catch (error) {
       const message = errorToMessage(error);
       if (isMetaRateLimitError(message)) {
@@ -488,7 +502,7 @@ async function refreshBackfillJobRollup(jobId: string) {
   const supabase = createAdsAnalystClient("worker") as unknown as SupabaseAny;
   const [jobRes, chunksRes] = await Promise.all([
     supabase.from("meta_ads_backfill_jobs").select("*").eq("id", jobId).single(),
-    supabase.from("meta_ads_backfill_chunks").select("status,insight_rows,error").eq("job_id", jobId),
+    supabase.from("meta_ads_backfill_chunks").select("status,insight_rows,enrichment_rows,error").eq("job_id", jobId),
   ]);
   if (jobRes.error) throw jobRes.error;
   if (chunksRes.error) throw chunksRes.error;
@@ -501,6 +515,7 @@ async function refreshBackfillJobRollup(jobId: string) {
     running: number;
     canceled: number;
     insightRows: number;
+    enrichmentRows: number;
     errors: string[];
   }>(
     (acc, chunk) => {
@@ -510,11 +525,20 @@ async function refreshBackfillJobRollup(jobId: string) {
       if (status === "running") acc.running += 1;
       if (status === "canceled") acc.canceled += 1;
       acc.insightRows += numberField(chunk.insight_rows);
+      acc.enrichmentRows += numberField(chunk.enrichment_rows);
       const error = stringField(chunk.error);
       if (error) acc.errors.push(error);
       return acc;
     },
-    { completed: 0, failed: 0, running: 0, canceled: 0, insightRows: 0, errors: [] as string[] },
+    {
+      completed: 0,
+      failed: 0,
+      running: 0,
+      canceled: 0,
+      insightRows: 0,
+      enrichmentRows: 0,
+      errors: [] as string[],
+    },
   );
   const total = numberField(job.total_chunks) || chunkRows.length;
   const priorStatus = String(job.status) as BackfillStatus;
@@ -539,7 +563,7 @@ async function refreshBackfillJobRollup(jobId: string) {
       completed_chunks: counts.completed,
       failed_chunks: counts.failed,
       running_chunks: counts.running,
-      metrics: { insightRows: counts.insightRows },
+      metrics: { insightRows: counts.insightRows, enrichmentRows: counts.enrichmentRows },
       errors: counts.errors.slice(0, 50),
       completed_at:
         nextStatus === "success" || nextStatus === "partial" || nextStatus === "failed" || nextStatus === "canceled"
@@ -656,6 +680,8 @@ function mapChunk(row: JsonRecord): MetaAdsBackfillChunk {
     status: chunkStatusValue(row.status),
     attempts: numberField(row.attempts),
     insightRows: numberField(row.insight_rows),
+    enrichmentRows: numberField(row.enrichment_rows),
+    metrics: row.metrics || {},
     error: stringField(row.error),
     lockedAt: stringField(row.locked_at),
     retryAfter: stringField(row.retry_after),

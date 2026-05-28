@@ -22,6 +22,8 @@ test("semantic catalog exposes governed Meta Ads fields and compatibility rules"
     ["summary", "day", "week", "month", "quarter"],
   );
   assert.equal(resolveSemanticAlias("messages")?.key, "messaging_contacts");
+  assert.equal(resolveSemanticAlias("budget")?.key, "daily_budget");
+  assert.equal(resolveSemanticAlias("monthly budget")?.key, "monthly_budget");
   assert.equal(resolveSemanticAlias("group")?.key, "campaign_umbrella");
   assert.equal(resolveSemanticAlias("weekly")?.key, "week");
   assert.ok(catalog.unsupportedBoundaries.some((boundary) => boundary.key === "crm"));

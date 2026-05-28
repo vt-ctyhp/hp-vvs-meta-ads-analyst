@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  mapAggregateRow,
   normalizeAggregateInput,
   shouldRevalidateCachedMetaInsightAggregates,
 } from "../src/lib/meta-insight-aggregates.ts";
@@ -39,5 +40,21 @@ describe("normalizeAggregateInput", () => {
     assert.equal(shouldRevalidateCachedMetaInsightAggregates("test"), false);
     assert.equal(shouldRevalidateCachedMetaInsightAggregates(undefined), false);
     assert.equal(shouldRevalidateCachedMetaInsightAggregates("production"), true);
+  });
+
+  it("maps current-state budget fields from the aggregate RPC", () => {
+    const row = mapAggregateRow({
+      spend: "123.45",
+      monthly_budget: "3100",
+      daily_budget: "100",
+      lifetime_budget: "5000",
+      budget_remaining: "4200",
+    });
+
+    assert.equal(row.spend, 123.45);
+    assert.equal(row.daily_budget, 100);
+    assert.equal(row.monthly_budget, 3100);
+    assert.equal(row.lifetime_budget, 5000);
+    assert.equal(row.budget_remaining, 4200);
   });
 });

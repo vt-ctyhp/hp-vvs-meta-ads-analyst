@@ -216,7 +216,10 @@ const NUMBER_PATTERN =
   "\\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|ninety";
 const MONEY_METRICS = new Set<WorkbenchMetric>([
   "spend",
+  "daily_budget",
   "monthly_budget",
+  "lifetime_budget",
+  "budget_remaining",
   "cpm",
   "cpc",
   "cpl",
@@ -1632,6 +1635,9 @@ function detectMetrics(prompt: string, useDefault = true): WorkbenchMetric[] {
 
 function refineDetectedMetrics(prompt: string, metrics: WorkbenchMetric[]): WorkbenchMetric[] {
   const lower = prompt.toLowerCase();
+  if (/\bmonthly budgets?\b|\bbudget\s+per\s+month\b/.test(lower) && metrics.includes("monthly_budget")) {
+    metrics = metrics.filter((metric) => metric !== "daily_budget");
+  }
   if (/\bnew\s+messages?\b|\bnew\s+messaging\s+contacts?\b|\bfirst\s+repl(?:y|ies)\b/.test(lower)) {
     return metrics.filter((metric) => metric !== "messaging_contacts");
   }
@@ -1800,7 +1806,7 @@ function inferQuestionType(prompt: string): WorkbenchQuestionType {
   if (/\b(?:compare|versus|vs\.?|against|previous|prior|from .* to)\b/.test(lower)) {
     return "comparison";
   }
-  if (/\b(?:trend|over time|week[-\s]?by[-\s]?week|day[-\s]?by[-\s]?day|month[-\s]?by[-\s]?month|daily|weekly|monthly|quarterly)\b/.test(lower)) {
+  if (/\b(?:trend|over time|week[-\s]?by[-\s]?week|day[-\s]?by[-\s]?day|month[-\s]?by[-\s]?month|daily(?!\s+budgets?\b)|weekly|monthly|quarterly)\b/.test(lower)) {
     return "trend";
   }
   return "leaderboard";
@@ -1871,7 +1877,7 @@ function trendLimit(planned: PlannedIntent) {
 function detectDimensions(prompt: string, useDefault = true): WorkbenchDimension[] {
   const lower = prompt.toLowerCase();
   const dimensions: WorkbenchDimension[] = [];
-  if (/\bby\s+(?:day|date)\b|\band\s+(?:day|date)\b|\bdaily\b|\bper\s+day\b|\bevery\s+day\b|\beach\s+day\b|\bday[-\s]?by[-\s]?day\b/.test(lower)) {
+  if (/\bby\s+(?:day|date)\b|\band\s+(?:day|date)\b|\bdaily\b(?!\s+budgets?\b)|\bper\s+day\b|\bevery\s+day\b|\beach\s+day\b|\bday[-\s]?by[-\s]?day\b/.test(lower)) {
     dimensions.push("date");
   }
   if (/\bby\s+week\b|\band\s+week\b|\bweekly\b|\bper\s+week\b|\beach\s+week\b|\bweek[-\s]?(?:by|over)[-\s]?week\b/.test(lower)) dimensions.push("week");
@@ -2116,7 +2122,10 @@ function sourceRowCount(groupedRows: MetaInsightAggregateRow[], totalRows: MetaI
 function sumRows(rows: MetaInsightAggregateRow[]) {
   return rows.reduce((sum, row) => {
     sum.spend += row.spend;
+    sum.daily_budget += row.daily_budget;
     sum.monthly_budget += row.monthly_budget;
+    sum.lifetime_budget += row.lifetime_budget;
+    sum.budget_remaining += row.budget_remaining;
     sum.impressions += row.impressions;
     sum.reach += row.reach;
     sum.clicks += row.clicks;
@@ -2222,7 +2231,10 @@ function emptyAggregateRow(): MetaInsightAggregateRow {
     creative: null,
     creative_id: null,
     spend: 0,
+    daily_budget: 0,
     monthly_budget: 0,
+    lifetime_budget: 0,
+    budget_remaining: 0,
     impressions: 0,
     reach: 0,
     clicks: 0,

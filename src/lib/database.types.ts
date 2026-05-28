@@ -3978,13 +3978,93 @@ export type Database = {
           },
         ]
       }
+      meta_ad_labels: {
+        Row: {
+          created_at: string
+          environment: string
+          id: string
+          last_synced_at: string | null
+          meta_account_id: string
+          meta_id: string
+          name: string | null
+          raw_json: Json
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          environment?: string
+          id?: string
+          last_synced_at?: string | null
+          meta_account_id: string
+          meta_id: string
+          name?: string | null
+          raw_json?: Json
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          environment?: string
+          id?: string
+          last_synced_at?: string | null
+          meta_account_id?: string
+          meta_id?: string
+          name?: string | null
+          raw_json?: Json
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      meta_ad_pixels: {
+        Row: {
+          created_at: string
+          environment: string
+          id: string
+          is_unavailable: boolean | null
+          last_fired_time: string | null
+          last_synced_at: string | null
+          meta_account_id: string
+          meta_id: string
+          name: string | null
+          raw_json: Json
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          environment?: string
+          id?: string
+          is_unavailable?: boolean | null
+          last_fired_time?: string | null
+          last_synced_at?: string | null
+          meta_account_id: string
+          meta_id: string
+          name?: string | null
+          raw_json?: Json
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          environment?: string
+          id?: string
+          is_unavailable?: boolean | null
+          last_fired_time?: string | null
+          last_synced_at?: string | null
+          meta_account_id?: string
+          meta_id?: string
+          name?: string | null
+          raw_json?: Json
+          updated_at?: string
+        }
+        Relationships: []
+      }
       meta_ad_sets: {
         Row: {
           account_id: string | null
           ad_set_id: string
+          attribution_spec: Json
           bid_strategy: string | null
           billing_event: string | null
           brand_id: string | null
+          budget_remaining: number | null
           campaign_id: string | null
           campaign_ref_id: string | null
           campaign_umbrella: string | null
@@ -3998,24 +4078,32 @@ export type Database = {
           end_time: string | null
           environment: string
           id: string
+          is_budget_schedule_enabled: boolean | null
+          is_dynamic_creative: boolean | null
           last_synced_at: string | null
+          learning_stage_info: Json
           lifetime_budget: number | null
           meta_account_id: string
           name: string | null
           optimization_goal: string | null
+          promoted_object: Json
           raw_json: Json
           start_time: string | null
           status: string | null
           targeting: Json
+          targeting_optimization_types: Json
+          destination_type: string | null
           updated_at: string
           updated_time: string | null
         }
         Insert: {
           account_id?: string | null
           ad_set_id: string
+          attribution_spec?: Json
           bid_strategy?: string | null
           billing_event?: string | null
           brand_id?: string | null
+          budget_remaining?: number | null
           campaign_id?: string | null
           campaign_ref_id?: string | null
           campaign_umbrella?: string | null
@@ -4029,24 +4117,32 @@ export type Database = {
           end_time?: string | null
           environment?: string
           id?: string
+          is_budget_schedule_enabled?: boolean | null
+          is_dynamic_creative?: boolean | null
           last_synced_at?: string | null
+          learning_stage_info?: Json
           lifetime_budget?: number | null
           meta_account_id: string
           name?: string | null
           optimization_goal?: string | null
+          promoted_object?: Json
           raw_json?: Json
           start_time?: string | null
           status?: string | null
           targeting?: Json
+          targeting_optimization_types?: Json
+          destination_type?: string | null
           updated_at?: string
           updated_time?: string | null
         }
         Update: {
           account_id?: string | null
           ad_set_id?: string
+          attribution_spec?: Json
           bid_strategy?: string | null
           billing_event?: string | null
           brand_id?: string | null
+          budget_remaining?: number | null
           campaign_id?: string | null
           campaign_ref_id?: string | null
           campaign_umbrella?: string | null
@@ -4060,15 +4156,21 @@ export type Database = {
           end_time?: string | null
           environment?: string
           id?: string
+          is_budget_schedule_enabled?: boolean | null
+          is_dynamic_creative?: boolean | null
           last_synced_at?: string | null
+          learning_stage_info?: Json
           lifetime_budget?: number | null
           meta_account_id?: string
           name?: string | null
           optimization_goal?: string | null
+          promoted_object?: Json
           raw_json?: Json
           start_time?: string | null
           status?: string | null
           targeting?: Json
+          targeting_optimization_types?: Json
+          destination_type?: string | null
           updated_at?: string
           updated_time?: string | null
         }
@@ -4099,6 +4201,7 @@ export type Database = {
       meta_ads: {
         Row: {
           account_id: string | null
+          ad_active_time: string | null
           ad_id: string
           ad_set_id: string | null
           ad_set_ref_id: string | null
@@ -4109,6 +4212,7 @@ export type Database = {
           campaign_umbrella_confidence: string | null
           campaign_umbrella_reason: string | null
           campaign_umbrella_source: string | null
+          configured_status: string | null
           created_at: string
           created_time: string | null
           creative_id: string | null
@@ -4120,15 +4224,19 @@ export type Database = {
           meta_account_id: string
           name: string | null
           preview_html: string | null
+          preview_shareable_link: string | null
           preview_source: string
           preview_url: string | null
           raw_json: Json
           status: string | null
+          tracking_and_conversion_with_defaults: Json
+          tracking_specs: Json
           updated_at: string
           updated_time: string | null
         }
         Insert: {
           account_id?: string | null
+          ad_active_time?: string | null
           ad_id: string
           ad_set_id?: string | null
           ad_set_ref_id?: string | null
@@ -4139,6 +4247,7 @@ export type Database = {
           campaign_umbrella_confidence?: string | null
           campaign_umbrella_reason?: string | null
           campaign_umbrella_source?: string | null
+          configured_status?: string | null
           created_at?: string
           created_time?: string | null
           creative_id?: string | null
@@ -4150,15 +4259,19 @@ export type Database = {
           meta_account_id: string
           name?: string | null
           preview_html?: string | null
+          preview_shareable_link?: string | null
           preview_source?: string
           preview_url?: string | null
           raw_json?: Json
           status?: string | null
+          tracking_and_conversion_with_defaults?: Json
+          tracking_specs?: Json
           updated_at?: string
           updated_time?: string | null
         }
         Update: {
           account_id?: string | null
+          ad_active_time?: string | null
           ad_id?: string
           ad_set_id?: string | null
           ad_set_ref_id?: string | null
@@ -4169,6 +4282,7 @@ export type Database = {
           campaign_umbrella_confidence?: string | null
           campaign_umbrella_reason?: string | null
           campaign_umbrella_source?: string | null
+          configured_status?: string | null
           created_at?: string
           created_time?: string | null
           creative_id?: string | null
@@ -4180,10 +4294,13 @@ export type Database = {
           meta_account_id?: string
           name?: string | null
           preview_html?: string | null
+          preview_shareable_link?: string | null
           preview_source?: string
           preview_url?: string | null
           raw_json?: Json
           status?: string | null
+          tracking_and_conversion_with_defaults?: Json
+          tracking_specs?: Json
           updated_at?: string
           updated_time?: string | null
         }
@@ -4232,6 +4349,7 @@ export type Database = {
           completed_at: string | null
           created_at: string
           end_date: string
+          enrichment_rows: number
           environment: string
           error: string | null
           id: string
@@ -4239,6 +4357,7 @@ export type Database = {
           job_id: string
           locked_at: string | null
           meta_account_id: string
+          metrics: Json
           retry_after: string | null
           start_date: string
           status: string
@@ -4250,6 +4369,7 @@ export type Database = {
           completed_at?: string | null
           created_at?: string
           end_date: string
+          enrichment_rows?: number
           environment?: string
           error?: string | null
           id?: string
@@ -4257,6 +4377,7 @@ export type Database = {
           job_id: string
           locked_at?: string | null
           meta_account_id: string
+          metrics?: Json
           retry_after?: string | null
           start_date: string
           status?: string
@@ -4268,6 +4389,7 @@ export type Database = {
           completed_at?: string | null
           created_at?: string
           end_date?: string
+          enrichment_rows?: number
           environment?: string
           error?: string | null
           id?: string
@@ -4275,6 +4397,7 @@ export type Database = {
           job_id?: string
           locked_at?: string | null
           meta_account_id?: string
+          metrics?: Json
           retry_after?: string | null
           start_date?: string
           status?: string
@@ -4305,6 +4428,7 @@ export type Database = {
           requested_end: string
           requested_start: string
           running_chunks: number
+          sort_direction: string
           started_at: string | null
           status: string
           total_chunks: number
@@ -4324,6 +4448,7 @@ export type Database = {
           requested_end: string
           requested_start: string
           running_chunks?: number
+          sort_direction?: string
           started_at?: string | null
           status?: string
           total_chunks?: number
@@ -4343,6 +4468,7 @@ export type Database = {
           requested_end?: string
           requested_start?: string
           running_chunks?: number
+          sort_direction?: string
           started_at?: string | null
           status?: string
           total_chunks?: number
@@ -4353,7 +4479,10 @@ export type Database = {
       meta_campaigns: {
         Row: {
           account_id: string | null
+          bid_strategy: string | null
           brand_id: string | null
+          budget_rebalance_flag: boolean | null
+          budget_remaining: number | null
           buying_type: string | null
           campaign_id: string
           campaign_umbrella: string | null
@@ -4362,13 +4491,16 @@ export type Database = {
           campaign_umbrella_source: string | null
           created_at: string
           created_time: string | null
+          daily_budget: number | null
           effective_status: string | null
           environment: string
           id: string
           last_synced_at: string | null
+          lifetime_budget: number | null
           meta_account_id: string
           name: string | null
           objective: string | null
+          pacing_type: Json
           raw_json: Json
           start_time: string | null
           status: string | null
@@ -4378,7 +4510,10 @@ export type Database = {
         }
         Insert: {
           account_id?: string | null
+          bid_strategy?: string | null
           brand_id?: string | null
+          budget_rebalance_flag?: boolean | null
+          budget_remaining?: number | null
           buying_type?: string | null
           campaign_id: string
           campaign_umbrella?: string | null
@@ -4387,13 +4522,16 @@ export type Database = {
           campaign_umbrella_source?: string | null
           created_at?: string
           created_time?: string | null
+          daily_budget?: number | null
           effective_status?: string | null
           environment?: string
           id?: string
           last_synced_at?: string | null
+          lifetime_budget?: number | null
           meta_account_id: string
           name?: string | null
           objective?: string | null
+          pacing_type?: Json
           raw_json?: Json
           start_time?: string | null
           status?: string | null
@@ -4403,7 +4541,10 @@ export type Database = {
         }
         Update: {
           account_id?: string | null
+          bid_strategy?: string | null
           brand_id?: string | null
+          budget_rebalance_flag?: boolean | null
+          budget_remaining?: number | null
           buying_type?: string | null
           campaign_id?: string
           campaign_umbrella?: string | null
@@ -4412,13 +4553,16 @@ export type Database = {
           campaign_umbrella_source?: string | null
           created_at?: string
           created_time?: string | null
+          daily_budget?: number | null
           effective_status?: string | null
           environment?: string
           id?: string
           last_synced_at?: string | null
+          lifetime_budget?: number | null
           meta_account_id?: string
           name?: string | null
           objective?: string | null
+          pacing_type?: Json
           raw_json?: Json
           start_time?: string | null
           status?: string | null
@@ -4450,15 +4594,19 @@ export type Database = {
           asset_metadata: Json
           body: string | null
           brand_id: string | null
+          call_to_action: Json
           call_to_action_type: string | null
           created_at: string
           creative_cache_attempted_at: string | null
           creative_cache_error: string | null
           creative_id: string
+          degrees_of_freedom_spec: Json
           effective_object_story_id: string | null
+          effective_instagram_media_id: string | null
           environment: string
           id: string
           image_url: string | null
+          instagram_permalink_url: string | null
           last_preview_refresh_at: string | null
           last_synced_at: string | null
           meta_account_id: string
@@ -4475,6 +4623,7 @@ export type Database = {
           thumbnail_url: string | null
           title: string | null
           updated_at: string
+          url_tags: string | null
           video_thumbnail_url: string | null
         }
         Insert: {
@@ -4483,15 +4632,19 @@ export type Database = {
           asset_metadata?: Json
           body?: string | null
           brand_id?: string | null
+          call_to_action?: Json
           call_to_action_type?: string | null
           created_at?: string
           creative_cache_attempted_at?: string | null
           creative_cache_error?: string | null
           creative_id: string
+          degrees_of_freedom_spec?: Json
           effective_object_story_id?: string | null
+          effective_instagram_media_id?: string | null
           environment?: string
           id?: string
           image_url?: string | null
+          instagram_permalink_url?: string | null
           last_preview_refresh_at?: string | null
           last_synced_at?: string | null
           meta_account_id: string
@@ -4508,6 +4661,7 @@ export type Database = {
           thumbnail_url?: string | null
           title?: string | null
           updated_at?: string
+          url_tags?: string | null
           video_thumbnail_url?: string | null
         }
         Update: {
@@ -4516,15 +4670,19 @@ export type Database = {
           asset_metadata?: Json
           body?: string | null
           brand_id?: string | null
+          call_to_action?: Json
           call_to_action_type?: string | null
           created_at?: string
           creative_cache_attempted_at?: string | null
           creative_cache_error?: string | null
           creative_id?: string
+          degrees_of_freedom_spec?: Json
           effective_object_story_id?: string | null
+          effective_instagram_media_id?: string | null
           environment?: string
           id?: string
           image_url?: string | null
+          instagram_permalink_url?: string | null
           last_preview_refresh_at?: string | null
           last_synced_at?: string | null
           meta_account_id?: string
@@ -4541,6 +4699,7 @@ export type Database = {
           thumbnail_url?: string | null
           title?: string | null
           updated_at?: string
+          url_tags?: string | null
           video_thumbnail_url?: string | null
         }
         Relationships: [
@@ -4556,6 +4715,217 @@ export type Database = {
             columns: ["brand_id"]
             isOneToOne: false
             referencedRelation: "brands"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      meta_custom_conversions: {
+        Row: {
+          created_at: string
+          creation_time: string | null
+          custom_event_type: string | null
+          environment: string
+          event_source_type: string | null
+          id: string
+          is_archived: boolean | null
+          is_unavailable: boolean | null
+          last_fired_time: string | null
+          last_synced_at: string | null
+          meta_account_id: string
+          meta_id: string
+          name: string | null
+          raw_json: Json
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          creation_time?: string | null
+          custom_event_type?: string | null
+          environment?: string
+          event_source_type?: string | null
+          id?: string
+          is_archived?: boolean | null
+          is_unavailable?: boolean | null
+          last_fired_time?: string | null
+          last_synced_at?: string | null
+          meta_account_id: string
+          meta_id: string
+          name?: string | null
+          raw_json?: Json
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          creation_time?: string | null
+          custom_event_type?: string | null
+          environment?: string
+          event_source_type?: string | null
+          id?: string
+          is_archived?: boolean | null
+          is_unavailable?: boolean | null
+          last_fired_time?: string | null
+          last_synced_at?: string | null
+          meta_account_id?: string
+          meta_id?: string
+          name?: string | null
+          raw_json?: Json
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      meta_daily_insight_enrichments: {
+        Row: {
+          account_currency: string | null
+          account_id: string | null
+          ad_id: string
+          ad_ref_id: string | null
+          ad_set_id: string | null
+          ad_set_ref_id: string | null
+          attribution_setting: string | null
+          brand_id: string | null
+          campaign_id: string | null
+          campaign_ref_id: string | null
+          cost_per_inline_link_click: number | null
+          cost_per_inline_post_engagement: number | null
+          cost_per_outbound_click: Json
+          cost_per_result: Json
+          created_at: string
+          creative_id: string | null
+          creative_ref_id: string | null
+          date_start: string
+          date_stop: string
+          environment: string
+          id: string
+          inline_post_engagement: number | null
+          instagram_profile_visits: number | null
+          landing_page_view_actions_per_link_click: number | null
+          landing_page_view_per_link_click: number | null
+          last_synced_at: string | null
+          meta_account_id: string
+          meta_conversions: Json
+          outbound_clicks: Json
+          raw_json: Json
+          result_rate: Json
+          social_spend: number | null
+          unique_outbound_clicks: Json
+          updated_at: string
+          website_ctr: Json
+        }
+        Insert: {
+          account_currency?: string | null
+          account_id?: string | null
+          ad_id: string
+          ad_ref_id?: string | null
+          ad_set_id?: string | null
+          ad_set_ref_id?: string | null
+          attribution_setting?: string | null
+          brand_id?: string | null
+          campaign_id?: string | null
+          campaign_ref_id?: string | null
+          cost_per_inline_link_click?: number | null
+          cost_per_inline_post_engagement?: number | null
+          cost_per_outbound_click?: Json
+          cost_per_result?: Json
+          created_at?: string
+          creative_id?: string | null
+          creative_ref_id?: string | null
+          date_start: string
+          date_stop: string
+          environment?: string
+          id?: string
+          inline_post_engagement?: number | null
+          instagram_profile_visits?: number | null
+          landing_page_view_actions_per_link_click?: number | null
+          landing_page_view_per_link_click?: number | null
+          last_synced_at?: string | null
+          meta_account_id: string
+          meta_conversions?: Json
+          outbound_clicks?: Json
+          raw_json?: Json
+          result_rate?: Json
+          social_spend?: number | null
+          unique_outbound_clicks?: Json
+          updated_at?: string
+          website_ctr?: Json
+        }
+        Update: {
+          account_currency?: string | null
+          account_id?: string | null
+          ad_id?: string
+          ad_ref_id?: string | null
+          ad_set_id?: string | null
+          ad_set_ref_id?: string | null
+          attribution_setting?: string | null
+          brand_id?: string | null
+          campaign_id?: string | null
+          campaign_ref_id?: string | null
+          cost_per_inline_link_click?: number | null
+          cost_per_inline_post_engagement?: number | null
+          cost_per_outbound_click?: Json
+          cost_per_result?: Json
+          created_at?: string
+          creative_id?: string | null
+          creative_ref_id?: string | null
+          date_start?: string
+          date_stop?: string
+          environment?: string
+          id?: string
+          inline_post_engagement?: number | null
+          instagram_profile_visits?: number | null
+          landing_page_view_actions_per_link_click?: number | null
+          landing_page_view_per_link_click?: number | null
+          last_synced_at?: string | null
+          meta_account_id?: string
+          meta_conversions?: Json
+          outbound_clicks?: Json
+          raw_json?: Json
+          result_rate?: Json
+          social_spend?: number | null
+          unique_outbound_clicks?: Json
+          updated_at?: string
+          website_ctr?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meta_daily_insight_enrichments_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "meta_ad_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meta_daily_insight_enrichments_ad_ref_id_fkey"
+            columns: ["ad_ref_id"]
+            isOneToOne: false
+            referencedRelation: "meta_ads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meta_daily_insight_enrichments_ad_set_ref_id_fkey"
+            columns: ["ad_set_ref_id"]
+            isOneToOne: false
+            referencedRelation: "meta_ad_sets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meta_daily_insight_enrichments_brand_id_fkey"
+            columns: ["brand_id"]
+            isOneToOne: false
+            referencedRelation: "brands"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meta_daily_insight_enrichments_campaign_ref_id_fkey"
+            columns: ["campaign_ref_id"]
+            isOneToOne: false
+            referencedRelation: "meta_campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meta_daily_insight_enrichments_creative_ref_id_fkey"
+            columns: ["creative_ref_id"]
+            isOneToOne: false
+            referencedRelation: "meta_creatives"
             referencedColumns: ["id"]
           },
         ]
@@ -4764,6 +5134,141 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      meta_insight_breakdown_backfill_chunks: {
+        Row: {
+          attempts: number
+          brand_code: string
+          breakdown_set: string
+          completed_at: string | null
+          created_at: string
+          end_date: string
+          environment: string
+          error: string | null
+          id: string
+          locked_at: string | null
+          meta_account_id: string
+          metrics: Json
+          retry_after: string | null
+          row_count: number
+          start_date: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          brand_code: string
+          breakdown_set: string
+          completed_at?: string | null
+          created_at?: string
+          end_date: string
+          environment?: string
+          error?: string | null
+          id?: string
+          locked_at?: string | null
+          meta_account_id: string
+          metrics?: Json
+          retry_after?: string | null
+          row_count?: number
+          start_date: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          brand_code?: string
+          breakdown_set?: string
+          completed_at?: string | null
+          created_at?: string
+          end_date?: string
+          environment?: string
+          error?: string | null
+          id?: string
+          locked_at?: string | null
+          meta_account_id?: string
+          metrics?: Json
+          retry_after?: string | null
+          row_count?: number
+          start_date?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      meta_insight_breakdown_daily: {
+        Row: {
+          actions: Json
+          ad_id: string | null
+          ad_set_id: string | null
+          breakdown_key: string
+          breakdown_set: string
+          breakdown_values: Json
+          campaign_id: string | null
+          clicks: number
+          created_at: string
+          date_start: string
+          date_stop: string
+          environment: string
+          id: string
+          impressions: number
+          inline_link_clicks: number
+          last_synced_at: string | null
+          level: string
+          meta_account_id: string
+          raw_json: Json
+          reach: number
+          spend: number
+          updated_at: string
+        }
+        Insert: {
+          actions?: Json
+          ad_id?: string | null
+          ad_set_id?: string | null
+          breakdown_key: string
+          breakdown_set: string
+          breakdown_values?: Json
+          campaign_id?: string | null
+          clicks?: number
+          created_at?: string
+          date_start: string
+          date_stop: string
+          environment?: string
+          id?: string
+          impressions?: number
+          inline_link_clicks?: number
+          last_synced_at?: string | null
+          level?: string
+          meta_account_id: string
+          raw_json?: Json
+          reach?: number
+          spend?: number
+          updated_at?: string
+        }
+        Update: {
+          actions?: Json
+          ad_id?: string | null
+          ad_set_id?: string | null
+          breakdown_key?: string
+          breakdown_set?: string
+          breakdown_values?: Json
+          campaign_id?: string | null
+          clicks?: number
+          created_at?: string
+          date_start?: string
+          date_stop?: string
+          environment?: string
+          id?: string
+          impressions?: number
+          inline_link_clicks?: number
+          last_synced_at?: string | null
+          level?: string
+          meta_account_id?: string
+          raw_json?: Json
+          reach?: number
+          spend?: number
+          updated_at?: string
+        }
+        Relationships: []
       }
       meta_social_comments: {
         Row: {
@@ -8153,16 +8658,19 @@ export type Database = {
           creative: string
           creative_id: string
           ctr: number
+          daily_budget: number
           date: string
           frequency: number
           impressions: number
           leads: number
+          lifetime_budget: number
           messaging_contacts: number
           month: string
           monthly_budget: number
           new_messaging_contacts: number
           primary_results: number
           reach: number
+          budget_remaining: number
           secondary_results: number
           source_rows: number
           spend: number
@@ -8224,6 +8732,7 @@ export type Database = {
           completed_at: string | null
           created_at: string
           end_date: string
+          enrichment_rows: number
           environment: string
           error: string | null
           id: string
@@ -8231,6 +8740,7 @@ export type Database = {
           job_id: string
           locked_at: string | null
           meta_account_id: string
+          metrics: Json
           retry_after: string | null
           start_date: string
           status: string
@@ -8239,6 +8749,34 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "meta_ads_backfill_chunks"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      claim_meta_insight_breakdown_backfill_chunks: {
+        Args: { p_limit?: number }
+        Returns: {
+          attempts: number
+          brand_code: string
+          breakdown_set: string
+          completed_at: string | null
+          created_at: string
+          end_date: string
+          environment: string
+          error: string | null
+          id: string
+          locked_at: string | null
+          meta_account_id: string
+          metrics: Json
+          retry_after: string | null
+          row_count: number
+          start_date: string
+          status: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "meta_insight_breakdown_backfill_chunks"
           isOneToOne: false
           isSetofReturn: true
         }

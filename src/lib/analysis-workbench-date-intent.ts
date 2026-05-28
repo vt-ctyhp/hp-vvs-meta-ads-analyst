@@ -139,7 +139,7 @@ export function inferWorkbenchDateGrainFromPrompt(
   prompt: string,
 ): WorkbenchPlannerDateGrain | null {
   const lower = prompt.toLowerCase();
-  if (/\bby\s+(?:day|date)\b|\band\s+(?:day|date)\b|\bdaily\b|\bper\s+day\b|\bevery\s+day\b|\beach\s+day\b|\bday[-\s]?by[-\s]?day\b/.test(lower)) {
+  if (/\bby\s+(?:day|date)\b|\band\s+(?:day|date)\b|\bdaily\b(?!\s+budgets?\b)|\bper\s+day\b|\bevery\s+day\b|\beach\s+day\b|\bday[-\s]?by[-\s]?day\b/.test(lower)) {
     return "day";
   }
   if (/\bby\s+week\b|\band\s+week\b|\bweekly\b|\bper\s+week\b|\beach\s+week\b|\bweek[-\s]?(?:by|over)[-\s]?week\b/.test(lower)) {
