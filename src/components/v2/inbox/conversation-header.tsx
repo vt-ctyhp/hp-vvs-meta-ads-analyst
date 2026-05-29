@@ -1,31 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
-
 import {
   META_INBOX_QUEUE_CATEGORIES,
   metaInboxVocabularyLabel,
 } from "../../../lib/meta-inbox-vocabulary.ts";
 import type { MetaInboxQueueDisplayItem } from "../../../lib/meta-inbox-queue-view.ts";
-
-// Resolve assignee names from /api/users once, cached across header mounts so
-// switching conversations doesn't refetch. Falls back to the raw id if missing.
-let cachedUserNames: Map<string, string> | null = null;
-let inflightUserNames: Promise<Map<string, string>> | null = null;
-function loadUserNames(): Promise<Map<string, string>> {
-  if (cachedUserNames) return Promise.resolve(cachedUserNames);
-  if (inflightUserNames) return inflightUserNames;
-  inflightUserNames = fetch("/api/users")
-    .then((r) => (r.ok ? r.json() : { users: [] }))
-    .then((payload: { users?: { id: string; fullName: string | null }[] }) => {
-      const map = new Map<string, string>();
-      for (const u of payload.users || []) if (u.fullName) map.set(u.id, u.fullName);
-      cachedUserNames = map;
-      return map;
-    })
-    .catch(() => new Map<string, string>());
-  return inflightUserNames;
-}
+import { useInboxUserNames } from "./use-inbox-user-names.ts";
 
 type ConversationHeaderProps = {
   item: MetaInboxQueueDisplayItem | null;
@@ -46,16 +26,7 @@ export function ConversationHeader({
   onOpenQa = noop,
   onCloseConversation = noop,
 }: ConversationHeaderProps) {
-  const [userNames, setUserNames] = useState<Map<string, string> | null>(cachedUserNames);
-  useEffect(() => {
-    let alive = true;
-    void loadUserNames().then((map) => {
-      if (alive) setUserNames(map);
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
+  const userNames = useInboxUserNames();
 
   if (!item) {
     return (
@@ -95,11 +66,9 @@ export function ConversationHeader({
     >
       <div className="flex min-w-0 flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-            <span>
-              {item.brand} · {item.channel} {kind} · {categoryLabel}
-            </span>
-          </div>
+          <p className="truncate text-[11px] uppercase tracking-[0.14em] text-hp-muted">
+            {item.brand} · {item.channel} {kind} · {categoryLabel}
+          </p>
 
           <div className="mt-3 flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
             <h2 className="font-title break-words text-[22px] leading-tight text-hp-ink">
@@ -120,37 +89,35 @@ export function ConversationHeader({
           </p>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          <DrawerChip label="Details" onClick={onOpenDetails} />
-          <DrawerChip label="Audit" onClick={onOpenAudit} />
-          <DrawerChip label="Notes" onClick={onOpenNotes} />
-          <DrawerChip label="QA" onClick={onOpenQa} />
-          <DrawerChip label="Close →" onClick={onCloseConversation} emphasized />
+        {/* Inspector panels as one segmented strip, with Close as the decisive
+            primary beneath it. A fixed-width action column keeps the eyebrow on
+            one line. */}
+        <div className="flex shrink-0 flex-col items-end gap-3">
+          <div className="flex divide-x divide-hp-rule border border-hp-rule">
+            <DrawerTab label="Profile" onClick={onOpenDetails} />
+            <DrawerTab label="Notes" onClick={onOpenNotes} />
+            <DrawerTab label="History" onClick={onOpenAudit} />
+            <DrawerTab label="Quality" onClick={onOpenQa} />
+          </div>
+          <button
+            type="button"
+            onClick={onCloseConversation}
+            className="h-10 border border-hp-ink bg-hp-ink px-4 text-[10px] uppercase tracking-[0.14em] text-hp-foundation transition-colors hover:bg-hp-body"
+          >
+            Close →
+          </button>
         </div>
       </div>
     </header>
   );
 }
 
-function DrawerChip({
-  label,
-  emphasized = false,
-  onClick,
-}: {
-  label: string;
-  emphasized?: boolean;
-  onClick: () => void;
-}) {
+function DrawerTab({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={[
-        "h-9 border px-3 text-[10px] uppercase tracking-[0.14em] transition-colors",
-        emphasized
-          ? "border-hp-ink bg-hp-ink text-hp-foundation hover:bg-hp-body"
-          : "border-hp-rule bg-hp-card text-hp-ink hover:border-hp-ink hover:bg-hp-inset",
-      ].join(" ")}
+      className="h-9 bg-hp-card px-3 text-[10px] uppercase tracking-[0.14em] text-hp-ink transition-colors hover:bg-hp-inset"
     >
       {label}
     </button>

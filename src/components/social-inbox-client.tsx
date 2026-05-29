@@ -45,6 +45,7 @@ import {
 } from "./v2/inbox/inbox-client-state";
 import { PublicCommentActionPanel } from "./v2/inbox/public-comment-action-panel";
 import { QueueRail, visibleQueueCategories } from "./v2/inbox/queue-rail";
+import { useInboxUserNames } from "./v2/inbox/use-inbox-user-names";
 import { ReplyComposer } from "./v2/inbox/reply-composer";
 import { SelectedItemDetail } from "./v2/inbox/selected-item-detail";
 import { useDrawerState } from "./v2/inbox/use-drawer-state";
@@ -132,6 +133,7 @@ export function SocialInboxClient({
     reset: resetInboxFilters,
   } = useInboxFilters(queue, { visibleQueueKeys });
   const drawerState = useDrawerState();
+  const userNames = useInboxUserNames();
   const handleSelectQueueItem = useCallback(
     (itemId: string) => {
       setSelectedId(itemId);
@@ -456,6 +458,7 @@ export function SocialInboxClient({
             queueCategories={queueCategories}
             onSelect={(item) => handleSelectQueueItem(item.id)}
             now={replyWindowNow}
+            userNames={userNames}
           />
         }
 

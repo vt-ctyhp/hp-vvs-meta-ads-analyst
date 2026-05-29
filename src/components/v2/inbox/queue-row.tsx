@@ -9,11 +9,13 @@ export function QueueRow({
   active,
   onSelect,
   now,
+  userNames,
 }: {
   item: MetaInboxQueueDisplayItem;
   active: boolean;
   onSelect: () => void;
   now?: Date | number;
+  userNames?: Map<string, string> | null;
 }) {
   const needsReply = isNeedsReply(item);
   const overSla = queueItemIsOverSla(item, now);
@@ -26,6 +28,8 @@ export function QueueRow({
     META_INBOX_QUEUE_CATEGORIES,
     item.queueCategoryKey,
   );
+  const assignedId = item.inboxConversation?.assigned_user_id ?? null;
+  const assigneeName = assignedId ? userNames?.get(assignedId) ?? null : null;
 
   return (
     <button
@@ -126,6 +130,26 @@ export function QueueRow({
               Needs reply
             </span>
           ) : null}
+
+          {assignedId ? (
+            <span
+              className={[
+                "inline-flex items-center px-2 py-1 text-[10px] uppercase tracking-[0.14em]",
+                active ? "bg-hp-foundation/20 text-hp-foundation" : "bg-hp-inset text-hp-ink",
+              ].join(" ")}
+            >
+              {assigneeName ? assigneeName.split(/\s+/)[0] : "Assigned"}
+            </span>
+          ) : (
+            <span
+              className={[
+                "inline-flex items-center px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em]",
+                active ? "bg-hp-foundation text-hp-ink" : "bg-hp-ink text-hp-foundation",
+              ].join(" ")}
+            >
+              Unassigned
+            </span>
+          )}
         </div>
       </div>
     </button>

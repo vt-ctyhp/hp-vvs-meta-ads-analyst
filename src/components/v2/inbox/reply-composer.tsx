@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, Paperclip, Plus, RefreshCw, Send, Tags, X } from "lucide-react";
+import { Bookmark, ChevronUp, Loader2, Maximize2, Paperclip, RefreshCw, Send, Tags, X } from "lucide-react";
 import { useState, type ChangeEvent } from "react";
 
 import type { MetaInboxQueueDisplayItem } from "../../../lib/meta-inbox-queue-view.ts";
@@ -82,7 +82,9 @@ function ManagedReplyComposer({
   onCreateSavedReply,
 }: ManagedReplyComposerProps) {
   const [confirmingSend, setConfirmingSend] = useState(false);
-  const [savedRepliesOpen, setSavedRepliesOpen] = useState(true);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const [savingTemplate, setSavingTemplate] = useState(false);
   const [sendAttemptsOpen, setSendAttemptsOpen] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [selectedAttachments, setSelectedAttachments] = useState<SocialInboxUploadedAttachment[]>([]);
@@ -118,10 +120,14 @@ function ManagedReplyComposer({
     Boolean(draft.trim()) &&
     Boolean(draftName.trim()) &&
     savedReplyMutationState.status !== "saving";
+  const previewReply =
+    previewId && item ? item.savedReplies.find((reply) => reply.id === previewId) ?? null : null;
 
   function insertSavedReply(body: string) {
     onDraftChange(draft.trim() ? `${draft}\n\n${body}` : body);
     setConfirmingSend(false);
+    setTemplatesOpen(false);
+    setPreviewId(null);
   }
 
   function savePersonalDraft() {
@@ -237,71 +243,128 @@ function ManagedReplyComposer({
         </section>
       ) : null}
 
-      <section className="border-b border-hp-rule bg-hp-card">
-        <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2 text-hp-ink">
-            <Tags size={14} />
-            <p className="text-[10px] uppercase tracking-[0.14em]">
-              Saved Replies · {item?.savedReplies.length || 0} available
-            </p>
-          </div>
+      <div className="flex items-center justify-between gap-2 border-b border-hp-rule-soft bg-hp-card px-4 py-2.5">
+        <p className="min-w-0 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+          Reply as{" "}
+          <em className="font-[family-name:var(--font-title)] text-[13px] not-italic text-hp-ink">
+            {item?.brand || "Unassigned"}
+          </em>
+          {replyWindowClosed ? (
+            <span className="ml-2 normal-case tracking-normal text-signal-danger">
+              Reply window closed. Only follow-up tags can be sent.
+            </span>
+          ) : null}
+        </p>
+
+        <div className="relative shrink-0">
           <button
             type="button"
-            onClick={() => setSavedRepliesOpen((open) => !open)}
-            className="self-start border border-hp-rule bg-hp-card px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] text-hp-ink hover:border-hp-ink sm:self-auto"
+            onClick={() => {
+              setTemplatesOpen((open) => !open);
+              setPreviewId(null);
+            }}
+            aria-expanded={templatesOpen}
+            className="flex h-8 items-center gap-1.5 border border-hp-rule bg-hp-card px-2.5 text-[10px] uppercase tracking-[0.14em] text-hp-ink transition-colors hover:border-hp-ink"
           >
-            {savedRepliesOpen ? "Hide ↕" : "Show ↕"}
+            <Tags size={13} />
+            Templates
+            <span className="border border-hp-rule px-1 text-[9px] leading-none text-hp-muted lining-nums">
+              {item?.savedReplies.length || 0}
+            </span>
+            <ChevronUp size={12} className={templatesOpen ? "" : "rotate-180"} />
           </button>
-        </div>
 
-        {savedRepliesOpen ? (
-          <div className="grid gap-2 border-t border-hp-rule px-4 py-3 sm:grid-cols-2">
-            {item?.savedReplies.length ? (
-              item.savedReplies.slice(0, 4).map((savedReply) => (
-                <article key={savedReply.id} className="border border-hp-rule bg-hp-inset p-3">
-                  <div className="flex min-h-full flex-col gap-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[13px] font-medium text-hp-ink">
-                        {savedReply.title}
-                      </p>
-                      <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-hp-muted">
-                        {savedReply.body}
-                      </p>
-                      <p className="mt-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-                        {savedReply.visibility === "personal" ? "Personal Draft" : "Approved Shared"}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => insertSavedReply(savedReply.body)}
-                      disabled={!canSendInboxReply || replyWindowClosed}
-                      className="h-9 border border-hp-rule bg-hp-card px-3 text-[10px] uppercase tracking-[0.14em] text-hp-ink hover:border-hp-ink disabled:opacity-50"
-                    >
-                      Insert →
-                    </button>
-                  </div>
-                </article>
-              ))
-            ) : (
-              <p className="text-sm leading-6 text-hp-muted sm:col-span-2">
-                No saved replies match this queue, source channel, lead quality, and language yet.
+          {templatesOpen ? (
+            <div className="absolute bottom-full right-0 z-30 mb-1 w-80 border border-hp-rule bg-hp-card shadow-[0_8px_24px_rgba(42,39,37,0.08)]">
+              <p className="border-b border-hp-rule-soft bg-hp-inset px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                Insert a saved reply
               </p>
-            )}
-          </div>
-        ) : null}
-      </section>
+              <div className="max-h-72 overflow-y-auto">
+                {item?.savedReplies.length ? (
+                  item.savedReplies.map((savedReply) => (
+                    <div
+                      key={savedReply.id}
+                      className="flex items-stretch border-b border-hp-rule-soft last:border-0"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => insertSavedReply(savedReply.body)}
+                        disabled={!canSendInboxReply || replyWindowClosed}
+                        className="min-w-0 flex-1 px-3 py-2.5 text-left hover:bg-hp-inset disabled:opacity-50"
+                      >
+                        <span className="flex items-center justify-between gap-2">
+                          <span className="truncate text-[13px] text-hp-ink">{savedReply.title}</span>
+                          <span className="shrink-0 text-[9px] uppercase tracking-[0.14em] text-hp-muted">
+                            {savedReply.visibility === "personal" ? "Personal" : "Shared"}
+                          </span>
+                        </span>
+                        <span className="mt-0.5 line-clamp-1 text-[11px] leading-5 text-hp-muted">
+                          {savedReply.body}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPreviewId((id) => (id === savedReply.id ? null : savedReply.id))
+                        }
+                        aria-label={`View full message: ${savedReply.title}`}
+                        title="View full message"
+                        className={[
+                          "flex w-9 shrink-0 items-center justify-center border-l border-hp-rule-soft transition-colors hover:bg-hp-inset",
+                          previewId === savedReply.id ? "bg-hp-inset text-hp-ink" : "text-hp-muted",
+                        ].join(" ")}
+                      >
+                        <Maximize2 size={13} />
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <p className="px-3 py-3 text-[11px] leading-5 text-hp-muted">
+                    No saved replies match this queue, source channel, lead quality, and language yet.
+                  </p>
+                )}
+              </div>
+            </div>
+          ) : null}
 
-      <header className="border-b border-hp-rule bg-hp-inset px-4 py-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-        Reply as{" "}
-        <em className="font-[family-name:var(--font-title)] text-hp-ink">
-          {item?.brand || "Unassigned"}
-        </em>
-        {replyWindowClosed ? (
-          <span className="ml-2 normal-case tracking-normal text-signal-danger">
-            Reply window closed. Only follow-up tags can be sent.
-          </span>
-        ) : null}
-      </header>
+          {templatesOpen && previewReply ? (
+            <div className="absolute bottom-full right-[21rem] z-30 mb-1 flex max-h-80 w-80 flex-col border border-hp-rule bg-hp-card shadow-[0_8px_24px_rgba(42,39,37,0.08)]">
+              <div className="flex items-center justify-between gap-2 border-b border-hp-rule-soft bg-hp-inset px-3 py-2">
+                <span className="truncate text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+                  Full message
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPreviewId(null)}
+                  aria-label="Close full message"
+                  className="flex h-5 w-5 items-center justify-center text-hp-muted hover:text-hp-ink"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+                <p className="text-[13px] text-hp-ink">{previewReply.title}</p>
+                <p className="mt-0.5 text-[9px] uppercase tracking-[0.14em] text-hp-muted">
+                  {previewReply.visibility === "personal" ? "Personal" : "Shared"}
+                </p>
+                <p className="mt-2 whitespace-pre-line text-sm leading-6 text-hp-body">
+                  {previewReply.body}
+                </p>
+              </div>
+              <div className="border-t border-hp-rule-soft p-2">
+                <button
+                  type="button"
+                  onClick={() => insertSavedReply(previewReply.body)}
+                  disabled={!canSendInboxReply || replyWindowClosed}
+                  className="flex h-9 w-full items-center justify-center gap-2 border border-hp-ink bg-hp-ink px-3 text-[10px] uppercase tracking-[0.14em] text-hp-foundation transition-colors hover:bg-hp-body disabled:opacity-50"
+                >
+                  Insert →
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </div>
 
       <textarea
         value={draft}
@@ -316,109 +379,79 @@ function ManagedReplyComposer({
         placeholder={
           replyWindowClosed
             ? "Reply window is closed. Use a saved follow-up template."
-            : "Draft a reply…"
+            : "Write a reply, or insert a template…"
         }
         className="w-full resize-none border-0 bg-transparent px-4 py-3 text-sm leading-6 text-hp-ink outline-none placeholder:text-hp-muted disabled:opacity-70"
       />
 
-      <div className="border-t border-hp-rule-soft px-4 py-3">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-              Attachment
-            </p>
-            {attachmentUpload.message ? (
-              <p
-                className={`mt-1 text-xs leading-5 ${
-                  attachmentUpload.status === "error"
-                    ? "text-signal-danger"
-                    : attachmentUpload.status === "ready"
-                      ? "text-signal-positive"
-                      : "text-hp-muted"
-                }`}
-              >
-                {attachmentUpload.message}
-              </p>
-            ) : null}
-          </div>
-
-          <div className="shrink-0">
-            <input
-              id={attachmentInputId(conversationId)}
-              type="file"
-              multiple
-              onChange={uploadAttachments}
-              disabled={!canAttach}
-              className="sr-only"
-            />
-            <label
-              htmlFor={attachmentInputId(conversationId)}
-              aria-disabled={!canAttach}
-              className={`flex min-h-10 cursor-pointer items-center justify-center gap-2 border px-3 text-[10px] uppercase tracking-[0.14em] transition ${
-                canAttach
-                  ? "border-hp-rule bg-hp-card text-hp-ink hover:border-hp-ink"
-                  : "cursor-not-allowed border-hp-rule bg-hp-inset text-hp-muted opacity-60"
-              }`}
+      {selectedAttachments.length ? (
+        <div className="flex flex-wrap gap-2 px-4 pb-1">
+          {selectedAttachments.map((attachment) => (
+            <span
+              key={attachment.id}
+              className="inline-flex items-center gap-1.5 border border-hp-rule bg-hp-inset py-1 pl-2 pr-1 text-[11px] text-hp-ink"
             >
-              {isUploadingAttachment ? (
-                <Loader2 size={13} className="animate-spin" />
-              ) : (
-                <Paperclip size={13} />
-              )}
-              Attach
-            </label>
-          </div>
-        </div>
-
-        {selectedAttachments.length ? (
-          <ul className="mt-3 grid gap-2">
-            {selectedAttachments.map((attachment) => (
-              <li
-                key={attachment.id}
-                className="flex min-h-10 items-center justify-between gap-3 border border-hp-rule bg-hp-inset px-3 py-2"
+              <Paperclip size={11} />
+              <span className="max-w-[12rem] truncate">{attachment.label}</span>
+              <button
+                type="button"
+                onClick={() => removeAttachment(attachment.id)}
+                className="flex h-4 w-4 items-center justify-center text-hp-muted hover:text-hp-ink"
+                aria-label={`Remove ${attachment.label}`}
               >
-                <div className="min-w-0">
-                  <p className="truncate text-sm text-hp-ink">{attachment.label}</p>
-                  <p className="truncate text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-                    {attachment.attachment_type} · {formatBytes(attachment.size_bytes)}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => removeAttachment(attachment.id)}
-                  className="flex h-9 w-9 shrink-0 items-center justify-center border border-hp-rule text-hp-ink hover:border-hp-ink"
-                  aria-label={`Remove ${attachment.label}`}
-                >
-                  <X size={13} />
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </div>
+                <X size={11} />
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
 
-      <div className="grid gap-2 border-t border-hp-rule-soft px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto]">
-        <input
-          value={draftName}
-          onChange={(event) => setDraftName(event.target.value)}
-          disabled={!draft.trim() || !canSendInboxReply}
-          placeholder="Draft name"
-          className="h-10 min-w-0 border border-hp-rule bg-hp-inset px-3 text-sm outline-none placeholder:text-hp-muted focus:border-hp-ink disabled:opacity-70"
-        />
-        <button
-          type="button"
-          onClick={savePersonalDraft}
-          disabled={!canSaveDraft}
-          className="flex min-h-10 shrink-0 items-center justify-center gap-2 border border-hp-ink px-3 text-xs font-medium text-hp-ink transition hover:bg-hp-ink hover:text-hp-foundation disabled:opacity-50"
+      {attachmentUpload.message ? (
+        <p
+          className={`px-4 pb-1 text-xs leading-5 ${
+            attachmentUpload.status === "error"
+              ? "text-signal-danger"
+              : attachmentUpload.status === "ready"
+                ? "text-signal-positive"
+                : "text-hp-muted"
+          }`}
         >
-          {savedReplyMutationState.status === "saving" ? (
-            <Loader2 size={13} className="animate-spin" />
-          ) : (
-            <Plus size={13} />
-          )}
-          Save Personal Draft
-        </button>
-      </div>
+          {attachmentUpload.message}
+        </p>
+      ) : null}
+
+      {savingTemplate ? (
+        <div className="flex items-center gap-2 border-t border-hp-rule-soft bg-hp-inset px-4 py-2.5">
+          <input
+            value={draftName}
+            onChange={(event) => setDraftName(event.target.value)}
+            disabled={!draft.trim() || !canSendInboxReply}
+            placeholder="Name this template"
+            className="h-9 min-w-0 flex-1 border border-hp-rule bg-hp-card px-2.5 text-sm outline-none placeholder:text-hp-muted focus:border-hp-ink disabled:opacity-70"
+          />
+          <button
+            type="button"
+            onClick={() => {
+              savePersonalDraft();
+              setSavingTemplate(false);
+            }}
+            disabled={!canSaveDraft}
+            className="flex h-9 items-center gap-1.5 border border-hp-ink bg-hp-ink px-3 text-[10px] uppercase tracking-[0.14em] text-hp-foundation disabled:opacity-50"
+          >
+            {savedReplyMutationState.status === "saving" ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : null}
+            Save
+          </button>
+          <button
+            type="button"
+            onClick={() => setSavingTemplate(false)}
+            className="h-9 border border-hp-rule px-3 text-[10px] uppercase tracking-[0.14em] text-hp-ink hover:border-hp-ink"
+          >
+            Cancel
+          </button>
+        </div>
+      ) : null}
 
       {savedReplyMutationState.message ? (
         <p
@@ -467,19 +500,63 @@ function ManagedReplyComposer({
             </div>
           </div>
         ) : (
-          <div className="flex items-center justify-between gap-2 px-4 py-3">
-            <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-              Manual draft · {pendingSendAttemptCount} pending
-            </span>
-            <button
-              type="button"
-              onClick={startSendConfirmation}
-              disabled={!canSend}
-              className="flex h-10 shrink-0 items-center justify-center gap-2 border border-hp-ink bg-hp-ink px-4 text-[10px] uppercase tracking-[0.14em] text-hp-foundation hover:border-hp-pink hover:bg-hp-pink disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Send size={13} />
-              Send →
-            </button>
+          <div className="flex items-center justify-between gap-2 px-3 py-2.5">
+            <div className="flex items-center gap-1">
+              <input
+                id={attachmentInputId(conversationId)}
+                type="file"
+                multiple
+                onChange={uploadAttachments}
+                disabled={!canAttach}
+                className="sr-only"
+              />
+              <label
+                htmlFor={attachmentInputId(conversationId)}
+                aria-disabled={!canAttach}
+                className={`flex h-9 items-center gap-1.5 px-2 text-[10px] uppercase tracking-[0.14em] transition-colors ${
+                  canAttach
+                    ? "cursor-pointer text-hp-body hover:bg-hp-inset hover:text-hp-ink"
+                    : "cursor-not-allowed text-hp-muted opacity-40"
+                }`}
+              >
+                {isUploadingAttachment ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <Paperclip size={13} />
+                )}
+                Attach
+              </label>
+              <button
+                type="button"
+                onClick={() => setSavingTemplate((open) => !open)}
+                disabled={!hasDraftText || !canSendInboxReply}
+                className={[
+                  "flex h-9 items-center gap-1.5 px-2 text-[10px] uppercase tracking-[0.14em] transition-colors disabled:opacity-40",
+                  savingTemplate
+                    ? "bg-hp-inset text-hp-ink"
+                    : "text-hp-body hover:bg-hp-inset hover:text-hp-ink",
+                ].join(" ")}
+              >
+                <Bookmark size={13} />
+                Save as template
+              </button>
+            </div>
+            <div className="flex items-center gap-3">
+              {pendingSendAttemptCount > 0 ? (
+                <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted lining-nums">
+                  {pendingSendAttemptCount} ready
+                </span>
+              ) : null}
+              <button
+                type="button"
+                onClick={startSendConfirmation}
+                disabled={!canSend}
+                className="flex h-10 shrink-0 items-center justify-center gap-2 border border-hp-ink bg-hp-ink px-5 text-[10px] uppercase tracking-[0.14em] text-hp-foundation hover:border-hp-pink hover:bg-hp-pink disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Send size={13} />
+                Send →
+              </button>
+            </div>
           </div>
         )}
 
@@ -635,16 +712,6 @@ function newAttachmentSendAttemptIdempotencyKey(conversationId: string, attachme
 
 function attachmentInputId(conversationId: string | null) {
   return `reply-attachment-${conversationId || "none"}`;
-}
-
-function formatBytes(value: number | null | undefined) {
-  const bytes = Number(value) || 0;
-  if (bytes <= 0) return "Size unavailable";
-  if (bytes < 1024) return `${bytes} B`;
-  const kb = bytes / 1024;
-  if (kb < 1024) return `${kb.toFixed(kb >= 10 ? 0 : 1)} KB`;
-  const mb = kb / 1024;
-  return `${mb.toFixed(mb >= 10 ? 0 : 1)} MB`;
 }
 
 function stableIdempotencyKey(scope: string, conversationId: string, parts: string[]) {

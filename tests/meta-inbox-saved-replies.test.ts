@@ -180,9 +180,9 @@ describe("Meta inbox saved replies foundation", () => {
     assert.match(SOCIAL_INBOX_LIB, /meta_inbox_saved_replies/);
     assert.match(SOCIAL_INBOX_LIB, /savedReplies: SocialInboxSavedReply\[\]/);
     assert.match(SOCIAL_INBOX_LIB, /filterMetaInboxSavedRepliesForProfile/);
-    assert.match(REPLY_COMPOSER, /Saved Replies/);
-    assert.match(REPLY_COMPOSER, /Save Personal Draft/);
-    assert.match(REPLY_COMPOSER, /Approved Shared/);
+    assert.match(REPLY_COMPOSER, /Insert a saved reply/);
+    assert.match(REPLY_COMPOSER, /Save as template/);
+    assert.match(REPLY_COMPOSER, /Shared/);
     assert.match(INBOX_MUTATIONS, /\/api\/social-inbox\/saved-replies/);
   });
 });

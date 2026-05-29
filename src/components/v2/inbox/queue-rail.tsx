@@ -45,6 +45,7 @@ export function QueueRail({
   onSelect,
   now,
   readOnly,
+  userNames,
 }: {
   queue: MetaInboxQueueDisplayItem[];
   selectedId: string | null;
@@ -69,11 +70,14 @@ export function QueueRail({
   // Selection-only rail; readOnly provides ReadOnly context for the peek
   // subtree. The rail has no mutation controls of its own to hide.
   readOnly?: boolean;
+  // Resolved assignee names, loaded once by the parent and passed down so the
+  // rail stays a pure (hook-free) component.
+  userNames?: Map<string, string> | null;
 }) {
   const content = (
     <aside
       data-component="queue-rail"
-      className="flex min-h-[720px] min-w-0 flex-col bg-hp-card"
+      className="flex min-h-[720px] min-w-0 flex-col bg-hp-card xl:h-full xl:min-h-0"
     >
       <div className="border-b border-hp-rule p-4">
         <div className="mb-3 flex items-center justify-between gap-3">
@@ -215,6 +219,7 @@ export function QueueRail({
               active={selectedId === item.id}
               now={now}
               onSelect={() => onSelect(item)}
+              userNames={userNames}
             />
           ))
         ) : (

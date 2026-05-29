@@ -35,7 +35,10 @@ export function ConversationPane({
   const actionSurface = item?.type === "comment" ? commentActions : replyComposer;
 
   return (
-    <section data-component="conversation-pane" className="min-w-0 bg-hp-card">
+    <section
+      data-component="conversation-pane"
+      className="min-w-0 bg-hp-card xl:flex xl:h-full xl:min-h-0 xl:flex-col"
+    >
       <ConversationHeader
         item={item}
         now={now}
@@ -52,8 +55,11 @@ export function ConversationPane({
         </div>
       ) : null}
 
-      <div className="flex min-h-[640px] min-w-0 flex-col">
-        <div data-slot="conversation-thread" className="min-w-0 flex-1 p-6">
+      <div className="flex min-h-[640px] min-w-0 flex-col xl:min-h-0 xl:flex-1">
+        <div
+          data-slot="conversation-thread"
+          className="min-w-0 flex-1 p-6 xl:min-h-0 xl:overflow-y-auto"
+        >
           {item ? thread : emptyState}
         </div>
 
