@@ -51,6 +51,7 @@ export const APP_NAV_ROUTES = [
   // Channels: where customers come in.
   { href: "/convert", label: "Convert", permission: "view_dashboard", group: "channels" },
   { href: "/convert/inbox", label: "Inbox", permission: "view_inbox", group: "channels" },
+  { href: "/m/inbox/team", label: "Team", permission: "manage_inbox_state", group: "channels" },
 
   // Admin: data ops + access.
   { href: "/operate/pipelines", label: "Pipelines", permission: "view_backfill", group: "admin" },

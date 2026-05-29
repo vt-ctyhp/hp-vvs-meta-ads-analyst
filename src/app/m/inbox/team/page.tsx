@@ -14,7 +14,26 @@ export default async function TeamMetricsPage({
   searchParams: Promise<{ period?: string | string[] }>;
 }) {
   const profile = await getServerAccessProfile();
-  if (!profile?.teamLead && !profile?.roles.includes("admin")) notFound();
+  if (!profile) notFound();
+
+  // The "Team" nav link is visible to all inbox operators (manage_inbox_state),
+  // but only team leads and admins manage schedules — others get a calm note
+  // instead of a 404.
+  const canManageTeam = profile.teamLead || profile.roles.includes("admin");
+  if (!canManageTeam) {
+    return (
+      <main className="min-h-screen bg-hp-foundation px-4 py-6 text-hp-body md:px-8">
+        <section className="mx-auto max-w-7xl">
+          <header className="border-b border-hp-rule px-1 pb-4 pt-4">
+            <h1 className="font-title text-[26px] leading-tight text-hp-ink">Team</h1>
+          </header>
+          <p className="mt-4 border border-hp-rule bg-hp-card px-4 py-3 text-sm leading-6 text-hp-muted">
+            Team metrics and schedule settings are available to team leads and admins.
+          </p>
+        </section>
+      </main>
+    );
+  }
 
   const period = resolvePeriodParam((await searchParams).period);
   // Admins may reach this page without belonging to a team (and the local-test

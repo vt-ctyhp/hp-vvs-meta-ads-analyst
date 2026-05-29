@@ -25,13 +25,17 @@ export function AssignToUserPicker({
             fullName: string | null;
             initials: string | null;
             active: boolean;
+            roles?: string[];
           }[];
         }) => {
           if (cancelled) return;
-          const active = (payload.users || [])
-            .filter((u) => u.active)
+          // Any user may assign, but only sales / sales-lead users are valid
+          // assignees (the people who actually work the inbox).
+          const SALES_ROLES = ["sales", "sales_lead"];
+          const salesUsers = (payload.users || [])
+            .filter((u) => u.active && (u.roles || []).some((r) => SALES_ROLES.includes(r)))
             .map((u) => ({ id: u.id, fullName: u.fullName, initials: u.initials }));
-          setUsers(active);
+          setUsers(salesUsers);
         },
       )
       .catch(() => {
