@@ -1,3 +1,7 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
 import {
   resolveReplyWindowState,
   type ReplyWindowInput,
@@ -7,6 +11,25 @@ import {
   metaInboxVocabularyLabel,
 } from "../../../lib/meta-inbox-vocabulary.ts";
 import type { MetaInboxQueueDisplayItem } from "../../../lib/meta-inbox-queue-view.ts";
+
+// Resolve assignee names from /api/users once, cached across header mounts so
+// switching conversations doesn't refetch. Falls back to the raw id if missing.
+let cachedUserNames: Map<string, string> | null = null;
+let inflightUserNames: Promise<Map<string, string>> | null = null;
+function loadUserNames(): Promise<Map<string, string>> {
+  if (cachedUserNames) return Promise.resolve(cachedUserNames);
+  if (inflightUserNames) return inflightUserNames;
+  inflightUserNames = fetch("/api/users")
+    .then((r) => (r.ok ? r.json() : { users: [] }))
+    .then((payload: { users?: { id: string; fullName: string | null }[] }) => {
+      const map = new Map<string, string>();
+      for (const u of payload.users || []) if (u.fullName) map.set(u.id, u.fullName);
+      cachedUserNames = map;
+      return map;
+    })
+    .catch(() => new Map<string, string>());
+  return inflightUserNames;
+}
 
 type ConversationHeaderProps = {
   item: MetaInboxQueueDisplayItem | null;
@@ -27,6 +50,17 @@ export function ConversationHeader({
   onOpenQa = noop,
   onCloseConversation = noop,
 }: ConversationHeaderProps) {
+  const [userNames, setUserNames] = useState<Map<string, string> | null>(cachedUserNames);
+  useEffect(() => {
+    let alive = true;
+    void loadUserNames().then((map) => {
+      if (alive) setUserNames(map);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   if (!item) {
     return (
       <header
@@ -55,8 +89,9 @@ export function ConversationHeader({
   const sourcePlatform = platformOf(item.sourceChannel);
   const handle =
     sourcePlatform === "IG" && item.profile?.username ? `@${item.profile.username}` : null;
-  const assignment = item.inboxConversation?.assigned_user_id
-    ? `Assigned to ${item.inboxConversation.assigned_user_id}`
+  const assignedId = item.inboxConversation?.assigned_user_id ?? null;
+  const assignment = assignedId
+    ? `Assigned to ${userNames?.get(assignedId) || assignedId}`
     : "Unassigned";
   const currentTime = resolveRenderTime(item, now);
   const inboundAge = formatInboundAge(item, currentTime);
