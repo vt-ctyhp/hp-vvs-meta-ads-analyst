@@ -73,7 +73,8 @@ export async function runInboxAutoAssignSweep(): Promise<AutoAssignSweepResult> 
         await saveRotationPointer(supabase, env, categoryKey, pick.nextPointer);
         pointer = pick.nextPointer;
         result.assigned += 1;
-      } catch {
+      } catch (e) {
+        console.error("[auto-assign] assign failed for", conv.id, e);
         result.errors += 1;
       }
     }

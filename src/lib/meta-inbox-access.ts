@@ -5,15 +5,20 @@ export type MetaInboxAccessProfile = {
   appUserId: string | null;
   roles: readonly string[];
   permissions?: readonly string[];
+  // Trusted server-side automation (e.g. the auto-assign sweep). When true, the
+  // operational-write gate does not require a linked app user — the write is
+  // recorded with a NULL actor_user_id, the v1 marker for a system action.
+  system?: boolean;
 };
 
 // Used by the auto-assign cron worker. appUserId === null => the workflow records
-// actor_user_id = NULL, the v1 marker that distinguishes auto from manual assigns.
-// roles ["admin"] grants full queue-write access (mode: "all").
+// actor_user_id = NULL (system marker). system:true lets it pass the operational
+// write gate without a linked app user. roles ["admin"] grants full queue access.
 export const SYSTEM_INBOX_PROFILE: MetaInboxAccessProfile = {
   appUserId: null,
   roles: ["admin"],
   permissions: ["manage_inbox_state"],
+  system: true,
 };
 
 export type MetaInboxQueueAccessDecision =
@@ -197,6 +202,9 @@ export function assertMetaInboxOperationalWriteAccess(
       403,
     );
   }
+
+  // Trusted system automation writes with a NULL actor and no linked app user.
+  if (profile?.system) return;
 
   if (!profile?.appUserId || !UUID_RE.test(profile.appUserId)) {
     throw new MetaInboxAuthorizationError(
