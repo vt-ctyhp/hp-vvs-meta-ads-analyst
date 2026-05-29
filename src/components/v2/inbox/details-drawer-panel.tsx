@@ -1,6 +1,6 @@
 "use client";
 
-import { Link2, Mail, Pencil, Phone, Plus, Tags, Trash2, UserRound } from "lucide-react";
+import { Mail, Pencil, Phone, Plus, Tags, Trash2, UserRound } from "lucide-react";
 import { useState } from "react";
 
 import type { MetaInboxQueueDisplayItem } from "../../../lib/meta-inbox-queue-view.ts";
@@ -518,18 +518,6 @@ function WorkflowSection({
       }
     >
       <div className="grid gap-3">
-        <div className="border border-hp-rule bg-hp-inset p-3">
-          <div className="mb-2 flex items-center gap-2 text-hp-ink">
-            <Link2 size={15} />
-            <span className="text-[10px] uppercase tracking-[0.14em]">
-              Routing Explanation
-            </span>
-          </div>
-          <p className="text-sm leading-6 text-hp-muted">
-            {item.routingExplanation || "No normalized routing explanation has been captured yet."}
-          </p>
-        </div>
-
         <FilterSelect
           label="Queue"
           value={queueDraft}
@@ -663,25 +651,25 @@ function WorkflowSection({
             type="button"
             onClick={claimSelf}
             disabled={!canEditWorkflow || isSaving}
-            className="border border-hp-rule px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-hp-ink transition hover:border-hp-ink disabled:opacity-50"
+            className="whitespace-nowrap border border-hp-rule px-3 py-1.5 text-[10px] uppercase tracking-[0.12em] text-hp-ink transition hover:border-hp-ink disabled:opacity-50"
           >
-            Claim Self
+            Claim for Me
           </button>
           <button
             type="button"
             onClick={returnToTeamQueue}
             disabled={!canEditWorkflow || isSaving}
-            className="border border-hp-rule px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-hp-ink transition hover:border-hp-ink disabled:opacity-50"
+            className="whitespace-nowrap border border-hp-rule px-3 py-1.5 text-[10px] uppercase tracking-[0.12em] text-hp-ink transition hover:border-hp-ink disabled:opacity-50"
           >
-            Team Queue
+            Send to Team
           </button>
           <button
             type="button"
             onClick={saveWorkflow}
             disabled={saveDisabled}
-            className="bg-hp-ink px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-hp-foundation transition hover:opacity-90 disabled:opacity-50"
+            className="whitespace-nowrap bg-hp-ink px-3 py-1.5 text-[10px] uppercase tracking-[0.12em] text-hp-foundation transition hover:opacity-90 disabled:opacity-50"
           >
-            Save State
+            Save Changes
           </button>
         </div>
         <p className="text-xs leading-5 text-hp-muted">

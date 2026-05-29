@@ -104,8 +104,8 @@ describe("social inbox UI contract", () => {
 
   it("surfaces audited sales workflow mutation controls without snooze", () => {
     assert.match(DETAILS_DRAWER, /Workflow/);
-    assert.match(DETAILS_DRAWER, /Claim Self/);
-    assert.match(DETAILS_DRAWER, /Save State/);
+    assert.match(DETAILS_DRAWER, /Claim for Me/);
+    assert.match(DETAILS_DRAWER, /Save Changes/);
     assert.match(INBOX_MUTATIONS, /\/api\/social-inbox\/conversations\/\$\{encodeURIComponent\(conversationId\)\}\/workflow/);
     assert.equal(/snooze/i.test(DESKTOP_INBOX_SURFACE), false);
   });
