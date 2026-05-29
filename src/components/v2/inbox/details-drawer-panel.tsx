@@ -1,6 +1,6 @@
 "use client";
 
-import { Link2, Mail, Pencil, Phone, Plus, Tags, Trash2, UserRound } from "lucide-react";
+import { Mail, Pencil, Phone, Plus, Tags, Trash2, UserRound } from "lucide-react";
 import { useState } from "react";
 
 import type { MetaInboxQueueDisplayItem } from "../../../lib/meta-inbox-queue-view.ts";
@@ -129,7 +129,11 @@ function CustomerSection({
   const firstTouch = item.firstTouch;
   const sourcePlatform = platformOf(item.sourceChannel);
   const handle = sourcePlatform === "IG" && profile?.username ? `@${profile.username}` : null;
-  const profileUrl = profile?.profile_url || null;
+  const profileUrl =
+    profile?.profile_url ||
+    (sourcePlatform === "IG" && profile?.username
+      ? `https://instagram.com/${profile.username}`
+      : null);
   const platformLinkLabel = sourcePlatform === "IG"
     ? "Open on Instagram →"
     : sourcePlatform === "FB"
@@ -495,14 +499,6 @@ function WorkflowSection({
     });
   }
 
-  function returnToTeamQueue() {
-    if (!conversation || !canEditWorkflow) return;
-    onWorkflowUpdate(conversation.id, {
-      assignmentMode: "team_queue",
-      changeReason: changeReasonDraft || "Returned to team queue.",
-    });
-  }
-
   return (
     <DrawerSection
       title="Workflow"
@@ -514,18 +510,6 @@ function WorkflowSection({
       }
     >
       <div className="grid gap-3">
-        <div className="border border-hp-rule bg-hp-inset p-3">
-          <div className="mb-2 flex items-center gap-2 text-hp-ink">
-            <Link2 size={15} />
-            <span className="text-[10px] uppercase tracking-[0.14em]">
-              Routing Explanation
-            </span>
-          </div>
-          <p className="text-sm leading-6 text-hp-muted">
-            {item.routingExplanation || "No normalized routing explanation has been captured yet."}
-          </p>
-        </div>
-
         <FilterSelect
           label="Queue"
           value={queueDraft}
@@ -654,30 +638,22 @@ function WorkflowSection({
           }}
         />
 
-        <div className="grid gap-2 sm:grid-cols-3">
+        <div className="grid gap-2 sm:grid-cols-2">
           <button
             type="button"
             onClick={claimSelf}
             disabled={!canEditWorkflow || isSaving}
-            className="border border-hp-rule px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-hp-ink transition hover:border-hp-ink disabled:opacity-50"
+            className="whitespace-nowrap border border-hp-rule px-3 py-1.5 text-[10px] uppercase tracking-[0.12em] text-hp-ink transition hover:border-hp-ink disabled:opacity-50"
           >
-            Claim Self
-          </button>
-          <button
-            type="button"
-            onClick={returnToTeamQueue}
-            disabled={!canEditWorkflow || isSaving}
-            className="border border-hp-rule px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-hp-ink transition hover:border-hp-ink disabled:opacity-50"
-          >
-            Team Queue
+            Claim
           </button>
           <button
             type="button"
             onClick={saveWorkflow}
             disabled={saveDisabled}
-            className="bg-hp-ink px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-hp-foundation transition hover:opacity-90 disabled:opacity-50"
+            className="whitespace-nowrap bg-hp-ink px-3 py-1.5 text-[10px] uppercase tracking-[0.12em] text-hp-foundation transition hover:opacity-90 disabled:opacity-50"
           >
-            Save State
+            Save
           </button>
         </div>
         <p className="text-xs leading-5 text-hp-muted">

@@ -100,6 +100,7 @@ test("DetailsDrawerPanel renders customer source, workflow fields, and read-only
 
   assert.match(instagramMarkup, /@emmaposes/);
   assert.match(instagramMarkup, /Open on Instagram →/);
+  assert.doesNotMatch(instagramMarkup, /Routing Explanation/);
   assert.match(instagramMarkup, /\(555\) 111-2222/);
   for (const label of [
     "Queue",
@@ -149,6 +150,53 @@ test("DetailsDrawerPanel renders customer source, workflow fields, and read-only
   assert.match(unknownMarkup, /No profile link available/);
 });
 
+test("DetailsDrawerPanel builds the Instagram profile link from username when Meta omits a profile URL", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      DetailsDrawerPanel,
+      detailsProps({
+        item: itemFixture({
+          sourceChannel: "instagram_message",
+          platform: "instagram",
+          profile: profileFixture({
+            platform: "instagram",
+            username: "emmaposes",
+            profile_url: null,
+          }),
+        }),
+      }),
+    ),
+  );
+
+  assert.match(markup, /href="https:\/\/instagram\.com\/emmaposes"/);
+  assert.match(markup, /Open on Instagram →/);
+  assert.doesNotMatch(markup, /No profile link available/);
+});
+
+test("DetailsDrawerPanel does not fabricate a profile link for Facebook usernames", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      DetailsDrawerPanel,
+      detailsProps({
+        item: itemFixture({
+          sourceChannel: "facebook_message",
+          platform: "facebook",
+          channel: "Facebook",
+          profile: profileFixture({
+            platform: "facebook",
+            username: "some.vanity",
+            profile_url: null,
+          }),
+        }),
+      }),
+    ),
+  );
+
+  assert.doesNotMatch(markup, /Open on Facebook →/);
+  assert.doesNotMatch(markup, /instagram\.com\/some\.vanity/);
+  assert.match(markup, /No profile link available/);
+});
+
 test("DetailsDrawerPanel renders enabled workflow and contact controls with permission", () => {
   const markup = renderToStaticMarkup(
     React.createElement(
@@ -160,9 +208,9 @@ test("DetailsDrawerPanel renders enabled workflow and contact controls with perm
   );
 
   assert.match(markup, />Add Contact</);
-  assert.match(markup, />Claim Self</);
-  assert.match(markup, />Team Queue</);
-  assert.match(markup, />Save State</);
+  assert.match(markup, />Claim</);
+  assert.doesNotMatch(markup, /Send to Team/);
+  assert.match(markup, />Save</);
   assert.doesNotMatch(markup, /Sales and sales lead users can claim, route, label, close/);
 });
 
@@ -194,7 +242,7 @@ test("Details drawer close preset warns, defaults status to closed, and blocks i
   assert.match(markup, /Outcome/);
   assert.match(markup, /<select aria-label="Status"[^>]*data-tone="warning"[^>]*>/);
   assert.match(markup, /<option value="closed" selected="">Closed<\/option>/);
-  assert.match(markup, /<button type="button" disabled=""[^>]*>Save State<\/button>/);
+  assert.match(markup, /<button type="button" disabled=""[^>]*>Save<\/button>/);
 });
 
 test("Details drawer without close preset keeps normal status and default border", () => {
