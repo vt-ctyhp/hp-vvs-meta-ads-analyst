@@ -48,6 +48,7 @@ const ROOM_ITEMS: Record<
   convert: [
     { href: "/convert", label: "Convert Home", permission: "view_dashboard" },
     { href: "/convert/inbox", label: "Inbox", permission: "view_inbox" },
+    { href: "/convert/inbox/review", label: "Review", permission: "view_review" },
     { href: "/m/inbox/team", label: "Team", permission: "manage_inbox_state" },
   ],
   operate: [
