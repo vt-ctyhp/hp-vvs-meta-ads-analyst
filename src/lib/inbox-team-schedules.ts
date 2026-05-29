@@ -180,16 +180,19 @@ export async function loadInboxTeamScheduleSettings(
       .map((r) => [r.user_id, r.timezone as string]),
   );
 
-  // 4. Names via analytics identity view (mirrors inbox-metrics-db.ts pattern exactly)
-  const { data: userRows } = await (supabase as unknown as {
+  // 4. Names via analytics identity view. Fetch all profiles + map by app_user_id.
+  // An .in() filter on this view returned empty at runtime even though the web
+  // role can read it; this mirrors the proven /api/users boundary read.
+  const { data: userRows, error: nameError } = await (supabase as unknown as {
     schema: (schema: "analytics") => {
       from: (table: "ads_analyst_identity_profiles_v1") => {
         select: (columns: string) => {
-          in: (
+          order: (
             column: string,
-            values: string[],
+            options: { ascending: boolean },
           ) => Promise<{
             data: { app_user_id: string; full_name: string | null }[] | null;
+            error: unknown;
           }>;
         };
       };
@@ -198,7 +201,10 @@ export async function loadInboxTeamScheduleSettings(
     .schema("analytics")
     .from("ads_analyst_identity_profiles_v1")
     .select("app_user_id,full_name")
-    .in("app_user_id", ids);
+    .order("full_name", { ascending: true });
+  if (nameError) {
+    console.error("inbox-team-schedules: identity name lookup failed", nameError);
+  }
 
   const nameById = new Map<string, string | null>(
     ((userRows || []) as { app_user_id: string; full_name: string | null }[]).map((u) => [

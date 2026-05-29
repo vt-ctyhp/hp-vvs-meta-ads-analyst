@@ -231,14 +231,24 @@ export async function getTeamRollup(
   period: Period,
   now: Date,
 ): Promise<TeamRollup> {
-  const teamUserIds = new Set<string>([
-    ...(profile.teamUserIds || []),
-    ...(profile.appUserId ? [profile.appUserId] : []),
-  ]);
-  if (teamUserIds.size === 0) return { period, teamName: "Team", rows: [] };
-
   const env = getActiveMetaInboxEnvironment();
   const supabase = dynamicSupabaseWeb();
+
+  // Admins see every team member's metrics; everyone else sees their own team.
+  const teamUserIds = new Set<string>();
+  if ((profile.roles || []).includes("admin")) {
+    const { data: allMembers } = await supabase
+      .from("meta_inbox_team_members")
+      .select("app_user_id")
+      .eq("environment", env);
+    for (const r of (allMembers || []) as { app_user_id: string }[]) {
+      teamUserIds.add(r.app_user_id);
+    }
+  } else {
+    for (const id of profile.teamUserIds || []) teamUserIds.add(id);
+    if (profile.appUserId) teamUserIds.add(profile.appUserId);
+  }
+  if (teamUserIds.size === 0) return { period, teamName: "Team", rows: [] };
   const inbox = await getSocialInboxData(profile);
   const dashboard = buildMetaInboxManagerDashboard(inbox, { days: periodToDays(period), now });
 
@@ -252,13 +262,17 @@ export async function getTeamRollup(
   const userWindow = resolveUserWindow(DEFAULT_BUSINESS_WINDOW.tz);
   const ids = Array.from(teamUserIds);
 
-  // Names via the data-boundary identity view (web role has SELECT here; it has
-  // no grant on public.users under limited-access mode). app_user_id == user id.
+  // Names via the data-boundary identity view. Fetch all profiles and map by
+  // app_user_id — an .in() filter on this view returned empty at runtime even
+  // though the web role can read it; this mirrors the proven /api/users read.
   const { data: userRows } = await (supabase as unknown as {
     schema: (schema: "analytics") => {
       from: (table: "ads_analyst_identity_profiles_v1") => {
         select: (columns: string) => {
-          in: (column: string, values: string[]) => Promise<{ data: { app_user_id: string; full_name: string | null }[] | null }>;
+          order: (
+            column: string,
+            options: { ascending: boolean },
+          ) => Promise<{ data: { app_user_id: string; full_name: string | null }[] | null }>;
         };
       };
     };
@@ -266,7 +280,7 @@ export async function getTeamRollup(
     .schema("analytics")
     .from("ads_analyst_identity_profiles_v1")
     .select("app_user_id,full_name")
-    .in("app_user_id", ids);
+    .order("full_name", { ascending: true });
   const nameById = new Map<string, string | null>(
     ((userRows || []) as { app_user_id: string; full_name: string | null }[]).map(
       (u) => [u.app_user_id, u.full_name],
