@@ -199,7 +199,7 @@ test("ReplyComposer disables send controls when the reply window is closed", () 
   assert.equal(buttonByText(tree, "Send →").props.disabled, true);
 });
 
-test("ReplyComposer inserts saved replies and toggles the saved replies card", () => {
+test("ReplyComposer inserts a saved reply from the Templates popover", () => {
   const harness = loadReplyComposerHarness();
   let draft = "Existing draft";
   const draftChanges: string[] = [];
@@ -225,22 +225,23 @@ test("ReplyComposer inserts saved replies and toggles the saved replies card", (
     );
 
   let tree = render();
-  assert.match(textContent(tree), /Appointment intro/);
-  assert.match(textContent(tree), /Personal Draft/);
+  // Saved replies live behind the Templates popover, closed by default.
+  assert.doesNotMatch(textContent(tree), /Appointment intro/);
 
-  click(buttonByText(tree, "Insert →"));
+  click(buttonByText(tree, "Templates"));
+  tree = render();
+  assert.match(textContent(tree), /Appointment intro/);
+  assert.match(textContent(tree), /Personal/);
+
+  // Clicking the saved-reply row inserts it and closes the popover.
+  click(buttonByText(tree, "Appointment intro"));
   assert.equal(draftChanges.at(-1), "Existing draft\n\nWe have Saturday openings.");
 
   tree = render();
-  click(buttonByText(tree, "Hide ↕"));
-  tree = render();
   assert.doesNotMatch(textContent(tree), /Appointment intro/);
-  click(buttonByText(tree, "Show ↕"));
-  tree = render();
-  assert.match(textContent(tree), /Appointment intro/);
 });
 
-test("ReplyComposer saves a personal draft only after body and draft name are filled", () => {
+test("ReplyComposer saves a personal draft via Save as template", () => {
   const harness = loadReplyComposerHarness();
   let draft = "";
   const saveCalls: Array<{ conversationId: string; input: Record<string, unknown> }> = [];
@@ -258,17 +259,22 @@ test("ReplyComposer saves a personal draft only after body and draft name are fi
     );
 
   let tree = render();
-  assert.equal(inputByPlaceholder(tree, "Draft name").props.disabled, true);
-  assert.equal(buttonByText(tree, "Save Personal Draft").props.disabled, true);
+  // No draft yet: Save as template is disabled and the name field is hidden.
+  assert.equal(buttonByText(tree, "Save as template").props.disabled, true);
 
   change(textarea(tree), "Please visit our showroom.");
   tree = render();
-  assert.equal(inputByPlaceholder(tree, "Draft name").props.disabled, false);
-  assert.equal(buttonByText(tree, "Save Personal Draft").props.disabled, true);
+  assert.equal(buttonByText(tree, "Save as template").props.disabled, false);
 
-  change(inputByPlaceholder(tree, "Draft name"), "Showroom invite");
+  // Reveal the name field; Save stays disabled until it is filled.
+  click(buttonByText(tree, "Save as template"));
   tree = render();
-  click(buttonByText(tree, "Save Personal Draft"));
+  assert.equal(inputByPlaceholder(tree, "Name this template").props.disabled, false);
+  assert.equal(buttonByText(tree, "Save").props.disabled, true);
+
+  change(inputByPlaceholder(tree, "Name this template"), "Showroom invite");
+  tree = render();
+  click(buttonByText(tree, "Save"));
 
   assert.equal(saveCalls.length, 1);
   assert.equal(saveCalls[0]?.conversationId, "conv-1");

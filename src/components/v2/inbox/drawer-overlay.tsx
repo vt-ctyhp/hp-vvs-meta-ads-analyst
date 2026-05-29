@@ -73,8 +73,8 @@ export function DrawerOverlay({
 
 export function drawerTitle(drawer: Exclude<DrawerKey, null>, preset: DispositionPreset = null) {
   if (drawer === "details" && preset === "close") return "Close conversation";
-  if (drawer === "details") return "Details · Customer + Status";
-  if (drawer === "audit") return "Audit trail";
-  if (drawer === "notes") return "Notes & coaching";
-  return "QA scorecards";
+  if (drawer === "details") return "Profile";
+  if (drawer === "audit") return "History";
+  if (drawer === "notes") return "Notes";
+  return "Quality";
 }

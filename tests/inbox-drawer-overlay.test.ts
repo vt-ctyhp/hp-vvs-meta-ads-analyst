@@ -68,7 +68,7 @@ test("DrawerOverlay renders right-side shell, header context, and close controls
   assert.match(markup, /data-drawer="audit"/);
   assert.match(markup, /shadow-\[0_8px_24px_rgba\(42,39,37,0\.18\)\]/);
   assert.match(markup, /Emma Customer · HP/);
-  assert.match(markup, /Audit trail/);
+  assert.match(markup, /History/);
   assert.match(markup, /Audit drawer body/);
   assert.match(markup, /aria-label="Close drawer backdrop"/);
   assert.match(markup, />Close ×</);
@@ -263,7 +263,7 @@ test("Details drawer without close preset keeps normal status and default border
     ),
   );
 
-  assert.match(markup, /Details · Customer \+ Status/);
+  assert.match(markup, /Profile/);
   assert.doesNotMatch(markup, /Closing this conversation/);
   assert.doesNotMatch(markup, /<select aria-label="Status"[^>]*data-tone="warning"[^>]*>/);
   assert.match(markup, /<option value="needs_reply" selected="">Needs Reply<\/option>/);

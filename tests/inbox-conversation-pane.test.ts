@@ -95,7 +95,7 @@ test("ConversationHeader renders source context, assignment, and drawer chips (n
   assert.doesNotMatch(markup, /Routing/);
   assert.doesNotMatch(markup, /Asked for a Saturday appointment\./);
   assert.doesNotMatch(markup, /Reply window/);
-  for (const chip of ["Details", "Audit", "Notes", "QA", "Close →"]) {
+  for (const chip of ["Profile", "Notes", "History", "Quality", "Close →"]) {
     assert.match(markup, new RegExp(`>${escapeRegExp(chip)}<`));
   }
 
