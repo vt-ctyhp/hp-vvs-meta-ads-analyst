@@ -53,6 +53,7 @@ test("InboxEyebrow renders the five real manager metrics and sync freshness", ()
     }),
   );
 
+  assert.match(markup, /data-window-label[^>]*>Last 7 days</);
   assert.match(markup, /Needs reply/);
   assert.match(markup, /data-metric="needs-reply"[^>]*data-tone="ink"[^>]*>9</);
   assert.match(markup, /data-metric="unassigned"[^>]*data-tone="ink"[^>]*>6</);
@@ -283,6 +284,12 @@ function dashboardFixture(overrides: Record<string, unknown> = {}) {
       averageFirstResponseMinutes: 12,
       medianFirstResponseMinutes: 10,
       ...overrides,
+    },
+    range: {
+      label: "Last 7 days",
+      startAt: "2026-05-18T17:00:00.000Z",
+      endAt: "2026-05-25T17:00:00.000Z",
+      days: 7,
     },
   };
 }

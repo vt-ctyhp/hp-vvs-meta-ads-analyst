@@ -4,7 +4,7 @@ import { SYNC } from "../../../lib/glossary.ts";
 import type { MetaInboxManagerDashboard } from "../../../lib/meta-inbox-manager-dashboard.ts";
 import type { SocialInboxSyncRun } from "../../../lib/social-inbox.ts";
 
-type EyebrowDashboard = Pick<MetaInboxManagerDashboard, "metrics">;
+type EyebrowDashboard = Pick<MetaInboxManagerDashboard, "metrics" | "range">;
 
 type EyebrowMetric = {
   key: string;
@@ -35,20 +35,28 @@ export function InboxEyebrow({
       data-component="inbox-eyebrow"
       className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2 border-b border-hp-rule-soft px-1 py-2 text-[10px] text-hp-muted smallcaps"
     >
-      <dl className="flex flex-wrap items-center gap-x-5 gap-y-1">
-        {metrics.map((metric) => (
-          <div key={metric.key} className="flex items-baseline gap-1.5">
-            <dt>{metric.label}</dt>
-            <dd
-              data-metric={metric.key}
-              data-tone={metric.tone}
-              className={`font-title text-[15px] leading-none normal-case tracking-normal lining-nums ${metricToneClass(metric.tone)}`}
-            >
-              {metric.value}
-            </dd>
-          </div>
-        ))}
-      </dl>
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+        <span
+          data-window-label
+          className="border-r border-hp-rule-soft pr-5 text-hp-ink"
+        >
+          {dashboard.range.label}
+        </span>
+        <dl className="flex flex-wrap items-center gap-x-5 gap-y-1">
+          {metrics.map((metric) => (
+            <div key={metric.key} className="flex items-baseline gap-1.5">
+              <dt>{metric.label}</dt>
+              <dd
+                data-metric={metric.key}
+                data-tone={metric.tone}
+                className={`font-title text-[15px] leading-none normal-case tracking-normal lining-nums ${metricToneClass(metric.tone)}`}
+              >
+                {metric.value}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </div>
 
       <div className="flex flex-wrap items-center gap-3">
         <span>{formatLastSyncLabel(syncRun, now)}</span>
