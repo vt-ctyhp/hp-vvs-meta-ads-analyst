@@ -208,9 +208,9 @@ test("DetailsDrawerPanel renders enabled workflow and contact controls with perm
   );
 
   assert.match(markup, />Add Contact</);
-  assert.match(markup, />Claim for Me</);
-  assert.match(markup, />Send to Team</);
-  assert.match(markup, />Save Changes</);
+  assert.match(markup, />Claim</);
+  assert.doesNotMatch(markup, /Send to Team/);
+  assert.match(markup, />Save</);
   assert.doesNotMatch(markup, /Sales and sales lead users can claim, route, label, close/);
 });
 
@@ -242,7 +242,7 @@ test("Details drawer close preset warns, defaults status to closed, and blocks i
   assert.match(markup, /Outcome/);
   assert.match(markup, /<select aria-label="Status"[^>]*data-tone="warning"[^>]*>/);
   assert.match(markup, /<option value="closed" selected="">Closed<\/option>/);
-  assert.match(markup, /<button type="button" disabled=""[^>]*>Save Changes<\/button>/);
+  assert.match(markup, /<button type="button" disabled=""[^>]*>Save<\/button>/);
 });
 
 test("Details drawer without close preset keeps normal status and default border", () => {

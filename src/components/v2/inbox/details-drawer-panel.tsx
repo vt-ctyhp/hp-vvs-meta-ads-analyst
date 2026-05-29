@@ -499,14 +499,6 @@ function WorkflowSection({
     });
   }
 
-  function returnToTeamQueue() {
-    if (!conversation || !canEditWorkflow) return;
-    onWorkflowUpdate(conversation.id, {
-      assignmentMode: "team_queue",
-      changeReason: changeReasonDraft || "Returned to team queue.",
-    });
-  }
-
   return (
     <DrawerSection
       title="Workflow"
@@ -646,22 +638,14 @@ function WorkflowSection({
           }}
         />
 
-        <div className="grid gap-2 sm:grid-cols-3">
+        <div className="grid gap-2 sm:grid-cols-2">
           <button
             type="button"
             onClick={claimSelf}
             disabled={!canEditWorkflow || isSaving}
             className="whitespace-nowrap border border-hp-rule px-3 py-1.5 text-[10px] uppercase tracking-[0.12em] text-hp-ink transition hover:border-hp-ink disabled:opacity-50"
           >
-            Claim for Me
-          </button>
-          <button
-            type="button"
-            onClick={returnToTeamQueue}
-            disabled={!canEditWorkflow || isSaving}
-            className="whitespace-nowrap border border-hp-rule px-3 py-1.5 text-[10px] uppercase tracking-[0.12em] text-hp-ink transition hover:border-hp-ink disabled:opacity-50"
-          >
-            Send to Team
+            Claim
           </button>
           <button
             type="button"
@@ -669,7 +653,7 @@ function WorkflowSection({
             disabled={saveDisabled}
             className="whitespace-nowrap bg-hp-ink px-3 py-1.5 text-[10px] uppercase tracking-[0.12em] text-hp-foundation transition hover:opacity-90 disabled:opacity-50"
           >
-            Save Changes
+            Save
           </button>
         </div>
         <p className="text-xs leading-5 text-hp-muted">
