@@ -1,5 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
+import { after } from "next/server";
+
 import { ConfigurationError, getOptionalEnv } from "@/lib/env";
 import { jsonError } from "@/lib/http";
 import { ingestMetaWebhookPayload } from "@/lib/social-inbox";
@@ -38,6 +40,17 @@ export async function POST(request: Request) {
   try {
     const payload = JSON.parse(rawBody) as Record<string, unknown>;
     const result = await ingestMetaWebhookPayload(payload);
+    // Near-real-time auto-assign: the ingest above normalizes (categorizes) new
+    // messages, so assign any freshly-categorized, unassigned conversations. Run
+    // AFTER the response so the Meta ack stays fast; best-effort.
+    after(async () => {
+      try {
+        const { runInboxAutoAssignSweep } = await import("@/lib/inbox-auto-assign-worker");
+        await runInboxAutoAssignSweep();
+      } catch (hookError) {
+        console.error("inbox auto-assign webhook hook failed", hookError);
+      }
+    });
     return Response.json({ ok: true, ...result });
   } catch (error) {
     return jsonError(error);
