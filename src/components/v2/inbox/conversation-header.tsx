@@ -3,10 +3,6 @@
 import { useEffect, useState } from "react";
 
 import {
-  resolveReplyWindowState,
-  type ReplyWindowInput,
-} from "../../../lib/social-inbox-ui-freshness.ts";
-import {
   META_INBOX_QUEUE_CATEGORIES,
   metaInboxVocabularyLabel,
 } from "../../../lib/meta-inbox-vocabulary.ts";
@@ -82,10 +78,6 @@ export function ConversationHeader({
     item.queueCategoryKey,
   );
   const kind = item.type === "comment" ? "Comment" : "Message";
-  const routingPercent =
-    item.routingConfidence === null || item.routingConfidence === undefined
-      ? "Routing unavailable"
-      : `Routing ${Math.round(item.routingConfidence * 100)}%`;
   const sourcePlatform = platformOf(item.sourceChannel);
   const handle =
     sourcePlatform === "IG" && item.profile?.username ? `@${item.profile.username}` : null;
@@ -95,7 +87,6 @@ export function ConversationHeader({
     : "Unassigned";
   const currentTime = resolveRenderTime(item, now);
   const inboundAge = formatInboundAge(item, currentTime);
-  const replyWindow = resolveReplyWindowState(replyWindowInput(item), currentTime).label;
 
   return (
     <header
@@ -108,13 +99,6 @@ export function ConversationHeader({
             <span>
               {item.brand} · {item.channel} {kind} · {categoryLabel}
             </span>
-            <span className="text-hp-rule">·</span>
-            <span className="text-hp-ink">{routingPercent}</span>
-            {item.routingExplanation ? (
-              <span className="normal-case tracking-normal text-hp-muted">
-                - <em>{item.routingExplanation}</em>
-              </span>
-            ) : null}
           </div>
 
           <div className="mt-3 flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -132,7 +116,7 @@ export function ConversationHeader({
           </div>
 
           <p className="mt-2 break-words text-sm leading-6 text-hp-muted">
-            {assignment} · {inboundAge} since last inbound · Reply window {replyWindow}
+            {assignment} · {inboundAge} since last inbound
           </p>
         </div>
 
@@ -178,14 +162,6 @@ export function platformOf(sourceChannel: string | null | undefined) {
   if (sourceChannel.startsWith("instagram_")) return "IG";
   if (sourceChannel.startsWith("facebook_")) return "FB";
   return null;
-}
-
-function replyWindowInput(item: MetaInboxQueueDisplayItem): ReplyWindowInput {
-  return {
-    sendEligibility: item.sendEligibility,
-    replyWindowExpiresAt: item.replyWindowExpiresAt,
-    humanAgentWindowExpiresAt: item.humanAgentWindowExpiresAt,
-  };
 }
 
 function formatInboundAge(item: MetaInboxQueueDisplayItem, now: Date | number) {

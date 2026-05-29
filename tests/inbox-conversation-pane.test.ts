@@ -72,7 +72,7 @@ test("ConversationHeader renders IG handle only for Instagram source channels", 
   assert.equal(platformOf("ad_referral"), null);
 });
 
-test("ConversationHeader renders routing context, assignment, reply window, and drawer chips", () => {
+test("ConversationHeader renders source context, assignment, and drawer chips (no routing or reply window)", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ConversationHeader, {
       item: itemFixture({
@@ -90,11 +90,11 @@ test("ConversationHeader renders routing context, assignment, reply window, and 
   );
 
   assert.match(markup, /HP · Instagram Message · Book Appointment/);
-  assert.match(markup, /Routing 92%/);
-  assert.match(markup, /Asked for a Saturday appointment\./);
   assert.match(markup, /Assigned to Mia/);
   assert.match(markup, /2h since last inbound/);
-  assert.match(markup, /Reply window Standard Reply/);
+  assert.doesNotMatch(markup, /Routing/);
+  assert.doesNotMatch(markup, /Asked for a Saturday appointment\./);
+  assert.doesNotMatch(markup, /Reply window/);
   for (const chip of ["Details", "Audit", "Notes", "QA", "Close →"]) {
     assert.match(markup, new RegExp(`>${escapeRegExp(chip)}<`));
   }
