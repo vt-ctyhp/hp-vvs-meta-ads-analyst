@@ -180,7 +180,7 @@ describe("Meta Ads live end-to-end truth", () => {
     );
   });
 
-  liveIt("monthly_budget uses current live ad-set budget while spend remains historical", async () => {
+  liveIt("budget metrics use current live ad-set budget while spend remains historical", async () => {
     const supabase = createSupabaseClient();
     const rows = await fetchRpcRows(supabase, {
       start: "2026-04-29",
@@ -195,9 +195,16 @@ describe("Meta Ads live end-to-end truth", () => {
 
     const bookAppts = byGroup.get("Book Appts US");
     assert.ok(bookAppts, "Expected Book Appts US row");
+    assert.notEqual(bookAppts.daily_budget, 250);
+    assert.equal(bookAppts.daily_budget, 100);
     assert.notEqual(bookAppts.monthly_budget, 12250);
     assert.equal(bookAppts.monthly_budget, 3100);
 
+    assert.equal(byGroup.get("Cash for Gold US")?.daily_budget, 80);
+    assert.equal(byGroup.get("Facebook US Product")?.daily_budget, 15);
+    assert.equal(byGroup.get("US Promotions (WKDS / OOAK)")?.daily_budget, 13.5);
+    assert.equal(byGroup.get("Facebook VN Product")?.daily_budget, 0);
+    assert.equal(byGroup.get("VN Promotions (WKDS / OOAK)")?.daily_budget, 0);
     assert.equal(byGroup.get("Cash for Gold US")?.monthly_budget, 2480);
     assert.equal(byGroup.get("Facebook US Product")?.monthly_budget, 465);
     assert.equal(byGroup.get("US Promotions (WKDS / OOAK)")?.monthly_budget, 418.5);

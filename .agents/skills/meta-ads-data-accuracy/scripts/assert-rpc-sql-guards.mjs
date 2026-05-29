@@ -78,6 +78,12 @@ const CHECKS = [
     test: (sql) =>
       /case\s+when\s+(?:\w+\.)?(?:budget_rank|monthly_budget_rank)\s*=\s*1\s+and\s+(?:\w+\.)?delivery_status\s*=\s*'live'\s+and\s+(?:\w+\.)?daily_budget\s*>\s*0[\s\S]{0,180}(?:\w+\.)?daily_budget\s*\*\s*(?:\w+\.)?days_in_month/i.test(sql),
   },
+  {
+    id: "daily_budget_live_only",
+    description: "daily_budget counts only live budget entities",
+    test: (sql) =>
+      /case\s+when\s+(?:\w+\.)?daily_budget_rank\s*=\s*1\s+and\s+(?:\w+\.)?delivery_status\s*=\s*'live'\s+and\s+(?:\w+\.)?daily_budget\s*>\s*0[\s\S]{0,120}(?:\w+\.)?daily_budget/i.test(sql),
+  },
 ];
 
 async function main() {
@@ -203,6 +209,7 @@ function runSelfTest() {
       select extract(day from (date_trunc('month', p_end)::date + interval '1 month - 1 day'))::numeric as days_in_month;
       select row_number() over (partition by f.meta_account_id, f.daily_budget_entity_key order by case when f.delivery_status = 'live' then 0 else 1 end, f.date_start asc) as monthly_budget_rank;
       select round(sum(case when r.monthly_budget_rank = 1 and r.delivery_status = 'live' and r.daily_budget > 0 then r.daily_budget * r.days_in_month else 0 end), 2) as monthly_budget;
+      select round(sum(case when r.daily_budget_rank = 1 and r.delivery_status = 'live' and r.daily_budget > 0 then r.daily_budget else 0 end), 2) as daily_budget;
     $$ language sql;
   `;
   const badSql = goodSql.replace("where i.environment = r.environment", "where true");
