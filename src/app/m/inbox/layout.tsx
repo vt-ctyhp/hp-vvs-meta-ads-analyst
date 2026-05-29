@@ -5,9 +5,8 @@
  * identity menu, sign-out. Designed for phone-first use; the same layout
  * works on tablet and desktop with more horizontal whitespace.
  *
- * Auth: anyone with view_inbox can reach this shell. The legacy
- * TopNavigation already suppresses itself on /m/* paths so we don't
- * double up chrome.
+ * Auth: anyone with view_inbox can reach this shell. It renders its own
+ * slim chrome and is independent of the workspace nav.
  */
 
 import { redirect } from "next/navigation";

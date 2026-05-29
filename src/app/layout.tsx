@@ -1,8 +1,6 @@
 import type { Metadata } from "next";
 import { Cardo, Cormorant_Garamond } from "next/font/google";
 
-import { TopNavigation } from "@/components/top-navigation";
-
 import "./globals.css";
 
 const bodyFont = Cardo({
@@ -30,7 +28,6 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${bodyFont.variable} ${titleFont.variable}`}>
       <body>
-        <TopNavigation />
         {children}
       </body>
     </html>
