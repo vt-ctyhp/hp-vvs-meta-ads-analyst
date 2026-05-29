@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 
+import { TeamManagement } from "@/components/v2/inbox/team-management";
 import { TeamMetricsTable } from "@/components/v2/inbox/team-metrics-table";
 import { TeamScheduleSettings } from "@/components/v2/inbox/team-schedule-settings";
 import { getServerAccessProfile } from "@/lib/server-route-auth";
@@ -65,6 +66,11 @@ export default async function TeamMetricsPage({
           <PeriodSelector period={period} />
         </header>
         <TeamMetricsTable rows={rollup.rows} period={period} />
+        {profile.roles.includes("admin") ? (
+          <div className="mt-6">
+            <TeamManagement />
+          </div>
+        ) : null}
         <TeamScheduleSettings />
       </section>
     </main>
