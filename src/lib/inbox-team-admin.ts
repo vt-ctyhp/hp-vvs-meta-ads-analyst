@@ -13,6 +13,7 @@ import { createAdsAnalystClient } from "./ads-analyst-db.ts";
 import { AuthorizationError } from "./app-auth.ts";
 import { getActiveMetaInboxEnvironment } from "./meta-inbox-environment.ts";
 import { META_INBOX_QUEUE_CATEGORIES } from "./meta-inbox-vocabulary.ts";
+import { loadInboxUserDirectory } from "./inbox-user-directory.ts";
 
 export type TeamAdminProfile = {
   appUserId: string | null;
@@ -61,46 +62,17 @@ function normalizeRole(value: unknown): TeamMemberRole {
   return value === "lead" ? "lead" : "member";
 }
 
-async function loadProfiles(supabase: DynamicClient): Promise<{
+async function loadProfiles(): Promise<{
   nameById: Map<string, string | null>;
   salesUsers: { appUserId: string; fullName: string }[];
 }> {
-  const { data } = await (supabase as unknown as {
-    schema: (s: "analytics") => {
-      from: (t: "ads_analyst_identity_profiles_v1") => {
-        select: (c: string) => {
-          order: (
-            col: string,
-            o: { ascending: boolean },
-          ) => Promise<{
-            data:
-              | { app_user_id: string; full_name: string | null; active: boolean | null; roles: unknown }[]
-              | null;
-          }>;
-        };
-      };
-    };
-  })
-    .schema("analytics")
-    .from("ads_analyst_identity_profiles_v1")
-    .select("app_user_id,full_name,active,roles")
-    .order("full_name", { ascending: true });
-
-  const rows = (data || []) as {
-    app_user_id: string;
-    full_name: string | null;
-    active: boolean | null;
-    roles: unknown;
-  }[];
-  const nameById = new Map<string, string | null>(rows.map((r) => [r.app_user_id, r.full_name]));
-  const salesUsers = rows
-    .filter(
-      (r) =>
-        r.active &&
-        Array.isArray(r.roles) &&
-        (r.roles as string[]).some((role) => role === "sales" || role === "sales_lead"),
-    )
-    .map((r) => ({ appUserId: r.app_user_id, fullName: r.full_name || "Unknown" }));
+  const directory = await loadInboxUserDirectory();
+  const nameById = new Map<string, string | null>(
+    directory.map((u) => [u.appUserId, u.fullName]),
+  );
+  const salesUsers = directory
+    .filter((u) => u.active && u.roles.some((role) => role === "sales" || role === "sales_lead"))
+    .map((u) => ({ appUserId: u.appUserId, fullName: u.fullName || "Unknown" }));
   return { nameById, salesUsers };
 }
 
@@ -133,7 +105,7 @@ export async function loadTeamAdminData(profile: TeamAdminProfile): Promise<Team
     .eq("environment", env);
   const coverage = (coverageRows || []) as { team_id: string; queue_category_key: string }[];
 
-  const { nameById, salesUsers } = await loadProfiles(supabase);
+  const { nameById, salesUsers } = await loadProfiles();
 
   return {
     teams: teams.map((t) => ({

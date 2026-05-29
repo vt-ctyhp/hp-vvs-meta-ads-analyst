@@ -5,6 +5,7 @@
 
 import { createAdsAnalystClient } from "./ads-analyst-db.ts";
 import { getSocialInboxData } from "./social-inbox.ts";
+import { loadInboxUserDirectory } from "./inbox-user-directory.ts";
 import type { MetaInboxAccessProfile } from "./meta-inbox-access.ts";
 import { getActiveMetaInboxEnvironment } from "./meta-inbox-environment.ts";
 import { buildMetaInboxManagerDashboard } from "./meta-inbox-manager-dashboard.ts";
@@ -262,28 +263,13 @@ export async function getTeamRollup(
   const userWindow = resolveUserWindow(DEFAULT_BUSINESS_WINDOW.tz);
   const ids = Array.from(teamUserIds);
 
-  // Names via the data-boundary identity view. Fetch all profiles and map by
-  // app_user_id — an .in() filter on this view returned empty at runtime even
-  // though the web role can read it; this mirrors the proven /api/users read.
-  const { data: userRows } = await (supabase as unknown as {
-    schema: (schema: "analytics") => {
-      from: (table: "ads_analyst_identity_profiles_v1") => {
-        select: (columns: string) => {
-          order: (
-            column: string,
-            options: { ascending: boolean },
-          ) => Promise<{ data: { app_user_id: string; full_name: string | null }[] | null }>;
-        };
-      };
-    };
-  })
-    .schema("analytics")
-    .from("ads_analyst_identity_profiles_v1")
-    .select("app_user_id,full_name")
-    .order("full_name", { ascending: true });
+  // Names via the mode-aware inbox user directory (boundary view under limited
+  // access; public.users via service client otherwise). Avoids reading the
+  // analytics schema through the API, which isn't exposed in default mode.
+  const directory = await loadInboxUserDirectory();
   const nameById = new Map<string, string | null>(
-    ((userRows || []) as { app_user_id: string; full_name: string | null }[]).map(
-      (u) => [u.app_user_id, u.full_name],
+    directory.map(
+      (u) => [u.appUserId, u.fullName],
     ),
   );
 

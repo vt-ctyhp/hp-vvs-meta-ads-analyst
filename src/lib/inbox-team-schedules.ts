@@ -8,6 +8,7 @@
 import { createAdsAnalystClient } from "./ads-analyst-db.ts";
 import { AuthorizationError } from "./app-auth.ts";
 import { getActiveMetaInboxEnvironment } from "./meta-inbox-environment.ts";
+import { loadInboxUserDirectory } from "./inbox-user-directory.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -180,37 +181,12 @@ export async function loadInboxTeamScheduleSettings(
       .map((r) => [r.user_id, r.timezone as string]),
   );
 
-  // 4. Names via analytics identity view. Fetch all profiles + map by app_user_id.
-  // An .in() filter on this view returned empty at runtime even though the web
-  // role can read it; this mirrors the proven /api/users boundary read.
-  const { data: userRows, error: nameError } = await (supabase as unknown as {
-    schema: (schema: "analytics") => {
-      from: (table: "ads_analyst_identity_profiles_v1") => {
-        select: (columns: string) => {
-          order: (
-            column: string,
-            options: { ascending: boolean },
-          ) => Promise<{
-            data: { app_user_id: string; full_name: string | null }[] | null;
-            error: unknown;
-          }>;
-        };
-      };
-    };
-  })
-    .schema("analytics")
-    .from("ads_analyst_identity_profiles_v1")
-    .select("app_user_id,full_name")
-    .order("full_name", { ascending: true });
-  if (nameError) {
-    console.error("inbox-team-schedules: identity name lookup failed", nameError);
-  }
-
+  // 4. Names via the mode-aware inbox user directory (boundary view under limited
+  // access; public.users via service client otherwise — the analytics schema is
+  // not exposed to the API in default mode).
+  const directory = await loadInboxUserDirectory();
   const nameById = new Map<string, string | null>(
-    ((userRows || []) as { app_user_id: string; full_name: string | null }[]).map((u) => [
-      u.app_user_id,
-      u.full_name,
-    ]),
+    directory.map((u) => [u.appUserId, u.fullName]),
   );
 
   // 5. Assemble result in team-member order
