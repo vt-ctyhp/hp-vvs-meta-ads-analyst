@@ -149,6 +149,53 @@ test("DetailsDrawerPanel renders customer source, workflow fields, and read-only
   assert.match(unknownMarkup, /No profile link available/);
 });
 
+test("DetailsDrawerPanel builds the Instagram profile link from username when Meta omits a profile URL", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      DetailsDrawerPanel,
+      detailsProps({
+        item: itemFixture({
+          sourceChannel: "instagram_message",
+          platform: "instagram",
+          profile: profileFixture({
+            platform: "instagram",
+            username: "emmaposes",
+            profile_url: null,
+          }),
+        }),
+      }),
+    ),
+  );
+
+  assert.match(markup, /href="https:\/\/instagram\.com\/emmaposes"/);
+  assert.match(markup, /Open on Instagram →/);
+  assert.doesNotMatch(markup, /No profile link available/);
+});
+
+test("DetailsDrawerPanel does not fabricate a profile link for Facebook usernames", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      DetailsDrawerPanel,
+      detailsProps({
+        item: itemFixture({
+          sourceChannel: "facebook_message",
+          platform: "facebook",
+          channel: "Facebook",
+          profile: profileFixture({
+            platform: "facebook",
+            username: "some.vanity",
+            profile_url: null,
+          }),
+        }),
+      }),
+    ),
+  );
+
+  assert.doesNotMatch(markup, /Open on Facebook →/);
+  assert.doesNotMatch(markup, /instagram\.com\/some\.vanity/);
+  assert.match(markup, /No profile link available/);
+});
+
 test("DetailsDrawerPanel renders enabled workflow and contact controls with permission", () => {
   const markup = renderToStaticMarkup(
     React.createElement(

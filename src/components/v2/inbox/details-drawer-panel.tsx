@@ -129,7 +129,11 @@ function CustomerSection({
   const firstTouch = item.firstTouch;
   const sourcePlatform = platformOf(item.sourceChannel);
   const handle = sourcePlatform === "IG" && profile?.username ? `@${profile.username}` : null;
-  const profileUrl = profile?.profile_url || null;
+  const profileUrl =
+    profile?.profile_url ||
+    (sourcePlatform === "IG" && profile?.username
+      ? `https://instagram.com/${profile.username}`
+      : null);
   const platformLinkLabel = sourcePlatform === "IG"
     ? "Open on Instagram →"
     : sourcePlatform === "FB"
