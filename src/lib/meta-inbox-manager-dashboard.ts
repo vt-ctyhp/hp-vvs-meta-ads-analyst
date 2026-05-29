@@ -94,6 +94,9 @@ export type MetaInboxManagerDashboardAttributionRow = {
   failedSends: number;
   averageFirstResponseMinutes: number | null;
   averageAttributionConfidence: number | null;
+  // Populated for ad/creative rows by enrichManagerDashboardWithCreativeMedia.
+  thumbnailUrl?: string | null;
+  imageUrl?: string | null;
 };
 
 export type MetaInboxManagerDashboard = {

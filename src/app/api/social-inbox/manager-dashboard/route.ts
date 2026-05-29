@@ -1,5 +1,6 @@
 import { requirePermissionFromRequest } from "@/lib/app-auth";
 import { jsonError } from "@/lib/http";
+import { enrichManagerDashboardWithCreativeMedia } from "@/lib/meta-inbox-attribution-media";
 import {
   buildMetaInboxManagerDashboard,
   type MetaInboxManagerDashboardFilters,
@@ -16,12 +17,11 @@ export async function GET(request: Request) {
     const days = Number(url.searchParams.get("days") || 0);
     const data = await getSocialInboxManagerDashboardData(profile);
 
-    return Response.json(
-      buildMetaInboxManagerDashboard(data, {
-        days: Number.isFinite(days) && days > 0 ? days : undefined,
-        filters: managerDashboardFiltersFromSearchParams(url.searchParams),
-      }),
-    );
+    const dashboard = buildMetaInboxManagerDashboard(data, {
+      days: Number.isFinite(days) && days > 0 ? days : undefined,
+      filters: managerDashboardFiltersFromSearchParams(url.searchParams),
+    });
+    return Response.json(await enrichManagerDashboardWithCreativeMedia(dashboard));
   } catch (error) {
     return jsonError(error);
   }

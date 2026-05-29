@@ -176,6 +176,62 @@ export async function enrichCustomerJourneyDetailWithCreativePreviews(
   }
 }
 
+export type AttributionMedia = { thumbnailUrl: string | null; imageUrl: string | null };
+
+// Resolve display media keyed directly by creative_id (for the manager review
+// Attribution tab's Creative dimension). Reuses the same meta_creatives lookup
+// and "best row" selection as the ledger enrichment; never throws.
+export async function fetchCreativeMediaByCreativeId(
+  creativeIds: string[],
+  options: { client?: CustomerLedgerCreativeClient; logger?: Logger } = {},
+): Promise<Map<string, AttributionMedia>> {
+  const ids = unique(creativeIds);
+  const out = new Map<string, AttributionMedia>();
+  if (ids.length === 0) return out;
+
+  const client =
+    options.client ||
+    (createAdsAnalystClient("web") as unknown as CustomerLedgerCreativeClient);
+  const logger = options.logger || console;
+
+  try {
+    const index = indexCreativeRows(await selectCreativeRows(client, ids));
+    for (const id of ids) {
+      const media = resolveCreativeDisplayMedia(index.byCreative.get(id) || null);
+      out.set(id, { thumbnailUrl: media.thumbnailUrl, imageUrl: media.imageUrl });
+    }
+  } catch (error) {
+    logger.warn("[inbox] creative media lookup failed:", error);
+  }
+  return out;
+}
+
+// Resolve display media keyed by ad_id (Attribution tab's Ad dimension) by way
+// of meta_ads -> creative_id -> meta_creatives. Never throws.
+export async function fetchAdMediaByAdId(
+  adIds: string[],
+  options: { client?: CustomerLedgerCreativeClient; logger?: Logger } = {},
+): Promise<Map<string, AttributionMedia>> {
+  const ids = unique(adIds);
+  const out = new Map<string, AttributionMedia>();
+  if (ids.length === 0) return out;
+
+  const client =
+    options.client ||
+    (createAdsAnalystClient("web") as unknown as CustomerLedgerCreativeClient);
+  const logger = options.logger || console;
+
+  try {
+    const previews = await fetchCreativePreviewsByAdId(client, ids);
+    for (const [adId, preview] of previews) {
+      out.set(adId, { thumbnailUrl: preview.thumbnailUrl, imageUrl: preview.imageUrl });
+    }
+  } catch (error) {
+    logger.warn("[inbox] ad media lookup failed:", error);
+  }
+  return out;
+}
+
 async function fetchCreativePreviewsByAdId(
   client: CustomerLedgerCreativeClient,
   adIds: string[],

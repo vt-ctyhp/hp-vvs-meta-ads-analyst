@@ -1,6 +1,7 @@
 import { ManagerReview } from "@/components/v2/inbox/manager-review";
 import { resolvePeriodParam } from "@/lib/inbox-metrics";
 import { getTeamRollup } from "@/lib/inbox-metrics-db";
+import { enrichManagerDashboardWithCreativeMedia } from "@/lib/meta-inbox-attribution-media";
 import { buildMetaInboxManagerDashboard } from "@/lib/meta-inbox-manager-dashboard";
 import { requirePagePermission } from "@/lib/server-route-auth";
 import { getSocialInboxManagerDashboardData } from "@/lib/social-inbox";
@@ -10,8 +11,8 @@ export const dynamic = "force-dynamic";
 export default async function ManagerReviewPage() {
   const profile = await requirePagePermission("view_review", "/convert/inbox/review");
 
-  const dashboard = buildMetaInboxManagerDashboard(
-    await getSocialInboxManagerDashboardData(profile),
+  const dashboard = await enrichManagerDashboardWithCreativeMedia(
+    buildMetaInboxManagerDashboard(await getSocialInboxManagerDashboardData(profile)),
   );
 
   // Resolve assignee ids to names via the same manager-accessible source the

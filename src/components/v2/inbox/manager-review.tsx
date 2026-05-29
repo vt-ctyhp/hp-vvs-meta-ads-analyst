@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ImageIcon } from "lucide-react";
 
 import type {
   MetaInboxManagerDashboard,
@@ -73,6 +74,26 @@ function TabChip({
     >
       {label}
     </button>
+  );
+}
+
+function AttributionThumb({ src, alt }: { src?: string | null; alt: string }) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) {
+    return (
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center border border-hp-rule bg-hp-inset text-hp-muted">
+        <ImageIcon size={14} aria-hidden />
+      </div>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element -- external Supabase/Meta CDN media; matches CreativeThumb in the customer ledger.
+    <img
+      alt={alt}
+      src={src}
+      onError={() => setFailed(true)}
+      className="h-9 w-9 shrink-0 border border-hp-rule bg-hp-inset object-cover"
+    />
   );
 }
 
@@ -370,10 +391,22 @@ function AttributionView({ dashboard: initial }: { dashboard: MetaInboxManagerDa
               {rows.map((row) => (
                 <tr key={row.key} className="border-b border-hp-rule-soft">
                   <td className="py-2 text-hp-ink">
-                    {row.label}
-                    {row.key === "unattributed" ? (
-                      <span className="ml-2 text-[10px] smallcaps text-hp-muted">no first touch</span>
-                    ) : null}
+                    <div className="flex items-center gap-3">
+                      {dimension !== "campaign" ? (
+                        <AttributionThumb
+                          src={row.thumbnailUrl || row.imageUrl}
+                          alt={`${row.label} preview`}
+                        />
+                      ) : null}
+                      <span className="min-w-0">
+                        {row.label}
+                        {row.key === "unattributed" ? (
+                          <span className="ml-2 text-[10px] smallcaps text-hp-muted">
+                            no first touch
+                          </span>
+                        ) : null}
+                      </span>
+                    </div>
                   </td>
                   <td className="py-2 text-right lining-nums text-hp-body">
                     {fmtInt(row.totalConversations)}
