@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useReducer, useRef } from "react";
 
+import { CALIFORNIA_TIME_ZONE } from "@/lib/california-time";
+
 // ---------------------------------------------------------------------------
 // Types (mirrored from the API response shape)
 // ---------------------------------------------------------------------------
@@ -249,9 +251,9 @@ function MemberScheduleRow({
       <div className="flex items-baseline justify-between">
         <div className="flex items-center gap-3">
           <span className="font-title text-[14px] text-hp-ink">{member.fullName}</span>
-          {member.timezone && (
-            <span className="text-[10px] smallcaps text-hp-muted">{member.timezone}</span>
-          )}
+          <span className="text-[10px] smallcaps text-hp-muted">
+            {member.timezone ?? CALIFORNIA_TIME_ZONE}
+          </span>
           {isSaving && (
             <span className="text-[10px] smallcaps text-hp-muted">saving…</span>
           )}
@@ -274,7 +276,7 @@ function MemberScheduleRow({
       </div>
 
       {/* Weekday schedule grid */}
-      <div className="mt-3 grid grid-cols-7 gap-1">
+      <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(7rem,1fr))] gap-1">
         {WEEKDAY_LABELS.map((label, weekday) => {
           const entry = member.schedules.find((s) => s.weekday === weekday);
           const start = entry?.startTime ?? "";
