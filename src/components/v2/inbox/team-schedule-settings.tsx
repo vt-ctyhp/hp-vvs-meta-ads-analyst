@@ -276,7 +276,7 @@ function MemberScheduleRow({
       </div>
 
       {/* Weekday schedule grid */}
-      <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(7rem,1fr))] gap-1">
+      <div className="mt-3 grid grid-cols-[repeat(7,minmax(5.5rem,1fr))] gap-1 overflow-x-auto">
         {WEEKDAY_LABELS.map((label, weekday) => {
           const entry = member.schedules.find((s) => s.weekday === weekday);
           const start = entry?.startTime ?? "";

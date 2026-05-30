@@ -65,7 +65,9 @@ export default async function TeamMetricsPage({
           <h1 className="font-title text-[26px] leading-tight text-hp-ink">{rollup.teamName}</h1>
           <PeriodSelector period={period} />
         </header>
-        <TeamMetricsTable rows={rollup.rows} period={period} />
+        <div className="overflow-x-auto">
+          <TeamMetricsTable rows={rollup.rows} period={period} />
+        </div>
         {profile.roles.includes("admin") ? (
           <div className="mt-6">
             <TeamManagement />

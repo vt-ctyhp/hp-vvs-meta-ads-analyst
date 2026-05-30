@@ -60,7 +60,7 @@ export default async function MobileInboxIndex() {
     profile && hasPermission(profile.roles, "send_inbox_reply");
 
   return (
-    <div className="space-y-4">
+    <div className="mx-auto max-w-3xl space-y-4">
       <header className="border border-hp-rule bg-hp-card px-4 py-4">
         <p className="font-[family-name:var(--font-title)] text-lg leading-snug text-hp-ink">
           {sentence.lead ? (
