@@ -1,8 +1,11 @@
+import { CalendarClock } from "lucide-react";
+
 import type { MetaInboxQueueDisplayItem } from "../../../lib/meta-inbox-queue-view.ts";
 import {
   META_INBOX_QUEUE_CATEGORIES,
   metaInboxVocabularyLabel,
 } from "../../../lib/meta-inbox-vocabulary.ts";
+import { formatDateLabel } from "./drawer-panel-helpers.tsx";
 
 export function QueueRow({
   item,
@@ -30,6 +33,11 @@ export function QueueRow({
   );
   const assignedId = item.inboxConversation?.assigned_user_id ?? null;
   const assigneeName = assignedId ? userNames?.get(assignedId) ?? null : null;
+  const followUpAt = item.inboxConversation?.follow_up_at ?? null;
+  const nowMsForFollowUp = typeof now === "number" ? now : now ? now.getTime() : null;
+  const followUpMs = followUpAt ? Date.parse(followUpAt) : Number.NaN;
+  const followUpOverdue =
+    nowMsForFollowUp !== null && Number.isFinite(followUpMs) && followUpMs < nowMsForFollowUp;
 
   return (
     <button
@@ -86,16 +94,34 @@ export function QueueRow({
           >
             {item.preview}
           </p>
-          <span
-            className={[
-              "mt-3 inline-flex max-w-full border px-2 py-1 text-[10px] uppercase leading-none tracking-[0.14em]",
-              active
-                ? "border-hp-foundation/40 text-hp-foundation/80"
-                : "border-hp-rule text-hp-muted",
-            ].join(" ")}
-          >
-            {item.brand} · {categoryLabel}
-          </span>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span
+              className={[
+                "inline-flex max-w-full border px-2 py-1 text-[10px] uppercase leading-none tracking-[0.14em]",
+                active
+                  ? "border-hp-foundation/40 text-hp-foundation/80"
+                  : "border-hp-rule text-hp-muted",
+              ].join(" ")}
+            >
+              {item.brand} · {categoryLabel}
+            </span>
+            {followUpAt ? (
+              <span
+                data-followup-overdue={followUpOverdue ? "true" : "false"}
+                className={[
+                  "inline-flex items-center gap-1 border px-2 py-1 text-[10px] uppercase leading-none tracking-[0.14em]",
+                  active
+                    ? "border-hp-foundation/40 text-hp-foundation/80"
+                    : followUpOverdue
+                      ? "border-signal-warning text-signal-warning"
+                      : "border-hp-rule text-hp-muted",
+                ].join(" ")}
+              >
+                <CalendarClock size={11} className="shrink-0" aria-hidden="true" />
+                Follow-up · {formatDateLabel(followUpAt)}
+              </span>
+            ) : null}
+          </div>
         </div>
 
         <div className="flex shrink-0 flex-col items-end gap-2 text-right">

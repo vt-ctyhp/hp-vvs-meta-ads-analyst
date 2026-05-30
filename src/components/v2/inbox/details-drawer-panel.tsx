@@ -1,6 +1,6 @@
 "use client";
 
-import { Mail, Pencil, Phone, Plus, Tags, Trash2, UserRound } from "lucide-react";
+import { Info, Mail, Pencil, Phone, Plus, Tags, Trash2, UserRound } from "lucide-react";
 import { useState } from "react";
 
 import type { MetaInboxQueueDisplayItem } from "../../../lib/meta-inbox-queue-view.ts";
@@ -457,6 +457,7 @@ function WorkflowSection({
   const [lostReasonDraft, setLostReasonDraft] = useState(conversation?.inbox_lost_reason || "");
   const [followUpDraft, setFollowUpDraft] = useState(formatDateTimeLocal(conversation?.follow_up_at));
   const [changeReasonDraft, setChangeReasonDraft] = useState("");
+  const [leadInfoOpen, setLeadInfoOpen] = useState(false);
   const canEditWorkflow = Boolean(conversation && canManageInboxState);
   const isSaving = mutationState.status === "saving";
   const finalizing =
@@ -517,55 +518,112 @@ function WorkflowSection({
           disabled={!canEditWorkflow || isSaving}
           options={META_INBOX_QUEUE_CATEGORIES.map((category) => [category.key, category.label])}
         />
-        <FilterSelect
-          label="Status"
-          value={statusDraft}
-          onChange={(value) =>
-            setStatusDraft(value as SocialInboxConversation["conversation_status"])
-          }
-          disabled={!canEditWorkflow || isSaving}
-          warning={preset === "close"}
-          options={META_INBOX_CONVERSATION_STATUSES.map((statusOption) => [
-            statusOption.key,
-            statusOption.label,
-          ])}
-        />
-        <FilterSelect
-          label="Lead Quality"
-          value={leadQualityDraft}
-          onChange={setLeadQualityDraft}
-          disabled={!canEditWorkflow || isSaving}
-          options={[
-            ["", "Not Labeled"],
-            ...META_INBOX_LEAD_QUALITY_LABELS.map((quality) => [quality.key, quality.label] as [
-              string,
-              string,
-            ]),
-          ]}
-        />
-        <label className="block min-w-0">
-          <span className="mb-1.5 block text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-            Reason Tags
-          </span>
-          <select
-            multiple
-            aria-label="Reason Tags"
-            value={reasonTagDrafts}
-            onChange={(event) =>
-              setReasonTagDrafts(
-                Array.from(event.currentTarget.selectedOptions).map((option) => option.value),
-              )
+        <div className="grid gap-1.5">
+          <FilterSelect
+            label="Status"
+            value={statusDraft}
+            onChange={(value) =>
+              setStatusDraft(value as SocialInboxConversation["conversation_status"])
             }
             disabled={!canEditWorkflow || isSaving}
-            className="h-28 w-full border border-hp-rule bg-white px-3 py-2 text-sm text-hp-ink outline-none transition-colors focus:border-hp-ink disabled:bg-hp-inset disabled:text-hp-muted"
+            warning={preset === "close"}
+            options={META_INBOX_CONVERSATION_STATUSES.map((statusOption) => [
+              statusOption.key,
+              statusOption.label,
+            ])}
+          />
+          <p className="text-[11px] leading-5 text-hp-muted">
+            The Needs Reply badge is automatic — it appears whenever a customer message is newer
+            than your last reply. Status is set manually and never changes on its own.
+          </p>
+        </div>
+        <div className="relative min-w-0">
+          <span className="mb-1.5 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+            Lead Quality
+            <button
+              type="button"
+              aria-label="Lead quality definitions"
+              onMouseEnter={() => setLeadInfoOpen(true)}
+              onMouseLeave={() => setLeadInfoOpen(false)}
+              onFocus={() => setLeadInfoOpen(true)}
+              onBlur={() => setLeadInfoOpen(false)}
+              onClick={() => setLeadInfoOpen(true)}
+              className="inline-flex h-4 w-4 items-center justify-center border border-hp-rule text-hp-muted transition-colors hover:border-hp-ink hover:text-hp-ink focus:border-hp-ink focus:text-hp-ink focus:outline-none"
+            >
+              <Info size={11} aria-hidden="true" />
+            </button>
+          </span>
+          <select
+            aria-label="Lead Quality"
+            value={leadQualityDraft}
+            onChange={(event) => setLeadQualityDraft(event.target.value)}
+            disabled={!canEditWorkflow || isSaving}
+            className="h-10 w-full border border-hp-rule bg-white px-3 text-sm text-hp-ink outline-none transition-colors focus:border-hp-ink disabled:bg-hp-inset disabled:text-hp-muted"
           >
-            {META_INBOX_LEAD_QUALITY_REASON_TAGS.map((tag) => (
-              <option key={tag.key} value={tag.key}>
-                {tag.label}
+            <option value="">Not Labeled</option>
+            {META_INBOX_LEAD_QUALITY_LABELS.map((quality) => (
+              <option key={quality.key} value={quality.key}>
+                {quality.label}
               </option>
             ))}
           </select>
-        </label>
+          {leadInfoOpen ? (
+            <span
+              role="tooltip"
+              className="pointer-events-none absolute left-0 right-0 top-full z-30 mt-1 border border-hp-rule bg-hp-foundation p-3 normal-case tracking-normal shadow-[0_8px_24px_rgba(42,39,37,0.18)]"
+            >
+              <span className="grid gap-2.5">
+                {META_INBOX_LEAD_QUALITY_LABELS.map((quality) => (
+                  <span key={quality.key} className="block">
+                    <span className="block text-[12px] font-semibold leading-tight text-hp-ink">
+                      {quality.label}
+                    </span>
+                    <span className="mt-0.5 block text-[11px] leading-snug text-hp-body">
+                      {quality.description}
+                    </span>
+                    <span className="mt-0.5 block text-[11px] italic leading-snug text-hp-muted">
+                      e.g. {quality.example}
+                    </span>
+                  </span>
+                ))}
+              </span>
+            </span>
+          ) : null}
+        </div>
+        <div className="min-w-0">
+          <span className="mb-1.5 block text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+            Reason Tags
+          </span>
+          <div role="group" aria-label="Reason Tags" className="flex flex-wrap gap-1.5">
+            {META_INBOX_LEAD_QUALITY_REASON_TAGS.map((tag) => {
+              const selected = reasonTagDrafts.includes(tag.key);
+              return (
+                <button
+                  key={tag.key}
+                  type="button"
+                  aria-pressed={selected}
+                  disabled={!canEditWorkflow || isSaving}
+                  title={tag.description}
+                  onClick={() =>
+                    setReasonTagDrafts((prev) =>
+                      prev.includes(tag.key)
+                        ? prev.filter((key) => key !== tag.key)
+                        : [...prev, tag.key],
+                    )
+                  }
+                  className={[
+                    "border px-2.5 py-1 text-[11px] uppercase tracking-[0.08em] transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                    selected
+                      ? "border-hp-ink bg-hp-ink text-hp-foundation"
+                      : "border-hp-rule bg-white text-hp-body hover:border-hp-ink",
+                  ].join(" ")}
+                >
+                  {tag.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <FilterSelect
           label="Inbox Outcome"
           value={outcomeDraft}
