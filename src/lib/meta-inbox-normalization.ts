@@ -243,27 +243,21 @@ export function buildMetaInboxNormalizationBatch(
     stringField(message.thread_id) || "",
   );
 
+  // A single customer (page + participant) can own more than one raw thread:
+  // polling stores a real `t_…` thread with the full inbound history, while a
+  // webhook send/echo lands on a synthetic `…:webhook:…` thread. Both resolve
+  // to the same canonical key, so we group every raw thread that shares a
+  // canonical key and compute ONE conversation from the union of their
+  // messages. Computing per raw thread and writing per canonical key (the
+  // previous behavior) let whichever raw thread was processed last clobber the
+  // timeline — e.g. a lone outbound webhook reply blanking a real inbound
+  // history and wrongly closing the reply window.
+  const threadGroups = new Map<string, MetaInboxRawRecord[]>();
   for (const thread of input.threads || []) {
     const platform = platformField(thread.platform);
     const threadId = stringField(thread.thread_id);
     if (!threadId) continue;
-
-    const threadMessages = messagesByThread.get(threadId) || [];
-    const participant = threadParticipant(thread, threadMessages);
-    const profile = participant.participantId
-      ? customerProfile({
-          platform,
-          pageId: stringField(thread.page_id),
-          igUserId: stringField(thread.ig_user_id),
-          participantId: participant.participantId,
-          displayName: participant.displayName,
-          username: participant.username,
-          raw: participant.rawProfileJson,
-        })
-      : null;
-
-    if (profile) profiles.set(profile.profileKey, profile);
-
+    const participant = threadParticipant(thread, messagesByThread.get(threadId) || []);
     const canonicalKey = canonicalThreadKey(
       platform,
       {
@@ -273,13 +267,38 @@ export function buildMetaInboxNormalizationBatch(
       },
       threadId,
     );
-    const timeline = messageTimeline(threadMessages, stringField(thread.last_message_at));
+    const existing = threadGroups.get(canonicalKey);
+    if (existing) existing.push(thread);
+    else threadGroups.set(canonicalKey, [thread]);
+  }
+
+  for (const [canonicalKey, groupThreads] of threadGroups) {
+    const primaryThread = pickPrimaryThread(groupThreads, messagesByThread);
+    const platform = platformField(primaryThread.platform);
+    const threadId = stringField(primaryThread.thread_id);
+    const threadMessages = mergeThreadMessages(groupThreads, messagesByThread);
+    const participant = threadParticipant(primaryThread, threadMessages);
+    const profile = participant.participantId
+      ? customerProfile({
+          platform,
+          pageId: stringField(primaryThread.page_id),
+          igUserId: stringField(primaryThread.ig_user_id),
+          participantId: participant.participantId,
+          displayName: participant.displayName,
+          username: participant.username,
+          raw: participant.rawProfileJson,
+        })
+      : null;
+
+    if (profile) profiles.set(profile.profileKey, profile);
+
+    const timeline = messageTimeline(threadMessages, stringField(primaryThread.last_message_at));
     const firstMessage = firstInboundMessage(threadMessages) || threadMessages[0] || null;
-    const firstTouch = firstTouchFromMessage(canonicalKey, firstMessage, thread);
+    const firstTouch = firstTouchFromMessage(canonicalKey, firstMessage, primaryThread);
     const inboundBodies = threadMessages
       .filter((message) => stringField(message.direction) !== "outbound")
       .map((message) => stringField(message.body));
-    const hasInboundText = [stringField(thread.snippet), ...inboundBodies].some(
+    const hasInboundText = [stringField(primaryThread.snippet), ...inboundBodies].some(
       (value) => Boolean(value && value.trim()),
     );
     const routing = inferQueueCategory(firstTouch, hasInboundText);
@@ -299,10 +318,10 @@ export function buildMetaInboxNormalizationBatch(
         : "ad_referral",
       sourceType: firstTouch.attributionMethod === "none" ? "message_thread" : "ad_referral",
       platform,
-      rawThreadId: stringField(thread.id),
+      rawThreadId: stringField(primaryThread.id),
       rawCommentId: null,
-      pageId: stringField(thread.page_id),
-      igUserId: stringField(thread.ig_user_id),
+      pageId: stringField(primaryThread.page_id),
+      igUserId: stringField(primaryThread.ig_user_id),
       participantId: participant.participantId,
       platformThreadId: threadId,
       parentContentId: null,
@@ -559,6 +578,50 @@ function firstInboundMessage(messages: readonly MetaInboxRawRecord[]) {
     .sort((a, b) => String(stringField(a.sent_at) || "").localeCompare(String(stringField(b.sent_at) || "")))[0];
 }
 
+// When several raw threads share a canonical key, the one with the richest
+// message history wins as the conversation's display/identity thread (the real
+// polled `t_…` thread over a one-message synthetic `…:webhook:…` thread). Ties
+// fall back to most-recent activity, then thread id, for deterministic output.
+function pickPrimaryThread(
+  threads: readonly MetaInboxRawRecord[],
+  messagesByThread: Map<string, MetaInboxRawRecord[]>,
+): MetaInboxRawRecord {
+  const messageCountFor = (thread: MetaInboxRawRecord) =>
+    (messagesByThread.get(stringField(thread.thread_id) || "") || []).length;
+  return [...threads].sort((a, b) => {
+    const byCount = messageCountFor(b) - messageCountFor(a);
+    if (byCount !== 0) return byCount;
+    const byActivity = (stringField(b.last_message_at) || "").localeCompare(
+      stringField(a.last_message_at) || "",
+    );
+    if (byActivity !== 0) return byActivity;
+    return (stringField(a.thread_id) || "").localeCompare(stringField(b.thread_id) || "");
+  })[0];
+}
+
+// Union the messages of every raw thread in a canonical group, deduped by
+// (platform, message_id) so overlapping history loads don't double-count.
+function mergeThreadMessages(
+  threads: readonly MetaInboxRawRecord[],
+  messagesByThread: Map<string, MetaInboxRawRecord[]>,
+): MetaInboxRawRecord[] {
+  if (threads.length === 1) {
+    return messagesByThread.get(stringField(threads[0].thread_id) || "") || [];
+  }
+  const merged = new Map<string, MetaInboxRawRecord>();
+  let unkeyed = 0;
+  for (const thread of threads) {
+    const threadMessages = messagesByThread.get(stringField(thread.thread_id) || "") || [];
+    for (const message of threadMessages) {
+      const platform = stringField(message.platform);
+      const messageId = stringField(message.message_id);
+      const key = platform && messageId ? `${platform}:${messageId}` : `unkeyed:${unkeyed++}`;
+      if (!merged.has(key)) merged.set(key, message);
+    }
+  }
+  return [...merged.values()];
+}
+
 function firstTouchFromMessage(
   canonicalConversationKey: string,
   message: MetaInboxRawRecord | null,
@@ -808,18 +871,119 @@ function replyWindowState(latestInboundAt: string | null, now: Date) {
   };
 }
 
+function toIsoOrNull(value: unknown): string | null {
+  if (typeof value !== "string" || !value) return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+
+// Compare two (already-canonical ISO) timestamps by instant, returning the
+// later (or earlier) of the two and tolerating nulls.
+function laterIso(a: string | null, b: string | null): string | null {
+  if (!a) return b;
+  if (!b) return a;
+  return Date.parse(a) >= Date.parse(b) ? a : b;
+}
+
+function earlierIso(a: string | null, b: string | null): string | null {
+  if (!a) return b;
+  if (!b) return a;
+  return Date.parse(a) <= Date.parse(b) ? a : b;
+}
+
+/**
+ * Durable guard for the conversation upsert: a conversation's message timeline
+ * only ever grows, so a normalization pass that sees a PARTIAL message set must
+ * never regress the stored timeline. The incremental webhook path normalizes a
+ * single synthetic-thread message (often an outbound reply with no inbound),
+ * which would otherwise blank `latest_inbound_at` and wrongly close the reply
+ * window. We merge the freshly-computed row with the stored row — earliest
+ * first-inbound, latest of every "latest" field — then recompute the reply
+ * window and needs_reply from the merged timeline so eligibility stays honest.
+ *
+ * Operates on persisted snake_case rows so it can sit directly in the upsert
+ * map alongside preserveMetaInboxConversationWorkflowFields.
+ */
+export function preserveConversationTimeline(
+  row: Record<string, unknown>,
+  existing: Record<string, unknown>,
+  now: Date,
+): Record<string, unknown> {
+  const firstInboundAt = earlierIso(
+    toIsoOrNull(row.first_inbound_at),
+    toIsoOrNull(existing.first_inbound_at),
+  );
+  const latestInboundAt = laterIso(
+    toIsoOrNull(row.latest_inbound_at),
+    toIsoOrNull(existing.latest_inbound_at),
+  );
+  const latestOutboundAt = laterIso(
+    toIsoOrNull(row.latest_outbound_at),
+    toIsoOrNull(existing.latest_outbound_at),
+  );
+  const lastActivityAt = laterIso(
+    toIsoOrNull(row.last_activity_at),
+    toIsoOrNull(existing.last_activity_at),
+  );
+  const replyWindow = replyWindowState(latestInboundAt, now);
+  const needsReply = Boolean(
+    latestInboundAt && (!latestOutboundAt || laterIso(latestInboundAt, latestOutboundAt) === latestInboundAt),
+  );
+
+  return {
+    ...row,
+    first_inbound_at: firstInboundAt,
+    latest_inbound_at: latestInboundAt,
+    latest_outbound_at: latestOutboundAt,
+    last_activity_at: lastActivityAt,
+    reply_window_expires_at: replyWindow.replyWindowExpiresAt,
+    human_agent_window_expires_at: replyWindow.humanAgentWindowExpiresAt,
+    send_eligibility: replyWindow.sendEligibility,
+    needs_reply: needsReply,
+  };
+}
+
+// Synthetic webhook thread ids are minted as
+// `<platform>:webhook:<businessId>:<participantId>` (see meta-webhook-shape).
+// They reliably encode the identity, so when the row-level identity is
+// unresolved we recover it from the id rather than embedding the raw id into
+// the canonical key. Returns null for non-webhook ids or `unknown` sentinels.
+function parseWebhookThreadIdentity(
+  threadId: string,
+): { businessId: string; participantId: string } | null {
+  const parts = threadId.split(":");
+  if (parts.length !== 4 || parts[1] !== "webhook") return null;
+  const businessId = parts[2];
+  const participantId = parts[3];
+  if (!businessId || businessId === "unknown") return null;
+  if (!participantId || participantId === "unknown") return null;
+  return { businessId, participantId };
+}
+
 // Identity-based canonical key keeps webhook (synthetic thread id) and polling
 // (real `t_…` id) on the same conversation row when they describe the same
-// participant on the same page. Falls back to the thread id when identity is
-// not available.
+// participant on the same page. When the row-level identity is incomplete we
+// recover it from a synthetic webhook id (which encodes it); only when that
+// also fails do we fall back to the raw thread id. Without this recovery, a
+// webhook thread normalized before its participant resolves produced a
+// malformed `…:message_thread:<platform>:webhook:…` key and a duplicate
+// conversation row.
 function canonicalThreadKey(
   platform: string,
   identity: { pageId: string | null; igUserId: string | null; participantId: string | null },
   threadId: string,
 ) {
-  const businessId = identity.pageId || identity.igUserId;
-  if (businessId && identity.participantId) {
-    return `${platform}:message_thread:${businessId}:${identity.participantId}`;
+  let businessId = identity.pageId || identity.igUserId;
+  let participantId = identity.participantId;
+  if (!businessId || !participantId) {
+    const parsed = parseWebhookThreadIdentity(threadId);
+    if (parsed) {
+      businessId = businessId || parsed.businessId;
+      participantId = participantId || parsed.participantId;
+    }
+  }
+  if (businessId && participantId) {
+    return `${platform}:message_thread:${businessId}:${participantId}`;
   }
   return `${platform}:message_thread:${threadId}`;
 }

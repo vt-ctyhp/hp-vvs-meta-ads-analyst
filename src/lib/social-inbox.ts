@@ -18,6 +18,7 @@ import {
   applyCampaignUmbrellaRouting,
   buildMetaInboxNormalizationBatch,
   buildMetaInboxNormalizationBatchWithThreadHistory,
+  preserveConversationTimeline,
   umbrellaToQueueCategory,
   type MetaAdsLookupRow,
   type MetaInboxFirstTouchCandidate,
@@ -3517,6 +3518,7 @@ async function normalizeMetaInboxRows(
   role: "worker" | "ingest" = "worker",
   options: { loadFullThreadHistory?: boolean } = {},
 ) {
+  const now = input.now ?? new Date();
   const batch = options.loadFullThreadHistory
     ? await buildMetaInboxNormalizationBatchWithThreadHistory(
         input,
@@ -3608,7 +3610,11 @@ async function normalizeMetaInboxRows(
         routing_explanation: initialWorkflow.routingExplanation,
       };
       const existing = existingConversationWorkflowState.get(conversation.canonicalConversationKey);
-      return existing ? preserveMetaInboxConversationWorkflowFields(row, existing) : row;
+      if (!existing) return row;
+      // Workflow fields (status/routing) first, then the durable timeline guard
+      // so an incremental partial-history pass can never regress the reply window.
+      const workflowPreserved = preserveMetaInboxConversationWorkflowFields(row, existing);
+      return preserveConversationTimeline(workflowPreserved, existing, now);
     }),
     "canonical_conversation_key",
     role,
@@ -3808,6 +3814,13 @@ async function selectMetaInboxConversationWorkflowState(
         "routing_source",
         "routing_confidence",
         "routing_explanation",
+        // Timeline fields feed preserveConversationTimeline so an incremental
+        // (partial) normalization can't regress latest_inbound_at and wrongly
+        // close the reply window.
+        "first_inbound_at",
+        "latest_inbound_at",
+        "latest_outbound_at",
+        "last_activity_at",
       ].join(","),
     )
       .in("canonical_conversation_key", chunk)
