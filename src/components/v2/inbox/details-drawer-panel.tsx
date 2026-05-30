@@ -612,7 +612,7 @@ function WorkflowSection({
                     )
                   }
                   className={[
-                    "border px-2.5 py-1 text-[11px] uppercase tracking-[0.08em] transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                    "border px-2 py-1 text-[11px]! uppercase leading-none! tracking-[0.06em] transition-colors disabled:cursor-not-allowed disabled:opacity-50",
                     selected
                       ? "border-hp-ink bg-hp-ink text-hp-foundation"
                       : "border-hp-rule bg-white text-hp-body hover:border-hp-ink",
