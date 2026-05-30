@@ -17,6 +17,50 @@ export function shouldEnrichProfile(row: {
   return !isMeaningfulString(row.display_name) || !isMeaningfulString(row.profile_picture_url);
 }
 
+export type ProfileEnrichmentPatch = {
+  display_name?: string;
+  profile_picture_url?: string;
+};
+
+/**
+ * Decide what to write back to a customer profile during enrichment.
+ *
+ * Name precedence: an existing display name is never overwritten; otherwise a
+ * name fetched from the Graph API wins; otherwise fall back to a name the
+ * webhook already carried (the thread's participant_name / a message's
+ * recipient_name). The fallback matters for click-to-Messenger leads whose
+ * PSID Meta refuses to resolve via Graph — without it the inbox would render
+ * the raw PSID as the customer's name even when the inbound/echo payload
+ * already supplied a usable one. Returns an empty patch when nothing should
+ * change, so callers can skip the write.
+ */
+export function resolveProfileEnrichmentPatch(params: {
+  currentDisplayName: string | null;
+  currentProfilePictureUrl: string | null;
+  fetched: MessengerProfile | null;
+  fallbackName: string | null;
+}): ProfileEnrichmentPatch {
+  const patch: ProfileEnrichmentPatch = {};
+
+  if (!isMeaningfulString(params.currentDisplayName)) {
+    const fetchedName = params.fetched?.displayName ?? null;
+    if (isMeaningfulString(fetchedName)) {
+      patch.display_name = fetchedName.trim();
+    } else if (isMeaningfulString(params.fallbackName)) {
+      patch.display_name = params.fallbackName.trim();
+    }
+  }
+
+  if (!isMeaningfulString(params.currentProfilePictureUrl)) {
+    const fetchedPicture = params.fetched?.profilePictureUrl ?? null;
+    if (isMeaningfulString(fetchedPicture)) {
+      patch.profile_picture_url = fetchedPicture.trim();
+    }
+  }
+
+  return patch;
+}
+
 /**
  * Parse `/me/conversations?user_id=...` Graph response and pull the participant
  * whose id matches `participantId`. Returns null when no participant matches.
@@ -142,7 +186,7 @@ function stringField(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function isMeaningfulString(value: string | null): boolean {
+function isMeaningfulString(value: string | null): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
