@@ -55,10 +55,10 @@ export function ConversationPane({
         </div>
       ) : null}
 
-      <div className="flex min-h-[640px] min-w-0 flex-col xl:min-h-0 xl:flex-1">
+      <div className="flex min-w-0 flex-col">
         <div
           data-slot="conversation-thread"
-          className="min-w-0 flex-1 p-6 xl:min-h-0 xl:overflow-y-auto"
+          className="min-w-0 max-h-[62vh] overflow-y-auto p-6"
         >
           {item ? thread : emptyState}
         </div>
