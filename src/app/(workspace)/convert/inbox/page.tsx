@@ -4,6 +4,7 @@ import { getMissingRequiredEnv, isTruthyEnv } from "@/lib/env";
 import { safeErrorMessage } from "@/lib/error-message";
 import { getPersonalHeaderMetrics } from "@/lib/inbox-metrics-db";
 import { getMetaPermissionHealth, validateConfiguredMetaAccounts } from "@/lib/meta";
+import { getActiveMetaInboxEnvironment } from "@/lib/meta-inbox-environment";
 import { requirePagePermission } from "@/lib/server-route-auth";
 import {
   emptySocialInboxData,
@@ -37,11 +38,18 @@ export default async function InboxPage() {
   // Frontline sales (no dashboard) land here by default; on phone-sized screens
   // bounce them to the phone-first /m/inbox shell. Dashboard roles stay.
   const prefersMobileShell = !profile.permissions.includes("view_dashboard");
+  let environment = "production";
+  try {
+    environment = await getActiveMetaInboxEnvironment();
+  } catch {
+    /* default to production for the realtime topic */
+  }
   return (
     <>
       {prefersMobileShell ? <SmallScreenInboxRedirect /> : null}
       <SocialInboxClient
         status={status}
+        environment={environment}
         initialData={inboxData.data}
         dataError={inboxData.error}
         canManageInboxState={profile.permissions.includes("manage_inbox_state")}

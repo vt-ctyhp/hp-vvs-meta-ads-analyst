@@ -57,6 +57,8 @@ import {
   type StatusFilter,
 } from "./v2/inbox/use-inbox-filters";
 import { useSocialInboxMutations } from "./v2/inbox/use-social-inbox-mutations";
+import { InboxLiveIndicator } from "./v2/inbox/inbox-live-indicator";
+import { useInboxLive } from "./v2/inbox/use-inbox-live";
 import type {
   SocialInboxData,
   SocialInboxConversationHistory,
@@ -69,6 +71,7 @@ export type { SocialInboxStatus };
 
 export function SocialInboxClient({
   status,
+  environment,
   initialData,
   dataError,
   canManageInboxState,
@@ -79,6 +82,7 @@ export function SocialInboxClient({
   teamLead = false,
 }: {
   status: SocialInboxStatus;
+  environment: string;
   initialData: SocialInboxData;
   dataError: string | null;
   canManageInboxState: boolean;
@@ -329,7 +333,7 @@ export function SocialInboxClient({
     };
 
     timeoutId = window.setTimeout(beat, activity === "replying" ? 600 : 0);
-    const intervalId = window.setInterval(beat, activity === "replying" ? 10_000 : 25_000);
+    const intervalId = window.setInterval(beat, 10_000);
 
     return () => {
       disposed = true;
@@ -345,6 +349,22 @@ export function SocialInboxClient({
     setIsSyncing,
     loadConversationHistory,
     selectedConversationIdRef,
+  });
+
+  const refetchInboxQueue = useCallback(async () => {
+    const response = await fetch("/api/social-inbox", { cache: "no-store" });
+    const fresh = (await response.json()) as SocialInboxData | { error: string };
+    if (response.ok && fresh && typeof fresh === "object" && !("error" in fresh)) {
+      setInboxData(fresh);
+    }
+  }, [setInboxData]);
+
+  const { live: inboxLive } = useInboxLive({
+    environment,
+    enabled: status.readiness.socialInbox,
+    selectedConversationIdRef,
+    refetchQueue: refetchInboxQueue,
+    refetchThread: loadConversationHistory,
   });
 
   const selectedWorkflowMutationState =
@@ -450,6 +470,7 @@ export function SocialInboxClient({
             <InboxStatusSentence queue={queue} />
           </>
         )}
+        {status.readiness.socialInbox ? <InboxLiveIndicator live={inboxLive} /> : null}
       </section>
 
       <InboxLayoutShell
