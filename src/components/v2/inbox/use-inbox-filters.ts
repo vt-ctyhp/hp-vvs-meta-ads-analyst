@@ -21,7 +21,7 @@ export type SourceFilter = "all" | "facebook" | "instagram";
 export type SourceChannelFilter = "all" | MetaInboxSourceChannelKey;
 export type QueueCategoryFilter = "all" | MetaInboxQueueCategoryKey;
 export type ItemTypeFilter = "all" | "messages" | "comments";
-export type StatusFilter = "all" | "needs-reply";
+export type StatusFilter = "all" | "needs-reply" | "follow-up";
 
 export type AttributionFilterOptions = {
   campaignUmbrellas: [string, string][];
@@ -111,6 +111,7 @@ export function useInboxFilters(
         if (itemTypeFilter === "messages" && item.type !== "message") return false;
         if (itemTypeFilter === "comments" && item.type !== "comment") return false;
         if (statusFilter === "needs-reply" && item.status !== "Needs reply") return false;
+        if (statusFilter === "follow-up" && !item.inboxConversation?.follow_up_at) return false;
 
         const normalizedQuery = query.trim().toLowerCase();
         if (!normalizedQuery) return true;

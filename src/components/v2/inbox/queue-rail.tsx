@@ -192,6 +192,7 @@ export function QueueRail({
                 options={[
                   ["all", "All Statuses"],
                   ["needs-reply", "Needs Reply"],
+                  ["follow-up", "Follow-Up"],
                 ]}
               />
             </div>

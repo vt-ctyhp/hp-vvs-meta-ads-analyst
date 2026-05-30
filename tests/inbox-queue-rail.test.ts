@@ -317,6 +317,7 @@ test("QueueRail disclosure renders the rail-owned filter controls", () => {
   assert.match(markup, />Messages</);
   assert.match(markup, />Comments</);
   assert.match(markup, />Needs Reply</);
+  assert.match(markup, />Follow-Up</);
 });
 
 test("QueueRail filter controls call the supplied filter handlers", () => {

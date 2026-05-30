@@ -175,6 +175,43 @@ describe("inbox deep modules", () => {
     );
   });
 
+  it("filters by follow-up, independent of needs reply", () => {
+    const queue = [
+      itemFixture({
+        id: "fu-needs",
+        status: "Needs reply",
+        inboxConversation: followUpConversation("2026-06-02T15:30:00.000Z"),
+      }),
+      itemFixture({
+        id: "fu-synced",
+        status: "Synced",
+        inboxConversation: followUpConversation("2026-05-28T09:00:00.000Z"),
+      }),
+      itemFixture({ id: "no-fu", status: "Needs reply", inboxConversation: null }),
+    ];
+
+    // Follow-up surfaces every conversation with a follow-up date, whether or
+    // not it also needs a reply.
+    assert.deepEqual(
+      ids(
+        renderInboxFilters(queue, (filters) => {
+          if (filters.statusFilter !== "follow-up") filters.setStatusFilter("follow-up");
+        }),
+      ),
+      ["fu-needs", "fu-synced"],
+    );
+
+    // Needs-reply is independent: it ignores the follow-up date entirely.
+    assert.deepEqual(
+      ids(
+        renderInboxFilters(queue, (filters) => {
+          if (filters.statusFilter !== "needs-reply") filters.setStatusFilter("needs-reply");
+        }),
+      ),
+      ["fu-needs", "no-fu"],
+    );
+  });
+
   it("combines filters as an intersection", () => {
     assert.deepEqual(
       ids(
@@ -532,4 +569,12 @@ function firstTouchFixture(
     ad_title: null,
     ...overrides,
   };
+}
+
+function followUpConversation(
+  followUpAt: string,
+): NonNullable<MetaInboxQueueDisplayItem["inboxConversation"]> {
+  return { follow_up_at: followUpAt } as unknown as NonNullable<
+    MetaInboxQueueDisplayItem["inboxConversation"]
+  >;
 }
