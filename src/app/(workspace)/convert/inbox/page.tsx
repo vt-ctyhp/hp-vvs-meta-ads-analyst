@@ -1,4 +1,5 @@
 import { SocialInboxClient, type SocialInboxStatus } from "@/components/social-inbox-client";
+import { SmallScreenInboxRedirect } from "@/components/v2/inbox/small-screen-inbox-redirect";
 import { getMissingRequiredEnv, isTruthyEnv } from "@/lib/env";
 import { safeErrorMessage } from "@/lib/error-message";
 import { getPersonalHeaderMetrics } from "@/lib/inbox-metrics-db";
@@ -33,20 +34,26 @@ export default async function InboxPage() {
         ).catch(() => null)
       : Promise.resolve(null),
   ]);
+  // Frontline sales (no dashboard) land here by default; on phone-sized screens
+  // bounce them to the phone-first /m/inbox shell. Dashboard roles stay.
+  const prefersMobileShell = !profile.permissions.includes("view_dashboard");
   return (
-    <SocialInboxClient
-      status={status}
-      initialData={inboxData.data}
-      dataError={inboxData.error}
-      canManageInboxState={profile.permissions.includes("manage_inbox_state")}
-      canSendInboxReply={profile.permissions.includes("send_inbox_reply")}
-      canCreateManagerCoaching={
-        profile.roles.includes("admin") || profile.roles.includes("sales_lead")
-      }
-      metricsHeaderEnabled={metricsHeaderEnabled}
-      headerMetrics={headerMetrics}
-      teamLead={profile.teamLead}
-    />
+    <>
+      {prefersMobileShell ? <SmallScreenInboxRedirect /> : null}
+      <SocialInboxClient
+        status={status}
+        initialData={inboxData.data}
+        dataError={inboxData.error}
+        canManageInboxState={profile.permissions.includes("manage_inbox_state")}
+        canSendInboxReply={profile.permissions.includes("send_inbox_reply")}
+        canCreateManagerCoaching={
+          profile.roles.includes("admin") || profile.roles.includes("sales_lead")
+        }
+        metricsHeaderEnabled={metricsHeaderEnabled}
+        headerMetrics={headerMetrics}
+        teamLead={profile.teamLead}
+      />
+    </>
   );
 }
 

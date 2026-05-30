@@ -6,7 +6,9 @@
  *
  *   - Admin / Marketing / Read-only / Executive → /analyst (then /convert,
  *     /operate as needed).
- *   - Sales → /m/inbox (mobile-equal inbox shell, no room navigation).
+ *   - Sales → /convert/inbox by default (desktop inbox in the Convert room).
+ *     The Convert dashboard stays gated behind view_dashboard; the phone-first
+ *     /m/inbox shell remains available.
  *   - Sales leadership variants (sales_lead, sales_appointment_reviewer,
  *     sales_creative_reviewer) → /analyst so they can see context.
  *   - Diamond / wax / 3D / manufacturing roles without any of the above keep
@@ -35,10 +37,6 @@ export const ROOM_PERMISSIONS: Record<Room, AppPermission> = {
   operate: "view_backfill",
 };
 
-const SALES_LIKE_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
-  "sales",
-]);
-
 export function resolveLandingPath(roles: UserRole[]): string {
   if (roles.length === 0) return "/no-access";
 
@@ -47,14 +45,10 @@ export function resolveLandingPath(roles: UserRole[]): string {
     return ROOM_PATHS.analyst;
   }
 
-  // Sales-frontline lands on the mobile-equal inbox shell with no room nav.
-  if (roles.some((role) => SALES_LIKE_ROLES.has(role))) {
-    return "/m/inbox";
-  }
-
-  // Inbox-permitted roles without dashboard fall through to the mobile inbox.
+  // Inbox-permitted roles without dashboard (frontline sales, etc.) default to
+  // the desktop inbox in the Convert room.
   if (hasPermission(roles, "view_inbox")) {
-    return "/m/inbox";
+    return "/convert/inbox";
   }
 
   return "/no-access";
@@ -69,7 +63,12 @@ export function roomsForRoles(roles: UserRole[]): Room[] {
   ) {
     rooms.push("analyst");
   }
-  if (hasPermission(roles, "view_dashboard")) rooms.push("convert");
+  // Convert holds the desktop inbox; inbox-permitted roles (e.g. frontline
+  // sales) get the room so they can reach /convert/inbox. Per-page gates still
+  // keep the Convert dashboard (view_dashboard) and Review (view_review) out.
+  if (hasPermission(roles, "view_dashboard") || hasPermission(roles, "view_inbox")) {
+    rooms.push("convert");
+  }
   if (
     hasPermission(roles, "view_backfill") ||
     hasPermission(roles, "manage_backfill") ||
@@ -88,6 +87,11 @@ export function firstWorkspaceHref(
     if (permissions.includes("view_dashboard")) return "/analyst";
     if (permissions.includes("view_creative_analysis")) return "/analyst/creative-analysis";
     if (permissions.includes("view_ai_analysis")) return "/analysis";
+  }
+
+  if (rooms.includes("convert")) {
+    if (permissions.includes("view_dashboard")) return "/convert";
+    if (permissions.includes("view_inbox")) return "/convert/inbox";
   }
 
   if (rooms.includes("operate")) {

@@ -36,7 +36,7 @@ export default async function MobileInboxLayout({
   return (
     <div className="min-h-screen text-hp-body">
       <header className="sticky top-0 z-30 border-b border-hp-rule bg-hp-card/90 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-3xl items-center gap-3 px-4">
+        <div className="mx-auto flex h-14 max-w-3xl items-center gap-3 px-4 lg:max-w-7xl lg:px-6">
           <span className="font-[family-name:var(--font-title)] text-2xl font-medium tracking-tight text-hp-ink">
             Inbox
           </span>
@@ -51,7 +51,7 @@ export default async function MobileInboxLayout({
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-3xl px-4 py-4">{children}</main>
+      <main className="mx-auto max-w-3xl px-4 py-4 lg:max-w-7xl lg:px-6">{children}</main>
     </div>
   );
 }

@@ -41,7 +41,8 @@ export default async function ConversationDetailPage({
   const firstComment = history.comments[0] || null;
 
   return (
-    <ConversationDetail
+    <div className="mx-auto max-w-3xl">
+      <ConversationDetail
       conversationId={conversation.id}
       kind={kind}
       platform={conversation.platform}
@@ -54,5 +55,6 @@ export default async function ConversationDetailPage({
       canSend={canSend}
       backHref="/m/inbox"
     />
+    </div>
   );
 }
