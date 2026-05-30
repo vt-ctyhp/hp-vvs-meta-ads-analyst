@@ -32,6 +32,7 @@ import {
   shouldEnrichProfile,
 } from "./meta-messenger-profile.ts";
 import { pickLatestNonEmptySnippet } from "./meta-message-snippet.ts";
+import { socialSyncBoundsForTrigger, type SocialSyncBounds } from "./social-sync-bounds.ts";
 import {
   assertMetaInboxConversationMutationAccess,
   assertMetaInboxOperationalWriteAccess,
@@ -240,6 +241,7 @@ type ConversationSyncInput = {
   page: ManagedPage;
   platform: "facebook" | "instagram";
   params?: Record<string, string>;
+  bounds?: SocialSyncBounds | null;
 };
 
 type SocialSyncMetrics = {
@@ -610,8 +612,9 @@ export async function syncSocialInbox(
 
     await upsertPages(pages);
 
+    const bounds = socialSyncBoundsForTrigger(trigger);
     for (const page of pages) {
-      const pageResult = await syncPage(page);
+      const pageResult = await syncPage(page, bounds);
       metrics.threads += pageResult.threads;
       metrics.messages += pageResult.messages;
       metrics.comments += pageResult.comments;
@@ -2942,7 +2945,7 @@ async function fetchManagedPages() {
     .filter(Boolean) as ManagedPage[];
 }
 
-async function syncPage(page: ManagedPage) {
+async function syncPage(page: ManagedPage, bounds: SocialSyncBounds | null = null) {
   const result = {
     threads: 0,
     messages: 0,
@@ -2953,6 +2956,7 @@ async function syncPage(page: ManagedPage) {
   const facebookMessages = await safeSyncConversations({
     page,
     platform: "facebook",
+    bounds,
   });
   result.threads += facebookMessages.threads;
   result.messages += facebookMessages.messages;
@@ -2962,6 +2966,7 @@ async function syncPage(page: ManagedPage) {
     page,
     platform: "instagram",
     params: { platform: "instagram" },
+    bounds,
   });
   result.threads += instagramMessages.threads;
   result.messages += instagramMessages.messages;
@@ -2990,7 +2995,7 @@ async function safeSyncConversations(input: ConversationSyncInput) {
   }
 }
 
-async function syncConversations({ page, platform, params = {} }: ConversationSyncInput) {
+async function syncConversations({ page, platform, params = {}, bounds = null }: ConversationSyncInput) {
   const now = new Date().toISOString();
   const conversations = await graphPages<JsonRecord>(
     `${page.pageId}/conversations`,
@@ -3001,7 +3006,7 @@ async function syncConversations({ page, platform, params = {} }: ConversationSy
     },
     {
       accessToken: page.accessToken,
-      maxPages: getPositiveIntegerEnv("META_SOCIAL_SYNC_CONVERSATION_PAGES", 50),
+      maxPages: bounds?.conversationPages ?? getPositiveIntegerEnv("META_SOCIAL_SYNC_CONVERSATION_PAGES", 50),
       timeoutMs: 25000,
     },
   );
@@ -3033,7 +3038,7 @@ async function syncConversations({ page, platform, params = {} }: ConversationSy
   );
 
   const threadById = new Map(threadRows.map((thread) => [String(thread.thread_id), thread]));
-  const maxThreads = getPositiveIntegerEnv("META_SOCIAL_SYNC_MESSAGE_THREAD_LIMIT", 1000);
+  const maxThreads = bounds?.messageThreadLimit ?? getPositiveIntegerEnv("META_SOCIAL_SYNC_MESSAGE_THREAD_LIMIT", 1000);
   let messageCount = 0;
   const errors: string[] = [];
 
