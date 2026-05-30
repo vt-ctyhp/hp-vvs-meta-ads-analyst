@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 
 import { AuthorizationError } from "./app-auth.ts";
-import { ConfigurationError, getMetaApiVersion } from "./env";
-import { safeErrorMessage } from "./error-message";
-import { getMetaPermissionHealth } from "./meta";
+import { ConfigurationError, getMetaApiVersion } from "./env.ts";
+import { safeErrorMessage } from "./error-message.ts";
+import { getMetaPermissionHealth } from "./meta.ts";
 import {
   createAdsAnalystClient,
-} from "./ads-analyst-db";
+} from "./ads-analyst-db.ts";
 import {
   activeMetaInboxOnConflict,
   getActiveMetaInboxEnvironment,
@@ -25,7 +25,11 @@ import {
   type MetaInboxThreadHistoryLoader,
 } from "./meta-inbox-normalization.ts";
 import { isCampaignUmbrella } from "./campaign-umbrellas.ts";
-import { fetchMessengerProfile, shouldEnrichProfile } from "./meta-messenger-profile.ts";
+import {
+  fetchMessengerProfile,
+  resolveProfileEnrichmentPatch,
+  shouldEnrichProfile,
+} from "./meta-messenger-profile.ts";
 import { pickLatestNonEmptySnippet } from "./meta-message-snippet.ts";
 import {
   assertMetaInboxConversationMutationAccess,
@@ -3734,25 +3738,19 @@ async function enrichMessengerProfilesForThreads(
       pageTokenCache.set(pageId, page?.accessToken || null);
     }
     const pageAccessToken = pageTokenCache.get(pageId);
-    if (!pageAccessToken) {
-      stats.skipped += 1;
-      continue;
-    }
+    // A missing token only means we can't ask Graph — we may still have a name
+    // from the webhook payload (participant_name), so don't bail out here.
+    const fetched = pageAccessToken
+      ? await fetchMessengerProfile(participantId, pageAccessToken)
+      : null;
 
-    const fetched = await fetchMessengerProfile(participantId, pageAccessToken);
-    if (!fetched) {
-      stats.skipped += 1;
-      continue;
-    }
-
-    const patch: JsonRecord = { last_profile_synced_at: new Date().toISOString() };
-    if (!stringField(profileRow.display_name) && fetched.displayName) {
-      patch.display_name = fetched.displayName;
-    }
-    if (!stringField(profileRow.profile_picture_url) && fetched.profilePictureUrl) {
-      patch.profile_picture_url = fetched.profilePictureUrl;
-    }
-    if (Object.keys(patch).length === 1) {
+    const patch = resolveProfileEnrichmentPatch({
+      currentDisplayName: stringField(profileRow.display_name),
+      currentProfilePictureUrl: stringField(profileRow.profile_picture_url),
+      fetched,
+      fallbackName: stringField(thread.participant_name),
+    });
+    if (!patch.display_name && !patch.profile_picture_url) {
       stats.skipped += 1;
       continue;
     }
@@ -3760,7 +3758,7 @@ async function enrichMessengerProfilesForThreads(
     const update = await updateActiveMetaInboxRows(
       supabase,
       "meta_inbox_customer_profiles",
-      patch,
+      { ...patch, last_profile_synced_at: new Date().toISOString() },
     ).eq("id", String(profileRow.id));
     if (update.error) {
       if (isMissingMetaInboxSchemaError(update.error)) return stats;

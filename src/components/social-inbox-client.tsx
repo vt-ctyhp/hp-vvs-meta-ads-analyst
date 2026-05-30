@@ -6,6 +6,7 @@ import { translateError } from "@/lib/glossary";
 import { buildMetaInboxManagerDashboard } from "@/lib/meta-inbox-manager-dashboard";
 import {
   readConversationTextState,
+  resolveActiveReplyWindowInput,
   writeConversationTextState,
   type ConversationTextState,
 } from "@/lib/social-inbox-ui-freshness";
@@ -147,6 +148,22 @@ export function SocialInboxClient({
   const selectedHistoryState = selectedConversationId
     ? historyByConversationId[selectedConversationId] || IDLE_HISTORY_STATE
     : null;
+  // The bulk inbox snapshot can be stale (it is not re-fetched after load), but
+  // the per-conversation history fetch carries the current conversation row. Use
+  // its reply-window eligibility so the composer matches the live thread it shows.
+  const selectedItemForReply = useMemo(
+    () =>
+      selectedItem
+        ? {
+            ...selectedItem,
+            ...resolveActiveReplyWindowInput(
+              selectedItem,
+              selectedHistoryState?.data?.conversation,
+            ),
+          }
+        : null,
+    [selectedItem, selectedHistoryState?.data?.conversation],
+  );
   const selectedPresenceState = selectedConversationId
     ? presenceByConversationId[selectedConversationId] || IDLE_PRESENCE_STATE
     : IDLE_PRESENCE_STATE;
@@ -487,7 +504,7 @@ export function SocialInboxClient({
             replyComposer={
               <ReplyComposer
                 key={conversationPanelKey(selectedItem, "reply-attempt")}
-                item={selectedItem}
+                item={selectedItemForReply}
                 draft={activeReplyDraft}
                 onDraftChange={(value) => {
                   setReplyDraftByConversationId((current) =>

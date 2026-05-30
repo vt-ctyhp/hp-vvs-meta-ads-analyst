@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 import {
   clearConversationTextState,
   readConversationTextState,
+  resolveActiveReplyWindowInput,
   resolveReplyWindowState,
   timeUntilLabel,
   writeConversationTextState,
@@ -21,6 +22,44 @@ const CONVERSATION_HEADER = readFileSync(
 );
 const DETAILS_DRAWER = readFileSync("src/components/v2/inbox/details-drawer-panel.tsx", "utf8");
 const REPLY_COMPOSER = readFileSync("src/components/v2/inbox/reply-composer.tsx", "utf8");
+
+describe("resolveActiveReplyWindowInput", () => {
+  const NOW = Date.parse("2026-05-29T19:14:00.000Z");
+
+  it("prefers the freshly-loaded conversation eligibility over a stale item", () => {
+    // Reproduces the bug: the page-load snapshot said the window was closed, but
+    // the conversation later received an inbound. The live history fetch carries
+    // the fresh, open eligibility, so the composer must trust that, not the snapshot.
+    const staleItem = {
+      sendEligibility: "expired",
+      replyWindowExpiresAt: null,
+      humanAgentWindowExpiresAt: null,
+    };
+    const freshConversation = {
+      send_eligibility: "standard_reply_allowed",
+      reply_window_expires_at: "2026-05-30T19:10:35.126+00:00",
+      human_agent_window_expires_at: "2026-06-05T19:10:35.126+00:00",
+    };
+
+    const active = resolveActiveReplyWindowInput(staleItem, freshConversation);
+    assert.equal(resolveReplyWindowState(active, NOW).canAttemptSend, true);
+  });
+
+  it("falls back to the item's own eligibility when no fresh conversation is loaded", () => {
+    const staleItem = {
+      sendEligibility: "expired",
+      replyWindowExpiresAt: null,
+      humanAgentWindowExpiresAt: null,
+    };
+    const active = resolveActiveReplyWindowInput(staleItem, null);
+    assert.deepEqual(active, staleItem);
+    assert.equal(resolveReplyWindowState(active, NOW).canAttemptSend, false);
+  });
+
+  it("wires the freshly-loaded conversation into the desktop reply composer", () => {
+    assert.match(DESKTOP_INBOX, /resolveActiveReplyWindowInput/);
+  });
+});
 
 describe("social inbox UI freshness contracts", () => {
   it("keeps text drafts keyed by conversation id", () => {

@@ -90,6 +90,42 @@ export function resolveReplyWindowState(
   };
 }
 
+/**
+ * Pick the reply-window eligibility the composer should trust.
+ *
+ * The bulk inbox snapshot (loaded once at page render) can be stale: a
+ * conversation may have received a new inbound since load, reopening its reply
+ * window server-side. The per-conversation history fetch returns the *current*
+ * conversation row, so when it is present we trust its eligibility over the
+ * snapshot. Falls back to the snapshot when no fresh conversation is loaded yet.
+ */
+export function resolveActiveReplyWindowInput<Eligibility extends string>(
+  fallback: {
+    sendEligibility: Eligibility;
+    replyWindowExpiresAt: string | null;
+    humanAgentWindowExpiresAt: string | null;
+  },
+  freshConversation:
+    | {
+        send_eligibility: Eligibility;
+        reply_window_expires_at: string | null;
+        human_agent_window_expires_at: string | null;
+      }
+    | null
+    | undefined,
+): {
+  sendEligibility: Eligibility;
+  replyWindowExpiresAt: string | null;
+  humanAgentWindowExpiresAt: string | null;
+} {
+  if (!freshConversation) return fallback;
+  return {
+    sendEligibility: freshConversation.send_eligibility,
+    replyWindowExpiresAt: freshConversation.reply_window_expires_at,
+    humanAgentWindowExpiresAt: freshConversation.human_agent_window_expires_at,
+  };
+}
+
 export function resolveReplyWindowDetail(item: ReplyWindowInput, nowMs = Date.now()) {
   const target =
     item.sendEligibility === "standard_reply_allowed"

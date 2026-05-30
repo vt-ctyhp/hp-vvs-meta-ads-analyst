@@ -6,6 +6,7 @@ import {
   parseConversationsParticipantResponse,
   fetchMessengerProfile,
   shouldEnrichProfile,
+  resolveProfileEnrichmentPatch,
 } from "../src/lib/meta-messenger-profile.ts";
 
 describe("Messenger profile parser", () => {
@@ -223,5 +224,93 @@ describe("fetchMessengerProfile", () => {
     assert.equal(await fetchMessengerProfile("", "token", { fetchFn: fakeFetch }), null);
     assert.equal(await fetchMessengerProfile("psid", "", { fetchFn: fakeFetch }), null);
     assert.equal(called, false);
+  });
+});
+
+describe("resolveProfileEnrichmentPatch", () => {
+  it("uses the Graph display name and picture when available", () => {
+    assert.deepEqual(
+      resolveProfileEnrichmentPatch({
+        currentDisplayName: null,
+        currentProfilePictureUrl: null,
+        fetched: { displayName: "Darlene Customer", profilePictureUrl: "https://cdn/x.jpg" },
+        fallbackName: "Perry",
+      }),
+      { display_name: "Darlene Customer", profile_picture_url: "https://cdn/x.jpg" },
+    );
+  });
+
+  it("falls back to the thread participant name when Graph returns no profile", () => {
+    // The real-world bug: a click-to-Messenger lead whose PSID Meta refuses to
+    // resolve. Graph yields nothing, but the webhook already carried a name.
+    assert.deepEqual(
+      resolveProfileEnrichmentPatch({
+        currentDisplayName: null,
+        currentProfilePictureUrl: null,
+        fetched: null,
+        fallbackName: "Perry",
+      }),
+      { display_name: "Perry" },
+    );
+  });
+
+  it("falls back to the thread name when the Graph profile has a picture but no name", () => {
+    assert.deepEqual(
+      resolveProfileEnrichmentPatch({
+        currentDisplayName: null,
+        currentProfilePictureUrl: null,
+        fetched: { displayName: null, profilePictureUrl: "https://cdn/x.jpg" },
+        fallbackName: "Perry",
+      }),
+      { display_name: "Perry", profile_picture_url: "https://cdn/x.jpg" },
+    );
+  });
+
+  it("prefers the Graph name over the thread fallback name", () => {
+    assert.deepEqual(
+      resolveProfileEnrichmentPatch({
+        currentDisplayName: null,
+        currentProfilePictureUrl: null,
+        fetched: { displayName: "Graph Name", profilePictureUrl: null },
+        fallbackName: "Perry",
+      }),
+      { display_name: "Graph Name" },
+    );
+  });
+
+  it("never overwrites an existing display name", () => {
+    assert.deepEqual(
+      resolveProfileEnrichmentPatch({
+        currentDisplayName: "Already Set",
+        currentProfilePictureUrl: "https://cdn/old.jpg",
+        fetched: { displayName: "Graph Name", profilePictureUrl: "https://cdn/new.jpg" },
+        fallbackName: "Perry",
+      }),
+      {},
+    );
+  });
+
+  it("returns an empty patch when no name is available anywhere", () => {
+    assert.deepEqual(
+      resolveProfileEnrichmentPatch({
+        currentDisplayName: null,
+        currentProfilePictureUrl: null,
+        fetched: null,
+        fallbackName: null,
+      }),
+      {},
+    );
+  });
+
+  it("ignores a blank fallback name", () => {
+    assert.deepEqual(
+      resolveProfileEnrichmentPatch({
+        currentDisplayName: null,
+        currentProfilePictureUrl: null,
+        fetched: null,
+        fallbackName: "   ",
+      }),
+      {},
+    );
   });
 });
