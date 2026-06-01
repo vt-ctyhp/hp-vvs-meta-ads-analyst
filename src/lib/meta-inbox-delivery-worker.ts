@@ -1,6 +1,7 @@
 import { createAdsAnalystClient } from "./ads-analyst-db.ts";
 import { getMetaApiVersion } from "./env.ts";
 import { safeErrorMessage } from "./error-message.ts";
+import { resolveInstagramMessagingCredentialsForPage } from "./meta-instagram-messaging.ts";
 import { isLiveSendEnabled } from "./social-reply-send-flags.ts";
 import {
   scopeActiveMetaInboxEnvironment,
@@ -163,7 +164,8 @@ export async function deliverQueuedMetaInboxSendAttempts(
         );
       }
 
-      const send = await postMetaInboxReply(target, managed.accessToken);
+      const accessToken = resolveDeliveryAccessToken(target, managed);
+      const send = await postMetaInboxReply(target, accessToken);
       const sentAt = new Date().toISOString();
       const success = buildMetaInboxDeliverySuccessUpdate(sendingAttempt, {
         metaSendId: send.metaSendId,
@@ -339,17 +341,20 @@ async function insertSendAttemptEvent(
 
 async function postMetaInboxReply(
   target: MetaInboxDeliveryTarget,
-  pageToken: string,
+  accessToken: string,
 ): Promise<{ metaSendId: string }> {
+  const origin = target.graphHost === "instagram"
+    ? "https://graph.instagram.com"
+    : "https://graph.facebook.com";
   const url = new URL(
-    `https://graph.facebook.com/${getMetaApiVersion()}/${target.graphPath.replace(/^\//, "")}`,
+    `${origin}/${getMetaApiVersion()}/${target.graphPath.replace(/^\//, "")}`,
   );
 
   const response = await fetchMetaGraph(url.toString(), {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "Authorization": `Bearer ${pageToken}`,
+      "Authorization": `Bearer ${accessToken}`,
     },
     body: JSON.stringify(target.graphBody),
     cache: "no-store",
@@ -390,6 +395,25 @@ async function postMetaInboxReply(
   }
 
   return { metaSendId };
+}
+
+function resolveDeliveryAccessToken(
+  target: MetaInboxDeliveryTarget,
+  managed: { accessToken: string; igUserId: string | null },
+) {
+  if (target.graphHost !== "instagram") return managed.accessToken;
+
+  const credentials = resolveInstagramMessagingCredentialsForPage({
+    igUserId: managed.igUserId,
+  });
+  if (!credentials) {
+    throw deliveryFailure(
+      "Instagram message delivery requires META_INSTAGRAM_ACCESS_TOKEN for the connected Instagram professional account.",
+      { httpStatus: 403 },
+    );
+  }
+
+  return credentials.accessToken;
 }
 
 async function fetchMetaGraph(url: string, init: RequestInit) {

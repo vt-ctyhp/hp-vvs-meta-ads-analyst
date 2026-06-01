@@ -80,6 +80,11 @@ import {
   isMissingMetaInboxSchemaError,
   normalizeMetaInboxSchemaError,
 } from "./meta-inbox-schema.ts";
+import {
+  buildInstagramGraphUrl,
+  resolveInstagramMessagingCredentialsForPage,
+} from "./meta-instagram-messaging.ts";
+import { pickCustomerParticipant } from "./meta-conversation-participants.ts";
 import { webhookMessageRow as shapeWebhookMessageRow, webhookReferralRow as shapeWebhookReferralRow } from "./meta-webhook-shape.ts";
 export { webhookMessageRow, webhookReferralRow } from "./meta-webhook-shape.ts";
 import {
@@ -242,6 +247,9 @@ type ConversationSyncInput = {
   platform: "facebook" | "instagram";
   params?: Record<string, string>;
   bounds?: SocialSyncBounds | null;
+  accessToken?: string;
+  graphHost?: "facebook" | "instagram";
+  conversationsPath?: string;
 };
 
 type SocialSyncMetrics = {
@@ -2962,12 +2970,7 @@ async function syncPage(page: ManagedPage, bounds: SocialSyncBounds | null = nul
   result.messages += facebookMessages.messages;
   result.errors.push(...facebookMessages.errors);
 
-  const instagramMessages = await safeSyncConversations({
-    page,
-    platform: "instagram",
-    params: { platform: "instagram" },
-    bounds,
-  });
+  const instagramMessages = await syncInstagramConversations(page, bounds);
   result.threads += instagramMessages.threads;
   result.messages += instagramMessages.messages;
   result.errors.push(...instagramMessages.errors);
@@ -2983,6 +2986,27 @@ async function syncPage(page: ManagedPage, bounds: SocialSyncBounds | null = nul
   return result;
 }
 
+async function syncInstagramConversations(page: ManagedPage, bounds: SocialSyncBounds | null) {
+  const credentials = resolveInstagramMessagingCredentialsForPage(page);
+  if (credentials) {
+    return safeSyncConversations({
+      page,
+      platform: "instagram",
+      bounds,
+      accessToken: credentials.accessToken,
+      graphHost: "instagram",
+      conversationsPath: `${credentials.igUserId}/conversations`,
+    });
+  }
+
+  return safeSyncConversations({
+    page,
+    platform: "instagram",
+    params: { platform: "instagram" },
+    bounds,
+  });
+}
+
 async function safeSyncConversations(input: ConversationSyncInput) {
   try {
     return await syncConversations(input);
@@ -2995,17 +3019,27 @@ async function safeSyncConversations(input: ConversationSyncInput) {
   }
 }
 
-async function syncConversations({ page, platform, params = {}, bounds = null }: ConversationSyncInput) {
+async function syncConversations({
+  page,
+  platform,
+  params = {},
+  bounds = null,
+  accessToken,
+  graphHost = "facebook",
+  conversationsPath,
+}: ConversationSyncInput) {
   const now = new Date().toISOString();
+  const token = accessToken || page.accessToken;
   const conversations = await graphPages<JsonRecord>(
-    `${page.pageId}/conversations`,
+    conversationsPath || `${page.pageId}/conversations`,
     {
       ...params,
       fields: "id,updated_time,message_count,unread_count,participants",
       limit: String(getPositiveIntegerEnv("META_SOCIAL_SYNC_CONVERSATION_LIMIT", 25)),
     },
     {
-      accessToken: page.accessToken,
+      accessToken: token,
+      graphHost,
       maxPages: bounds?.conversationPages ?? getPositiveIntegerEnv("META_SOCIAL_SYNC_CONVERSATION_PAGES", 50),
       timeoutMs: 25000,
     },
@@ -3017,7 +3051,10 @@ async function syncConversations({ page, platform, params = {}, bounds = null }:
       .map((conversation) => {
         const threadId = stringField(conversation.id);
         if (!threadId) return null;
-        const customer = pickCustomerParticipant(conversation.participants, page.pageId);
+        const customer = pickCustomerParticipant(conversation.participants, [
+          page.pageId,
+          page.igUserId,
+        ]);
         return {
           platform,
           thread_id: threadId,
@@ -3054,7 +3091,8 @@ async function syncConversations({ page, platform, params = {}, bounds = null }:
           limit: String(getPositiveIntegerEnv("META_SOCIAL_SYNC_MESSAGE_LIMIT", 25)),
         },
         {
-          accessToken: page.accessToken,
+          accessToken: token,
+          graphHost,
           maxPages: 1,
           timeoutMs: 20000,
         },
@@ -3344,10 +3382,15 @@ async function upsertPages(pages: ManagedPage[]) {
 async function graphPages<T>(
   path: string,
   params: Record<string, string | undefined>,
-  options: { accessToken?: string; maxPages?: number; timeoutMs?: number } = {},
+  options: {
+    accessToken?: string;
+    graphHost?: "facebook" | "instagram";
+    maxPages?: number;
+    timeoutMs?: number;
+  } = {},
 ) {
   const data: T[] = [];
-  let nextUrl: string | undefined = graphUrl(path, params, options.accessToken);
+  let nextUrl: string | undefined = graphUrl(path, params, options.accessToken, options.graphHost);
   let page = 0;
 
   while (nextUrl && (!options.maxPages || page < options.maxPages)) {
@@ -3389,7 +3432,12 @@ function graphUrl(
   path: string,
   params: Record<string, string | undefined>,
   accessToken = requireMetaAccessToken(),
+  graphHost: "facebook" | "instagram" = "facebook",
 ) {
+  if (graphHost === "instagram") {
+    return buildInstagramGraphUrl(path, params, accessToken);
+  }
+
   const url = new URL(`https://graph.facebook.com/${getMetaApiVersion()}/${path.replace(/^\//, "")}`);
   url.searchParams.set("access_token", accessToken);
   for (const [key, value] of Object.entries(params)) {
@@ -4546,20 +4594,6 @@ function firstRecord(value: unknown): JsonRecord {
   const data = recordField(value).data;
   const first = Array.isArray(data) ? data[0] : null;
   return isRecord(first) ? first : {};
-}
-
-function pickCustomerParticipant(
-  participants: unknown,
-  pageId: string,
-): { id: string | null; name: string | null } {
-  const participantList = arrayField(recordField(participants).data).filter(isRecord);
-  for (const candidate of participantList) {
-    const id = stringField(candidate.id);
-    if (id && id !== pageId) {
-      return { id, name: stringField(candidate.name) };
-    }
-  }
-  return { id: null, name: null };
 }
 
 function recordField(value: unknown): JsonRecord {

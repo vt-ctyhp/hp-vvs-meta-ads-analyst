@@ -23,6 +23,8 @@ Optional:
 | `OPENAI_FAST_MODEL` | `gpt-5.4-nano` | Fast model for ad-hoc analysis spec generation. |
 | `OPENAI_DEEP_MODEL` | `gpt-5.5` | Deep model for optional ad-hoc analysis interpretation. |
 | `META_API_VERSION` | `v24.0` | Meta Graph API version. |
+| `META_INSTAGRAM_ACCESS_TOKEN` | unset | Optional Instagram User access token for Instagram DM conversation sync and reply delivery through `graph.instagram.com`. Required for current Instagram Messaging API flows. |
+| `META_INSTAGRAM_USER_ID` | unset | Optional Instagram professional account id that owns `META_INSTAGRAM_ACCESS_TOKEN`; prevents applying one IG token to the wrong connected Page. |
 | `META_VVS_AD_ACCOUNT_ID` | unset | Optional VVS ad account id, with or without `act_`. Add when VVS access is ready. |
 | `META_INCREMENTAL_SYNC_DAYS` | `28` | Recent insight window refreshed by regular Meta Ads sync. The default matches Meta's documented point after which Insights no longer change; older stored history remains in Supabase unless an explicit backfill or month re-sync runs. |
 | `META_SYNC_DATE_PRESET` | unset | Legacy preset override for code paths that still opt into Meta `date_preset`; regular sync now uses an explicit recent `time_range`. |

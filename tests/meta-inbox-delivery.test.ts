@@ -41,6 +41,30 @@ describe("Meta inbox delivery worker foundation", () => {
     });
   });
 
+  it("builds an Instagram message send target for the Instagram Graph API", () => {
+    const target = buildMetaInboxDeliveryTarget(
+      conversationFixture({
+        platform: "instagram",
+        source_type: "message_thread",
+        page_id: "page-1",
+        ig_user_id: "ig-1",
+        participant_id: "ig-customer-1",
+        platform_thread_id: "ig-thread-1",
+      }),
+      attemptFixture({ messaging_type: "RESPONSE" }),
+    );
+
+    assert.equal(target.sourceType, "message");
+    assert.equal(target.platform, "instagram");
+    assert.equal(target.pageSelector, "page-1");
+    assert.equal(target.graphHost, "instagram");
+    assert.equal(target.graphPath, "ig-1/messages");
+    assert.deepEqual(target.graphBody, {
+      recipient: { id: "ig-customer-1" },
+      message: { text: "Thanks for reaching out." },
+    });
+  });
+
   it("builds a public comment reply target", () => {
     const target = buildMetaInboxDeliveryTarget(
       conversationFixture({

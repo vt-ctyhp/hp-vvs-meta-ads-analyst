@@ -35,7 +35,7 @@ describe("Meta inbox review regression fixes", () => {
   it("does not send Meta page tokens in Graph API URLs", () => {
     assert.doesNotMatch(DELIVERY_WORKER, /searchParams\.set\("access_token"/);
     assert.doesNotMatch(COMMENT_WORKER, /searchParams\.set\("access_token"/);
-    assert.match(DELIVERY_WORKER, /Authorization": `Bearer \$\{pageToken\}`/);
+    assert.match(DELIVERY_WORKER, /"Authorization": `Bearer \$\{(?:pageToken|accessToken)\}`/);
     assert.match(COMMENT_WORKER, /Authorization": `Bearer \$\{pageToken\}`/);
   });
 

@@ -35,6 +35,7 @@ export type MetaInboxDeliveryConversation = {
 export type MetaInboxDeliveryTarget = {
   sourceType: "message" | "comment";
   platform: "facebook" | "instagram";
+  graphHost: "facebook" | "instagram";
   pageSelector: string;
   sourceId: string;
   participantId: string | null;
@@ -103,14 +104,22 @@ export function buildMetaInboxDeliveryTarget(
       graphBody.messaging_type = attempt.messaging_type || "RESPONSE";
       if (attempt.tag) graphBody.tag = attempt.tag;
     }
+    const graphHost = conversation.platform === "instagram" ? "instagram" : "facebook";
+    const graphPath = conversation.platform === "instagram"
+      ? `${conversation.ig_user_id || ""}/messages`
+      : "me/messages";
+    if (conversation.platform === "instagram" && !conversation.ig_user_id) {
+      throw new Error("Conversation is missing an Instagram user id.");
+    }
 
     return {
       sourceType: "message",
       platform: conversation.platform,
+      graphHost,
       pageSelector,
       sourceId,
       participantId: conversation.participant_id,
-      graphPath: "me/messages",
+      graphPath,
       graphBody,
     };
   }
@@ -121,6 +130,7 @@ export function buildMetaInboxDeliveryTarget(
     return {
       sourceType: "comment",
       platform: conversation.platform,
+      graphHost: "facebook",
       pageSelector,
       sourceId,
       participantId: null,
