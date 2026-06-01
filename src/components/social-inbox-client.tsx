@@ -29,6 +29,7 @@ import { EmptyThreadState } from "./v2/inbox/empty-thread-state";
 import {
   buildQueue,
   conversationPanelKey,
+  IDLE_AI_REPLY_SUGGESTION_STATE,
   IDLE_COMMENT_ACTION_STATE,
   IDLE_CONTACT_METHOD_STATE,
   IDLE_HISTORY_STATE,
@@ -100,6 +101,8 @@ export function SocialInboxClient({
     useState<ConversationTextState>({});
   const [replyInstructionByConversationId, setReplyInstructionByConversationId] =
     useState<ConversationTextState>({});
+  const [replySuggestionIdByConversationId, setReplySuggestionIdByConversationId] =
+    useState<Record<string, string | null>>({});
   const [replyWindowNow, setReplyWindowNow] = useState(() => Date.now());
   const selectedConversationIdRef = useRef<string | null>(null);
   const [historyByConversationId, setHistoryByConversationId] = useState<
@@ -208,6 +211,9 @@ export function SocialInboxClient({
     replyInstructionByConversationId,
     selectedConversationId,
   );
+  const activeReplySuggestionId = selectedConversationId
+    ? replySuggestionIdByConversationId[selectedConversationId] || null
+    : null;
   const selectedHistoryNextCursor = selectedHistoryState?.data?.pageInfo.nextCursor || null;
   const loadConversationHistory = useCallback(
     async (conversationId: string, cursor?: string | null) => {
@@ -375,6 +381,10 @@ export function SocialInboxClient({
     mutations.contactMethodMutationState.conversationId === selectedConversationId
       ? mutations.contactMethodMutationState
       : IDLE_CONTACT_METHOD_STATE;
+  const selectedAiReplySuggestionState =
+    mutations.aiReplySuggestionState.conversationId === selectedConversationId
+      ? mutations.aiReplySuggestionState
+      : IDLE_AI_REPLY_SUGGESTION_STATE;
   const selectedReplyAttemptMutationState =
     mutations.replyAttemptMutationState.conversationId === selectedConversationId
       ? mutations.replyAttemptMutationState
@@ -531,11 +541,34 @@ export function SocialInboxClient({
                   setReplyDraftByConversationId((current) =>
                     writeConversationTextState(current, selectedConversationId, value),
                   );
+                  if (!value.trim() && selectedConversationId) {
+                    setReplySuggestionIdByConversationId((current) => ({
+                      ...current,
+                      [selectedConversationId]: null,
+                    }));
+                  }
                 }}
                 canSendInboxReply={canSendInboxReply}
+                aiSuggestionState={selectedAiReplySuggestionState}
+                aiSuggestionId={activeReplySuggestionId}
                 mutationState={selectedReplyAttemptMutationState}
                 savedReplyMutationState={selectedSavedReplyMutationState}
                 replyWindowNow={replyWindowNow}
+                onSuggestReply={async (conversationId) => {
+                  const result = await mutations.handleAiReplySuggestion(conversationId, {
+                    brand: selectedItemForReply?.brand || null,
+                    language: "auto",
+                    staffGuidance: activeReplyInstruction || null,
+                  });
+                  if (!result) return;
+                  setReplyDraftByConversationId((current) =>
+                    writeConversationTextState(current, conversationId, result.draft),
+                  );
+                  setReplySuggestionIdByConversationId((current) => ({
+                    ...current,
+                    [conversationId]: result.suggestionId,
+                  }));
+                }}
                 onUploadAttachment={mutations.handleAttachmentUpload}
                 onCreateSendAttempt={mutations.handleSendAttemptCreate}
                 onQueueSendAttempt={mutations.handleSendAttemptQueue}

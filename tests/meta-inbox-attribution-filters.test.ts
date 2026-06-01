@@ -228,6 +228,7 @@ function sendAttemptFixture(overrides: Partial<SocialInboxSendAttempt> = {}): So
     id: "send-attempt",
     conversation_id: "conversation",
     reply_text: "Reply",
+    ai_reply_suggestion_id: null,
     approved_by: null,
     approved_at: null,
     status: "approved",

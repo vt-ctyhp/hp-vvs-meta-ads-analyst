@@ -593,6 +593,7 @@ function sendAttemptFixture(overrides: Record<string, unknown> = {}) {
     id: "attempt-1",
     conversation_id: "conv-1",
     reply_text: "Attempt ready.",
+    ai_reply_suggestion_id: null,
     approved_by: "advisor-1",
     approved_at: "2026-05-25T17:00:00.000Z",
     status: "approved",

@@ -34,6 +34,14 @@ const SELECTED_ITEM_DETAIL = readFileSync(
   "utf8",
 );
 const DESKTOP_INBOX_PAGE = readFileSync("src/app/(workspace)/convert/inbox/page.tsx", "utf8");
+const INBOX_SETTINGS_PAGE = readFileSync(
+  "src/app/(workspace)/convert/inbox/settings/page.tsx",
+  "utf8",
+);
+const AI_REPLY_TRAINING_PANEL = readFileSync(
+  "src/components/v2/inbox/ai-reply-training-panel.tsx",
+  "utf8",
+);
 const MOBILE_INBOX_PAGE = readFileSync("src/app/m/inbox/page.tsx", "utf8");
 const MOBILE_INBOX_DETAIL_PAGE = readFileSync("src/app/m/inbox/[conversationId]/page.tsx", "utf8");
 const MOBILE_CONVERSATION_DETAIL = readFileSync(
@@ -64,13 +72,22 @@ describe("social inbox UI contract", () => {
     assert.match(DETAILS_DRAWER, /META_INBOX_SOURCE_CHANNELS/);
   });
 
-  it("keeps active AI reply controls out of the foundation inbox surfaces", () => {
-    const combined = `${DESKTOP_INBOX}\n${MOBILE_COMPOSER}`;
+  it("wires suggested replies through the normalized conversation composer", () => {
+    assert.match(INBOX_MUTATIONS, /\/api\/social-inbox\/suggest-reply/);
+    assert.match(DESKTOP_INBOX, /handleAiReplySuggestion/);
+    assert.match(DESKTOP_INBOX, /activeReplyInstruction/);
+    assert.match(DESKTOP_INBOX, /aiSuggestionId=\{activeReplySuggestionId\}/);
+    assert.match(MOBILE_COMPOSER, /\bSuggest\b/);
+    assert.match(MOBILE_COMPOSER, /aiReplySuggestionId/);
+    assert.doesNotMatch(MOBILE_COMPOSER, /Ask AI/);
+  });
 
-    assert.equal(combined.includes("/api/social-inbox/suggest-reply"), false);
-    assert.equal(combined.includes("Ask AI"), false);
-    assert.equal(combined.includes("Suggest Reply"), false);
-    assert.equal(combined.includes("AI Suggestion"), false);
+  it("surfaces minimal reply training in inbox settings", () => {
+    assert.match(INBOX_SETTINGS_PAGE, /AiReplyTrainingPanel/);
+    assert.match(AI_REPLY_TRAINING_PANEL, /\/api\/social-inbox\/ai-training/);
+    assert.match(AI_REPLY_TRAINING_PANEL, /Draft Test/);
+    assert.match(AI_REPLY_TRAINING_PANEL, /Synthetic example/);
+    assert.match(AI_REPLY_TRAINING_PANEL, /Never claim/);
   });
 
   it("loads selected desktop conversation history through the conversation-specific endpoint", () => {

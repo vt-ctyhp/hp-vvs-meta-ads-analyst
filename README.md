@@ -25,6 +25,8 @@ The ads integration only uses read endpoints. It does not request or use `ads_ma
    vercel env add NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
    vercel env add SUPABASE_SERVICE_ROLE_KEY
    vercel env add OPENAI_API_KEY
+   vercel env add ANTHROPIC_API_KEY
+   vercel env add AI_REPLY_SUGGESTIONS_ENABLED
    vercel env add META_APP_ID
    vercel env add META_APP_SECRET
    vercel env add META_ACCESS_TOKEN

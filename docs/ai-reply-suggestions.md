@@ -1,59 +1,56 @@
 # AI Reply Suggestions
 
-The inbox AI reply system is human-approved only. The model can draft a reply, but it must never send, approve, or modify a customer conversation by itself.
+The inbox reply assistant drafts human-approved customer replies. It never sends a message, approves a send attempt, changes workflow state, or mutates Meta directly.
 
-## V1 Flow
+## Current Flow
 
-1. A dashboard user selects a Facebook/Instagram message thread or comment in `/convert/inbox`; a sales user uses `/m/inbox`.
-2. The app sends the selected source ID, requested language, brand, and optional staff guidance to `POST /api/social-inbox/suggest-reply`.
-3. The server retrieves Supabase context:
-   - selected thread/comment
-   - recent message history
-   - active brand voice prompt by brand and language
-   - existing thread summary when available
-   - matching playbook entries when available
-4. The server calls OpenAI with compact context and asks for one editable draft.
-5. The draft is saved to `ai_reply_suggestions` and inserted into the disabled-send composer for human review.
+1. Sales opens a normalized inbox conversation in `/convert/inbox`.
+2. The composer calls `POST /api/social-inbox/suggest-reply` with `conversationId`, optional brand/language, and optional staff guidance.
+3. The server verifies `send_inbox_reply`, loads all known authorized conversation history through the normalized conversation model, and builds a verbatim transcript.
+4. The server adds only thin business guidance: active prompt profile, disallowed claims, and a few optional training examples. It does not classify the conversation into rigid buckets before prompting.
+5. Anthropic receives a structured-output request and returns one editable draft plus internal strategy metadata.
+6. The server validates the structured output, stores an audit row in `ai_reply_suggestions`, and returns the draft to the composer.
+7. If the human approves/sends that draft, `meta_inbox_send_attempts.ai_reply_suggestion_id` links the final send attempt back to the suggestion.
 
-## Language Handling
+## Configuration
 
-The API accepts `auto`, `en`, or `vi`.
+Reply suggestions stay off until:
 
-- `auto` detects Vietnamese from the latest customer message and recent thread history.
-- `en` uses the English Hung Phat trusted-jeweler voice.
-- `vi` uses the Vietnamese Southern, respectful, role-aware voice with `Dạ`, `ạ`, and safe default pronouns.
+- `AI_REPLY_SUGGESTIONS_ENABLED=true`
+- `ANTHROPIC_API_KEY` is configured
 
-Each language has a compact runtime prompt in `brand_voice_guidelines`. The full guideline is stored for governance, while the runtime prompt is optimized for token use.
+Optional:
 
-## Token Strategy
+- `ANTHROPIC_REPLY_MODEL` defaults to `claude-sonnet-4-5`
+- `ANTHROPIC_REPLY_MAX_TRANSCRIPT_CHARS` defaults to `60000`
 
-The OpenAI call does not receive the whole database. Supabase retrieval is done by the app server, then only useful context is sent:
+## Context Strategy
 
-- current customer message
-- customer name when known
-- last 16 messages, clipped per message
-- stored thread summary or a lightweight heuristic summary for older messages
-- top matching playbook entries
-- compact brand voice prompt
+Default behavior is full known history, verbatim. Most sales conversations are short, so the model sees the actual customer/team turns instead of a summary. If an unusually long transcript exceeds the cap, the server includes the newest verbatim turns and marks the transcript as truncated in `context_used`.
 
-Static instructions are placed before dynamic thread data so prompt caching can help with repeated drafts.
+The prompt profile is intentionally small:
 
-## Future Approved-Examples Loop
+- business context
+- sales guidance
+- tone guidance
+- disallowed claims
 
-V1 creates the tables needed for the learning loop, but does not require approved examples yet.
+Examples are optional calibration data, not canned responses. The model still drafts from the full conversation.
 
-Recommended next phase:
+## Training Loop
 
-1. Track whether a generated draft was inserted, edited, approved, sent, or discarded.
-2. Store the final human-edited version alongside the original draft.
-3. Add approved examples to `reply_playbook_entries` or a dedicated examples table by category:
-   - appointment booking
-   - price inquiry
-   - custom jewelry
-   - cash for gold
-   - product availability
-   - hesitant client follow-up
-4. Retrieve only the most relevant examples for each draft.
-5. Run periodic review to remove weak examples and promote strong ones into playbook guidance.
+`/convert/inbox/settings` includes Suggested Reply Training:
 
-Fine-tuning should wait until there is enough high-quality approved reply data. Prompting plus Supabase retrieval is the V1 default.
+- edit the active prompt profile for HP/VVS
+- answer the training questions directly in business/sales/tone fields
+- create synthetic customer conversations
+- run a draft test against Anthropic
+- save strong synthetic examples with critique and ideal response
+
+Training data lives in:
+
+- `ai_reply_prompt_profiles`
+- `ai_reply_training_examples`
+- `ai_reply_suggestion_feedback`
+
+Fine-tuning is deferred. Prompt profile plus examples is the current default because it is easier to inspect, edit, and roll back.

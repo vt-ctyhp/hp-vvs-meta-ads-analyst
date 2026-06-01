@@ -16,6 +16,8 @@ const MUTATION_ROUTES = [
   "src/app/api/social-inbox/conversations/[conversationId]/presence/route.ts",
   "src/app/api/social-inbox/conversations/[conversationId]/notes/route.ts",
   "src/app/api/social-inbox/conversations/[conversationId]/qa-scorecards/route.ts",
+  "src/app/api/social-inbox/ai-training/route.ts",
+  "src/app/api/social-inbox/suggest-reply/route.ts",
   "src/app/api/social-inbox/saved-replies/route.ts",
 ] as const;
 

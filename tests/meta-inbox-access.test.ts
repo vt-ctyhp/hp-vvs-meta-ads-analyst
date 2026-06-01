@@ -445,6 +445,7 @@ function sendAttempt(id: string, conversationId: string) {
     meta_error_code: null,
     meta_error_subcode: null,
     meta_trace_id: null,
+    ai_reply_suggestion_id: null,
     attempt_count: 0,
     next_retry_at: null,
     last_attempted_at: null,

@@ -31,6 +31,7 @@ import type {
 import {
   IDLE_COMMENT_ACTION_STATE,
   IDLE_CONTACT_METHOD_STATE,
+  IDLE_AI_REPLY_SUGGESTION_STATE,
   IDLE_NOTE_STATE,
   IDLE_QA_SCORECARD_STATE,
   IDLE_REPLY_ATTEMPT_STATE,
@@ -51,6 +52,7 @@ import {
   upsertQaScorecard,
   upsertSavedReply,
   upsertSendAttempt,
+  type AiReplySuggestionLoadState,
   type CommentActionMutationLoadState,
   type ContactMethodMutationLoadState,
   type NoteMutationLoadState,
@@ -73,6 +75,7 @@ type UseSocialInboxMutationsInput = {
 export type SocialInboxMutationController = {
   workflowMutationState: WorkflowMutationLoadState;
   contactMethodMutationState: ContactMethodMutationLoadState;
+  aiReplySuggestionState: AiReplySuggestionLoadState;
   replyAttemptMutationState: ReplyAttemptMutationLoadState;
   commentActionMutationState: CommentActionMutationLoadState;
   savedReplyMutationState: SavedReplyMutationLoadState;
@@ -85,6 +88,10 @@ export type SocialInboxMutationController = {
     input: MetaInboxContactMethodMutationInput,
   ) => void;
   handleAttachmentUpload: (conversationId: string, file: File) => Promise<SocialInboxUploadedAttachment>;
+  handleAiReplySuggestion: (
+    conversationId: string,
+    input: AiReplySuggestionInput,
+  ) => Promise<AiReplySuggestionResult | null>;
   handleSendAttemptCreate: (conversationId: string, input: MetaInboxSendAttemptInput) => Promise<void>;
   handleSendAttemptRetry: (conversationId: string, input: MetaInboxRetrySendAttemptInput) => void;
   handleSendAttemptQueue: (conversationId: string, input: MetaInboxQueueSendAttemptInput) => void;
@@ -103,6 +110,22 @@ export type SocialInboxMutationController = {
   handleSync: () => Promise<void>;
 };
 
+export type AiReplySuggestionInput = {
+  brand?: string | null;
+  language?: "auto" | "en" | "vi" | null;
+  staffGuidance?: string | null;
+};
+
+export type AiReplySuggestionResult = {
+  suggestionId: string;
+  draft: string;
+  strategy: string;
+  nextBestAction: string;
+  confidence: string;
+  riskFlags: string[];
+  toneNotes: string[];
+};
+
 export function useSocialInboxMutations({
   setInboxData,
   setReplyDraftByConversationId,
@@ -115,6 +138,8 @@ export function useSocialInboxMutations({
     useState<WorkflowMutationLoadState>(IDLE_WORKFLOW_STATE);
   const [contactMethodMutationState, setContactMethodMutationState] =
     useState<ContactMethodMutationLoadState>(IDLE_CONTACT_METHOD_STATE);
+  const [aiReplySuggestionState, setAiReplySuggestionState] =
+    useState<AiReplySuggestionLoadState>(IDLE_AI_REPLY_SUGGESTION_STATE);
   const [replyAttemptMutationState, setReplyAttemptMutationState] =
     useState<ReplyAttemptMutationLoadState>(IDLE_REPLY_ATTEMPT_STATE);
   const [commentActionMutationState, setCommentActionMutationState] =
@@ -321,6 +346,56 @@ export function useSocialInboxMutations({
       }
 
       return payload.attachment;
+    },
+    [],
+  );
+
+  const handleAiReplySuggestion = useCallback(
+    async (
+      conversationId: string,
+      input: AiReplySuggestionInput,
+    ): Promise<AiReplySuggestionResult | null> => {
+      setAiReplySuggestionState({
+        conversationId,
+        suggestionId: null,
+        status: "loading",
+        message: "Drafting suggested reply...",
+      });
+
+      try {
+        const response = await fetch("/api/social-inbox/suggest-reply", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conversationId,
+            ...input,
+          }),
+        });
+        const payload = (await response.json()) as AiReplySuggestionResult | { error?: string; reason?: string };
+        if (!response.ok || !("suggestionId" in payload)) {
+          const errorPayload = payload as { error?: string; reason?: string };
+          const reason = typeof errorPayload.reason === "string" ? errorPayload.reason : null;
+          throw new Error(
+            errorPayload.error || reason || "Could not draft suggested reply.",
+          );
+        }
+
+        setAiReplySuggestionState({
+          conversationId,
+          suggestionId: payload.suggestionId,
+          status: "ready",
+          message: `Suggested draft ready. Strategy: ${payload.nextBestAction.replaceAll("_", " ")}.`,
+        });
+        return payload;
+      } catch (error) {
+        setAiReplySuggestionState({
+          conversationId,
+          suggestionId: null,
+          status: "error",
+          message: translateError(error),
+        });
+        return null;
+      }
     },
     [],
   );
@@ -774,6 +849,7 @@ export function useSocialInboxMutations({
   return {
     workflowMutationState,
     contactMethodMutationState,
+    aiReplySuggestionState,
     replyAttemptMutationState,
     commentActionMutationState,
     savedReplyMutationState,
@@ -782,6 +858,7 @@ export function useSocialInboxMutations({
     handleWorkflowUpdate,
     handleContactMethodMutation,
     handleAttachmentUpload,
+    handleAiReplySuggestion,
     handleSendAttemptCreate,
     handleSendAttemptRetry,
     handleSendAttemptQueue,
