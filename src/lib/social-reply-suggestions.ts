@@ -1,8 +1,32 @@
-import OpenAI from "openai";
-
-import { createAdsAnalystClient, withAdsAnalystEnvironment } from "./ads-analyst-db";
-import { ConfigurationError, getOpenAIModel } from "./env";
-import { inferSocialBrand, type BrandLabel } from "./social-brand";
+import { createAdsAnalystClient } from "./ads-analyst-db.ts";
+import {
+  getAnthropicReplyMaxTranscriptChars,
+  getAnthropicReplyModel,
+  isAiReplySuggestionsEnabled,
+} from "./env.ts";
+import type { MetaInboxAccessProfile } from "./meta-inbox-access.ts";
+import { withActiveMetaInboxEnvironment } from "./meta-inbox-environment.ts";
+import { inferSocialBrand, type BrandLabel } from "./social-brand.ts";
+import {
+  getSocialInboxConversationKnownHistory,
+  type SocialInboxConversation,
+  type SocialInboxConversationHistory,
+} from "./social-inbox.ts";
+import {
+  createAnthropicReplySuggestion,
+  type AnthropicReplyClient,
+} from "./social-reply-anthropic.ts";
+import {
+  buildSocialReplyContext,
+  type SocialReplyExample,
+  type SocialReplyPromptProfile,
+  type SocialReplyRequestedLanguage,
+} from "./social-reply-context.ts";
+import type {
+  SocialReplyConfidence,
+  SocialReplyLanguage,
+  SocialReplyNextBestAction,
+} from "./social-reply-output-schema.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -16,7 +40,7 @@ type DynamicSingleResult = {
   error: Error | null;
 };
 
-type DynamicQuery = Promise<DynamicQueryResult> & {
+type DynamicQuery = PromiseLike<DynamicQueryResult> & {
   select: (columns: string) => DynamicQuery;
   eq: (column: string, value: string | number | boolean | null) => DynamicQuery;
   order: (
@@ -31,424 +55,243 @@ type DynamicQuery = Promise<DynamicQueryResult> & {
 type DynamicTable = {
   select: (columns: string) => DynamicQuery;
   insert: (row: JsonRecord) => DynamicQuery;
-  upsert: (row: JsonRecord, options: { onConflict: string }) => DynamicQuery;
 };
 
 type DynamicSupabaseClient = {
   from: (table: string) => DynamicTable;
 };
 
-type ReplyLanguage = "auto" | "en" | "vi";
-type ResolvedLanguage = "en" | "vi";
-type SocialPlatform = "facebook" | "instagram";
-type SourceType = "message" | "comment";
-
-type MessageContext = {
-  id: string;
-  messageId: string;
-  direction: "client" | "team" | "unknown";
-  sender: string | null;
-  body: string;
-  sentAt: string | null;
-};
-
-type PlaybookEntry = {
-  id: string;
-  category: string;
-  answerGuidance: string;
-  source: string | null;
-  score: number;
-};
-
 export type SuggestReplyInput = {
-  platform: SocialPlatform;
-  sourceType: SourceType;
-  sourceId: string;
+  conversationId: string;
   brand?: BrandLabel;
-  language?: ReplyLanguage;
-  instruction?: string | null;
+  language?: SocialReplyRequestedLanguage;
+  staffGuidance?: string | null;
 };
 
 export type SuggestReplyResult = {
   suggestionId: string;
   draft: string;
-  language: ResolvedLanguage;
+  provider: "anthropic";
   model: string;
-  contextUsed: {
-    brand: BrandLabel;
-    sourceType: SourceType;
-    platform: SocialPlatform;
-    messageCount: number;
-    includedMessages: number;
-    omittedMessages: number;
-    usedThreadSummary: boolean;
-    playbookEntries: number;
-    brandVoiceVersion: number | null;
-    customerName: string | null;
-  };
+  language: SocialReplyLanguage;
+  strategy: string;
+  nextBestAction: SocialReplyNextBestAction;
+  confidence: SocialReplyConfidence;
+  riskFlags: string[];
   toneNotes: string[];
+  contextUsed: ReturnType<typeof buildSocialReplyContext>["contextUsed"];
 };
 
-const MAX_RECENT_MESSAGES = 16;
-const MAX_MESSAGE_CHARS = 900;
-const MAX_PLAYBOOK_ENTRIES = 4;
-
-const FALLBACK_RUNTIME_PROMPTS: Record<"en" | "vi", string> = {
-  en: "Write as Hung Phat's trusted personal jeweler: warm, confident, concise, and gently leading the client forward. Match the client's energy and approximate message length. Use we, our team, or our showroom. Acknowledge the client's message before guiding. Do not use urgency tactics, cheap promo language, corporate filler, or emojis unless the client used one first. Prefer piece, price, showroom, consultation, take home, and create. Never invent facts. Never auto-send; produce one editable human-approved draft. End with a natural question when appropriate.",
-  vi: 'Viết bằng tiếng Việt miền Nam như Hưng Phát: lễ phép, ấm áp, thân tình, tự tin, và nhẹ nhàng dẫn khách tới bước tiếp theo. Mặc định gọi khách "anh/chị" và tự xưng "em"; nếu ngữ cảnh rõ khách lớn tuổi thì dùng "cô/chú/bác" và giữ vai vế nhất quán. Mở đầu bằng "Dạ" khi phù hợp, dùng "ạ" tự nhiên. Xác nhận ý khách trước rồi mới trả lời/gợi ý. Xưng "Hưng Phát", "bên em", hoặc "tiệm em"; tránh "chúng tôi" trong tin nhắn. Không dùng "quý khách", văn ngân hàng, tiếng Anh chen vào, áp lực gấp, hoặc từ khuyến mãi rẻ tiền. Không tự bịa thông tin. Không tự gửi; chỉ tạo một bản nháp để người dùng sửa và duyệt. Kết thúc bằng một câu hỏi nhẹ khi hợp lý.',
+export type SuggestReplyOptions = {
+  history?: SocialInboxConversationHistory | null;
+  anthropicClient?: AnthropicReplyClient;
+  supabase?: DynamicSupabaseClient;
 };
 
-export async function suggestSocialReply(input: SuggestReplyInput): Promise<SuggestReplyResult> {
-  const sourceId = input.sourceId.trim();
-  if (!sourceId) throw new Error("Source ID is required.");
+export async function suggestSocialReply(
+  input: SuggestReplyInput,
+  profile: MetaInboxAccessProfile,
+  options: SuggestReplyOptions = {},
+): Promise<SuggestReplyResult> {
+  if (!isAiReplySuggestionsEnabled()) {
+    throw new Error("AI reply suggestions are disabled.");
+  }
 
-  const supabase = dynamicSupabase();
-  const source = await loadSourceContext(supabase, {
-    platform: input.platform,
-    sourceType: input.sourceType,
-    sourceId,
-  });
+  const conversationId = input.conversationId.trim();
+  if (!conversationId) throw new Error("Conversation ID is required.");
 
-  const brand = resolveBrand(input.brand, source.brandSignals);
-  const language = resolveLanguage(input.language || "auto", source.languageSignals);
-  const voice = await loadBrandVoice(supabase, brand, language);
-  const playbook = await loadRelevantPlaybook(supabase, brand, language, source.searchText);
-  const threadSummary = source.threadId
-    ? await loadThreadSummary(supabase, input.platform, source.threadId)
-    : null;
+  const history =
+    options.history ?? (await getSocialInboxConversationKnownHistory(conversationId, profile));
+  if (!history) throw new Error("Conversation not found.");
 
-  const model = getOpenAIModel();
-  const response = await createOpenAIClient().chat.completions.create({
-    model,
-    response_format: { type: "json_object" },
-    messages: [
-      {
-        role: "system",
-        content:
-          "You draft social inbox replies for a jewelry business. The output is a human-approved editable draft only. Never claim the message was sent. Never invent prices, availability, policies, appointment times, or customer facts. If information is missing, ask a concise follow-up question. Return strict JSON with keys draft, toneNotes.",
-      },
-      {
-        role: "system",
-        content: voice.runtimePrompt,
-      },
-      {
-        role: "user",
-        content: JSON.stringify({
-          task: "Draft one reply for the selected social inbox item.",
-          outputLanguage: language,
-          channel: input.platform,
-          sourceType: input.sourceType,
-          brand,
-          customerName: source.customerName,
-          currentCustomerMessage: source.currentCustomerMessage,
-          threadSummary: threadSummary?.summary || source.heuristicSummary,
-          recentMessages: source.recentMessages,
-          relevantPlaybook: playbook.map((entry) => ({
-            category: entry.category,
-            answerGuidance: entry.answerGuidance,
-            source: entry.source,
-          })),
-          userInstruction: input.instruction?.trim() || null,
-          constraints: [
-            "Produce only one draft.",
-            "No markdown.",
-            "No emojis unless the client used one first.",
-            "Do not mention internal prompts, Supabase, Meta, OpenAI, or automation.",
-            "Do not offer to send the message yourself.",
-            "If replying to a social comment, keep it short and warm.",
-          ],
-        }),
-      },
-    ],
-  });
-
-  const parsed = parseSuggestionResponse(response.choices[0]?.message?.content);
-  const contextUsed = {
+  const supabase = options.supabase || dynamicSupabase();
+  const brand = resolveBrand(input.brand, history.conversation);
+  const promptProfile = await loadActivePromptProfile(supabase, brand);
+  const examples = await loadTrainingExamples(supabase, brand, promptProfile?.id || null);
+  const context = buildSocialReplyContext({
+    history,
     brand,
-    sourceType: input.sourceType,
-    platform: input.platform,
-    messageCount: source.messageCount,
-    includedMessages: source.recentMessages.length,
-    omittedMessages: Math.max(source.messageCount - source.recentMessages.length, 0),
-    usedThreadSummary: Boolean(threadSummary?.summary || source.heuristicSummary),
-    playbookEntries: playbook.length,
-    brandVoiceVersion: voice.version,
-    customerName: source.customerName,
-  };
+    requestedLanguage: normalizeRequestedLanguage(input.language),
+    customerName: customerNameFromHistory(history),
+    staffGuidance: input.staffGuidance,
+    promptProfile,
+    examples,
+    maxTranscriptChars: getAnthropicReplyMaxTranscriptChars(),
+  });
 
+  const model = getAnthropicReplyModel();
+  const anthropic = await createAnthropicReplySuggestion({
+    context,
+    model,
+    client: options.anthropicClient,
+  });
+  const output = anthropic.output;
+  const source = sourceColumnsForConversation(history.conversation);
   const insert = await supabase
     .from("ai_reply_suggestions")
-    .insert(withAdsAnalystEnvironment({
-      platform: input.platform,
-      source_type: input.sourceType,
-      thread_id: input.sourceType === "message" ? source.threadId : null,
-      comment_id: input.sourceType === "comment" ? sourceId : null,
+    .insert(withActiveMetaInboxEnvironment({
+      platform: history.conversation.platform,
+      source_type: source.sourceType,
+      thread_id: source.threadId,
+      comment_id: source.commentId,
+      conversation_id: history.conversation.id,
       brand,
-      language,
-      draft: parsed.draft,
+      language: output.suggestedLanguage === "mixed" ? "en" : output.suggestedLanguage,
+      draft: output.draft,
       status: "drafted",
-      context_used: contextUsed,
-      model,
-      prompt_version: voice.version,
+      context_used: context.contextUsed,
+      request_context: {
+        provider: "anthropic",
+        staffGuidancePresent: Boolean(input.staffGuidance?.trim()),
+        transcriptTruncated: context.transcriptTruncated,
+        omittedTranscriptItems: context.omittedTranscriptItems,
+      },
+      provider: "anthropic",
+      model: anthropic.model,
+      prompt_profile_id: promptProfile?.id || null,
+      prompt_version: promptProfile?.version || null,
+      strategy: output.strategy,
+      next_best_action: output.nextBestAction,
+      confidence: output.confidence,
+      risk_flags: output.riskFlags,
+      tone_notes: output.toneNotes,
+      usage: anthropic.usage,
     }))
     .select("id")
     .single();
 
   if (insert.error) throw insert.error;
+  const suggestionId = stringField(insert.data?.id);
+  if (!suggestionId) throw new Error("Reply suggestion did not return an ID.");
 
   return {
-    suggestionId: String(insert.data?.id || ""),
-    draft: parsed.draft,
-    language,
-    model,
-    contextUsed,
-    toneNotes: parsed.toneNotes,
+    suggestionId,
+    draft: output.draft,
+    provider: "anthropic",
+    model: anthropic.model,
+    language: output.suggestedLanguage,
+    strategy: output.strategy,
+    nextBestAction: output.nextBestAction,
+    confidence: output.confidence,
+    riskFlags: output.riskFlags,
+    toneNotes: output.toneNotes,
+    contextUsed: context.contextUsed,
   };
 }
 
-async function loadSourceContext(
-  supabase: DynamicSupabaseClient,
-  input: { platform: SocialPlatform; sourceType: SourceType; sourceId: string },
-) {
-  if (input.sourceType === "comment") {
-    const comment = await supabase
-      .from("meta_social_comments")
-      .select("*")
-      .eq("platform", input.platform)
-      .eq("comment_id", input.sourceId)
-      .maybeSingle();
-    if (comment.error) throw comment.error;
-    if (!comment.data) throw new Error("Comment not found.");
-
-    const body = stringField(comment.data.body) || "";
-    return {
-      threadId: null,
-      customerName: stringField(comment.data.author_name),
-      currentCustomerMessage: body,
-      recentMessages: [] as MessageContext[],
-      messageCount: 0,
-      heuristicSummary: null as string | null,
-      searchText: [body, stringField(comment.data.author_name)].filter(Boolean).join("\n"),
-      brandSignals: {
-        pageId: stringField(comment.data.page_id),
-        igUserId: stringField(comment.data.ig_user_id),
-      },
-      languageSignals: [body],
-    };
-  }
-
-  const thread = await supabase
-    .from("meta_social_threads")
-    .select("*")
-    .eq("platform", input.platform)
-    .eq("thread_id", input.sourceId)
-    .maybeSingle();
-  if (thread.error) throw thread.error;
-  if (!thread.data) throw new Error("Thread not found.");
-
-  const messages = await supabase
-    .from("meta_social_messages")
-    .select("*")
-    .eq("platform", input.platform)
-    .eq("thread_id", input.sourceId)
-    .order("sent_at", { ascending: false, nullsFirst: false })
-    .limit(40);
-  if (messages.error) throw messages.error;
-
-  const allMessages = rows(messages.data)
-    .map(mapMessageContext)
-    .sort((a, b) => String(a.sentAt || "").localeCompare(String(b.sentAt || "")));
-  const recentMessages = allMessages.slice(-MAX_RECENT_MESSAGES);
-  const currentCustomerMessage =
-    [...allMessages].reverse().find((message) => message.direction === "client")?.body ||
-    stringField(thread.data.snippet) ||
-    "";
-
-  return {
-    threadId: input.sourceId,
-    customerName:
-      stringField(thread.data.participant_name) ||
-      [...allMessages].reverse().find((message) => message.direction === "client")?.sender ||
-      null,
-    currentCustomerMessage,
-    recentMessages,
-    messageCount: allMessages.length,
-    heuristicSummary: buildHeuristicSummary(allMessages, recentMessages.length),
-    searchText: allMessages.map((message) => message.body).join("\n"),
-    brandSignals: {
-      pageId: stringField(thread.data.page_id),
-      igUserId: stringField(thread.data.ig_user_id),
-    },
-    languageSignals: [
-      currentCustomerMessage,
-      ...recentMessages.map((message) => message.body),
-    ],
-  };
-}
-
-async function loadBrandVoice(
+async function loadActivePromptProfile(
   supabase: DynamicSupabaseClient,
   brand: BrandLabel,
-  language: ResolvedLanguage,
-) {
-  const lookupBrand = brand === "VVS" ? "VVS" : "HP";
+): Promise<SocialReplyPromptProfile | null> {
   const result = await supabase
-    .from("brand_voice_guidelines")
+    .from("ai_reply_prompt_profiles")
     .select("*")
-    .eq("brand", lookupBrand)
-    .eq("language", language)
+    .eq("brand", brand)
     .eq("active", true)
     .order("version", { ascending: false })
     .limit(1);
-
   if (result.error) throw result.error;
+
   const row = rows(result.data)[0];
+  if (!row) return null;
 
   return {
-    runtimePrompt: stringField(row?.runtime_prompt) || FALLBACK_RUNTIME_PROMPTS[language],
-    version: numberField(row?.version),
+    id: stringField(row.id),
+    brand,
+    name: stringField(row.name) || `${brand} reply profile`,
+    version: numberField(row.version),
+    businessContext: stringField(row.business_context) || "",
+    salesGuidance: stringField(row.sales_guidance) || "",
+    toneGuidance: stringField(row.tone_guidance) || "",
+    disallowedClaims: stringArray(row.disallowed_claims),
   };
 }
 
-async function loadRelevantPlaybook(
+async function loadTrainingExamples(
   supabase: DynamicSupabaseClient,
   brand: BrandLabel,
-  language: ResolvedLanguage,
-  searchText: string,
-): Promise<PlaybookEntry[]> {
-  const lookupBrand = brand === "VVS" ? "VVS" : "HP";
-  const result = await supabase
-    .from("reply_playbook_entries")
+  promptProfileId: string | null,
+): Promise<SocialReplyExample[]> {
+  const query = supabase
+    .from("ai_reply_training_examples")
     .select("*")
-    .eq("brand", lookupBrand)
-    .eq("language", language)
+    .eq("brand", brand)
     .eq("active", true)
-    .limit(50);
-
+    .order("updated_at", { ascending: false })
+    .limit(8);
+  const result = promptProfileId ? await query.eq("prompt_profile_id", promptProfileId) : await query;
   if (result.error) throw result.error;
 
-  const normalized = searchText.toLowerCase();
   return rows(result.data)
-    .map((row) => {
-      const keywords = arrayField(row.trigger_keywords)
-        .filter((value): value is string => typeof value === "string")
-        .map((value) => value.toLowerCase());
-      const score = keywords.reduce(
-        (total, keyword) => total + (keyword && normalized.includes(keyword) ? 1 : 0),
-        0,
-      );
-      return {
-        id: String(row.id),
-        category: String(row.category || "General"),
-        answerGuidance: stringField(row.answer_guidance) || "",
-        source: stringField(row.source),
-        score,
-      };
-    })
-    .filter((entry) => entry.answerGuidance && entry.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, MAX_PLAYBOOK_ENTRIES);
-}
-
-async function loadThreadSummary(
-  supabase: DynamicSupabaseClient,
-  platform: SocialPlatform,
-  threadId: string,
-) {
-  const result = await supabase
-    .from("social_thread_summaries")
-    .select("*")
-    .eq("platform", platform)
-    .eq("thread_id", threadId)
-    .maybeSingle();
-  if (result.error) throw result.error;
-  if (!result.data) return null;
-  return {
-    summary: stringField(result.data.summary),
-    messageCount: numberField(result.data.message_count) || 0,
-  };
-}
-
-function mapMessageContext(row: JsonRecord): MessageContext {
-  const body = clipText(stringField(row.body) || "Attachment or unsupported message");
-  return {
-    id: String(row.id),
-    messageId: String(row.message_id),
-    direction:
-      row.direction === "inbound" ? "client" : row.direction === "outbound" ? "team" : "unknown",
-    sender: stringField(row.sender_name),
-    body,
-    sentAt: stringField(row.sent_at),
-  };
-}
-
-function buildHeuristicSummary(messages: MessageContext[], includedCount: number) {
-  const omitted = messages.slice(0, Math.max(messages.length - includedCount, 0));
-  if (omitted.length < 8) return null;
-
-  const first = omitted[0]?.sentAt || "unknown start";
-  const last = omitted[omitted.length - 1]?.sentAt || "unknown end";
-  const notable = omitted
-    .filter((message) => message.body && message.body !== "Attachment or unsupported message")
-    .slice(-4)
-    .map((message) => `${message.direction}: ${clipText(message.body, 220)}`);
-
-  return [
-    `${omitted.length} older message(s) from ${first} to ${last} were summarized heuristically to control token usage.`,
-    ...notable,
-  ].join("\n");
+    .map((row) => ({
+      id: String(row.id || ""),
+      title: stringField(row.title) || "Training example",
+      conversation: trainingConversationText(row.conversation_messages),
+      idealResponse: stringField(row.ideal_response) || "",
+      critique: stringField(row.critique),
+    }))
+    .filter((example) => example.conversation && example.idealResponse)
+    .slice(0, 5);
 }
 
 function resolveBrand(
   inputBrand: BrandLabel | undefined,
-  signals: { pageId: string | null; igUserId: string | null },
+  conversation: SocialInboxConversation,
 ): BrandLabel {
-  if (inputBrand === "HP" || inputBrand === "VVS") return inputBrand;
-  const inferred = inferSocialBrand(signals.pageId, signals.igUserId);
+  if (inputBrand === "HP" || inputBrand === "VVS" || inputBrand === "Unassigned") {
+    return inputBrand;
+  }
+  const inferred = inferSocialBrand(conversation.page_id, conversation.ig_user_id);
   return inferred === "Unassigned" ? "HP" : inferred;
 }
 
-function resolveLanguage(input: ReplyLanguage, values: string[]): ResolvedLanguage {
-  if (input === "en" || input === "vi") return input;
-  const joined = values.filter(Boolean).join("\n");
-  return looksVietnamese(joined) ? "vi" : "en";
-}
-
-function looksVietnamese(value: string) {
-  return /[ăâđêôơưáàảãạắằẳẵặấầẩẫậéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ]/i.test(value) ||
-    /\b(dạ|anh|chị|em|cô|chú|bác|tiệm|mình|nhẫn|vàng|kim cương|giá|ghé|nha|ạ)\b/i.test(value);
-}
-
-function parseSuggestionResponse(content: string | null | undefined) {
-  if (!content) throw new Error("OpenAI returned an empty suggestion.");
-  let parsed: JsonRecord;
-  try {
-    parsed = JSON.parse(content) as JsonRecord;
-  } catch {
-    parsed = { draft: content };
+function sourceColumnsForConversation(conversation: SocialInboxConversation) {
+  if (conversation.source_type === "public_comment") {
+    return {
+      sourceType: "comment",
+      threadId: null,
+      commentId: conversation.source_id,
+    };
   }
 
-  const draft = stringField(parsed.draft)?.trim();
-  if (!draft) throw new Error("OpenAI returned a blank draft.");
-
   return {
-    draft,
-    toneNotes: arrayField(parsed.toneNotes)
-      .filter((note): note is string => typeof note === "string")
-      .slice(0, 5),
+    sourceType: "message",
+    threadId: conversation.platform_thread_id || conversation.source_id,
+    commentId: null,
   };
+}
+
+function customerNameFromHistory(history: SocialInboxConversationHistory) {
+  const latestCustomerMessage = [...history.messages]
+    .reverse()
+    .find((message) => message.direction === "inbound" && message.sender_name);
+  if (latestCustomerMessage?.sender_name) return latestCustomerMessage.sender_name;
+  const latestComment = [...history.comments].reverse().find((comment) => comment.author_name);
+  return latestComment?.author_name || null;
+}
+
+function normalizeRequestedLanguage(value: unknown): SocialReplyRequestedLanguage {
+  return value === "en" || value === "vi" || value === "auto" ? value : "auto";
+}
+
+function trainingConversationText(value: unknown) {
+  if (typeof value === "string") return value.trim();
+  if (!Array.isArray(value)) return "";
+
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") return "";
+      const record = item as Record<string, unknown>;
+      const speaker = stringField(record.speaker) || stringField(record.role) || "Customer";
+      const body = stringField(record.body) || stringField(record.text) || "";
+      return body ? `${speaker}: ${body}` : "";
+    })
+    .filter(Boolean)
+    .join("\n");
 }
 
 function dynamicSupabase() {
   return createAdsAnalystClient("web") as unknown as DynamicSupabaseClient;
-}
-
-function createOpenAIClient() {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new ConfigurationError("Missing OPENAI_API_KEY", ["OPENAI_API_KEY"]);
-  }
-  return new OpenAI({ apiKey });
 }
 
 function rows(data: JsonRecord[] | null | undefined) {
@@ -463,12 +306,11 @@ function numberField(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function arrayField(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
-function clipText(value: string, maxChars = MAX_MESSAGE_CHARS) {
-  const normalized = value.replace(/\s+\n/g, "\n").trim();
-  if (normalized.length <= maxChars) return normalized;
-  return `${normalized.slice(0, maxChars - 1).trim()}...`;
+function stringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter(
+        (item): item is string =>
+          typeof item === "string" && item.trim().length > 0,
+      )
+    : [];
 }

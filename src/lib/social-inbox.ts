@@ -408,6 +408,7 @@ export type SocialInboxSendAttempt = {
   id: string;
   conversation_id: string;
   reply_text: string;
+  ai_reply_suggestion_id: string | null;
   approved_by: string | null;
   approved_at: string | null;
   status: MetaInboxSendAttemptStatus;
@@ -541,6 +542,7 @@ export type MetaInboxSendAttemptInput = {
   replyText?: string | null;
   idempotencyKey?: string | null;
   attachmentIds?: string[] | null;
+  aiReplySuggestionId?: string | null;
 };
 
 export type MetaInboxAttachmentUploadInput = {
@@ -890,6 +892,45 @@ export async function getSocialInboxConversationHistory(
   );
 }
 
+export async function getSocialInboxConversationKnownHistory(
+  conversationId: string,
+  profile: MetaInboxAccessProfile,
+): Promise<SocialInboxConversationHistory | null> {
+  const supabase = dynamicSupabase("web");
+  const queueAccess = await resolveSocialInboxQueueAccess(supabase, profile);
+  const conversationResult = await selectActiveMetaInboxRows(
+    supabase,
+    "meta_inbox_conversations",
+  )
+    .eq("id", conversationId)
+    .limit(1);
+  if (conversationResult.error) throw normalizeMetaInboxSchemaError(conversationResult.error);
+
+  const conversationRow = rows<JsonRecord>(conversationResult.data)[0];
+  if (!conversationRow) return null;
+
+  const conversation = mapInboxConversation(conversationRow);
+  if (!canReadMetaInboxConversationForQueueAccess(conversation, queueAccess)) {
+    throw new AuthorizationError("You do not have access to this inbox queue.", 403);
+  }
+
+  const [messages, comments] = await Promise.all([
+    selectKnownMessagesForConversation(supabase, conversation),
+    selectKnownCommentsForConversation(supabase, conversation),
+  ]);
+
+  return buildSocialInboxConversationHistoryPage(
+    conversation,
+    {
+      messages,
+      comments,
+    },
+    {
+      pageSize: messages.length + comments.length || 1,
+    },
+  );
+}
+
 export async function updateSocialInboxConversationWorkflow(
   conversationId: string,
   profile: MetaInboxAccessProfile,
@@ -1096,6 +1137,30 @@ async function selectExistingCommentActionForIdempotency(
   return rows<JsonRecord>(existing.data)[0] || null;
 }
 
+async function requireAiReplySuggestionForConversation(
+  supabase: DynamicSupabaseClient,
+  conversationId: string,
+  suggestionId: string,
+) {
+  if (!isUuid(suggestionId)) {
+    throw new Error("AI reply suggestion must be a valid UUID.");
+  }
+
+  const result = await selectActiveMetaInboxRows(
+    supabase,
+    "ai_reply_suggestions",
+  )
+    .eq("id", suggestionId)
+    .eq("conversation_id", conversationId)
+    .limit(1);
+  if (result.error) throw normalizeMetaInboxSchemaError(result.error);
+
+  const row = rows<JsonRecord>(result.data)[0];
+  if (!row) {
+    throw new AuthorizationError("AI reply suggestion is not attached to this conversation.", 403);
+  }
+}
+
 async function updateSendAttemptWithExpectedStatus(
   supabase: DynamicSupabaseClient,
   sendAttemptId: string,
@@ -1156,12 +1221,20 @@ export async function createSocialInboxSendAttempt(
   const conversation = await requireMutableConversation(supabase, conversationId, queueAccess);
   const now = new Date().toISOString();
   const actorUserId = profile.appUserId && isUuid(profile.appUserId) ? profile.appUserId : null;
+  if (input.aiReplySuggestionId) {
+    await requireAiReplySuggestionForConversation(
+      supabase,
+      conversation.id,
+      input.aiReplySuggestionId,
+    );
+  }
   const mutation = buildMetaInboxSendAttemptDraft(
     conversation,
     {
       replyText: input.replyText || "",
       idempotencyKey: input.idempotencyKey,
       attachmentIds: input.attachmentIds || [],
+      aiReplySuggestionId: input.aiReplySuggestionId,
     },
     {
       actorUserId,
@@ -1221,6 +1294,19 @@ export async function createSocialInboxSendAttempt(
       sendAttemptId: String(insert.data.id),
     },
   });
+
+  if (mutation.row.ai_reply_suggestion_id) {
+    const suggestionUpdate = await updateActiveMetaInboxRows(
+      supabase,
+      "ai_reply_suggestions",
+      {
+        status: "approved",
+        updated_at: now,
+      },
+    )
+      .eq("id", String(mutation.row.ai_reply_suggestion_id));
+    if (suggestionUpdate.error) throw normalizeMetaInboxSchemaError(suggestionUpdate.error);
+  }
 
   return {
     sendAttempt: mapSendAttempt(insert.data),
@@ -4252,6 +4338,7 @@ function mapSendAttempt(row: JsonRecord): SocialInboxSendAttempt {
     id: String(row.id),
     conversation_id: String(row.conversation_id || ""),
     reply_text: String(row.reply_text || ""),
+    ai_reply_suggestion_id: stringField(row.ai_reply_suggestion_id),
     approved_by: stringField(row.approved_by),
     approved_at: stringField(row.approved_at),
     status: sendAttemptStatusField(row.status),
@@ -4290,6 +4377,7 @@ function mapSendAttemptRecord(row: JsonRecord): MetaInboxSendAttemptRecord {
     id: mapped.id,
     conversation_id: mapped.conversation_id,
     reply_text: mapped.reply_text,
+    ai_reply_suggestion_id: mapped.ai_reply_suggestion_id,
     status: mapped.status,
     messaging_type: mapped.messaging_type,
     tag: mapped.tag,

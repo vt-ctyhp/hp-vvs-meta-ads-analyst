@@ -17,6 +17,7 @@ const SEND_ATTEMPT_BODY_FIELDS = {
   replyText: { type: "string", nullable: true },
   idempotencyKey: { type: "string", nullable: true },
   attachmentIds: { type: "stringArray", nullable: true },
+  aiReplySuggestionId: { type: "string", nullable: true },
 } as const;
 
 export async function POST(

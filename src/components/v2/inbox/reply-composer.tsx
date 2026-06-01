@@ -1,6 +1,6 @@
 "use client";
 
-import { Bookmark, ChevronUp, Loader2, Maximize2, Paperclip, RefreshCw, Send, Tags, X } from "lucide-react";
+import { Bookmark, ChevronUp, Loader2, Maximize2, Paperclip, PenLine, RefreshCw, Send, Tags, X } from "lucide-react";
 import { useState, type ChangeEvent } from "react";
 
 import type { MetaInboxQueueDisplayItem } from "../../../lib/meta-inbox-queue-view.ts";
@@ -24,6 +24,13 @@ export type ReplyAttemptMutationLoadState = {
   message: string | null;
 };
 
+export type AiReplySuggestionLoadState = {
+  conversationId: string | null;
+  suggestionId: string | null;
+  status: "idle" | "loading" | "ready" | "error";
+  message: string | null;
+};
+
 export type SavedReplyMutationLoadState = {
   conversationId: string | null;
   status: "idle" | "saving" | "saved" | "error";
@@ -35,9 +42,12 @@ type ManagedReplyComposerProps = {
   draft: string;
   onDraftChange: (value: string) => void;
   canSendInboxReply: boolean;
+  aiSuggestionState: AiReplySuggestionLoadState;
+  aiSuggestionId: string | null;
   mutationState: ReplyAttemptMutationLoadState;
   savedReplyMutationState: SavedReplyMutationLoadState;
   replyWindowNow: number;
+  onSuggestReply: (conversationId: string) => void | Promise<void>;
   onUploadAttachment: (
     conversationId: string,
     file: File,
@@ -72,9 +82,12 @@ function ManagedReplyComposer({
   draft,
   onDraftChange,
   canSendInboxReply,
+  aiSuggestionState,
+  aiSuggestionId,
   mutationState,
   savedReplyMutationState,
   replyWindowNow,
+  onSuggestReply,
   onUploadAttachment,
   onCreateSendAttempt,
   onQueueSendAttempt,
@@ -106,6 +119,12 @@ function ManagedReplyComposer({
     canSendInboxReply &&
     Boolean(windowState?.canAttemptSend) &&
     !isUploadingAttachment;
+  const canSuggest =
+    Boolean(conversationId) &&
+    canSendInboxReply &&
+    Boolean(windowState?.canAttemptSend) &&
+    aiSuggestionState.status !== "loading" &&
+    mutationState.status !== "saving";
   const canSend =
     Boolean(conversationId) &&
     canSendInboxReply &&
@@ -155,6 +174,7 @@ function ManagedReplyComposer({
     if (draft.trim()) {
       void onCreateSendAttempt(conversationId, {
         replyText: draft,
+        aiReplySuggestionId: aiSuggestionId,
         idempotencyKey: newSendAttemptIdempotencyKey(conversationId, draft),
       });
     }
@@ -420,6 +440,20 @@ function ManagedReplyComposer({
         </p>
       ) : null}
 
+      {aiSuggestionState.message ? (
+        <p
+          className={`px-4 pb-1 text-xs leading-5 ${
+            aiSuggestionState.status === "error"
+              ? "text-signal-danger"
+              : aiSuggestionState.status === "ready"
+                ? "text-signal-positive"
+                : "text-hp-muted"
+          }`}
+        >
+          {aiSuggestionState.message}
+        </p>
+      ) : null}
+
       {savingTemplate ? (
         <div className="flex items-center gap-2 border-t border-hp-rule-soft bg-hp-inset px-4 py-2.5">
           <input
@@ -526,6 +560,25 @@ function ManagedReplyComposer({
                 )}
                 Attach
               </label>
+              <button
+                type="button"
+                onClick={() => conversationId && void onSuggestReply(conversationId)}
+                disabled={!canSuggest}
+                title="Draft a suggested reply from full known conversation history"
+                className={[
+                  "flex h-9 items-center gap-1.5 px-2 text-[10px] uppercase tracking-[0.14em] transition-colors disabled:opacity-40",
+                  aiSuggestionState.status === "ready"
+                    ? "bg-hp-inset text-hp-ink"
+                    : "text-hp-body hover:bg-hp-inset hover:text-hp-ink",
+                ].join(" ")}
+              >
+                {aiSuggestionState.status === "loading" ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <PenLine size={13} />
+                )}
+                Suggest
+              </button>
               <button
                 type="button"
                 onClick={() => setSavingTemplate((open) => !open)}

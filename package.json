@@ -18,6 +18,7 @@
     "sync:meta": "node -e \"fetch('http://localhost:3000/api/sync',{method:'POST'}).then(r=>r.json()).then(console.log)\""
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.100.1",
     "@supabase/supabase-js": "^2.105.4",
     "@tanstack/react-table": "^8.21.3",
     "@tanstack/react-virtual": "^3.13.24",

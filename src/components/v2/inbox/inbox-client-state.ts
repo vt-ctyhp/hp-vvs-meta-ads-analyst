@@ -90,6 +90,13 @@ export type ReplyAttemptMutationLoadState = {
   message: string | null;
 };
 
+export type AiReplySuggestionLoadState = {
+  conversationId: string | null;
+  suggestionId: string | null;
+  status: "idle" | "loading" | "ready" | "error";
+  message: string | null;
+};
+
 export type CommentActionMutationLoadState = {
   conversationId: string | null;
   status: "idle" | "saving" | "saved" | "error";
@@ -142,6 +149,13 @@ export const IDLE_CONTACT_METHOD_STATE: ContactMethodMutationLoadState = {
 export const IDLE_REPLY_ATTEMPT_STATE: ReplyAttemptMutationLoadState = {
   conversationId: null,
   sendAttemptId: null,
+  status: "idle",
+  message: null,
+};
+
+export const IDLE_AI_REPLY_SUGGESTION_STATE: AiReplySuggestionLoadState = {
+  conversationId: null,
+  suggestionId: null,
   status: "idle",
   message: null,
 };

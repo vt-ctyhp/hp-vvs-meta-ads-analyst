@@ -28,6 +28,7 @@ export type MetaInboxSendAttemptRecord = {
   id: string;
   conversation_id: string;
   reply_text: string;
+  ai_reply_suggestion_id: string | null;
   status: MetaInboxSendAttemptStatus;
   messaging_type: "RESPONSE" | "MESSAGE_TAG" | null;
   tag: "HUMAN_AGENT" | null;
@@ -139,12 +140,18 @@ export function resolveMetaInboxReplyWindow(
 
 export function buildMetaInboxSendAttemptDraft(
   conversation: MetaInboxReplyConversationInput,
-  input: { replyText: string; idempotencyKey?: string | null; attachmentIds?: string[] | null },
+  input: {
+    replyText: string;
+    idempotencyKey?: string | null;
+    attachmentIds?: string[] | null;
+    aiReplySuggestionId?: string | null;
+  },
   context: ReplyContext,
 ): MetaInboxSendAttemptDraft {
   const actorUserId = requireUuid(context.actorUserId, "A valid sales user");
   const conversationId = requireUuid(conversation.id, "Conversation");
   const attachmentIds = normalizeAttachmentIds(input.attachmentIds);
+  const aiReplySuggestionId = optionalUuid(input.aiReplySuggestionId, "AI reply suggestion");
   if (attachmentIds.length > 1) {
     throw new Error("Send one attachment per send attempt.");
   }
@@ -175,6 +182,7 @@ export function buildMetaInboxSendAttemptDraft(
       messaging_type: windowState.messagingType,
       tag: windowState.tag,
       attachment_ids: attachmentIds,
+      ai_reply_suggestion_id: aiReplySuggestionId,
       attempt_count: 0,
       idempotency_key: idempotencyKey,
     },
@@ -188,6 +196,7 @@ export function buildMetaInboxSendAttemptDraft(
         tag: windowState.tag,
         idempotencyKey,
         attachmentCount: attachmentIds.length,
+        aiReplySuggestionId,
       },
       metadata: {
         source: "inbox_send_attempt",
@@ -368,6 +377,15 @@ function requireUuid(value: string | null | undefined, label: string) {
   const normalized = typeof value === "string" ? value.trim() : "";
   if (!UUID_RE.test(normalized)) {
     throw new Error(`${label} is required.`);
+  }
+  return normalized;
+}
+
+function optionalUuid(value: string | null | undefined, label: string) {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (!normalized) return null;
+  if (!UUID_RE.test(normalized)) {
+    throw new Error(`${label} must be a valid UUID.`);
   }
   return normalized;
 }

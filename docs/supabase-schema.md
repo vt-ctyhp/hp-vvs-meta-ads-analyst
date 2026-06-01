@@ -28,7 +28,10 @@ Tables:
 - `brand_voice_guidelines`
 - `reply_playbook_entries`
 - `social_thread_summaries`
+- `ai_reply_prompt_profiles`
 - `ai_reply_suggestions`
+- `ai_reply_training_examples`
+- `ai_reply_suggestion_feedback`
 
 Campaign umbrella metadata is stored on:
 
@@ -61,6 +64,8 @@ Important indexes:
 - website funnel date, event name, page group, session, approximate location, and Meta event lookups
 - active brand voice prompt lookup by brand/language
 - saved reply suggestion lookup by source thread/comment
+- active AI reply prompt profile lookup by environment/brand
+- AI reply training examples and suggestion feedback by environment/conversation
 
 ## Data Boundary Views
 

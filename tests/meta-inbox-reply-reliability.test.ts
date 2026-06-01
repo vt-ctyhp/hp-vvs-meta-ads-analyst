@@ -17,7 +17,12 @@ const MIGRATION = join(
   REPO_ROOT,
   "supabase/migrations/20260524100000_meta_inbox_reply_reliability.sql",
 );
+const AI_REPLY_TRAINING_MIGRATION = join(
+  REPO_ROOT,
+  "supabase/migrations/20260601221130_ai_reply_training_profiles.sql",
+);
 const migration = readFileSync(MIGRATION, "utf8");
+const aiReplyTrainingMigration = readFileSync(AI_REPLY_TRAINING_MIGRATION, "utf8");
 
 const NOW = "2026-05-24T12:00:00.000Z";
 const ACTOR_ID = "11111111-1111-4111-8111-111111111111";
@@ -49,6 +54,12 @@ describe("Meta inbox reply reliability foundation", () => {
     assert.match(migration, /meta_inbox_send_attempts_idempotency_idx/);
     assert.match(migration, /meta_inbox_send_attempts_delivery_queue_idx/);
     assert.match(migration, /event_type = 'send_attempt'/);
+  });
+
+  it("adds optional AI reply suggestion linkage to send attempts", () => {
+    assert.match(aiReplyTrainingMigration, /alter table public\.meta_inbox_send_attempts/);
+    assert.match(aiReplyTrainingMigration, /ai_reply_suggestion_id uuid references public\.ai_reply_suggestions/);
+    assert.match(aiReplyTrainingMigration, /meta_inbox_send_attempts_ai_reply_suggestion_idx/);
   });
 
   it("resolves standard, Human Agent, expired, and unknown reply windows", () => {
@@ -115,6 +126,7 @@ describe("Meta inbox reply reliability foundation", () => {
     assert.equal(draft.row.messaging_type, "RESPONSE");
     assert.equal(draft.row.tag, null);
     assert.equal(draft.row.reply_text, "Thanks, we can help with that.");
+    assert.equal(draft.row.ai_reply_suggestion_id, null);
     assert.equal(draft.row.idempotency_key, "client-key-1");
     assert.equal(draft.event.eventType, "send_attempt");
     assert.equal(draft.event.newValue.status, "approved");
@@ -139,6 +151,41 @@ describe("Meta inbox reply reliability foundation", () => {
 
     assert.equal(first.row.idempotency_key, retry.row.idempotency_key);
     assert.notEqual(first.row.idempotency_key, changed.row.idempotency_key);
+  });
+
+  it("links an approved text send attempt back to its AI suggestion", () => {
+    const draft = buildMetaInboxSendAttemptDraft(
+      conversationFixture(),
+      {
+        replyText: "Suggested draft.",
+        aiReplySuggestionId: "77777777-7777-4777-8777-777777777777",
+      },
+      { actorUserId: ACTOR_ID, now: NOW, humanAgentEnabled: true },
+    );
+
+    assert.equal(
+      draft.row.ai_reply_suggestion_id,
+      "77777777-7777-4777-8777-777777777777",
+    );
+    assert.equal(
+      draft.event.newValue.aiReplySuggestionId,
+      "77777777-7777-4777-8777-777777777777",
+    );
+  });
+
+  it("rejects invalid AI suggestion IDs", () => {
+    assert.throws(
+      () =>
+        buildMetaInboxSendAttemptDraft(
+          conversationFixture(),
+          {
+            replyText: "Suggested draft.",
+            aiReplySuggestionId: "not-a-uuid",
+          },
+          { actorUserId: ACTOR_ID, now: NOW, humanAgentEnabled: true },
+        ),
+      /valid UUID/i,
+    );
   });
 
   it("blocks send-attempt drafts when the reply window is expired", () => {
@@ -201,6 +248,7 @@ function sendAttemptFixture(
     id: "44444444-4444-4444-8444-444444444444",
     conversation_id: "33333333-3333-4333-8333-333333333333",
     reply_text: "hello",
+    ai_reply_suggestion_id: null,
     status: "failed_retryable",
     messaging_type: "RESPONSE",
     tag: null,

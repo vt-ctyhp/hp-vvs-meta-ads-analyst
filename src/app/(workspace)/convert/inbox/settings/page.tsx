@@ -5,11 +5,13 @@ import {
   type MetaInboxVocabularyOption,
 } from "@/lib/meta-inbox-vocabulary";
 import { requirePagePermission } from "@/lib/server-route-auth";
+import { AiReplyTrainingPanel } from "@/components/v2/inbox/ai-reply-training-panel";
 
 export const dynamic = "force-dynamic";
 
 export default async function InboxSettingsPage() {
-  await requirePagePermission("view_inbox", "/convert/inbox/settings");
+  const profile = await requirePagePermission("view_inbox", "/convert/inbox/settings");
+  const canManageReplyTraining = profile.permissions.includes("manage_inbox_state");
 
   return (
     <div className="space-y-6">
@@ -29,6 +31,8 @@ export default async function InboxSettingsPage() {
           Inbox
         </a>
       </header>
+
+      <AiReplyTrainingPanel canManage={canManageReplyTraining} />
 
       <section className="grid gap-4 md:grid-cols-[minmax(0,1.4fr)_minmax(280px,0.6fr)]">
         <VocabularyPanel

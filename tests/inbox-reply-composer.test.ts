@@ -292,6 +292,48 @@ test("ReplyComposer saves a personal draft via Save as template", () => {
   );
 });
 
+test("ReplyComposer requests a suggested reply from the selected conversation", () => {
+  const harness = loadReplyComposerHarness();
+  const suggestCalls: string[] = [];
+  const tree = harness.render(
+    replyComposerProps({
+      onSuggestReply(conversationId: string) {
+        suggestCalls.push(conversationId);
+      },
+    }),
+  );
+
+  click(buttonByText(tree, "Suggest"));
+
+  assert.deepEqual(suggestCalls, ["conv-1"]);
+});
+
+test("ReplyComposer carries the AI suggestion id into the approved text send attempt", () => {
+  const harness = loadReplyComposerHarness();
+  const sendCalls: Array<{ conversationId: string; input: Record<string, unknown> }> = [];
+  const render = () =>
+    harness.render(
+      replyComposerProps({
+        draft: "Suggested draft.",
+        aiSuggestionId: "77777777-7777-4777-8777-777777777777",
+        onCreateSendAttempt(conversationId: string, input: Record<string, unknown>) {
+          sendCalls.push({ conversationId, input });
+        },
+      }),
+    );
+
+  let tree = render();
+  click(buttonByText(tree, "Send →"));
+  tree = render();
+  click(buttonByText(tree, "Send →"));
+
+  assert.equal(sendCalls.length, 1);
+  assert.equal(
+    sendCalls[0]?.input.aiReplySuggestionId,
+    "77777777-7777-4777-8777-777777777777",
+  );
+});
+
 test("ReplyComposer keeps send attempts collapsed and exposes retry and queue actions when expanded", () => {
   const harness = loadReplyComposerHarness();
   const retryCalls: Array<{ conversationId: string; input: Record<string, unknown> }> = [];
@@ -387,6 +429,13 @@ function replyComposerProps(overrides: Record<string, unknown> = {}) {
     draft: "",
     onDraftChange: () => {},
     canSendInboxReply: true,
+    aiSuggestionState: {
+      conversationId: null,
+      suggestionId: null,
+      status: "idle",
+      message: null,
+    },
+    aiSuggestionId: null,
     mutationState: {
       conversationId: null,
       sendAttemptId: null,
@@ -399,6 +448,7 @@ function replyComposerProps(overrides: Record<string, unknown> = {}) {
       message: null,
     },
     replyWindowNow: Date.parse("2026-05-25T18:00:00.000Z"),
+    onSuggestReply: () => {},
     onCreateSendAttempt: () => {},
     onUploadAttachment: () => Promise.resolve(uploadedAttachmentFixture()),
     onQueueSendAttempt: () => {},
@@ -512,6 +562,7 @@ function sendAttemptFixture(overrides: Record<string, unknown> = {}) {
     id: "attempt-1",
     conversation_id: "conv-1",
     reply_text: "Reply text",
+    ai_reply_suggestion_id: null,
     approved_by: "Mia",
     approved_at: "2026-05-25T17:00:00.000Z",
     status: "approved",

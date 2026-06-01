@@ -20,7 +20,7 @@ timezone for aggregate funnel analytics. Raw IP addresses are not stored; the
 existing `ip_hash` remains a salted one-way hash. The app does not store
 postal code, latitude, longitude, or browser-supplied location payloads.
 
-AI reply suggestions are generated server-side only. The browser sends the selected source ID and optional staff guidance; the server retrieves compact Supabase context, applies the active brand voice prompt, calls OpenAI, stores the draft in `ai_reply_suggestions`, and returns it for human editing. The OpenAI API key, Supabase service role key, and Meta tokens are never exposed to the browser.
+AI reply suggestions are generated server-side only. The browser sends the normalized conversation ID and optional staff guidance; the server retrieves authorized known conversation history from Supabase, applies the active reply prompt profile and examples, calls Anthropic, stores the draft in `ai_reply_suggestions`, and returns it for human editing. Anthropic, OpenAI, Supabase service role, and Meta secrets are never exposed to the browser.
 
 The Meta webhook endpoint verifies `X-Hub-Signature-256` with `META_APP_SECRET` before storing inbound event payloads. The webhook verification token is stored only as `META_WEBHOOK_VERIFY_TOKEN` in the runtime environment.
 
@@ -28,7 +28,7 @@ The Meta webhook endpoint verifies `X-Hub-Signature-256` with `META_APP_SECRET` 
 
 - Secrets are read from runtime environment variables.
 - The Supabase service role key is only used in server-side modules and route handlers.
-- The browser bundle does not receive Meta, OpenAI, cron, or service role secrets.
+- The browser bundle does not receive Meta, Anthropic, OpenAI, cron, or service role secrets.
 - `.env*` files are ignored by Git.
 
 ## ERP Data Boundary

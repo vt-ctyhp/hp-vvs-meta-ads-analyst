@@ -8,6 +8,7 @@ Required:
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Browser/server | Publishable or anon key. Do not use the service role key here. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Server only | Used by route handlers and server components. Never expose to client code. |
 | `OPENAI_API_KEY` | Server only | Used for reports and chat. |
+| `ANTHROPIC_API_KEY` | Server only | Required only when `AI_REPLY_SUGGESTIONS_ENABLED=true`; used for inbox suggested replies. |
 | `META_APP_ID` | Server only | Meta app identifier for operator traceability. |
 | `META_APP_SECRET` | Server only | Stored for token/app setup traceability. Not exposed to client code. |
 | `META_ACCESS_TOKEN` | Server only | Meta token used by ads sync and planned social inbox. Must have `ads_read`; social inbox readiness also expects Page/Instagram messaging and comment permissions. Must not have `ads_management`. |
@@ -22,6 +23,9 @@ Optional:
 | `OPENAI_MODEL` | `gpt-4.1-mini` | Chat/report model. |
 | `OPENAI_FAST_MODEL` | `gpt-5.4-nano` | Fast model for ad-hoc analysis spec generation. |
 | `OPENAI_DEEP_MODEL` | `gpt-5.5` | Deep model for optional ad-hoc analysis interpretation. |
+| `AI_REPLY_SUGGESTIONS_ENABLED` | unset | Set to `true` to enable Anthropic suggested replies in the inbox composer and training simulator. |
+| `ANTHROPIC_REPLY_MODEL` | `claude-sonnet-4-5` | Anthropic model used for suggested inbox replies. |
+| `ANTHROPIC_REPLY_MAX_TRANSCRIPT_CHARS` | `60000` | Safety cap for verbatim known conversation transcript sent to Anthropic. Normal short inbox threads include all known history. |
 | `META_API_VERSION` | `v24.0` | Meta Graph API version. |
 | `META_INSTAGRAM_ACCESS_TOKEN` | unset | Optional Instagram User access token for Instagram DM conversation sync and reply delivery through `graph.instagram.com`. Required for current Instagram Messaging API flows. |
 | `META_INSTAGRAM_USER_ID` | unset | Optional Instagram professional account id that owns `META_INSTAGRAM_ACCESS_TOKEN`; prevents applying one IG token to the wrong connected Page. |

@@ -34,7 +34,7 @@ type BuildHistoryOptions = {
 };
 
 const DEFAULT_PAGE_SIZE = 50;
-const MAX_PAGE_SIZE = 100;
+const MAX_PAGE_SIZE = 1000;
 
 export function hasKnownMessageHistorySource(
   conversation: Pick<SocialInboxConversation, "source_type" | "platform_thread_id">,

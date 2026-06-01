@@ -126,6 +126,25 @@ export function getOpenAIModel(): string {
   return getOptionalEnv("OPENAI_MODEL", "gpt-4.1-mini");
 }
 
+export function getAnthropicReplyModel(): string {
+  return getOptionalEnv("ANTHROPIC_REPLY_MODEL", "claude-sonnet-4-5");
+}
+
+export function getAnthropicReplyMaxTranscriptChars(): number {
+  const configured = Number(getOptionalEnv("ANTHROPIC_REPLY_MAX_TRANSCRIPT_CHARS", "60000"));
+  if (!Number.isFinite(configured)) return 60000;
+  return Math.max(4000, Math.min(Math.floor(configured), 120000));
+}
+
+export function isAiReplySuggestionsEnabled() {
+  return isTruthyEnv("AI_REPLY_SUGGESTIONS_ENABLED");
+}
+
+export function getMissingAiReplySuggestionEnv(): string[] {
+  if (!isAiReplySuggestionsEnabled()) return [];
+  return getMissingRequiredEnv(["ANTHROPIC_API_KEY"]);
+}
+
 export function isTruthyEnv(name: string) {
   return ["1", "true", "yes", "on"].includes(getOptionalEnv(name).toLowerCase());
 }
