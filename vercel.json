@@ -5,6 +5,10 @@
       "schedule": "*/2 * * * *"
     },
     {
+      "path": "/api/cron/meta-inbox-delivery",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/sync",
       "schedule": "0 13 * * *"
     },
