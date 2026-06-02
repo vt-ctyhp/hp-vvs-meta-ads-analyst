@@ -89,6 +89,16 @@ describe("Meta inbox approved send-attempt queue slice", () => {
     assert.match(socialInbox, /\.eq\("status", expectedStatus\)/);
   });
 
+  it("delivers a queued attempt inline (gated by live send) so replies do not wait for the cron", () => {
+    const socialInbox = readFileSync("src/lib/social-inbox.ts", "utf8");
+
+    // After queueing, the same single-attempt delivery the cron uses is run inline,
+    // gated by the ALLOW_LIVE_META_SEND flag, scoped to just this attempt id.
+    assert.match(socialInbox, /isLiveSendEnabled/);
+    assert.match(socialInbox, /deliverQueuedMetaInboxSendAttempts/);
+    assert.match(socialInbox, /attemptId: attempt\.id/);
+  });
+
   it("exposes a send-attempt queue API route and UI action", () => {
     const route = readFileSync(
       "src/app/api/social-inbox/conversations/[conversationId]/send-attempts/queue/route.ts",

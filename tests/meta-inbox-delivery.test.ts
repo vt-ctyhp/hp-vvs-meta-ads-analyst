@@ -433,6 +433,62 @@ describe("Meta inbox delivery worker foundation", () => {
       else process.env.ALLOW_LIVE_META_SEND = previousFlag;
     }
   });
+
+  it("delivers only the targeted attempt when attemptId is set (inline send path)", async () => {
+    const previousFlag = process.env.ALLOW_LIVE_META_SEND;
+    const originalFetch = globalThis.fetch;
+    process.env.ALLOW_LIVE_META_SEND = "true";
+    const deliveredTexts: string[] = [];
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(String(init?.body || "{}")) as {
+        message?: { text?: string };
+      };
+      deliveredTexts.push(body.message?.text || "unknown");
+      return new Response(JSON.stringify({ message_id: `mid.${deliveredTexts.length}` }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    try {
+      const supabase = fakeDeliveryLifecycleSupabase([
+        attemptFixture({
+          id: "target-send",
+          reply_text: "target-send",
+          status: "queued",
+          attempt_count: 0,
+        }),
+        attemptFixture({
+          id: "other-queued",
+          reply_text: "other-queued",
+          status: "queued",
+          attempt_count: 0,
+        }),
+      ]);
+
+      const result = await deliverQueuedMetaInboxSendAttempts({
+        now: NOW,
+        attemptId: "target-send",
+        supabase,
+        managedPageResolver: async () => ({
+          pageId: "page-1",
+          accessToken: "page-token",
+          igUserId: null,
+        }),
+      } as never);
+
+      assert.equal(result.delivered, 1);
+      assert.deepEqual(deliveredTexts, ["target-send"]);
+      assert.deepEqual(supabase.finalStatuses(), {
+        "target-send": "sent",
+        "other-queued": "queued",
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousFlag === undefined) delete process.env.ALLOW_LIVE_META_SEND;
+      else process.env.ALLOW_LIVE_META_SEND = previousFlag;
+    }
+  });
 });
 
 function conversationFixture(
