@@ -182,6 +182,10 @@ describe("attribution ledger row merging", () => {
     const appointments = visitors.map((visitor, index) =>
       appointmentRow({
         appt_id: `acuity:apt-${index}`,
+        // The loader windows appointments by booked_at (see
+        // fetchCustomerJourneyLedgerData), so booked_at must fall inside the
+        // 2026-05-19 range for these to anchor the visitor fan-out.
+        booked_at: "2026-05-19T12:00:00.000Z",
         external_booking_id: `apt-${index}`,
         visit_date_time: "2026-05-19T21:00:00.000Z",
       }),
