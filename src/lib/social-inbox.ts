@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { AuthorizationError } from "./app-auth.ts";
 import { ConfigurationError, getMetaApiVersion } from "./env.ts";
 import { safeErrorMessage } from "./error-message.ts";
+import { deliverQueuedMetaInboxSendAttempts } from "./meta-inbox-delivery-worker.ts";
+import { isLiveSendEnabled } from "./social-reply-send-flags.ts";
 import { getMetaPermissionHealth } from "./meta.ts";
 import {
   createAdsAnalystClient,
@@ -1461,8 +1463,29 @@ export async function queueSocialInboxSendAttempt(
   );
   const event = await insertConversationEvent(supabase, conversation.id, actorUserId, now, mutation.event);
 
+  // Deliver immediately instead of waiting for the once-a-minute cron. Best-effort and
+  // gated by the live-send flag: on any failure the attempt stays queued and the cron
+  // backstop delivers it on its next run. The worker claims the row atomically
+  // (queued -> sending), so the inline send and the cron can never double-send it.
+  let finalRow = updated;
+  if (isLiveSendEnabled()) {
+    try {
+      await deliverQueuedMetaInboxSendAttempts({ attemptId: attempt.id });
+      const refreshed = await selectActiveMetaInboxRows(
+        supabase,
+        "meta_inbox_send_attempts",
+      )
+        .eq("id", attempt.id)
+        .limit(1);
+      const refreshedRow = rows<JsonRecord>(refreshed.data)[0];
+      if (refreshedRow) finalRow = refreshedRow;
+    } catch {
+      // Swallow — the queued attempt will be delivered by the cron backstop.
+    }
+  }
+
   return {
-    sendAttempt: mapSendAttempt(updated),
+    sendAttempt: mapSendAttempt(finalRow),
     events: [event],
   };
 }

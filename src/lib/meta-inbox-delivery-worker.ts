@@ -97,6 +97,7 @@ export async function deliverQueuedMetaInboxSendAttempts(
   options: {
     limit?: number;
     now?: string;
+    attemptId?: string;
     supabase?: DynamicSupabaseClient;
     managedPageResolver?: MetaInboxManagedPageResolver;
   } = {},
@@ -119,8 +120,10 @@ export async function deliverQueuedMetaInboxSendAttempts(
   const supabase =
     options.supabase || (createAdsAnalystClient("worker") as unknown as DynamicSupabaseClient);
   const managedPageResolver = options.managedPageResolver || defaultManagedPageResolver;
-  const queued = await selectActiveMetaInboxRows(supabase, "meta_inbox_send_attempts")
-    .in("status", ["queued", "failed_retryable"])
+  let pending = selectActiveMetaInboxRows(supabase, "meta_inbox_send_attempts")
+    .in("status", ["queued", "failed_retryable"]);
+  if (options.attemptId) pending = pending.eq("id", options.attemptId);
+  const queued = await pending
     .order("created_at", { ascending: true, nullsFirst: false })
     .limit(limit * 4);
   if (queued.error) throw queued.error;
