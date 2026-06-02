@@ -231,7 +231,7 @@ async function loadTrainingExamples(
       critique: stringField(row.critique),
     }))
     .filter((example) => example.conversation && example.idealResponse)
-    .slice(0, 5);
+    .slice(0, 3);
 }
 
 function resolveBrand(

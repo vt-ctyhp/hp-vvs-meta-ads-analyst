@@ -48,15 +48,25 @@ export async function createAnthropicReplySuggestion({
   model = getAnthropicReplyModel(),
   client = createAnthropicReplyClient(),
 }: AnthropicReplySuggestionRequest): Promise<AnthropicReplySuggestionResult> {
-  const message = await client.messages.parse({
+  const request: Record<string, unknown> = {
     model,
-    max_tokens: 1200,
-    system: context.systemPrompt,
+    // Adaptive thinking shares this budget with the visible output, so leave headroom.
+    max_tokens: 4000,
+    // Prefer the cacheable block form; fall back to the plain string for tests/fixtures.
+    system: context.systemBlocks ?? context.systemPrompt,
     messages: [{ role: "user", content: context.userPrompt }],
     output_config: {
       format: jsonSchemaOutputFormat(SOCIAL_REPLY_OUTPUT_JSON_SCHEMA),
     },
-  });
+  };
+
+  // Adaptive thinking only exists on newer models; sending it to an older
+  // pinned ANTHROPIC_REPLY_MODEL (e.g. claude-sonnet-4-5) returns a 400.
+  if (supportsAdaptiveThinking(model)) {
+    request.thinking = { type: "adaptive" };
+  }
+
+  const message = await client.messages.parse(request);
 
   const output = message.parsed_output
     ? parseSocialReplySuggestionOutput(message.parsed_output)
@@ -70,6 +80,21 @@ export async function createAnthropicReplySuggestion({
       outputTokens: numberOrNull(message.usage?.output_tokens),
     },
   };
+}
+
+// Models that accept `thinking: { type: "adaptive" }`. Older models use the
+// legacy enabled/budget_tokens shape and reject adaptive with a 400, so we
+// simply omit thinking for anything not on this list.
+const ADAPTIVE_THINKING_MODEL_PREFIXES = [
+  "claude-opus-4-6",
+  "claude-opus-4-7",
+  "claude-opus-4-8",
+  "claude-sonnet-4-6",
+];
+
+export function supportsAdaptiveThinking(model: string): boolean {
+  const normalized = model.trim().toLowerCase();
+  return ADAPTIVE_THINKING_MODEL_PREFIXES.some((prefix) => normalized.startsWith(prefix));
 }
 
 function createAnthropicReplyClient(): AnthropicReplyClient {

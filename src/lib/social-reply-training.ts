@@ -207,7 +207,7 @@ export async function simulateAiReplyTrainingDraft(input: AiReplyTrainingSimulat
   const profile = trainingData.profiles.find((candidate) => candidate.brand === brand) || null;
   const examples = trainingData.examples
     .filter((example) => example.brand === brand)
-    .slice(0, 5)
+    .slice(0, 3)
     .map((example) => ({
       id: example.id,
       title: example.title,

@@ -127,7 +127,7 @@ export function getOpenAIModel(): string {
 }
 
 export function getAnthropicReplyModel(): string {
-  return getOptionalEnv("ANTHROPIC_REPLY_MODEL", "claude-sonnet-4-5");
+  return getOptionalEnv("ANTHROPIC_REPLY_MODEL", "claude-sonnet-4-6");
 }
 
 export function getAnthropicReplyMaxTranscriptChars(): number {

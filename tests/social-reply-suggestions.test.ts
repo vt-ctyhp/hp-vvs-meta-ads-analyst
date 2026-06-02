@@ -44,7 +44,9 @@ describe("social reply suggestions", () => {
       messages: {
         async parse(request) {
           assert.match(JSON.stringify(request.messages), /Can I sell my gold today/);
-          assert.match(JSON.stringify(request.messages), /Move gold sellers into store assessment/);
+          // Brand profile + examples now live in the cacheable system blocks, not the user turn.
+          assert.match(JSON.stringify(request.system), /Move gold sellers into store assessment/);
+          assert.match(JSON.stringify(request.system), /Yes, please come in and our team can assess it/);
           return {
             parsed_output: {
               draft: "Yes, please come by today and we can assess it in store.",

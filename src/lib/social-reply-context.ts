@@ -49,8 +49,15 @@ export type SocialReplyTranscriptItem = {
   body: string;
 };
 
+export type SocialReplySystemBlock = {
+  type: "text";
+  text: string;
+  cache_control?: { type: "ephemeral" };
+};
+
 export type SocialReplyContext = {
   systemPrompt: string;
+  systemBlocks?: SocialReplySystemBlock[];
   userPrompt: string;
   transcript: SocialReplyTranscriptItem[];
   transcriptText: string;
@@ -122,6 +129,65 @@ const FALLBACK_PROFILE: Record<"HP" | "VVS" | "Unassigned", SocialReplyPromptPro
   },
 };
 
+const MAX_CALIBRATION_EXAMPLES = 3;
+
+// Brand-agnostic, byte-identical on every request → stable cache prefix.
+const STATIC_REPLY_INSTRUCTIONS = [
+  "ROLE",
+  "You draft human-approved customer replies for a jewelry sales inbox (Hung Phat / VVS).",
+  "A human always edits and approves your draft before it is sent. Never assume it goes out as-is.",
+  "Think strategically like a senior sales associate, then return ONLY the structured JSON output requested.",
+  "",
+  "DO",
+  "- Use the full known conversation transcript as your source of truth; do not reduce it into fixed buckets.",
+  "- Answer directly when the answer is safely known from the context you were given.",
+  "- When value, fit, trade-in, or cash-for-gold worth depends on seeing the item, guide the customer toward an in-store visit or appointment.",
+  "- Match the customer's language. If the conversation is mixed, follow the latest customer message.",
+  "- Keep the draft short enough for a Facebook or Instagram direct message.",
+  "- When key context is missing, ask ONE concise clarifying question or hand off to a human.",
+  "- Use the internal strategy field to explain why this reply moves the sale forward.",
+  "- Use risk flags to name specific missing or unsafe assumptions, not generic warnings.",
+  "",
+  "DON'T",
+  "- Never invent prices, appraisal values, payout amounts, inventory, policies, or appointment times.",
+  "- Never confirm a specific appointment time or guarantee a payout, value, or availability.",
+  "- Do not quote remotely anything that genuinely requires in-person assessment.",
+  "- No markdown, no bullet lists (unless the customer asked for a list), no emojis unless the customer used one first.",
+  "- No pressure tactics and no corporate filler.",
+].join("\n");
+
+function buildBrandSystemText(
+  profile: SocialReplyPromptProfile,
+  examples: SocialReplyExample[],
+): string {
+  const lines = [
+    "BRAND CONTEXT",
+    `Brand: ${profile.brand} (${profile.name})`,
+    `Business context: ${profile.businessContext}`,
+    `Sales guidance: ${profile.salesGuidance}`,
+    `Tone guidance: ${profile.toneGuidance}`,
+    `Never claim: ${profile.disallowedClaims.join("; ") || "(none specified)"}`,
+  ];
+
+  if (examples.length) {
+    lines.push(
+      "",
+      "CALIBRATION EXAMPLES (imitate the voice and judgment, do not copy the wording):",
+    );
+    examples.forEach((example, index) => {
+      lines.push(
+        "",
+        `Example ${index + 1}: ${example.title}`,
+        `Conversation:\n${example.conversation}`,
+        `Ideal reply:\n${example.idealResponse}`,
+      );
+      if (example.critique) lines.push(`Why it works: ${example.critique}`);
+    });
+  }
+
+  return lines.join("\n");
+}
+
 export function buildSocialReplyContext(input: SocialReplyContextInput): SocialReplyContext {
   const profile = input.promptProfile || FALLBACK_PROFILE[input.brand];
   const transcript = buildSocialReplyTranscript(input.history);
@@ -137,16 +203,15 @@ export function buildSocialReplyContext(input: SocialReplyContextInput): SocialR
   const transcriptText = transcriptWindow.items.map(formatTranscriptItem).join("\n");
   const examples = input.examples || [];
 
-  const systemPrompt = [
-    "You draft human-approved customer replies for a jewelry sales inbox.",
-    "Use the full known conversation transcript exactly as source context. Do not reduce it into fixed buckets.",
-    "Think strategically like a senior sales associate, then return only the structured JSON output requested.",
-    "The draft is never auto-sent. A human edits and approves it.",
-    "Never invent prices, item availability, appraisal value, payout amount, policies, appointment times, or facts not present in context.",
-    "If the customer goal requires inspection or cash-for-gold assessment, guide them toward coming into the store instead of pretending to quote remotely.",
-    "If context is missing, ask one concise question or hand off to a human.",
-  ].join("\n");
+  // Stable per brand/profile/examples → cacheable prefix (breakpoint on the brand block).
+  const brandSystemText = buildBrandSystemText(profile, examples.slice(0, MAX_CALIBRATION_EXAMPLES));
+  const systemBlocks: SocialReplySystemBlock[] = [
+    { type: "text", text: STATIC_REPLY_INSTRUCTIONS },
+    { type: "text", text: brandSystemText, cache_control: { type: "ephemeral" } },
+  ];
+  const systemPrompt = `${STATIC_REPLY_INSTRUCTIONS}\n\n${brandSystemText}`;
 
+  // Per-conversation, volatile → stays in the user turn, after the cached prefix.
   const userPayload = {
     task: "Draft one strategic reply for the selected inbox conversation.",
     outputLanguage: resolvedLanguage,
@@ -163,39 +228,17 @@ export function buildSocialReplyContext(input: SocialReplyContextInput): SocialR
       needsReply: input.history.conversation.needs_reply,
       replyWindowExpiresAt: input.history.conversation.reply_window_expires_at,
     },
-    promptProfile: {
-      id: profile.id,
-      name: profile.name,
-      version: profile.version,
-      businessContext: profile.businessContext,
-      salesGuidance: profile.salesGuidance,
-      toneGuidance: profile.toneGuidance,
-      disallowedClaims: profile.disallowedClaims,
-    },
     staffGuidance: cleanText(input.staffGuidance),
     transcript: {
       truncated: transcriptWindow.truncated,
       omittedOldestItems: transcriptWindow.omittedItems,
       text: transcriptText,
     },
-    calibrationExamples: examples.slice(0, 5).map((example) => ({
-      title: example.title,
-      conversation: example.conversation,
-      idealResponse: example.idealResponse,
-      critique: example.critique,
-    })),
-    responseRules: [
-      "Return one customer-facing draft only inside the draft field.",
-      "Keep the draft concise enough for Facebook or Instagram messaging.",
-      "Match customer language if clear. If mixed, prefer the latest customer language.",
-      "No markdown, no bullet list unless customer asked for a list, no emojis unless customer used one first.",
-      "The strategy field is internal and should explain why this reply moves the sale forward.",
-      "Risk flags should name missing or unsafe assumptions, not generic warnings.",
-    ],
   };
 
   return {
     systemPrompt,
+    systemBlocks,
     userPrompt: JSON.stringify(userPayload, null, 2),
     transcript: transcriptWindow.items,
     transcriptText,
