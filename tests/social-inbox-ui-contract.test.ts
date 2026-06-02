@@ -229,7 +229,10 @@ describe("social inbox UI contract", () => {
     assert.match(MESSAGE_ATTACHMENT_LIST, /unoptimized/);
     assert.match(SOCIAL_INBOX_LIB, /normalizeMetaInboxAttachments/);
     assert.match(SOCIAL_INBOX_LIB, /messageAttachmentsFromRow/);
-    assert.match(SOCIAL_INBOX_LIB, /rawMessage\.attachments \|\| rawJson\.attachments/);
+    assert.match(SOCIAL_INBOX_LIB, /normalizeMetaMessageAttachments/);
+    // The Graph conversation read must request shares/story/sticker, otherwise
+    // shared links and story replies arrive blank and render as "Unsupported message".
+    assert.match(SOCIAL_INBOX_LIB, /"id,message,created_time,from,to,attachments,shares,story,sticker"/);
     assert.match(SOCIAL_INBOX_LIB, /attachmentIds\?: string\[\] \| null/);
   });
 

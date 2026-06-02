@@ -64,6 +64,7 @@ import {
 } from "./meta-inbox-contact-methods.ts";
 import {
   normalizeMetaInboxAttachments,
+  normalizeMetaMessageAttachments,
   validateMetaInboxSendAttachments,
   type MetaInboxAttachmentType,
   type MetaInboxNormalizedAttachment,
@@ -3170,10 +3171,11 @@ async function syncConversations({
     if (!threadId) continue;
 
     try {
+      const messageFields = "id,message,created_time,from,to,attachments,shares,story,sticker";
       const messages = await graphPages<JsonRecord>(
         `${threadId}/messages`,
         {
-          fields: "id,message,created_time,from,to,attachments",
+          fields: messageFields,
           limit: String(getPositiveIntegerEnv("META_SOCIAL_SYNC_MESSAGE_LIMIT", 25)),
         },
         {
@@ -3183,15 +3185,27 @@ async function syncConversations({
           timeoutMs: 20000,
         },
       );
+      // The bulk read drops attachments on some messages; re-read each blank
+      // message node directly to recover the content (bounded, best-effort).
+      const enrichedMessages = await enrichBlankMessages(
+        messages,
+        (messageId) =>
+          graphNode<JsonRecord>(
+            messageId,
+            { fields: messageFields },
+            { accessToken: token, graphHost, timeoutMs: 15000 },
+          ),
+        getPositiveIntegerEnv("META_SOCIAL_SYNC_BLANK_REFETCH_LIMIT", 10),
+      );
       const messageRows = await upsertMessages({
         page,
         platform,
         threadId,
         threadRefId: stringField(threadById.get(threadId)?.id),
-        messages,
+        messages: enrichedMessages,
       });
       messageCount += messageRows.length;
-      await refreshThreadFromMessages(platform, threadId, messages);
+      await refreshThreadFromMessages(platform, threadId, enrichedMessages);
       await normalizeMetaInboxRows({
         threads: threadById.get(threadId) ? [threadById.get(threadId) as JsonRecord] : [],
         messages: messageRows,
@@ -3241,6 +3255,97 @@ function webhookCommentRow(object: string | null, entry: JsonRecord, change: Jso
   };
 }
 
+/**
+ * A Meta message carries no displayable content: no body text and nothing the
+ * attachment normalizer can surface (attachments, shares, sticker, story).
+ */
+export function metaMessageIsBlank(message: JsonRecord): boolean {
+  return !stringField(message.message) && normalizeMetaMessageAttachments(message).length === 0;
+}
+
+/**
+ * The bulk Graph conversation-edge read sometimes returns a message with an
+ * empty body and no attachments even when the message has content (a photo it
+ * declines to expand). Re-reading that single message node usually returns the
+ * content. Best-effort: never throws, bounded by `limit`, and only swaps in the
+ * re-fetched node when it actually has more content than the blank we started
+ * with. `fetchNode` is injected so the orchestration is testable without network.
+ */
+export async function enrichBlankMessages(
+  messages: JsonRecord[],
+  fetchNode: (messageId: string) => Promise<JsonRecord | null>,
+  limit: number,
+): Promise<JsonRecord[]> {
+  let budget = limit;
+  const out: JsonRecord[] = [];
+  for (const message of messages) {
+    const messageId = stringField(message.id);
+    if (budget > 0 && messageId && metaMessageIsBlank(message)) {
+      budget -= 1;
+      try {
+        const node = await fetchNode(messageId);
+        if (node && !metaMessageIsBlank(node)) {
+          out.push({ ...message, ...node });
+          continue;
+        }
+      } catch {
+        // Best-effort enrichment: a failed re-fetch must not abort the sync.
+      }
+    }
+    out.push(message);
+  }
+  return out;
+}
+
+/**
+ * Guard against a lossy re-sync overwriting content we already captured. The
+ * Graph conversation-edge read sometimes returns a previously-populated message
+ * with an empty body and no attachments (e.g. an image it declines to expand);
+ * upserting that blank would erase the real content. When an incoming row is
+ * blank but the stored row has content, preserve the stored body/attachments.
+ */
+export function nonDestructiveMessageRows(
+  rows: JsonRecord[],
+  existingByMessageId: Map<string, { body: unknown; attachments: unknown }>,
+): JsonRecord[] {
+  return rows.map((row) => {
+    if (rowHasContent(row.body, row.attachments)) return row;
+    const existing = existingByMessageId.get(String(row.message_id));
+    if (!existing || !rowHasContent(existing.body, existing.attachments)) return row;
+    return { ...row, body: existing.body ?? row.body, attachments: existing.attachments ?? row.attachments };
+  });
+}
+
+function rowHasContent(body: unknown, attachments: unknown): boolean {
+  return Boolean(stringField(body)) || (Array.isArray(attachments) && attachments.length > 0);
+}
+
+async function loadExistingMessageContent(
+  platform: "facebook" | "instagram",
+  messageIds: string[],
+): Promise<Map<string, { body: unknown; attachments: unknown }>> {
+  const map = new Map<string, { body: unknown; attachments: unknown }>();
+  const ids = [...new Set(messageIds.filter(Boolean))];
+  if (!ids.length) return map;
+
+  const supabase = dynamicSupabase("worker");
+  const result = await selectActiveMetaInboxRows(
+    supabase,
+    "meta_social_messages",
+    "message_id,body,attachments",
+  )
+    .eq("platform", platform)
+    .in("message_id", ids);
+  if (result.error) {
+    if (isMissingMetaInboxSchemaError(result.error)) return map;
+    throw normalizeMetaInboxSchemaError(result.error);
+  }
+  for (const row of rowsFrom(result.data)) {
+    map.set(String(row.message_id), { body: row.body, attachments: row.attachments });
+  }
+  return map;
+}
+
 async function upsertMessages({
   page,
   platform,
@@ -3254,35 +3359,38 @@ async function upsertMessages({
   threadRefId: string | null;
   messages: JsonRecord[];
 }) {
-  return upsertMany(
-    "meta_social_messages",
-    messages
-      .map((message) => {
-        const messageId = stringField(message.id);
-        if (!messageId) return null;
-        const from = recordField(message.from);
-        const to = firstRecord(message.to);
-        const senderId = stringField(from.id);
-        const recipientId = stringField(to.id);
-        return {
-          thread_ref_id: threadRefId,
-          platform,
-          thread_id: threadId,
-          message_id: messageId,
-          direction: messageDirection(senderId, page, platform),
-          sender_id: senderId,
-          sender_name: stringField(from.name) || stringField(from.username),
-          recipient_id: recipientId,
-          recipient_name: stringField(to.name) || stringField(to.username),
-          body: stringField(message.message),
-          attachments: normalizeMetaInboxAttachments(message.attachments),
-          sent_at: stringField(message.created_time),
-          raw_json: message,
-        };
-      })
-      .filter(Boolean) as JsonRecord[],
-    "platform,message_id",
+  const rows = messages
+    .map((message) => {
+      const messageId = stringField(message.id);
+      if (!messageId) return null;
+      const from = recordField(message.from);
+      const to = firstRecord(message.to);
+      const senderId = stringField(from.id);
+      const recipientId = stringField(to.id);
+      return {
+        thread_ref_id: threadRefId,
+        platform,
+        thread_id: threadId,
+        message_id: messageId,
+        direction: messageDirection(senderId, page, platform),
+        sender_id: senderId,
+        sender_name: stringField(from.name) || stringField(from.username),
+        recipient_id: recipientId,
+        recipient_name: stringField(to.name) || stringField(to.username),
+        body: stringField(message.message),
+        attachments: normalizeMetaMessageAttachments(message),
+        sent_at: stringField(message.created_time),
+        raw_json: message,
+      };
+    })
+    .filter(Boolean) as JsonRecord[];
+  if (!rows.length) return [];
+
+  const existing = await loadExistingMessageContent(
+    platform,
+    rows.map((row) => String(row.message_id)),
   );
+  return upsertMany("meta_social_messages", nonDestructiveMessageRows(rows, existing), "platform,message_id");
 }
 
 async function refreshThreadFromMessages(
@@ -3496,6 +3604,20 @@ async function graphPages<T>(
   }
 
   return data;
+}
+
+async function graphNode<T>(
+  path: string,
+  params: Record<string, string | undefined>,
+  options: { accessToken?: string; graphHost?: "facebook" | "instagram"; timeoutMs?: number } = {},
+): Promise<T> {
+  const url = graphUrl(path, params, options.accessToken, options.graphHost);
+  const response = await fetchWithTimeout(url, { timeoutMs: options.timeoutMs || 20000 });
+  const json = (await response.json()) as T & { error?: { message?: string } };
+  if (!response.ok || json.error) {
+    throw new MetaSocialGraphError(json.error?.message || `Meta Graph API request failed for ${path}`, json);
+  }
+  return json;
 }
 
 async function fetchWithTimeout(url: string, { timeoutMs }: { timeoutMs: number }) {
@@ -4120,13 +4242,17 @@ function mapComment(row: JsonRecord): SocialInboxComment {
   };
 }
 
-function messageAttachmentsFromRow(row: JsonRecord) {
+export function messageAttachmentsFromRow(row: JsonRecord) {
   const attachments = normalizeMetaInboxAttachments(row.attachments);
   if (attachments.length) return attachments;
 
+  // Stored attachments column is empty: recover shares/stickers/stories from the
+  // raw payload. Graph rows store the message object directly (shares at top
+  // level); webhook rows store the event with the message under `message`.
   const rawJson = recordField(row.raw_json);
-  const rawMessage = recordField(rawJson.message);
-  return normalizeMetaInboxAttachments(rawMessage.attachments || rawJson.attachments);
+  const fromMessage = normalizeMetaMessageAttachments(rawJson.message);
+  if (fromMessage.length) return fromMessage;
+  return normalizeMetaMessageAttachments(rawJson);
 }
 
 function mapCustomerProfile(row: JsonRecord): SocialInboxCustomerProfile {

@@ -8,6 +8,7 @@ import {
   attachmentCapabilityForConversation,
   normalizeMetaInboxAttachment,
   normalizeMetaInboxAttachments,
+  normalizeMetaMessageAttachments,
   validateMetaInboxSendAttachments,
   type MetaInboxSendAttachmentRow,
 } from "../src/lib/meta-inbox-attachments.ts";
@@ -418,3 +419,53 @@ function attachmentRowFixture(
   };
   return { ...base, ...overrides };
 }
+
+describe("normalizeMetaMessageAttachments folds shares, stickers, and stories", () => {
+  it("turns a shared link (the Graph `shares` field) into a share attachment", () => {
+    const result = normalizeMetaMessageAttachments({
+      message: "",
+      shares: { data: [{ id: "m_1", link: "https://youtube.com/shorts/TFbNICIlCLE" }] },
+    });
+
+    assert.equal(result.length, 1);
+    assert.equal(result[0].attachmentType, "share");
+    assert.equal(result[0].mediaUrl, "https://youtube.com/shorts/TFbNICIlCLE");
+  });
+
+  it("keeps regular attachments and appends shares alongside them", () => {
+    const result = normalizeMetaMessageAttachments({
+      attachments: { data: [{ image_data: { url: "https://cdn.example/photo.jpg" } }] },
+      shares: { data: [{ link: "https://example.com/post" }] },
+    });
+
+    assert.equal(result.length, 2);
+    assert.deepEqual(
+      result.map((a) => a.attachmentType).sort(),
+      ["image", "share"],
+    );
+  });
+
+  it("turns a sticker into a sticker attachment carrying its image url", () => {
+    const result = normalizeMetaMessageAttachments({
+      sticker: "https://cdn.example/sticker.png",
+    });
+
+    assert.equal(result.length, 1);
+    assert.equal(result[0].attachmentType, "sticker");
+    assert.equal(result[0].mediaUrl, "https://cdn.example/sticker.png");
+  });
+
+  it("turns an Instagram story reference into a share attachment with its link", () => {
+    const result = normalizeMetaMessageAttachments({
+      story: { mention: { link: "https://instagram.com/stories/x/123/", id: "123" } },
+    });
+
+    assert.equal(result.length, 1);
+    assert.equal(result[0].attachmentType, "share");
+    assert.equal(result[0].mediaUrl, "https://instagram.com/stories/x/123/");
+  });
+
+  it("returns an empty array when the message has no displayable content", () => {
+    assert.deepEqual(normalizeMetaMessageAttachments({ message: "" }), []);
+  });
+});

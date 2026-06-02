@@ -68,6 +68,85 @@ export function normalizeMetaInboxAttachments(value: unknown): MetaInboxNormaliz
   return attachmentArrayField(value).map(normalizeMetaInboxAttachment);
 }
 
+/**
+ * Build the full set of displayable attachments for a Meta message, folding in
+ * content types the bulk conversation-edge read leaves out of `attachments`:
+ * shared links (`shares`), stickers (`sticker`), and Instagram story
+ * replies/mentions (`story`). Without this, those messages arrive with an empty
+ * body and no attachments and render as "Unsupported message".
+ */
+export function normalizeMetaMessageAttachments(message: unknown): MetaInboxNormalizedAttachment[] {
+  const record = recordField(message);
+  const out: MetaInboxNormalizedAttachment[] = [...normalizeMetaInboxAttachments(record.attachments)];
+
+  for (const share of attachmentArrayField(record.shares)) {
+    const shareRecord = recordField(share);
+    const link = firstStringField(
+      shareRecord.link,
+      shareRecord.url,
+      firstRecordField(shareRecord.payload).url,
+    );
+    if (link) out.push(linkAttachment("share", link, shareRecord));
+  }
+
+  const stickerUrl = stickerUrlFrom(record.sticker);
+  if (stickerUrl) out.push(linkAttachment("sticker", stickerUrl, recordField(record.sticker)));
+
+  const storyLink = storyLinkFrom(record.story);
+  if (storyLink) out.push(linkAttachment("share", storyLink, recordField(record.story)));
+
+  return out;
+}
+
+function linkAttachment(
+  attachmentType: MetaInboxAttachmentType,
+  url: string,
+  raw: JsonRecord,
+): MetaInboxNormalizedAttachment {
+  const isSticker = attachmentType === "sticker";
+  return {
+    attachmentType,
+    label: firstStringField(raw.title, raw.name) || url,
+    metaAttachmentId: firstStringField(raw.id, raw.metaAttachmentId, raw.meta_attachment_id),
+    name: firstStringField(raw.title, raw.name),
+    mimeType: null,
+    mediaUrl: url,
+    previewUrl: isSticker ? url : null,
+    sizeBytes: null,
+    raw,
+  };
+}
+
+function stickerUrlFrom(value: unknown): string | null {
+  if (typeof value === "string") return stringField(value);
+  const record = recordField(value);
+  return firstStringField(
+    record.url,
+    record.media_url,
+    record.mediaUrl,
+    record.sticker_url,
+    record.stickerUrl,
+    firstRecordField(record.image_data, record.imageData).url,
+  );
+}
+
+function storyLinkFrom(value: unknown): string | null {
+  const record = recordField(value);
+  if (!hasAnyValue(record)) return null;
+  const mention = recordField(record.mention);
+  const replyTo = recordField(record.reply_to);
+  const replyStory = recordField(replyTo.story);
+  return firstStringField(
+    record.link,
+    record.url,
+    mention.link,
+    mention.url,
+    replyTo.link,
+    replyStory.url,
+    replyStory.link,
+  );
+}
+
 export function normalizeMetaInboxAttachment(value: unknown): MetaInboxNormalizedAttachment {
   const raw = recordField(value);
   const nestedRaw = recordField(raw.raw);
