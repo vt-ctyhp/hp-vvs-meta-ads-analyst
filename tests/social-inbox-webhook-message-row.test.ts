@@ -90,4 +90,30 @@ describe("webhookMessageRow name extraction", () => {
     assert.equal(attachments[0].attachmentType, "image");
     assert.equal(attachments[0].mediaUrl, "https://scontent.example/photo.jpg");
   });
+
+  it("captures a shared link as a share attachment instead of dropping it", () => {
+    const row = webhookMessageRow(
+      "page",
+      { id: "page-1" },
+      {
+        sender: { id: "customer-1", name: "Mohamed Yafai" },
+        recipient: { id: "page-1" },
+        message: {
+          mid: "mid.share",
+          shares: { data: [{ id: "mid.share", link: "https://youtube.com/shorts/TFbNICIlCLE" }] },
+        },
+        timestamp: 1748246280000,
+      },
+    );
+
+    assert.ok(row);
+    assert.equal(row.message.body, null);
+    const attachments = row.message.attachments as Array<{
+      attachmentType: string;
+      mediaUrl: string | null;
+    }>;
+    assert.equal(attachments.length, 1);
+    assert.equal(attachments[0].attachmentType, "share");
+    assert.equal(attachments[0].mediaUrl, "https://youtube.com/shorts/TFbNICIlCLE");
+  });
 });

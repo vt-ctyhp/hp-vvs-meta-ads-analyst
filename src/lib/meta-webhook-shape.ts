@@ -1,4 +1,4 @@
-import { normalizeMetaInboxAttachments } from "./meta-inbox-attachments.ts";
+import { normalizeMetaMessageAttachments } from "./meta-inbox-attachments.ts";
 
 export type JsonRecord = Record<string, unknown>;
 
@@ -79,7 +79,7 @@ export function webhookMessageRow(
       recipient_id: recipientId,
       recipient_name: recipientName,
       body,
-      attachments: normalizeMetaInboxAttachments(message.attachments),
+      attachments: normalizeMetaMessageAttachments(message),
       sent_at: sentAt,
       raw_json: event,
     },
