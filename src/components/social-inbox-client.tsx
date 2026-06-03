@@ -555,11 +555,18 @@ export function SocialInboxClient({
                 savedReplyMutationState={selectedSavedReplyMutationState}
                 replyWindowNow={replyWindowNow}
                 onSuggestReply={async (conversationId) => {
-                  const result = await mutations.handleAiReplySuggestion(conversationId, {
-                    brand: selectedItemForReply?.brand || null,
-                    language: "auto",
-                    staffGuidance: activeReplyInstruction || null,
-                  });
+                  const result = await mutations.handleAiReplySuggestion(
+                    conversationId,
+                    {
+                      brand: selectedItemForReply?.brand || null,
+                      language: "auto",
+                      staffGuidance: activeReplyInstruction || null,
+                    },
+                    (draft) =>
+                      setReplyDraftByConversationId((current) =>
+                        writeConversationTextState(current, conversationId, draft),
+                      ),
+                  );
                   if (!result) return;
                   setReplyDraftByConversationId((current) =>
                     writeConversationTextState(current, conversationId, result.draft),

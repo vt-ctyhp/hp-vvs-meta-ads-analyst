@@ -1,6 +1,7 @@
 import { useCallback, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 
 import { translateError } from "../../../lib/glossary.ts";
+import { consumeSuggestionStream } from "./consume-suggestion-stream.ts";
 import {
   clearConversationTextState,
   type ConversationTextState,
@@ -91,6 +92,7 @@ export type SocialInboxMutationController = {
   handleAiReplySuggestion: (
     conversationId: string,
     input: AiReplySuggestionInput,
+    onDraftDelta?: (draft: string) => void,
   ) => Promise<AiReplySuggestionResult | null>;
   handleSendAttemptCreate: (conversationId: string, input: MetaInboxSendAttemptInput) => Promise<void>;
   handleSendAttemptRetry: (conversationId: string, input: MetaInboxRetrySendAttemptInput) => void;
@@ -354,6 +356,7 @@ export function useSocialInboxMutations({
     async (
       conversationId: string,
       input: AiReplySuggestionInput,
+      onDraftDelta?: (draft: string) => void,
     ): Promise<AiReplySuggestionResult | null> => {
       setAiReplySuggestionState({
         conversationId,
@@ -371,22 +374,29 @@ export function useSocialInboxMutations({
             ...input,
           }),
         });
-        const payload = (await response.json()) as AiReplySuggestionResult | { error?: string; reason?: string };
-        if (!response.ok || !("suggestionId" in payload)) {
-          const errorPayload = payload as { error?: string; reason?: string };
-          const reason = typeof errorPayload.reason === "string" ? errorPayload.reason : null;
+
+        if (!response.ok || !response.body) {
+          // Pre-stream failures (auth, foundation gate, validation) stay JSON.
+          const errorPayload = (await response.json().catch(() => null)) as
+            | { error?: string; reason?: string }
+            | null;
           throw new Error(
-            errorPayload.error || reason || "Could not draft suggested reply.",
+            errorPayload?.error || errorPayload?.reason || "Could not draft suggested reply.",
           );
         }
 
+        const result = await consumeSuggestionStream<AiReplySuggestionResult>(
+          response.body,
+          onDraftDelta,
+        );
+
         setAiReplySuggestionState({
           conversationId,
-          suggestionId: payload.suggestionId,
+          suggestionId: result.suggestionId,
           status: "ready",
-          message: `Suggested draft ready. Strategy: ${payload.nextBestAction.replaceAll("_", " ")}.`,
+          message: `Suggested draft ready. Strategy: ${result.nextBestAction.replaceAll("_", " ")}.`,
         });
-        return payload;
+        return result;
       } catch (error) {
         setAiReplySuggestionState({
           conversationId,
