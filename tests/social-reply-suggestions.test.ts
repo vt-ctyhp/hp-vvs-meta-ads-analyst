@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { suggestSocialReply } from "../src/lib/social-reply-suggestions.ts";
-import type { AnthropicReplyClient } from "../src/lib/social-reply-anthropic.ts";
+import { streamSocialReply, suggestSocialReply } from "../src/lib/social-reply-suggestions.ts";
+import type {
+  AnthropicReplyClient,
+  AnthropicReplyStreamClient,
+} from "../src/lib/social-reply-anthropic.ts";
 import type { SocialInboxConversationHistory } from "../src/lib/social-inbox.ts";
 
 type JsonRecord = Record<string, unknown>;
@@ -97,6 +100,84 @@ describe("social reply suggestions", () => {
     assert.equal(insert?.row.comment_id, null);
     assert.equal(insert?.row.provider, "anthropic");
     assert.equal(insert?.row.prompt_profile_id, "55555555-5555-4555-8555-555555555555");
+    assert.equal(insert?.row.next_best_action, "invite_to_store");
+    assert.deepEqual(insert?.row.risk_flags, ["No payout quote"]);
+  });
+});
+
+describe("social reply streaming", () => {
+  it("streams growing draft snapshots and persists the final structured suggestion", async () => {
+    const supabase = fakeSupabase({});
+    const drafts: string[] = [];
+    const snapshots = [
+      '{"draft":"Yes',
+      '{"draft":"Yes, please come by today',
+      '{"draft":"Yes, please come by today.","strategy":"In-store assessment closes the sale."',
+    ];
+
+    const anthropicStreamClient: AnthropicReplyStreamClient = {
+      messages: {
+        stream(request) {
+          assert.match(JSON.stringify(request.messages), /Can I sell my gold today/);
+          const listeners: Array<(delta: string, snapshot: string) => void> = [];
+          const messageStream = {
+            on(_event: "text", listener: (delta: string, snapshot: string) => void) {
+              listeners.push(listener);
+              return messageStream;
+            },
+            async finalMessage() {
+              for (const snapshot of snapshots) {
+                for (const listener of listeners) listener("", snapshot);
+              }
+              return {
+                parsed_output: {
+                  draft: "Yes, please come by today.",
+                  strategy: "In-store assessment closes the sale.",
+                  nextBestAction: "invite_to_store",
+                  confidence: "high",
+                  suggestedLanguage: "en",
+                  toneNotes: ["Direct close"],
+                  riskFlags: ["No payout quote"],
+                },
+                usage: { input_tokens: 180, output_tokens: 40 },
+              };
+            },
+          };
+          return messageStream;
+        },
+      },
+    };
+
+    const result = await withEnv(
+      { AI_REPLY_SUGGESTIONS_ENABLED: "true", ANTHROPIC_REPLY_MODEL: "claude-test" },
+      () =>
+        streamSocialReply(
+          { conversationId: "33333333-3333-4333-8333-333333333333", language: "auto" },
+          {
+            appUserId: "11111111-1111-4111-8111-111111111111",
+            roles: ["sales"],
+            permissions: ["send_inbox_reply"],
+          },
+          {
+            history: historyFixture(),
+            supabase: supabase as never,
+            anthropicStreamClient,
+            onDraftDelta: (draft) => drafts.push(draft),
+          },
+        ),
+    );
+
+    // Each distinct snapshot surfaces a longer draft; duplicates are suppressed.
+    assert.deepEqual(drafts, [
+      "Yes",
+      "Yes, please come by today",
+      "Yes, please come by today.",
+    ]);
+    assert.equal(result.draft, "Yes, please come by today.");
+    assert.equal(result.suggestionId, "99999999-9999-4999-8999-999999999999");
+    assert.equal(result.nextBestAction, "invite_to_store");
+    const insert = supabase.inserts.find((row) => row.table === "ai_reply_suggestions");
+    assert.equal(insert?.row.draft, "Yes, please come by today.");
     assert.equal(insert?.row.next_best_action, "invite_to_store");
     assert.deepEqual(insert?.row.risk_flags, ["No payout quote"]);
   });

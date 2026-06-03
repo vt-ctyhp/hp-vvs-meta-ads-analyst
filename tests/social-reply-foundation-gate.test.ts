@@ -63,7 +63,7 @@ describe("social reply foundation gate", () => {
     assert.match(SUGGEST_REPLY_ROUTE, /isSocialReplySuggestionReady/);
     assert.match(SUGGEST_REPLY_ROUTE, /buildFoundationAiReplyDisabledResponse/);
     assert.match(SUGGEST_REPLY_ROUTE, /status:\s*501/);
-    assert.match(SUGGEST_REPLY_ROUTE, /suggestSocialReply/);
+    assert.match(SUGGEST_REPLY_ROUTE, /streamSocialReply/);
     assert.match(SUGGEST_REPLY_ROUTE, /social-reply-suggestions/);
     assert.doesNotMatch(SUGGEST_REPLY_ROUTE, /OpenAI/);
   });

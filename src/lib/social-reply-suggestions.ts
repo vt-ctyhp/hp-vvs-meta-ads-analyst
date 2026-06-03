@@ -14,7 +14,10 @@ import {
 } from "./social-inbox.ts";
 import {
   createAnthropicReplySuggestion,
+  streamAnthropicReplySuggestion,
   type AnthropicReplyClient,
+  type AnthropicReplyStreamClient,
+  type AnthropicReplySuggestionResult,
 } from "./social-reply-anthropic.ts";
 import {
   buildSocialReplyContext,
@@ -88,11 +91,59 @@ export type SuggestReplyOptions = {
   supabase?: DynamicSupabaseClient;
 };
 
+export type StreamSocialReplyOptions = {
+  history?: SocialInboxConversationHistory | null;
+  anthropicStreamClient?: AnthropicReplyStreamClient;
+  supabase?: DynamicSupabaseClient;
+  onDraftDelta?: (draft: string) => void;
+};
+
+type PreparedSocialReply = {
+  supabase: DynamicSupabaseClient;
+  history: SocialInboxConversationHistory;
+  brand: BrandLabel;
+  promptProfile: SocialReplyPromptProfile | null;
+  context: ReturnType<typeof buildSocialReplyContext>;
+  model: string;
+};
+
 export async function suggestSocialReply(
   input: SuggestReplyInput,
   profile: MetaInboxAccessProfile,
   options: SuggestReplyOptions = {},
 ): Promise<SuggestReplyResult> {
+  const prepared = await prepareSocialReply(input, profile, options);
+  const anthropic = await createAnthropicReplySuggestion({
+    context: prepared.context,
+    model: prepared.model,
+    client: options.anthropicClient,
+  });
+  return persistSocialReply(prepared, input, anthropic);
+}
+
+export async function streamSocialReply(
+  input: SuggestReplyInput,
+  profile: MetaInboxAccessProfile,
+  options: StreamSocialReplyOptions = {},
+): Promise<SuggestReplyResult> {
+  const prepared = await prepareSocialReply(input, profile, options);
+  const anthropic = await streamAnthropicReplySuggestion({
+    context: prepared.context,
+    model: prepared.model,
+    client: options.anthropicStreamClient,
+    onDraftDelta: options.onDraftDelta,
+  });
+  return persistSocialReply(prepared, input, anthropic);
+}
+
+async function prepareSocialReply(
+  input: SuggestReplyInput,
+  profile: MetaInboxAccessProfile,
+  options: {
+    history?: SocialInboxConversationHistory | null;
+    supabase?: DynamicSupabaseClient;
+  },
+): Promise<PreparedSocialReply> {
   if (!isAiReplySuggestionsEnabled()) {
     throw new Error("AI reply suggestions are disabled.");
   }
@@ -119,12 +170,15 @@ export async function suggestSocialReply(
     maxTranscriptChars: getAnthropicReplyMaxTranscriptChars(),
   });
 
-  const model = getAnthropicReplyModel();
-  const anthropic = await createAnthropicReplySuggestion({
-    context,
-    model,
-    client: options.anthropicClient,
-  });
+  return { supabase, history, brand, promptProfile, context, model: getAnthropicReplyModel() };
+}
+
+async function persistSocialReply(
+  prepared: PreparedSocialReply,
+  input: SuggestReplyInput,
+  anthropic: AnthropicReplySuggestionResult,
+): Promise<SuggestReplyResult> {
+  const { supabase, history, brand, promptProfile, context } = prepared;
   const output = anthropic.output;
   const source = sourceColumnsForConversation(history.conversation);
   const insert = await supabase
