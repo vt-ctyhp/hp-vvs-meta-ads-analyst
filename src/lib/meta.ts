@@ -268,6 +268,22 @@ export const META_AD_CATALOG_FIELDS = [
   `creative{${META_AD_CREATIVE_CATALOG_FIELDS.join(",")}}`,
 ] as const;
 
+// Catalog refresh paginates an account's whole active+paused ad inventory (and
+// derives meta_creatives from the same payload). The binding limit is the PAGE
+// COUNT, not the page size: graphPages throws as soon as a `next` cursor
+// survives maxPages, which aborts the entire catalog refresh before a single
+// ad/creative row is written (last good write 2026-05-16, so every ad newer
+// than that — and its thumbnail — went missing from the ledger). The HP account
+// crossed the old 50/page x 100-page = 5,000-ad ceiling, so a 250-page ceiling
+// (12,500 ads at the proven 50/page) clears it.
+//
+// Do NOT raise the per-page size: META_AD_CATALOG_FIELDS is heavy (nested
+// creative + raw specs) and Meta rejects larger pages outright with "please
+// reduce the amount of data you're asking for" (verified: a 100/page run failed
+// before writing any ad). Both values stay env-overridable.
+export const META_AD_CATALOG_PAGE_LIMIT = 50;
+export const DEFAULT_META_SYNC_MAX_AD_PAGES = 250;
+
 const META_AD_STATUS_FIELDS = [
   "id",
   "name",
@@ -891,9 +907,9 @@ async function fetchMetaAdsForCatalogRefresh(
   try {
     return await graphPages<JsonRecord>(`${metaAccountId}/ads`, {
       fields: META_AD_CATALOG_FIELDS.join(","),
-      limit: "50",
+      limit: String(META_AD_CATALOG_PAGE_LIMIT),
       filtering: activeInventoryFilter(),
-    }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_PAGES", 100) });
+    }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_PAGES", DEFAULT_META_SYNC_MAX_AD_PAGES) });
   } catch (error) {
     if (!(error instanceof MetaGraphError)) throw error;
     if (fallback) {
@@ -901,9 +917,9 @@ async function fetchMetaAdsForCatalogRefresh(
     }
     return graphPages<JsonRecord>(`${metaAccountId}/ads`, {
       fields: META_AD_CORE_CATALOG_FIELDS.join(","),
-      limit: "50",
+      limit: String(META_AD_CATALOG_PAGE_LIMIT),
       filtering: activeInventoryFilter(),
-    }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_PAGES", 100) });
+    }, { maxPages: getSyncMaxPages("META_SYNC_MAX_AD_PAGES", DEFAULT_META_SYNC_MAX_AD_PAGES) });
   }
 }
 
@@ -2737,21 +2753,44 @@ async function graphPages<T>(
   const data: T[] = [];
   let nextUrl: string | undefined = graphUrl(path, params);
   let page = 0;
+  const maxRetries = getSyncMaxPages("META_SYNC_PAGE_MAX_RETRIES", 6);
 
   while (nextUrl && (!options.maxPages || page < options.maxPages)) {
-    const response = await fetch(nextUrl, { cache: "no-store", signal: options.signal });
-    recordMetaUsageFromResponse(path, response);
-    const json = (await response.json()) as MetaPaging<T>;
+    // Retry the SAME cursor on retryable Meta errors (rate limits / throttling).
+    // Unlike graphFetch, pagination previously had no backoff, so a single
+    // throttle mid-walk aborted the whole catalog/insights refresh. Large
+    // accounts (HP: ~6.6k active+paused ads = ~130 pages) routinely trip Meta's
+    // user request limit before finishing; resuming after a backoff lets the
+    // walk grind through. User-level limits can need minutes to clear, so the
+    // backoff is capped high (see metaPageBackoffMs).
+    let json: MetaPaging<T> | undefined;
+    for (let attempt = 0; ; attempt++) {
+      const response = await fetch(nextUrl, { cache: "no-store", signal: options.signal });
+      recordMetaUsageFromResponse(path, response);
+      const body = (await response.json()) as MetaPaging<T>;
 
-    if (!response.ok || json.error) {
+      if (response.ok && !body.error) {
+        json = body;
+        break;
+      }
+
+      if (attempt < maxRetries && isMetaRetryable(body)) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, metaPageBackoffMs(attempt), undefined),
+        );
+        continue;
+      }
+
       throw new MetaGraphError(
-        json.error?.message || `Meta Graph API request failed for ${path}`,
-        json,
+        body.error?.message || `Meta Graph API request failed for ${path}`,
+        body,
       );
     }
 
-    data.push(...(json.data || []));
-    nextUrl = json.paging?.next;
+    // json is always assigned here: the loop above only exits via break (which
+    // sets it) or throw.
+    data.push(...(json!.data || []));
+    nextUrl = json!.paging?.next;
     page += 1;
   }
 
@@ -2765,6 +2804,16 @@ async function graphPages<T>(
   }
 
   return data;
+}
+
+// Backoff between retries of a paginated Meta walk. Exponential with jitter,
+// capped at 60s so a single stuck cursor can wait out a multi-minute user-level
+// rate limit across the default 6 retries (~3s, 8s, 19s, 47s, 60s, 60s) instead
+// of aborting the entire refresh.
+function metaPageBackoffMs(attempt: number) {
+  const base = Math.min(3_000 * Math.pow(2.5, attempt), 60_000);
+  const jitter = base * (0.75 + Math.random() * 0.5);
+  return Math.round(jitter);
 }
 
 function getSyncDatePreset() {
