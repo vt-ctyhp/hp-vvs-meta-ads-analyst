@@ -8,8 +8,8 @@ colors:
   card: "#fbf7f1"
   inset: "#efe8dd"
   ink: "#2a2725"
-  ink-body: "#4a4540"
-  ink-muted: "#8a8178"
+  ink-body: "#423d38"
+  ink-muted: "#756c62"
   rule: "#d4cfc4"
   rule-soft: "#e6dfd2"
   hp-pink: "#e91d79"
@@ -163,8 +163,8 @@ A warm-cream palette tuned for paper feel. Every neutral is tinted toward the cr
 - **Card Cream** (`#fbf7f1`): The brighter cream used on lifted card surfaces, the top-nav backdrop (at 90% opacity over the page), and any panel that should read as "set on top of the page."
 - **Inset Cream** (`#efe8dd`): A darker cream used for inset states, hover backdrops on secondary chips, and pressed surfaces.
 - **Ink Deep** (`#2a2725`): Primary text color. Warm near-black. Use for headlines, body emphasis, primary buttons, active chip fills. Never `#000`.
-- **Ink Body** (`#4a4540`): Default body text. Mid-warm-brown. The workhorse.
-- **Ink Muted** (`#8a8178`): Smallcaps labels, secondary metadata, captions.
+- **Ink Body** (`#423d38`): Default body text. Mid-warm-brown. The workhorse.
+- **Ink Muted** (`#756c62`): Smallcaps labels, secondary metadata, captions. Darkened to clear WCAG AA (~4.6:1) on the cream foundation while staying a clear tier below `ink-body`.
 - **Rule Warm** (`#d4cfc4`): The default hairline border. Used on cards, dividers, table cell separators.
 - **Rule Soft** (`#e6dfd2`): A lighter hairline for ornament rules and quiet group separators.
 
