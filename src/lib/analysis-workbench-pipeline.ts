@@ -26,6 +26,7 @@ import type {
   JsonValue,
 } from "./analysis-workbench-contract.ts";
 import {
+  clampWorkbenchDateRangeToSyncedData,
   dateBucketLimit,
   dateGrainForDimensions,
   dateGrainToDimension,
@@ -198,7 +199,7 @@ export type AnalysisWorkbenchNarrativeInput = {
 
 export type AnalysisWorkbenchNarrativeComposer = (
   input: AnalysisWorkbenchNarrativeInput,
-) => Promise<{ summary: string; apiCost?: OpenAICostBreakdown } | null>;
+) => Promise<{ summary: string; title?: string; apiCost?: OpenAICostBreakdown } | null>;
 
 type PlannedIntent = AnalysisWorkbenchPipelineIntent & {
   semanticValidation: ReturnType<typeof validateAnalysisWorkbenchSemanticIntent>;
@@ -319,16 +320,14 @@ export async function runAnalysisWorkbenchFactsPipeline(
     buildVisualCards(planned, facts.items, groupedRows, trendRows, entityDisplays),
     input.controlledEdit,
   );
-  const answer = withWorkbenchAnswerApiCost(
-    await composeAnswerWithNarrative({
-      planned,
-      facts: facts.items,
-      sourceNotes,
-      visualCards,
-      composeNarrative: input.composeNarrative,
-    }),
+  const composed = await composeAnswerWithNarrative({
     planned,
-  );
+    facts: facts.items,
+    sourceNotes,
+    visualCards,
+    composeNarrative: input.composeNarrative,
+  });
+  const answer = withWorkbenchAnswerApiCost(composed.answer, planned);
   const groundingIssues = validateAnalysisWorkbenchNarrativeGrounding(
     answer.summary,
     answer.citations,
@@ -373,7 +372,7 @@ export async function runAnalysisWorkbenchFactsPipeline(
 
   return {
     status: groundingIssues.length ? "failed" : "completed",
-    title,
+    title: composed.title || title,
     intent: stripSemanticValidation(planned),
     queryPlan: {
       status: "ready",
@@ -506,7 +505,20 @@ function planAnalysisWorkbenchIntent(input: {
           metrics,
           dimensions,
         });
-  const dateRange = dateResolution.dateRange;
+  const clampedDate = clampWorkbenchDateRangeToSyncedData(
+    dateResolution.dateRange,
+    input.latestSyncedInsightDate,
+  );
+  const dateRange = clampedDate.dateRange;
+  const dateAssumptions = clampedDate.clamped
+    ? [
+        ...dateResolution.assumptions,
+        {
+          code: "synced_data_clamp",
+          message: `Date range trimmed to the latest synced Meta Ads date (${dateRange.end}); later dates have no data yet.`,
+        },
+      ]
+    : dateResolution.assumptions;
   const dateGrain = dateResolution.dateGrain || dateGrainForDimensions(dimensions);
   const semanticValidation = validateAnalysisWorkbenchSemanticIntent({
     prompt: input.prompt,
@@ -569,7 +581,7 @@ function planAnalysisWorkbenchIntent(input: {
     ...(parser ? { parser } : {}),
     semanticValidation: governedSemanticValidation,
     filterScopes,
-    dateAssumptions: dateResolution.assumptions,
+    dateAssumptions,
   };
 }
 
@@ -930,7 +942,10 @@ async function composeAnswerWithNarrative(input: {
   sourceNotes: AnalysisWorkbenchSourceNote[];
   visualCards: AnalysisWorkbenchVisualCard[];
   composeNarrative?: AnalysisWorkbenchNarrativeComposer;
-}) {
+}): Promise<{
+  answer: { summary: string; citations: AnalysisWorkbenchCitation[]; apiCost?: OpenAICostBreakdown };
+  title?: string;
+}> {
   const fallback = composeAnswer(input.planned, input.facts, input.sourceNotes);
   const composer = input.composeNarrative || composeAnalysisWorkbenchNarrativeWithAI;
   const narrative = await composer({
@@ -940,7 +955,7 @@ async function composeAnswerWithNarrative(input: {
     visualCards: input.visualCards,
     fallbackSummary: fallback.summary,
   });
-  if (!narrative?.summary.trim()) return fallback;
+  if (!narrative?.summary.trim()) return { answer: fallback };
 
   const candidate = {
     summary: narrative.summary.trim(),
@@ -951,7 +966,8 @@ async function composeAnswerWithNarrative(input: {
     candidate.summary,
     candidate.citations,
   );
-  return groundingIssues.length ? fallback : candidate;
+  if (groundingIssues.length) return { answer: fallback };
+  return { answer: candidate, title: sanitizeWorkbenchTitle(narrative.title) };
 }
 
 function withWorkbenchAnswerApiCost<T extends { summary: string; citations: AnalysisWorkbenchCitation[] }>(
@@ -2629,6 +2645,23 @@ function normalizePrompt(prompt: string) {
 
 function titleFromPrompt(prompt: string) {
   return prompt.length > 90 ? `${prompt.slice(0, 87)}...` : prompt;
+}
+
+/**
+ * Normalize an AI-generated run title to a short, single-line label. Strips
+ * citation markers, surrounding quotes, and trailing punctuation, and caps the
+ * length. Returns undefined when nothing usable remains so the caller can fall
+ * back to the prompt-derived title.
+ */
+function sanitizeWorkbenchTitle(value: string | undefined | null): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const cleaned = value
+    .replace(/\[[A-Za-z]\d+\]/g, "")
+    .replace(/\s+/g, " ")
+    .replace(/^["'\s]+|["'\s.]+$/g, "")
+    .trim();
+  if (!cleaned) return undefined;
+  return cleaned.length > 70 ? `${cleaned.slice(0, 67)}...` : cleaned;
 }
 
 function normalizeToken(value: string) {
