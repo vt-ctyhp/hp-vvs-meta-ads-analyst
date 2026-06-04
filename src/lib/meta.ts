@@ -923,6 +923,44 @@ async function fetchMetaAdsForCatalogRefresh(
   }
 }
 
+// Shared request shape for the per-ad-set catalog fetch. Exported so tests can
+// assert the edge/fields/page-size without hitting Meta.
+export function adSetAdsRequest(adSetId: string) {
+  return {
+    path: `${adSetId}/ads`,
+    params: {
+      fields: META_AD_CATALOG_FIELDS.join(","),
+      limit: String(META_AD_CATALOG_PAGE_LIMIT),
+      filtering: activeInventoryFilter(),
+    },
+  };
+}
+
+// Per-ad-set ads fetch for the chunked catalog refresh. Mirrors
+// fetchMetaAdsForCatalogRefresh (heavy fields with a core-field fallback on
+// MetaGraphError) but scoped to one ad set, so each call is small and the
+// graphPages backoff can absorb transient throttles.
+async function fetchMetaAdsForAdSet(
+  adSetId: string,
+  fallback?: { enrichment: SyncEnrichmentMetrics; account: string },
+) {
+  const maxPages = getSyncMaxPages("META_SYNC_MAX_AD_PAGES", DEFAULT_META_SYNC_MAX_AD_PAGES);
+  const req = adSetAdsRequest(adSetId);
+  try {
+    return await graphPages<JsonRecord>(req.path, req.params, { maxPages });
+  } catch (error) {
+    if (!(error instanceof MetaGraphError)) throw error;
+    if (fallback) {
+      recordSkippedEnrichment(fallback.enrichment, fallback.account, "ad_catalog_fields", errorToMessage(error));
+    }
+    return graphPages<JsonRecord>(
+      req.path,
+      { ...req.params, fields: META_AD_CORE_CATALOG_FIELDS.join(",") },
+      { maxPages },
+    );
+  }
+}
+
 async function fetchMetaAdsForStatusRefresh(metaAccountId: string) {
   return graphPages<JsonRecord>(`${metaAccountId}/ads`, {
     fields: META_AD_STATUS_FIELDS.join(","),
