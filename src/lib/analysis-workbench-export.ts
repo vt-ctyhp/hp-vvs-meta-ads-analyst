@@ -103,6 +103,117 @@ export function buildAnalysisWorkbenchPdfReportExport({
   };
 }
 
+/**
+ * One self-contained PDF for a single table or chart, suitable for emailing to
+ * a colleague. Charts are rendered as their full labelled data series (the PNG
+ * export covers the visual rendering).
+ */
+export function buildAnalysisWorkbenchCardPdfExport({
+  card,
+  sourceNotes = [],
+}: {
+  card: AnalysisWorkbenchVisualCard;
+  sourceNotes?: JsonValue[];
+}): AnalysisWorkbenchTextExport {
+  const lines = [
+    "HP/VVS Meta Ads Analysis",
+    "",
+    ...fullCardLines(card, sourceNotes),
+  ].flatMap((line) => wrapLine(line, 92));
+
+  return {
+    fileName: `${fileSlug(card.title)}.pdf`,
+    mimeType: "application/pdf",
+    content: buildPdf(lines),
+  };
+}
+
+export type AnalysisWorkbenchRunPdfInput = {
+  title: string;
+  prompt: string;
+  answerSummary: string;
+  visualCards: AnalysisWorkbenchVisualCard[];
+  sourceNotes: JsonValue[];
+  assumptions?: string[];
+  caveats?: string[];
+};
+
+/**
+ * One PDF for an entire run: the question, the AI answer, every table and chart,
+ * source notes, and assumptions/caveats. Works for any run (not just promoted
+ * dashboard packets).
+ */
+export function buildAnalysisWorkbenchRunPdfExport({
+  run,
+}: {
+  run: AnalysisWorkbenchRunPdfInput;
+}): AnalysisWorkbenchTextExport {
+  const lines = [
+    "HP/VVS Meta Ads Analysis Report",
+    "",
+    run.title,
+    `Question: ${run.prompt}`,
+    "",
+    "Answer",
+    run.answerSummary || "No answer saved.",
+    "",
+    "Visuals",
+    ...(run.visualCards.length
+      ? run.visualCards.flatMap((card) => fullCardLines(card, run.sourceNotes))
+      : ["No visual objects saved."]),
+    "Source Notes",
+    ...(normalizeSourceNotes(run.sourceNotes).length
+      ? normalizeSourceNotes(run.sourceNotes).map((note) => `${note.label}: ${note.value}`)
+      : ["None saved."]),
+    "",
+    "Assumptions",
+    ...(run.assumptions?.length ? run.assumptions : ["None saved."]),
+    "",
+    "Caveats",
+    ...(run.caveats?.length ? run.caveats : ["None saved."]),
+  ].flatMap((line) => wrapLine(line, 92));
+
+  return {
+    fileName: `${fileSlug(run.title) || "analysis"}-run.pdf`,
+    mimeType: "application/pdf",
+    content: buildPdf(lines),
+  };
+}
+
+function fullCardLines(card: AnalysisWorkbenchVisualCard, sourceNotes: JsonValue[]): string[] {
+  const header = `${visualTypeLabel(card.type)}: ${card.title}`;
+  const sources = `Sources: ${sourceSummary(card.sourceNoteIds, sourceNotes)}`;
+
+  if (card.type === "flat_table" || card.type === "pivot_table") {
+    return [header, sources, ...tableRows(card).map((row) => row.join(" | ")), ""];
+  }
+  if (card.type === "bar_chart") {
+    return [header, sources, ...card.bars.map((bar) => `${bar.label}: ${bar.formattedValue}`), ""];
+  }
+  if (card.type === "line_chart") {
+    return [
+      header,
+      sources,
+      ...card.points.map((point) => `${point.label}: ${point.formattedValue}`),
+      "",
+    ];
+  }
+  if (card.type === "scatter_chart") {
+    return [
+      header,
+      sources,
+      ...card.points.map((point) => `${point.label}: ${point.formattedX} / ${point.formattedY}`),
+      "",
+    ];
+  }
+  return [
+    header,
+    sources,
+    `${card.title}: ${"formattedValue" in card ? card.formattedValue : ""}`,
+    "",
+  ];
+}
+
 function tableRows(card: AnalysisWorkbenchTableExportCard): string[][] {
   if (card.type === "flat_table") {
     const columnInfo = card.columns.map((column) => ({

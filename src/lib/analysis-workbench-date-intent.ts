@@ -447,6 +447,33 @@ function relativeDateAssumption() {
   };
 }
 
+/**
+ * Shrink a resolved date range so it never extends past the latest synced Meta
+ * Ads date. The requested range (e.g. a full calendar year) is left untouched
+ * by the resolver; this is applied in the pipeline so queries and the AI answer
+ * only cover dates that actually have data. Shrink-only: the start is preserved
+ * (unless it too sits past the synced data) and an earlier-than-synced end is
+ * left as-is.
+ */
+export function clampWorkbenchDateRangeToSyncedData(
+  dateRange: AnalysisWorkbenchContextDateRange,
+  latestSyncedInsightDate?: string | null,
+): { dateRange: AnalysisWorkbenchContextDateRange; clamped: boolean } {
+  if (!isDateString(latestSyncedInsightDate) || !isDateString(dateRange.end)) {
+    return { dateRange, clamped: false };
+  }
+  if (dateRange.end <= latestSyncedInsightDate) {
+    return { dateRange, clamped: false };
+  }
+
+  const end = latestSyncedInsightDate;
+  const start = isDateString(dateRange.start) && dateRange.start <= end ? dateRange.start : end;
+  return {
+    dateRange: { ...dateRange, start, end, days: inclusiveDateDays(start, end) },
+    clamped: true,
+  };
+}
+
 function normalizeDateGrain(
   grain: WorkbenchPlannerDateIntent["grain"],
 ): WorkbenchDateGrain | null {

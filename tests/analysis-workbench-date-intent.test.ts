@@ -2,9 +2,39 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  clampWorkbenchDateRangeToSyncedData,
   inferAnalysisWorkbenchDateIntentFromPrompt,
   resolveAnalysisWorkbenchDateIntent,
 } from "../src/lib/analysis-workbench-date-intent.ts";
+
+test("clamp shrinks a future-ending range to the latest synced date and recomputes days", () => {
+  const result = clampWorkbenchDateRangeToSyncedData(
+    { start: "2026-01-01", end: "2026-12-31", days: 365, label: "2026" },
+    "2026-06-04",
+  );
+
+  assert.equal(result.clamped, true);
+  assert.equal(result.dateRange.start, "2026-01-01");
+  assert.equal(result.dateRange.end, "2026-06-04");
+  assert.equal(result.dateRange.days, 155);
+  assert.equal(result.dateRange.label, "2026");
+});
+
+test("clamp leaves a range already within synced data untouched", () => {
+  const range = { start: "2026-05-01", end: "2026-05-25", days: 25, label: "May 2026" };
+  const result = clampWorkbenchDateRangeToSyncedData(range, "2026-06-04");
+
+  assert.equal(result.clamped, false);
+  assert.deepEqual(result.dateRange, range);
+});
+
+test("clamp is a no-op when the latest synced date is unknown", () => {
+  const range = { start: "2026-01-01", end: "2026-12-31", days: 365, label: "2026" };
+  const result = clampWorkbenchDateRangeToSyncedData(range, null);
+
+  assert.equal(result.clamped, false);
+  assert.deepEqual(result.dateRange, range);
+});
 
 test("full-year weekly phrasing resolves to full calendar year with week grain", () => {
   const intent = inferAnalysisWorkbenchDateIntentFromPrompt(

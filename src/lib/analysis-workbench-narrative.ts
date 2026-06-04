@@ -14,11 +14,12 @@ export const composeAnalysisWorkbenchNarrativeWithAI: AnalysisWorkbenchNarrative
   try {
     const response = await client.chat.completions.create({
       model,
+      response_format: { type: "json_object" },
       messages: [
         {
           role: "system",
           content:
-            "Write a concise senior Meta Ads analyst answer from the supplied computed facts only. Do not invent numbers, dates, metrics, entity names, or data sources. Keep citations exactly as supplied, such as [F1] or [S1]. Do not mention technical IDs.",
+            'Write a concise senior Meta Ads analyst answer from the supplied computed facts only. Do not invent numbers, dates, metrics, entity names, or data sources. Keep citations exactly as supplied, such as [F1] or [S1]. Do not mention technical IDs. Respond with a JSON object {"title": string, "answer": string}. "title" is a 3-5 word headline summarizing the question (Title Case, no citations, no trailing punctuation). "answer" is the full analyst response with its citations.',
         },
         {
           role: "user",
@@ -54,6 +55,7 @@ export const composeAnalysisWorkbenchNarrativeWithAI: AnalysisWorkbenchNarrative
             sourceNotes: input.sourceNotes,
             fallbackSummary: input.fallbackSummary,
             requirements: [
+              "Set title to a 3-5 word headline that names the metric, breakdown, and period when present.",
               "Lead with the direct answer.",
               "For week-over-week shapes, mention the latest week comparison and the best week when present.",
               "For entity shapes, use entity names, not IDs.",
@@ -64,10 +66,13 @@ export const composeAnalysisWorkbenchNarrativeWithAI: AnalysisWorkbenchNarrative
         },
       ],
     });
-    const summary = response.choices[0]?.message?.content?.trim();
-    if (!summary) return null;
+    const content = response.choices[0]?.message?.content?.trim();
+    if (!content) return null;
+    const parsed = parseNarrativeResponse(content);
+    if (!parsed.summary) return null;
     return {
-      summary,
+      summary: parsed.summary,
+      ...(parsed.title ? { title: parsed.title } : {}),
       apiCost: buildOpenAICostBreakdown({
         model: response.model || model,
         inputTokens: response.usage?.prompt_tokens || 0,
@@ -78,6 +83,18 @@ export const composeAnalysisWorkbenchNarrativeWithAI: AnalysisWorkbenchNarrative
     return null;
   }
 };
+
+function parseNarrativeResponse(content: string): { summary: string; title?: string } {
+  try {
+    const parsed = JSON.parse(content) as { title?: unknown; answer?: unknown };
+    const answer = typeof parsed.answer === "string" ? parsed.answer.trim() : "";
+    const title = typeof parsed.title === "string" ? parsed.title.trim() : "";
+    if (answer) return title ? { summary: answer, title } : { summary: answer };
+  } catch {
+    // Fall through: treat the raw content as the summary.
+  }
+  return { summary: content };
+}
 
 function aiNarrativeEnabled() {
   const configured = process.env.ANALYSIS_WORKBENCH_AI_NARRATIVE?.trim().toLowerCase();

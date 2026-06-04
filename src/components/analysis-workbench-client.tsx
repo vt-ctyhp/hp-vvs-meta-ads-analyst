@@ -35,8 +35,10 @@ import {
   type AnalysisWorkbenchRun,
 } from "@/lib/analysis-workbench-contract";
 import {
+  buildAnalysisWorkbenchCardPdfExport,
   buildAnalysisWorkbenchChartPngExportSource,
   buildAnalysisWorkbenchPdfReportExport,
+  buildAnalysisWorkbenchRunPdfExport,
   buildAnalysisWorkbenchTableCsvExport,
   isAnalysisWorkbenchChartCard,
   isAnalysisWorkbenchTableCard,
@@ -127,12 +129,14 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
 
     return "Create the first durable Ask AI run from one prompt.";
   }, [selectedRun]);
-  const inheritedContextChips = useMemo(() => {
-    const chips = buildAnalysisContextChips(
-      selectedRun ? resolveAnalysisRunContext(selectedRun) : null,
-    );
-    return chips.filter((chip) => !removedContextKeys.includes(chip.id));
-  }, [removedContextKeys, selectedRun]);
+  const allContextChips = useMemo(
+    () => buildAnalysisContextChips(selectedRun ? resolveAnalysisRunContext(selectedRun) : null),
+    [selectedRun],
+  );
+  const inheritedContextChips = useMemo(
+    () => allContextChips.filter((chip) => !removedContextKeys.includes(chip.id)),
+    [allContextChips, removedContextKeys],
+  );
 
   async function submitRun() {
     const nextPrompt = prompt.trim();
@@ -290,6 +294,7 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
                     current.includes(id) ? current : [...current, id],
                   )
                 }
+                onClearAll={() => setRemovedContextKeys(allContextChips.map((chip) => chip.id))}
               />
 
               <textarea
@@ -412,16 +417,29 @@ export function ModeSelector({
 export function InheritedContextChips({
   chips,
   onRemove,
+  onClearAll,
 }: {
   chips: AnalysisWorkbenchContextChip[];
   onRemove: (id: string) => void;
+  onClearAll?: () => void;
 }) {
   if (!chips.length) return null;
 
   return (
     <div className="mt-4 border border-hp-rule bg-hp-foundation p-3">
-      <div className="mb-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-        Inherited Context
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">
+          Inherited Context
+        </span>
+        {onClearAll ? (
+          <button
+            type="button"
+            onClick={onClearAll}
+            className="text-[10px] uppercase tracking-[0.14em] text-hp-muted underline decoration-hp-rule underline-offset-4 transition-colors hover:text-hp-ink"
+          >
+            Clear all
+          </button>
+        ) : null}
       </div>
       <div className="flex flex-wrap gap-2">
         {chips.map((chip) => (
@@ -513,12 +531,17 @@ export function RunDetail({
           <p className="mt-2 max-w-3xl text-sm leading-6 text-hp-body">{run.prompt}</p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <ExportButton
+            label="Export PDF"
+            ariaLabel={`Export ${run.title} run PDF`}
+            onClick={() => downloadRunPdf(run)}
+          />
           {onRerun ? (
             <button
               type="button"
               onClick={onRerun}
               disabled={rerunning}
-              className="inline-flex h-10 items-center justify-center gap-2 border border-hp-rule bg-hp-card px-3 text-[11px] uppercase tracking-[0.14em] text-hp-body transition-colors hover:border-hp-ink hover:bg-hp-inset disabled:hover:border-hp-rule disabled:hover:bg-hp-card"
+              className="inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap border border-hp-rule bg-hp-card px-3 text-[10px] uppercase tracking-[0.12em] text-hp-body transition-colors hover:border-hp-ink hover:bg-hp-inset disabled:hover:border-hp-rule disabled:hover:bg-hp-card"
             >
               {rerunning ? (
                 <Loader2 size={14} className="animate-spin" aria-hidden />
@@ -1558,11 +1581,18 @@ function TableExportAction({
   if (!runId || !isAnalysisWorkbenchTableCard(card)) return null;
 
   return (
-    <ExportButton
-      label="Export CSV"
-      ariaLabel={`Export ${card.title} CSV`}
-      onClick={() => downloadTableCsv(runId, card, sourceNotes)}
-    />
+    <div className="flex flex-wrap gap-2">
+      <ExportButton
+        label="Export CSV"
+        ariaLabel={`Export ${card.title} CSV`}
+        onClick={() => downloadTableCsv(runId, card, sourceNotes)}
+      />
+      <ExportButton
+        label="Export PDF"
+        ariaLabel={`Export ${card.title} PDF`}
+        onClick={() => downloadCardPdf(card, sourceNotes)}
+      />
+    </div>
   );
 }
 
@@ -1578,11 +1608,18 @@ function ChartExportAction({
   if (!runId || !isAnalysisWorkbenchChartCard(card)) return null;
 
   return (
-    <ExportButton
-      label="Export PNG"
-      ariaLabel={`Export ${card.title} PNG`}
-      onClick={() => void downloadChartPng(runId, card, sourceNotes)}
-    />
+    <div className="flex flex-wrap gap-2">
+      <ExportButton
+        label="Export PNG"
+        ariaLabel={`Export ${card.title} PNG`}
+        onClick={() => void downloadChartPng(runId, card, sourceNotes)}
+      />
+      <ExportButton
+        label="Export PDF"
+        ariaLabel={`Export ${card.title} PDF`}
+        onClick={() => downloadCardPdf(card, sourceNotes)}
+      />
+    </div>
   );
 }
 
@@ -1611,6 +1648,41 @@ function ExportButton({
 function downloadDashboardPacketPdf(runId: string, packet: AnalysisWorkbenchDashboardPacket) {
   const pdf = buildAnalysisWorkbenchPdfReportExport({ runId, packet });
   downloadFile(pdf.fileName, pdf.content, pdf.mimeType);
+}
+
+function downloadCardPdf(
+  card: AnalysisWorkbenchVisualCard,
+  sourceNotes: AnalysisWorkbenchRun["sourceNotes"],
+) {
+  const pdf = buildAnalysisWorkbenchCardPdfExport({ card, sourceNotes });
+  downloadFile(pdf.fileName, pdf.content, pdf.mimeType);
+}
+
+function downloadRunPdf(run: AnalysisWorkbenchRun) {
+  const validation = run.validation as { assumptions?: unknown; warnings?: unknown } | null;
+  const pdf = buildAnalysisWorkbenchRunPdfExport({
+    run: {
+      title: run.title,
+      prompt: run.prompt,
+      answerSummary: run.answer.summary,
+      visualCards: run.visualCards,
+      sourceNotes: run.sourceNotes,
+      assumptions: validationMessages(validation?.assumptions),
+      caveats: validationMessages(validation?.warnings),
+    },
+  });
+  downloadFile(pdf.fileName, pdf.content, pdf.mimeType);
+}
+
+function validationMessages(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) =>
+      item && typeof item === "object" && typeof (item as { message?: unknown }).message === "string"
+        ? (item as { message: string }).message
+        : null,
+    )
+    .filter((message): message is string => Boolean(message));
 }
 
 function downloadTableCsv(

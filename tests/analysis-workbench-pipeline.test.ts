@@ -508,6 +508,67 @@ test("AI narrative with uncited numbers falls back to grounded deterministic ans
   assert.match(result.answer.summary, /\$700/);
 });
 
+test("AI narrative title becomes the sanitized run title", async () => {
+  const result = await runAnalysisWorkbenchFactsPipeline({
+    prompt: "Show spend by campaign group for the last 7 days.",
+    outputMode: "answer_visuals",
+    latestSyncedInsightDate: "2026-05-25",
+    composeNarrative: async (input) => ({
+      summary: input.fallbackSummary,
+      title: '"Spend by Campaign Group [F1]."',
+    }),
+    executeAggregate: async (request) =>
+      request.dimensions.length
+        ? [aggregateRow({ campaign_umbrella: "Book Appts US", spend: 700, source_rows: 2 })]
+        : [aggregateRow({ spend: 700, source_rows: 2 })],
+  });
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.title, "Spend by Campaign Group");
+});
+
+test("run title falls back to the prompt when the narrative supplies no title", async () => {
+  const result = await runAnalysisWorkbenchFactsPipeline({
+    prompt: "Show spend by campaign group for the last 7 days.",
+    outputMode: "answer_visuals",
+    latestSyncedInsightDate: "2026-05-25",
+    composeNarrative: async (input) => ({ summary: input.fallbackSummary }),
+    executeAggregate: async (request) =>
+      request.dimensions.length
+        ? [aggregateRow({ campaign_umbrella: "Book Appts US", spend: 700, source_rows: 2 })]
+        : [aggregateRow({ spend: 700, source_rows: 2 })],
+  });
+
+  assert.equal(result.title, "Show spend by campaign group for the last 7 days.");
+});
+
+test("date range is shrunk to the latest synced data with a clamp assumption", async () => {
+  const requests: AnalysisWorkbenchPipelineAggregateRequest[] = [];
+  const result = await runAnalysisWorkbenchFactsPipeline({
+    prompt: "Break out spend by month for the entire year 2026.",
+    outputMode: "answer_visuals",
+    latestSyncedInsightDate: "2026-06-04",
+    executeAggregate: async (request) => {
+      requests.push(request);
+      return request.dimensions.length
+        ? [
+            aggregateRow({ month: "2026-01", spend: 1000, source_rows: 5 }),
+            aggregateRow({ month: "2026-02", spend: 1200, source_rows: 6 }),
+          ]
+        : [aggregateRow({ spend: 2200, source_rows: 11 })];
+    },
+  });
+
+  const intent = result.intent as AnalysisWorkbenchPipelineIntent;
+  assert.equal(intent.dateRange.start, "2026-01-01");
+  assert.equal(intent.dateRange.end, "2026-06-04");
+  assert.ok(requests.length > 0);
+  assert.ok(requests.every((request) => request.end === "2026-06-04"));
+  assert.ok(
+    result.validation.assumptions.some((assumption) => assumption.code === "synced_data_clamp"),
+  );
+});
+
 test("recommendation shapes repair one-dimension pivot parser output to a table", async () => {
   const result = await runAnalysisWorkbenchFactsPipeline({
     prompt:
@@ -901,7 +962,7 @@ test("natural language prompt grammar resolves governed query intent across comm
   }
 });
 
-test("AI parser result drives full-year weekly spend trend without recent-date caps", async () => {
+test("AI parser full-year weekly spend trend is shrunk to the latest synced date", async () => {
   const requests: AnalysisWorkbenchPipelineAggregateRequest[] = [];
   const result = await runAnalysisWorkbenchFactsPipeline({
     prompt: "week by week ad spend for the entire of 2026",
@@ -969,12 +1030,15 @@ test("AI parser result drives full-year weekly spend trend without recent-date c
   assert.equal(intent.questionType, "trend");
   assert.equal(intent.parser?.source, "ai");
   assert.equal(intent.dateRange.start, "2026-01-01");
-  assert.equal(intent.dateRange.end, "2026-12-31");
-  assert.equal(intent.dateRange.days, 365);
+  assert.equal(intent.dateRange.end, "2026-05-25");
+  assert.equal(intent.dateRange.days, 145);
   assert.equal(intent.dateGrain, "week");
   assert.deepEqual(intent.metrics, ["spend"]);
   assert.deepEqual(intent.dimensions, ["week"]);
-  assert.equal(intent.limit >= 53, true);
+  assert.equal(intent.limit >= 22, true);
+  assert.ok(
+    result.validation.assumptions.some((assumption) => assumption.code === "synced_data_clamp"),
+  );
   assert.deepEqual(
     requests.map((request) => ({
       start: request.start,
@@ -987,15 +1051,15 @@ test("AI parser result drives full-year weekly spend trend without recent-date c
     [
       {
         start: "2026-01-01",
-        end: "2026-12-31",
+        end: "2026-05-25",
         dimensions: ["week"],
         sortField: "week",
         sortDirection: "asc",
-        limit: 54,
+        limit: 22,
       },
       {
         start: "2026-01-01",
-        end: "2026-12-31",
+        end: "2026-05-25",
         dimensions: [],
         sortField: "week",
         sortDirection: "asc",
@@ -1003,11 +1067,11 @@ test("AI parser result drives full-year weekly spend trend without recent-date c
       },
       {
         start: "2026-01-01",
-        end: "2026-12-31",
+        end: "2026-05-25",
         dimensions: ["week"],
         sortField: "week",
         sortDirection: "asc",
-        limit: 54,
+        limit: 22,
       },
     ],
   );

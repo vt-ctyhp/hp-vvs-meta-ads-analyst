@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildAnalysisWorkbenchCardPdfExport,
   buildAnalysisWorkbenchChartPngExportSource,
   buildAnalysisWorkbenchPdfReportExport,
+  buildAnalysisWorkbenchRunPdfExport,
   buildAnalysisWorkbenchTableCsvExport,
 } from "../src/lib/analysis-workbench-export.ts";
 import type {
@@ -192,4 +194,76 @@ test("dashboard packet PDF export contains answer, visuals, notes, assumptions, 
   assert.match(pdf.content, /Data source: Meta Ads daily insights/);
   assert.match(pdf.content, /Relative date range ends at latest synced day/);
   assert.match(pdf.content, /Primary KPI is group-specific/);
+});
+
+test("per-card PDF export renders a single table with its full rows and sources", () => {
+  const pivot: Extract<AnalysisWorkbenchVisualCard, { type: "pivot_table" }> = {
+    id: "pivot_campaign_umbrella_month_spend",
+    type: "pivot_table",
+    title: "Spend by campaign group and month",
+    rowDimension: "campaign_umbrella",
+    columnDimension: "month",
+    metric: "spend",
+    columns: [
+      { key: "2026-01", label: "2026-01" },
+      { key: "2026-02", label: "2026-02" },
+    ],
+    rows: [
+      {
+        rowLabel: "Book Appts US",
+        cells: {
+          "2026-01": { value: 1000, formattedValue: "$1,000" },
+          "2026-02": { value: 1200, formattedValue: "$1,200" },
+        },
+        total: { value: 2200, formattedValue: "$2,200" },
+      },
+    ],
+    sourceNoteIds: ["S1"],
+  };
+
+  const pdf = buildAnalysisWorkbenchCardPdfExport({ card: pivot, sourceNotes });
+
+  assert.equal(pdf.mimeType, "application/pdf");
+  assert.match(pdf.fileName, /spend-by-campaign-group-and-month\.pdf$/);
+  assert.match(pdf.content, /^%PDF-1\.4/);
+  assert.match(pdf.content, /Spend by campaign group and month/);
+  assert.match(pdf.content, /Book Appts US/);
+  assert.match(pdf.content, /\$2,200/);
+  assert.match(pdf.content, /Data source: Meta Ads daily insights/);
+});
+
+test("whole-run PDF export bundles the question, answer, visuals, and notes", () => {
+  const chart: Extract<AnalysisWorkbenchVisualCard, { type: "bar_chart" }> = {
+    id: "bar_campaign_umbrella_spend",
+    type: "bar_chart",
+    title: "Spend by campaign group",
+    metric: "spend",
+    dimension: "campaign_umbrella",
+    bars: [
+      { label: "Book Appts US", value: 2500, formattedValue: "$2,500" },
+      { label: "Cash for Gold US", value: 900, formattedValue: "$900" },
+    ],
+    sourceNoteIds: ["S1"],
+  };
+
+  const pdf = buildAnalysisWorkbenchRunPdfExport({
+    run: {
+      title: "Spend by Campaign Group",
+      prompt: "Break out spend by campaign group for the last 30 days.",
+      answerSummary: "Book Appts US led spend [S1].",
+      visualCards: [chart],
+      sourceNotes,
+      assumptions: ["Date range trimmed to the latest synced Meta Ads date."],
+      caveats: ["No matching rows for some groups."],
+    },
+  });
+
+  assert.equal(pdf.mimeType, "application/pdf");
+  assert.match(pdf.fileName, /spend-by-campaign-group-run\.pdf$/);
+  assert.match(pdf.content, /^%PDF-1\.4/);
+  assert.match(pdf.content, /Question: Break out spend by campaign group/);
+  assert.match(pdf.content, /Book Appts US led spend/);
+  assert.match(pdf.content, /Spend by campaign group/);
+  assert.match(pdf.content, /Date range trimmed to the latest synced/);
+  assert.match(pdf.content, /No matching rows for some groups/);
 });
