@@ -1040,6 +1040,126 @@ async function fetchMetaCustomConversions(metaAccountId: string) {
   }, { maxPages: getSyncMaxPages("META_SYNC_MAX_CUSTOM_CONVERSION_PAGES", 10) });
 }
 
+// Shared row shaping for the full ad-catalog upserts. Extracted from syncAccount
+// so the chunked per-ad-set path (syncAdCatalogChunk) builds identical rows.
+type CreativeCatalogRowContext = {
+  brandId: string | null;
+  accountRowId: unknown;
+  metaAccountId: string;
+  now: string;
+  refreshPreviews: boolean;
+  previewByAdId: Map<string, { previewHtml: string | null; previewUrl: string | null }>;
+};
+
+type AdCatalogRowContext = CreativeCatalogRowContext & {
+  classifications: Map<string, CampaignUmbrellaClassification>;
+  campaignByMetaId: Map<string, JsonRecord>;
+  adSetByMetaId: Map<string, JsonRecord>;
+  creativeByMetaId: Map<string, JsonRecord>;
+};
+
+export function buildCreativeCatalogRow(
+  ad: JsonRecord,
+  ctx: CreativeCatalogRowContext,
+): JsonRecord | null {
+  const creative = recordField(ad.creative);
+  const creativeId = stringField(creative.id);
+  if (!creativeId) return null;
+  const adPreview = ctx.previewByAdId.get(String(ad.id)) || null;
+  const preview = ctx.refreshPreviews ? chooseStoredPreview(creative, adPreview) : null;
+  return {
+    brand_id: ctx.brandId,
+    account_id: ctx.accountRowId,
+    meta_account_id: ctx.metaAccountId,
+    creative_id: creativeId,
+    name: stringField(creative.name),
+    title: stringField(creative.title),
+    body: stringField(creative.body),
+    call_to_action_type: stringField(creative.call_to_action_type),
+    ...(hasMetaField(creative, "call_to_action") ? { call_to_action: recordField(creative.call_to_action) } : {}),
+    ...(hasMetaField(creative, "url_tags") ? { url_tags: stringField(creative.url_tags) } : {}),
+    ...(hasMetaField(creative, "instagram_permalink_url")
+      ? { instagram_permalink_url: stringField(creative.instagram_permalink_url) }
+      : {}),
+    ...(hasMetaField(creative, "effective_instagram_media_id")
+      ? { effective_instagram_media_id: stringField(creative.effective_instagram_media_id) }
+      : {}),
+    ...(hasMetaField(creative, "degrees_of_freedom_spec")
+      ? { degrees_of_freedom_spec: recordField(creative.degrees_of_freedom_spec) }
+      : {}),
+    object_type: stringField(creative.object_type),
+    object_story_id: stringField(creative.object_story_id),
+    effective_object_story_id: stringField(creative.effective_object_story_id),
+    ...(ctx.refreshPreviews
+      ? {
+          thumbnail_url: stringField(creative.thumbnail_url),
+          image_url: stringField(creative.image_url),
+          video_thumbnail_url: stringField(creative.video_thumbnail_url),
+          preview_url: preview?.previewUrl || null,
+          preview_html: preview?.previewHtml || null,
+          preview_source: preview?.previewSource || "fallback",
+          creative_cache_attempted_at: null,
+          creative_cache_error: null,
+          last_preview_refresh_at: ctx.now,
+        }
+      : {}),
+    asset_metadata: {
+      image_hash: creative.image_hash || null,
+      video_id: creative.video_id || null,
+    },
+    object_story_spec: recordField(creative.object_story_spec),
+    asset_feed_spec: recordField(creative.asset_feed_spec),
+    raw_json: creative,
+    last_synced_at: ctx.now,
+  };
+}
+
+export function buildAdCatalogRow(ad: JsonRecord, ctx: AdCatalogRowContext): JsonRecord {
+  const creative = recordField(ad.creative);
+  const adPreview = ctx.previewByAdId.get(String(ad.id)) || null;
+  const preview = ctx.refreshPreviews ? chooseStoredPreview(creative, adPreview) : null;
+  const creativeId = stringField(creative.id);
+  const adId = stringField(ad.id);
+  const classification = ctx.classifications.get(adId || "") ||
+    classifyCampaignUmbrella({ campaignName: stringField(ad.name) });
+  return {
+    brand_id: ctx.brandId,
+    account_id: ctx.accountRowId,
+    campaign_ref_id: ctx.campaignByMetaId.get(String(ad.campaign_id))?.id || null,
+    ad_set_ref_id: ctx.adSetByMetaId.get(String(ad.adset_id))?.id || null,
+    creative_ref_id: ctx.creativeByMetaId.get(creativeId || "")?.id || null,
+    meta_account_id: ctx.metaAccountId,
+    campaign_id: stringField(ad.campaign_id),
+    ad_set_id: stringField(ad.adset_id),
+    ad_id: adId,
+    creative_id: creativeId,
+    name: stringField(ad.name),
+    status: stringField(ad.status),
+    configured_status: stringField(ad.configured_status),
+    effective_status: stringField(ad.effective_status),
+    ...(hasMetaField(ad, "tracking_specs") ? { tracking_specs: arrayField(ad.tracking_specs) } : {}),
+    ...(hasMetaField(ad, "tracking_and_conversion_with_defaults")
+      ? { tracking_and_conversion_with_defaults: recordField(ad.tracking_and_conversion_with_defaults) }
+      : {}),
+    ...(hasMetaField(ad, "preview_shareable_link")
+      ? { preview_shareable_link: stringField(ad.preview_shareable_link) }
+      : {}),
+    ...(hasMetaField(ad, "ad_active_time") ? { ad_active_time: stringField(ad.ad_active_time) } : {}),
+    ...(ctx.refreshPreviews
+      ? {
+          preview_source: preview?.previewSource || "fallback",
+          preview_url: preview?.previewUrl || null,
+          preview_html: preview?.previewHtml || null,
+        }
+      : {}),
+    created_time: stringField(ad.created_time),
+    updated_time: stringField(ad.updated_time),
+    ...umbrellaColumns(classification),
+    raw_json: ad,
+    last_synced_at: ctx.now,
+  };
+}
+
 async function syncAccount(
   account: SyncAccountConfig,
   brandId: string | null,
@@ -1260,61 +1380,18 @@ async function syncAccount(
     }
   }
 
+  const creativeRowContext: CreativeCatalogRowContext = {
+    brandId,
+    accountRowId: accountRow.id,
+    metaAccountId,
+    now,
+    refreshPreviews,
+    previewByAdId,
+  };
   const creativeRowsInput = refreshAdCatalog
-    ? ads
-        .map((ad) => {
-          const creative = recordField(ad.creative);
-          const creativeId = stringField(creative.id);
-          if (!creativeId) return null;
-          const adPreview = previewByAdId.get(String(ad.id)) || null;
-          const preview = refreshPreviews ? chooseStoredPreview(creative, adPreview) : null;
-          return {
-            brand_id: brandId,
-            account_id: accountRow.id,
-            meta_account_id: metaAccountId,
-            creative_id: creativeId,
-            name: stringField(creative.name),
-            title: stringField(creative.title),
-            body: stringField(creative.body),
-            call_to_action_type: stringField(creative.call_to_action_type),
-            ...(hasMetaField(creative, "call_to_action") ? { call_to_action: recordField(creative.call_to_action) } : {}),
-            ...(hasMetaField(creative, "url_tags") ? { url_tags: stringField(creative.url_tags) } : {}),
-            ...(hasMetaField(creative, "instagram_permalink_url")
-              ? { instagram_permalink_url: stringField(creative.instagram_permalink_url) }
-              : {}),
-            ...(hasMetaField(creative, "effective_instagram_media_id")
-              ? { effective_instagram_media_id: stringField(creative.effective_instagram_media_id) }
-              : {}),
-            ...(hasMetaField(creative, "degrees_of_freedom_spec")
-              ? { degrees_of_freedom_spec: recordField(creative.degrees_of_freedom_spec) }
-              : {}),
-            object_type: stringField(creative.object_type),
-            object_story_id: stringField(creative.object_story_id),
-            effective_object_story_id: stringField(creative.effective_object_story_id),
-            ...(refreshPreviews
-              ? {
-                  thumbnail_url: stringField(creative.thumbnail_url),
-                  image_url: stringField(creative.image_url),
-                  video_thumbnail_url: stringField(creative.video_thumbnail_url),
-                  preview_url: preview?.previewUrl || null,
-                  preview_html: preview?.previewHtml || null,
-                  preview_source: preview?.previewSource || "fallback",
-                  creative_cache_attempted_at: null,
-                  creative_cache_error: null,
-                  last_preview_refresh_at: now,
-                }
-              : {}),
-            asset_metadata: {
-              image_hash: creative.image_hash || null,
-              video_id: creative.video_id || null,
-            },
-            object_story_spec: recordField(creative.object_story_spec),
-            asset_feed_spec: recordField(creative.asset_feed_spec),
-            raw_json: creative,
-            last_synced_at: now,
-          };
-        })
-        .filter(Boolean) as JsonRecord[]
+    ? (ads
+        .map((ad) => buildCreativeCatalogRow(ad, creativeRowContext))
+        .filter(Boolean) as JsonRecord[])
     : [];
 
   const creativeRows = await upsertMany(
@@ -1357,55 +1434,15 @@ async function syncAccount(
   const adRows = refreshAdCatalog
     ? await upsertMany(
         "meta_ads",
-        ads.map((ad) => {
-          const creative = recordField(ad.creative);
-          const adPreview = previewByAdId.get(String(ad.id)) || null;
-          const preview = refreshPreviews ? chooseStoredPreview(creative, adPreview) : null;
-          const creativeId = stringField(creative.id);
-          const adId = stringField(ad.id);
-          const classification = adClassifications.get(adId || "") ||
-            classifyCampaignUmbrella({ campaignName: stringField(ad.name) });
-          return {
-            brand_id: brandId,
-            account_id: accountRow.id,
-            campaign_ref_id: campaignByMetaId.get(String(ad.campaign_id))?.id || null,
-            ad_set_ref_id: adSetByMetaId.get(String(ad.adset_id))?.id || null,
-            creative_ref_id: creativeByMetaId.get(creativeId || "")?.id || null,
-            meta_account_id: metaAccountId,
-            campaign_id: stringField(ad.campaign_id),
-            ad_set_id: stringField(ad.adset_id),
-            ad_id: adId,
-            creative_id: creativeId,
-            name: stringField(ad.name),
-            status: stringField(ad.status),
-            configured_status: stringField(ad.configured_status),
-            effective_status: stringField(ad.effective_status),
-            ...(hasMetaField(ad, "tracking_specs") ? { tracking_specs: arrayField(ad.tracking_specs) } : {}),
-            ...(hasMetaField(ad, "tracking_and_conversion_with_defaults")
-              ? {
-                  tracking_and_conversion_with_defaults: recordField(
-                    ad.tracking_and_conversion_with_defaults,
-                  ),
-                }
-              : {}),
-            ...(hasMetaField(ad, "preview_shareable_link")
-              ? { preview_shareable_link: stringField(ad.preview_shareable_link) }
-              : {}),
-            ...(hasMetaField(ad, "ad_active_time") ? { ad_active_time: stringField(ad.ad_active_time) } : {}),
-            ...(refreshPreviews
-              ? {
-                  preview_source: preview?.previewSource || "fallback",
-                  preview_url: preview?.previewUrl || null,
-                  preview_html: preview?.previewHtml || null,
-                }
-              : {}),
-            created_time: stringField(ad.created_time),
-            updated_time: stringField(ad.updated_time),
-            ...umbrellaColumns(classification),
-            raw_json: ad,
-            last_synced_at: now,
-          };
-        }),
+        ads.map((ad) =>
+          buildAdCatalogRow(ad, {
+            ...creativeRowContext,
+            classifications: adClassifications,
+            campaignByMetaId,
+            adSetByMetaId,
+            creativeByMetaId,
+          }),
+        ),
         "meta_account_id,ad_id",
       )
     : refreshAdStatusesOnly
