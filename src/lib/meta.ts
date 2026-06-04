@@ -422,11 +422,11 @@ export type MetaAdVideoMetrics = {
   videoThruplayWatchedActions: MetaActionMetricRows;
 };
 
-type DynamicSupabaseClient = {
+export type DynamicSupabaseClient = {
   from: (table: string) => {
     upsert: (
       rows: JsonRecord[],
-      options: { onConflict: string },
+      options: { onConflict: string; defaultToNull?: boolean },
     ) => {
       select: (columns: string) => Promise<{ data: JsonRecord[] | null; error: Error | null }>;
     };
@@ -2935,9 +2935,14 @@ async function upsertSingle(table: string, row: JsonRecord, onConflict: string) 
   return rows[0];
 }
 
-async function upsertMany(table: string, rows: JsonRecord[], onConflict: string) {
+export async function upsertMany(
+  table: string,
+  rows: JsonRecord[],
+  onConflict: string,
+  client?: DynamicSupabaseClient,
+) {
   if (!rows.length) return [];
-  const supabase = createAdsAnalystClient("worker") as unknown as DynamicSupabaseClient;
+  const supabase = client ?? (createAdsAnalystClient("worker") as unknown as DynamicSupabaseClient);
   const results: JsonRecord[] = [];
 
   for (const chunk of chunks(rows, 500)) {
@@ -2945,6 +2950,11 @@ async function upsertMany(table: string, rows: JsonRecord[], onConflict: string)
       .from(table)
       .upsert(withAdsAnalystEnvironmentRows(chunk), {
         onConflict: adsAnalystOnConflict(onConflict),
+        // Columns missing from some rows in a bulk upsert must fall back to
+        // their DB DEFAULT, not NULL. Several enrichment columns are NOT NULL
+        // DEFAULT; without this the sync throws a not-null violation and aborts
+        // before writing any meta_daily_insights rows.
+        defaultToNull: false,
       })
       .select("*");
 
