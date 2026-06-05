@@ -22,12 +22,14 @@ describe("syncOptionsForTrigger", () => {
   });
 
   it("requires the explicit catalog trigger for full ad and creative refresh", () => {
+    // Catalog triggers refresh ads + creatives only; ranking/creative
+    // diagnostics moved off the automated path to manual_diagnostics.
     assert.deepEqual(syncOptionsForTrigger("manual_catalog"), {
       refreshPreviews: true,
       refreshAdCatalog: true,
       refreshAdStatusesOnly: false,
-      refreshRankingDiagnostics: true,
-      includeCreativeDiagnostics: true,
+      refreshRankingDiagnostics: false,
+      includeCreativeDiagnostics: false,
     });
   });
 

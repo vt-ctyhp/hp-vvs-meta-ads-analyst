@@ -36,12 +36,15 @@ export function syncOptionsForTrigger(
   if (trigger === "preview") return {};
 
   if (trigger === "manual_catalog" || trigger === "cron_catalog") {
+    // Catalog runs as a budgeted per-ad-set chunk that refreshes ads +
+    // creatives only. Ranking/creative diagnostics moved off the automated
+    // catalog path to keep each chunk lean; they refresh via manual_diagnostics.
     return {
       refreshPreviews: true,
       refreshAdCatalog: true,
       refreshAdStatusesOnly: false,
-      refreshRankingDiagnostics: true,
-      includeCreativeDiagnostics: true,
+      refreshRankingDiagnostics: false,
+      includeCreativeDiagnostics: false,
     };
   }
 
