@@ -820,6 +820,13 @@ describe("attribution ledger detail data", () => {
           occurred_at: "2026-05-20T23:49:17.152Z",
         }),
         eventRow({
+          event_id: "hp_evt-submit-error",
+          event_name: "BookingSubmitError",
+          event_type: "booking",
+          occurred_at: "2026-05-20T23:49:17.500Z",
+          properties: { message: "Invalid appointment request." },
+        }),
+        eventRow({
           event_id: "acuity-1708622080",
           event_name: "Schedule",
           event_type: "conversion",
@@ -865,6 +872,7 @@ describe("attribution ledger detail data", () => {
         "Meta ad landing page viewed",
         "Instagram profile link landing viewed",
         "Booking submitted",
+        "Booking submit failed — Invalid appointment request.",
         "Acuity booking created",
         "Meta CAPI sent",
       ],

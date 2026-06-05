@@ -2253,6 +2253,17 @@ function timelineLabel(event: CustomerJourneyLedgerEventRow) {
     if (metaOriginLabel) return metaOriginLabel;
     return pageViewLabel(event.page_url);
   }
+  if (event.event_name === "BookingSubmitError") {
+    // Surface *why* the submit failed instead of a bare "BookingSubmitError".
+    // The reason (e.g. "Invalid appointment request." / a field validation
+    // message) is what distinguishes a benign client-validation bounce from a
+    // hard backend rejection that abandons the booking.
+    const message =
+      event.properties && typeof event.properties.message === "string"
+        ? event.properties.message.trim()
+        : "";
+    return message ? `Booking submit failed — ${message}` : "Booking submit failed";
+  }
   const labels: Record<string, string> = {
     BookingClientConfirmed: "Booking confirmed in browser",
     BookingContactStarted: "Started booking form",
