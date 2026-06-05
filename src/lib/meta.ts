@@ -28,10 +28,15 @@ import {
   adsAnalystOnConflict,
   createAdsAnalystClient,
   getAdsAnalystEnvironment,
+  usesEnvironmentScopedAdsAnalystUpserts,
   usesLimitedAdsAnalystDbAccess,
   withAdsAnalystEnvironment,
   withAdsAnalystEnvironmentRows,
 } from "./ads-analyst-db.ts";
+import {
+  runAdCatalogChunk,
+  type AdSetChunkDeps,
+} from "./meta-ad-catalog-chunk.ts";
 import type { Json } from "./database.types.ts";
 
 type JsonRecord = Record<string, unknown>;
@@ -103,6 +108,7 @@ type SyncMetrics = {
   creatives: number;
   insightRows: number;
   previewRefreshes: number;
+  adSetsProcessed?: number;
   enrichment?: SyncEnrichmentMetrics;
   metaUsage?: MetaUsageSummary;
   audit?: SyncAuditSummary;
@@ -535,8 +541,32 @@ export async function syncMetaAds(trigger: MetaAdsSyncTrigger = "manual") {
       const brandRows = await ensureBrands(accounts);
       const brandByCode = new Map(brandRows.map((brand) => [String(brand.code), String(brand.id)]));
 
+      const chunkedCatalog = trigger === "cron_catalog" || trigger === "manual_catalog";
+
       for (const account of accounts) {
         try {
+          if (chunkedCatalog) {
+            // Catalog refresh runs as a budgeted, resumable per-ad-set chunk so
+            // it fits Vercel's 300s cap and Meta's ad-account rate budget. It
+            // refreshes ads + creatives only; insights/diagnostics have their
+            // own triggers.
+            const result = await syncAdCatalogChunk(
+              account,
+              brandByCode.get(account.brandCode) || null,
+            );
+            metrics.accounts += 1;
+            metrics.ads += result.ads;
+            metrics.creatives += result.creatives;
+            metrics.adSetsProcessed = (metrics.adSetsProcessed ?? 0) + result.adSetsProcessed;
+            mergeEnrichmentMetrics(metrics.enrichment!, result.enrichment);
+            if (result.errors.length) {
+              errors.push(
+                `${account.brandCode}: ${result.errors.length} ad set(s) failed this chunk (e.g. ${result.errors[0]})`,
+              );
+            }
+            continue;
+          }
+
           const result = await syncAccount(
             account,
             brandByCode.get(account.brandCode) || null,
@@ -1160,6 +1190,348 @@ export function buildAdCatalogRow(ad: JsonRecord, ctx: AdCatalogRowContext): Jso
   };
 }
 
+type DimensionCatalogRowContext = {
+  brandId: string | null;
+  accountRowId: unknown;
+  metaAccountId: string;
+  now: string;
+  statusOnly: boolean;
+};
+
+export function buildCampaignCatalogRow(
+  campaign: JsonRecord,
+  classification: CampaignUmbrellaClassification,
+  ctx: DimensionCatalogRowContext,
+): JsonRecord {
+  const baseRow = {
+    brand_id: ctx.brandId,
+    account_id: ctx.accountRowId,
+    meta_account_id: ctx.metaAccountId,
+    campaign_id: stringField(campaign.id),
+    name: stringField(campaign.name),
+    status: stringField(campaign.status),
+    effective_status: stringField(campaign.effective_status),
+    created_time: stringField(campaign.created_time),
+    updated_time: stringField(campaign.updated_time),
+    ...umbrellaColumns(classification),
+    raw_json: campaign,
+    last_synced_at: ctx.now,
+  };
+  if (ctx.statusOnly) return baseRow;
+  return {
+    ...baseRow,
+    ...(hasMetaField(campaign, "objective") ? { objective: stringField(campaign.objective) } : {}),
+    ...(hasMetaField(campaign, "buying_type") ? { buying_type: stringField(campaign.buying_type) } : {}),
+    ...(hasMetaField(campaign, "daily_budget") ? { daily_budget: moneyCents(campaign.daily_budget) } : {}),
+    ...(hasMetaField(campaign, "lifetime_budget") ? { lifetime_budget: moneyCents(campaign.lifetime_budget) } : {}),
+    ...(hasMetaField(campaign, "budget_remaining") ? { budget_remaining: moneyCents(campaign.budget_remaining) } : {}),
+    ...(hasMetaField(campaign, "bid_strategy") ? { bid_strategy: stringField(campaign.bid_strategy) } : {}),
+    ...(hasMetaField(campaign, "pacing_type") ? { pacing_type: arrayField(campaign.pacing_type) } : {}),
+    ...(hasMetaField(campaign, "budget_rebalance_flag")
+      ? { budget_rebalance_flag: booleanField(campaign.budget_rebalance_flag) }
+      : {}),
+    ...(hasMetaField(campaign, "start_time") ? { start_time: stringField(campaign.start_time) } : {}),
+    ...(hasMetaField(campaign, "stop_time") ? { stop_time: stringField(campaign.stop_time) } : {}),
+  };
+}
+
+export function buildAdSetCatalogRow(
+  adSet: JsonRecord,
+  classification: CampaignUmbrellaClassification,
+  ctx: DimensionCatalogRowContext & { campaignByMetaId: Map<string, JsonRecord> },
+): JsonRecord {
+  const baseRow = {
+    brand_id: ctx.brandId,
+    account_id: ctx.accountRowId,
+    campaign_ref_id: ctx.campaignByMetaId.get(String(adSet.campaign_id))?.id || null,
+    meta_account_id: ctx.metaAccountId,
+    campaign_id: stringField(adSet.campaign_id),
+    ad_set_id: stringField(adSet.id),
+    name: stringField(adSet.name),
+    status: stringField(adSet.status),
+    effective_status: stringField(adSet.effective_status),
+    created_time: stringField(adSet.created_time),
+    updated_time: stringField(adSet.updated_time),
+    ...umbrellaColumns(classification),
+    raw_json: adSet,
+    last_synced_at: ctx.now,
+  };
+  if (ctx.statusOnly) return baseRow;
+  return {
+    ...baseRow,
+    ...(hasMetaField(adSet, "optimization_goal") ? { optimization_goal: stringField(adSet.optimization_goal) } : {}),
+    ...(hasMetaField(adSet, "billing_event") ? { billing_event: stringField(adSet.billing_event) } : {}),
+    ...(hasMetaField(adSet, "bid_strategy") ? { bid_strategy: stringField(adSet.bid_strategy) } : {}),
+    ...(hasMetaField(adSet, "daily_budget") ? { daily_budget: moneyCents(adSet.daily_budget) } : {}),
+    ...(hasMetaField(adSet, "lifetime_budget") ? { lifetime_budget: moneyCents(adSet.lifetime_budget) } : {}),
+    ...(hasMetaField(adSet, "budget_remaining") ? { budget_remaining: moneyCents(adSet.budget_remaining) } : {}),
+    ...(hasMetaField(adSet, "learning_stage_info") ? { learning_stage_info: recordField(adSet.learning_stage_info) } : {}),
+    ...(hasMetaField(adSet, "attribution_spec") ? { attribution_spec: arrayField(adSet.attribution_spec) } : {}),
+    ...(hasMetaField(adSet, "promoted_object") ? { promoted_object: recordField(adSet.promoted_object) } : {}),
+    ...(hasMetaField(adSet, "destination_type") ? { destination_type: stringField(adSet.destination_type) } : {}),
+    ...(hasMetaField(adSet, "targeting_optimization_types")
+      ? { targeting_optimization_types: arrayField(adSet.targeting_optimization_types) }
+      : {}),
+    ...(hasMetaField(adSet, "is_dynamic_creative")
+      ? { is_dynamic_creative: booleanField(adSet.is_dynamic_creative) }
+      : {}),
+    ...(hasMetaField(adSet, "is_budget_schedule_enabled")
+      ? { is_budget_schedule_enabled: booleanField(adSet.is_budget_schedule_enabled) }
+      : {}),
+    ...(hasMetaField(adSet, "start_time") ? { start_time: stringField(adSet.start_time) } : {}),
+    ...(hasMetaField(adSet, "end_time") ? { end_time: stringField(adSet.end_time) } : {}),
+    ...(hasMetaField(adSet, "targeting") ? { targeting: recordField(adSet.targeting) } : {}),
+  };
+}
+
+function adCatalogChunkBudgetMs() {
+  const v = Number(process.env.META_CATALOG_CHUNK_BUDGET_MS);
+  return Number.isFinite(v) && v > 0 ? Math.floor(v) : 210_000;
+}
+
+function adCatalogChunkMaxAdSets() {
+  const v = Number(process.env.META_CATALOG_CHUNK_MAX_ADSETS);
+  return Number.isFinite(v) && v > 0 ? Math.floor(v) : 200;
+}
+
+function adCatalogEnvironmentScoped() {
+  return usesEnvironmentScopedAdsAnalystUpserts() || usesLimitedAdsAnalystDbAccess();
+}
+
+// Loose view of the Supabase query builder — meta.ts otherwise upserts through
+// upsertMany, so the read/update chain isn't covered by an existing type.
+type AdSetStateClient = {
+  from: (table: string) => {
+    // deno-lint-ignore no-explicit-any
+    select: (columns: string) => any;
+    // deno-lint-ignore no-explicit-any
+    update: (values: Record<string, unknown>) => any;
+  };
+};
+
+async function selectStalestAdSetIds(metaAccountId: string, limit: number): Promise<string[]> {
+  const supabase = createAdsAnalystClient("worker") as unknown as AdSetStateClient;
+  let query = supabase
+    .from("meta_ad_sets")
+    .select("ad_set_id,ads_refreshed_at")
+    .eq("meta_account_id", metaAccountId);
+  if (adCatalogEnvironmentScoped()) {
+    query = query.eq("environment", getAdsAnalystEnvironment());
+  }
+  const { data, error } = await query
+    .order("ads_refreshed_at", { ascending: true, nullsFirst: true })
+    .limit(limit);
+  if (error) throw error;
+  const rows: JsonRecord[] = Array.isArray(data) ? data : [];
+  return rows
+    .map((row) => stringField(row.ad_set_id))
+    .filter((value): value is string => Boolean(value));
+}
+
+async function stampAdSetRefreshed(metaAccountId: string, adSetId: string, now: string) {
+  const supabase = createAdsAnalystClient("worker") as unknown as AdSetStateClient;
+  let query = supabase
+    .from("meta_ad_sets")
+    .update({ ads_refreshed_at: now })
+    .eq("meta_account_id", metaAccountId)
+    .eq("ad_set_id", adSetId);
+  if (adCatalogEnvironmentScoped()) {
+    query = query.eq("environment", getAdsAnalystEnvironment());
+  }
+  const { error } = await query;
+  if (error) throw error;
+}
+
+// Per-ad-set preview map: only ads whose stored preview is a fallback need a
+// fresh /preview fetch. Mirrors the loop syncAccount runs over the whole account.
+async function buildCatalogPreviewMap(ads: JsonRecord[]) {
+  const previewByAdId = new Map<string, { previewHtml: string | null; previewUrl: string | null }>();
+  for (const ad of ads) {
+    const adId = stringField(ad.id);
+    if (!adId) continue;
+    const creative = recordField(ad.creative);
+    const preview = chooseStoredPreview(creative, null);
+    if (preview.previewSource === "fallback") {
+      previewByAdId.set(adId, await fetchAdPreview(adId));
+    }
+  }
+  return previewByAdId;
+}
+
+// One chunked catalog pass for an account: refresh the campaign/ad-set
+// dimensions, then process the stalest ad sets (within a wall-clock budget),
+// upserting their ads + creatives and stamping ads_refreshed_at.
+async function syncAdCatalogChunk(account: SyncAccountConfig, brandId: string | null) {
+  const accountId = normalizeAccountId(account.accountId);
+  const metaAccountId = `act_${accountId}`;
+  const now = new Date().toISOString();
+  const enrichment = emptyEnrichmentMetrics();
+
+  const accountProfile = await graphFetch<JsonRecord>(metaAccountId, {
+    fields: "id,name,currency,timezone_name,account_status,business_name",
+  });
+  const accountRow = await upsertSingle(
+    "meta_ad_accounts",
+    {
+      brand_id: brandId,
+      meta_account_id: metaAccountId,
+      name: stringField(accountProfile.name) || account.brandName,
+      currency: stringField(accountProfile.currency),
+      timezone_name: stringField(accountProfile.timezone_name),
+      account_status: numberField(accountProfile.account_status),
+      raw_json: accountProfile,
+      last_synced_at: now,
+    },
+    "meta_account_id",
+  );
+
+  const campaigns = await fetchMetaCampaignsForCatalogRefresh(metaAccountId, {
+    enrichment,
+    account: account.brandCode,
+  });
+  const adSets = await fetchMetaAdSetsForCatalogRefresh(metaAccountId, {
+    enrichment,
+    account: account.brandCode,
+  });
+  const overrides = await fetchCampaignUmbrellaOverrides(metaAccountId);
+  const campaignRawByMetaId = new Map(campaigns.map((c) => [String(c.id), c]));
+  const adSetRawByMetaId = new Map(adSets.map((a) => [String(a.id), a]));
+  const adSetNamesByCampaignId = groupAdSetNamesByCampaignId(adSets);
+
+  const campaignClassifications = new Map<string, CampaignUmbrellaClassification>();
+  for (const campaign of campaigns) {
+    const campaignId = stringField(campaign.id);
+    if (!campaignId) continue;
+    campaignClassifications.set(
+      campaignId,
+      classifyCampaignUmbrella({
+        campaignName: stringField(campaign.name),
+        adSetNames: adSetNamesByCampaignId.get(campaignId) || [],
+        override: getUmbrellaOverride(overrides, "campaign", campaignId),
+      }),
+    );
+  }
+  const dimCtx: DimensionCatalogRowContext = {
+    brandId,
+    accountRowId: accountRow.id,
+    metaAccountId,
+    now,
+    statusOnly: false,
+  };
+  const campaignRows = await upsertMany(
+    "meta_campaigns",
+    campaigns.map((campaign) =>
+      buildCampaignCatalogRow(
+        campaign,
+        campaignClassifications.get(stringField(campaign.id) || "") ||
+          classifyCampaignUmbrella({ campaignName: stringField(campaign.name) }),
+        dimCtx,
+      ),
+    ),
+    "meta_account_id,campaign_id",
+  );
+  const campaignByMetaId = new Map(campaignRows.map((row) => [String(row.campaign_id), row]));
+
+  const adSetClassifications = new Map<string, CampaignUmbrellaClassification>();
+  for (const adSet of adSets) {
+    const adSetId = stringField(adSet.id);
+    if (!adSetId) continue;
+    const campaignId = stringField(adSet.campaign_id);
+    const campaign = campaignId ? campaignRawByMetaId.get(campaignId) : undefined;
+    adSetClassifications.set(
+      adSetId,
+      classifyCampaignUmbrella({
+        campaignName: stringField(campaign?.name),
+        adSetName: stringField(adSet.name),
+        inherited: campaignId ? campaignClassifications.get(campaignId) : null,
+        override: getUmbrellaOverride(overrides, "ad_set", adSetId),
+      }),
+    );
+  }
+  const adSetRows = await upsertMany(
+    "meta_ad_sets",
+    adSets.map((adSet) =>
+      buildAdSetCatalogRow(
+        adSet,
+        adSetClassifications.get(stringField(adSet.id) || "") ||
+          classifyCampaignUmbrella({ adSetName: stringField(adSet.name) }),
+        { ...dimCtx, campaignByMetaId },
+      ),
+    ),
+    "meta_account_id,ad_set_id",
+  );
+  const adSetByMetaId = new Map(adSetRows.map((row) => [String(row.ad_set_id), row]));
+
+  const deps: AdSetChunkDeps = {
+    listAdSets: () => selectStalestAdSetIds(metaAccountId, adCatalogChunkMaxAdSets()),
+    fetchAds: (adSetId) =>
+      fetchMetaAdsForAdSet(adSetId, { enrichment, account: account.brandCode }),
+    persist: async (_adSetId, ads) => {
+      const previewByAdId = await buildCatalogPreviewMap(ads);
+      const creativeCtx: CreativeCatalogRowContext = {
+        brandId,
+        accountRowId: accountRow.id,
+        metaAccountId,
+        now,
+        refreshPreviews: true,
+        previewByAdId,
+      };
+      const creativeRows = uniqueBy(
+        ads.map((ad) => buildCreativeCatalogRow(ad, creativeCtx)).filter(Boolean) as JsonRecord[],
+        (row) => String(row.creative_id),
+      );
+      const upsertedCreatives = await upsertMany(
+        "meta_creatives",
+        creativeRows,
+        "meta_account_id,creative_id",
+      );
+      const creativeByMetaId = new Map(
+        upsertedCreatives.map((row) => [String(row.creative_id), row]),
+      );
+
+      const adClassifications = new Map<string, CampaignUmbrellaClassification>();
+      for (const ad of ads) {
+        const adId = stringField(ad.id);
+        if (!adId) continue;
+        const campaignId = stringField(ad.campaign_id);
+        const aSetId = stringField(ad.adset_id);
+        const campaign = campaignId ? campaignRawByMetaId.get(campaignId) : undefined;
+        const aSet = aSetId ? adSetRawByMetaId.get(aSetId) : undefined;
+        adClassifications.set(
+          adId,
+          classifyCampaignUmbrella({
+            campaignName: stringField(campaign?.name),
+            adSetName: stringField(aSet?.name),
+            inherited:
+              (aSetId && adSetClassifications.get(aSetId)) ||
+              (campaignId && campaignClassifications.get(campaignId)) ||
+              null,
+            override: getUmbrellaOverride(overrides, "ad", adId),
+          }),
+        );
+      }
+
+      const adRows = ads.map((ad) =>
+        buildAdCatalogRow(ad, {
+          ...creativeCtx,
+          classifications: adClassifications,
+          campaignByMetaId,
+          adSetByMetaId,
+          creativeByMetaId,
+        }),
+      );
+      await upsertMany("meta_ads", adRows, "meta_account_id,ad_id");
+      return { ads: adRows.length, creatives: creativeRows.length };
+    },
+    stampRefreshed: (adSetId) => stampAdSetRefreshed(metaAccountId, adSetId, now),
+    now: () => Date.now(),
+    budgetMs: adCatalogChunkBudgetMs(),
+  };
+
+  const result = await runAdCatalogChunk(deps);
+  return { ...result, enrichment };
+}
+
 async function syncAccount(
   account: SyncAccountConfig,
   brandId: string | null,
@@ -1234,41 +1606,15 @@ async function syncAccount(
   const campaignRows = await upsertMany(
     "meta_campaigns",
     campaigns.map((campaign) => {
-      const campaignId = stringField(campaign.id);
-      const classification = campaignClassifications.get(campaignId || "") ||
+      const classification = campaignClassifications.get(stringField(campaign.id) || "") ||
         classifyCampaignUmbrella({ campaignName: stringField(campaign.name) });
-      const baseRow = {
-        brand_id: brandId,
-        account_id: accountRow.id,
-        meta_account_id: metaAccountId,
-        campaign_id: campaignId,
-        name: stringField(campaign.name),
-        status: stringField(campaign.status),
-        effective_status: stringField(campaign.effective_status),
-        created_time: stringField(campaign.created_time),
-        updated_time: stringField(campaign.updated_time),
-        ...umbrellaColumns(classification),
-        raw_json: campaign,
-        last_synced_at: now,
-      };
-
-      if (refreshAdStatusesOnly) return baseRow;
-
-      return {
-        ...baseRow,
-        ...(hasMetaField(campaign, "objective") ? { objective: stringField(campaign.objective) } : {}),
-        ...(hasMetaField(campaign, "buying_type") ? { buying_type: stringField(campaign.buying_type) } : {}),
-        ...(hasMetaField(campaign, "daily_budget") ? { daily_budget: moneyCents(campaign.daily_budget) } : {}),
-        ...(hasMetaField(campaign, "lifetime_budget") ? { lifetime_budget: moneyCents(campaign.lifetime_budget) } : {}),
-        ...(hasMetaField(campaign, "budget_remaining") ? { budget_remaining: moneyCents(campaign.budget_remaining) } : {}),
-        ...(hasMetaField(campaign, "bid_strategy") ? { bid_strategy: stringField(campaign.bid_strategy) } : {}),
-        ...(hasMetaField(campaign, "pacing_type") ? { pacing_type: arrayField(campaign.pacing_type) } : {}),
-        ...(hasMetaField(campaign, "budget_rebalance_flag")
-          ? { budget_rebalance_flag: booleanField(campaign.budget_rebalance_flag) }
-          : {}),
-        ...(hasMetaField(campaign, "start_time") ? { start_time: stringField(campaign.start_time) } : {}),
-        ...(hasMetaField(campaign, "stop_time") ? { stop_time: stringField(campaign.stop_time) } : {}),
-      };
+      return buildCampaignCatalogRow(campaign, classification, {
+        brandId,
+        accountRowId: accountRow.id,
+        metaAccountId,
+        now,
+        statusOnly: refreshAdStatusesOnly,
+      });
     }),
     "meta_account_id,campaign_id",
   );
@@ -1294,53 +1640,16 @@ async function syncAccount(
   const adSetRows = await upsertMany(
     "meta_ad_sets",
     adSets.map((adSet) => {
-      const adSetId = stringField(adSet.id);
-      const classification = adSetClassifications.get(adSetId || "") ||
+      const classification = adSetClassifications.get(stringField(adSet.id) || "") ||
         classifyCampaignUmbrella({ adSetName: stringField(adSet.name) });
-      const baseRow = {
-        brand_id: brandId,
-        account_id: accountRow.id,
-        campaign_ref_id: campaignByMetaId.get(String(adSet.campaign_id))?.id || null,
-        meta_account_id: metaAccountId,
-        campaign_id: stringField(adSet.campaign_id),
-        ad_set_id: adSetId,
-        name: stringField(adSet.name),
-        status: stringField(adSet.status),
-        effective_status: stringField(adSet.effective_status),
-        created_time: stringField(adSet.created_time),
-        updated_time: stringField(adSet.updated_time),
-        ...umbrellaColumns(classification),
-        raw_json: adSet,
-        last_synced_at: now,
-      };
-
-      if (refreshAdStatusesOnly) return baseRow;
-
-      return {
-        ...baseRow,
-        ...(hasMetaField(adSet, "optimization_goal") ? { optimization_goal: stringField(adSet.optimization_goal) } : {}),
-        ...(hasMetaField(adSet, "billing_event") ? { billing_event: stringField(adSet.billing_event) } : {}),
-        ...(hasMetaField(adSet, "bid_strategy") ? { bid_strategy: stringField(adSet.bid_strategy) } : {}),
-        ...(hasMetaField(adSet, "daily_budget") ? { daily_budget: moneyCents(adSet.daily_budget) } : {}),
-        ...(hasMetaField(adSet, "lifetime_budget") ? { lifetime_budget: moneyCents(adSet.lifetime_budget) } : {}),
-        ...(hasMetaField(adSet, "budget_remaining") ? { budget_remaining: moneyCents(adSet.budget_remaining) } : {}),
-        ...(hasMetaField(adSet, "learning_stage_info") ? { learning_stage_info: recordField(adSet.learning_stage_info) } : {}),
-        ...(hasMetaField(adSet, "attribution_spec") ? { attribution_spec: arrayField(adSet.attribution_spec) } : {}),
-        ...(hasMetaField(adSet, "promoted_object") ? { promoted_object: recordField(adSet.promoted_object) } : {}),
-        ...(hasMetaField(adSet, "destination_type") ? { destination_type: stringField(adSet.destination_type) } : {}),
-        ...(hasMetaField(adSet, "targeting_optimization_types")
-          ? { targeting_optimization_types: arrayField(adSet.targeting_optimization_types) }
-          : {}),
-        ...(hasMetaField(adSet, "is_dynamic_creative")
-          ? { is_dynamic_creative: booleanField(adSet.is_dynamic_creative) }
-          : {}),
-        ...(hasMetaField(adSet, "is_budget_schedule_enabled")
-          ? { is_budget_schedule_enabled: booleanField(adSet.is_budget_schedule_enabled) }
-          : {}),
-        ...(hasMetaField(adSet, "start_time") ? { start_time: stringField(adSet.start_time) } : {}),
-        ...(hasMetaField(adSet, "end_time") ? { end_time: stringField(adSet.end_time) } : {}),
-        ...(hasMetaField(adSet, "targeting") ? { targeting: recordField(adSet.targeting) } : {}),
-      };
+      return buildAdSetCatalogRow(adSet, classification, {
+        brandId,
+        accountRowId: accountRow.id,
+        metaAccountId,
+        now,
+        statusOnly: refreshAdStatusesOnly,
+        campaignByMetaId,
+      });
     }),
     "meta_account_id,ad_set_id",
   );
