@@ -59,7 +59,7 @@ export type ChangeLogDraft = {
 };
 
 export type ChangeLogFilters = {
-  rangeDays: 7 | 30 | 90 | null; // null = all time
+  rangeDays: number | null; // null = all time; UI offers 7 | 30 | 90
   brandCode: BrandCode | null;
   changeType: ChangeType | null;
   query: string;                 // matches title / entity names
