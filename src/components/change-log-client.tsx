@@ -325,6 +325,7 @@ function CapturePanel({
               onChange={(e) => setText(e.target.value)}
               rows={4}
               placeholder="Last Friday I raised the Cash for Gold budget to about $120/day. ROAS was strong and Father's Day is coming up."
+              aria-label="Change description"
               className="w-full border border-hp-rule bg-white px-3 py-2 text-[15px] leading-relaxed text-hp-body outline-none placeholder:text-hp-muted focus:border-hp-ink"
             />
           </div>
@@ -667,8 +668,12 @@ export function ChangeLogClient({
       body: JSON.stringify({ draft }),
     });
     if (!res.ok) throw new Error(((await res.json()) as { error?: string }).error ?? "Save failed");
-    const list = (await (await fetch("/api/change-log")).json()) as { entries: ChangeLogEntry[] };
-    setEntries(list.entries);
+    const refetchRes = await fetch("/api/change-log");
+    if (refetchRes.ok) {
+      const list = (await refetchRes.json()) as { entries: ChangeLogEntry[] };
+      setEntries(list.entries);
+    }
+    // On refetch failure, keep the existing list (the save already succeeded).
   }, []);
 
   return (
@@ -676,12 +681,14 @@ export function ChangeLogClient({
       <main className="mx-auto max-w-7xl px-6 py-8">
         {/* heading: single gilt mark per view, here */}
         <div className="mb-3 flex items-baseline gap-3">
-          <span className="text-hp-gilt">&#10086;</span>
+          <span className="text-hp-gilt" aria-hidden="true">&#10086;</span>
           <Eyebrow>Change Log</Eyebrow>
         </div>
         <header className="flex flex-col gap-2 border-b border-hp-rule pb-5 md:flex-row md:items-end md:justify-between">
           <p className={`${TITLE} max-w-[48ch] text-2xl leading-snug text-hp-ink`}>
-            {filtered.length} change{filtered.length === 1 ? "" : "s"} in the last {RANGE_LABEL[range].toLowerCase()}.
+            {range === "all"
+              ? `${filtered.length} change${filtered.length === 1 ? "" : "s"} across all time.`
+              : `${filtered.length} change${filtered.length === 1 ? "" : "s"} in the last ${RANGE_LABEL[range].toLowerCase()}.`}
             {cited ? ` ${cited} cited by AI analysis.` : ""}
           </p>
           <button
@@ -738,6 +745,7 @@ export function ChangeLogClient({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Filter by name"
+              aria-label="Filter by campaign or ad set"
               className="h-9 w-56 border border-hp-rule bg-white px-2.5 text-[13px] text-hp-body outline-none placeholder:text-hp-muted focus:border-hp-ink"
             />
           </Field>
