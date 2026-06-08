@@ -15,7 +15,9 @@ export type AppPermission =
   | "view_review"
   | "view_outcomes"
   | "send_inbox_reply"
-  | "manage_inbox_state";
+  | "manage_inbox_state"
+  | "view_change_log"
+  | "manage_change_log";
 
 export type PermissionGroup = {
   key: "admin" | "marketing" | "sales";
@@ -79,6 +81,14 @@ export const APP_PERMISSIONS: Record<AppPermission, { label: string; description
     description:
       "Mark conversations read, assign permitted conversations, and update inbox workflow state.",
   },
+  view_change_log: {
+    label: "Change Log",
+    description: "View the log of ad-account changes and business context.",
+  },
+  manage_change_log: {
+    label: "Manage Change Log",
+    description: "Add, edit, and remove change-log entries.",
+  },
 };
 
 export const PERMISSION_GROUPS: PermissionGroup[] = [
@@ -101,6 +111,8 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       "view_outcomes",
       "send_inbox_reply",
       "manage_inbox_state",
+      "view_change_log",
+      "manage_change_log",
     ],
   },
   {
@@ -114,6 +126,8 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       "view_ai_analysis",
       "view_inbox",
       "view_backfill",
+      "view_change_log",
+      "manage_change_log",
     ],
   },
   {
@@ -187,6 +201,7 @@ export function permissionsForRoles(roles: UserRole[]): AppPermission[] {
         "view_inbox",
         "view_backfill",
         "view_outcomes",
+        "view_change_log",
       ].forEach((permission) => permissions.add(permission as AppPermission));
       continue;
     }
