@@ -26,13 +26,13 @@ test("analysis workbench shell defaults to Answer + visuals and avoids legacy As
   assert.match(markup, /Text answer plus key chart and table cards for quick understanding/);
   assert.match(markup, /Saved packet with editable charts, pivot tables, exports, and source notes/);
   assert.match(markup, /Run analysis/);
-  assert.match(markup, /No runs yet/);
   assert.doesNotMatch(markup, />Ask</);
   assert.doesNotMatch(markup, /Build analysis/);
   assert.doesNotMatch(markup, /Saved Dashboards/);
+  assert.doesNotMatch(markup, /Recent Runs/);
 });
 
-test("analysis workbench shell lists recent runs for reopen", () => {
+test("analysis workbench shell auto-selects the latest run without a recent-runs rail", () => {
   const { AnalysisWorkbenchClient } = loadModule("src/components/analysis-workbench-client.tsx");
 
   const markup = renderToStaticMarkup(
@@ -54,7 +54,8 @@ test("analysis workbench shell lists recent runs for reopen", () => {
     }),
   );
 
-  assert.match(markup, /Recent Runs/);
+  // The recent-runs rail was removed; the latest run opens directly in the detail panel.
+  assert.doesNotMatch(markup, /Recent Runs/);
   assert.match(markup, /Which groups moved/);
   assert.match(markup, /Answer \+ visuals/);
 });
@@ -296,18 +297,20 @@ test("run detail formats long answer summaries into readable sections", () => {
     }),
   );
 
-  assert.match(markup, /Context/);
   assert.match(markup, /Est\. API cost/);
   assert.match(markup, /No model call/);
   assert.match(markup, /Findings/);
   assert.match(markup, /<ol class=/);
   assert.match(markup, /Totals/);
   assert.match(markup, /Top creative was 842430645584684/);
-  assert.match(markup, /Assumptions/);
   assert.match(markup, /Caveats/);
-  assert.match(markup, /Source notes/);
-  assert.match(markup, /\[F1\]/);
-  assert.match(markup, /\[S1\]/);
+  assert.match(markup, /Primary KPI is group-specific/);
+  // Source notes live in the collapsed details section, not inline in the answer.
+  assert.match(markup, /Source Notes/);
+  // The casual reader view drops the technical context preamble and inline citation chips.
+  assert.doesNotMatch(markup, /Context/);
+  assert.doesNotMatch(markup, /\[F1\]/);
+  assert.doesNotMatch(markup, /\[S1\]/);
 });
 
 test("run detail exposes promotion and renders saved dashboard packet sections", () => {
@@ -601,6 +604,119 @@ test("workbench status and visual regions render loading, empty, and error state
     React.createElement(VisualCardGrid, { cards: [], runStatus: "completed" }),
   );
   assert.match(noVisualMarkup, /No visual cards saved for this run/);
+});
+
+test("bar, scatter, and pivot cards assign unique React keys when entity labels collide", () => {
+  // renderToStaticMarkup never drops duplicate-keyed siblings and emits no key warning,
+  // so we assert on the keys themselves: wrap the (shared, cached) JSX runtime that the
+  // compiled component uses and record every key it creates per element type.
+  const { VisualCardGrid } = loadModule("src/components/analysis-workbench-client.tsx");
+  const jsxRuntime = require("react/jsx-runtime");
+
+  function captureRender(card: Record<string, unknown>) {
+    const originalJsx = jsxRuntime.jsx;
+    const originalJsxs = jsxRuntime.jsxs;
+    const keysByType: Record<string, string[]> = {};
+    const record = (type: unknown, key: unknown) => {
+      if (typeof type === "string" && key !== undefined && key !== null) {
+        (keysByType[type] ||= []).push(String(key));
+      }
+    };
+    jsxRuntime.jsx = (type: unknown, props: unknown, key: unknown) => {
+      record(type, key);
+      return originalJsx(type, props, key);
+    };
+    jsxRuntime.jsxs = (type: unknown, props: unknown, key: unknown) => {
+      record(type, key);
+      return originalJsxs(type, props, key);
+    };
+
+    let markup = "";
+    try {
+      markup = renderToStaticMarkup(
+        React.createElement(VisualCardGrid, {
+          runStatus: "completed",
+          runId: "run-dupe",
+          sourceNotes: [{ id: "S1", label: "Data source", value: "Meta Ads daily insights" }],
+          cards: [card],
+        }),
+      );
+    } finally {
+      jsxRuntime.jsx = originalJsx;
+      jsxRuntime.jsxs = originalJsxs;
+    }
+    return { markup, keysByType };
+  }
+
+  const assertUniqueKeys = (keysByType: Record<string, string[]>, type: string) => {
+    const keys = keysByType[type] || [];
+    assert.ok(keys.length >= 2, `expected at least two keyed <${type}> rows, saw ${keys.length}`);
+    assert.equal(
+      new Set(keys).size,
+      keys.length,
+      `Duplicate <${type}> React keys: ${keys.join(", ")}`,
+    );
+  };
+
+  const bar = captureRender({
+    id: "bar_creative_contacts",
+    type: "bar_chart",
+    title: "Messaging Contacts by creative",
+    metric: "messaging_contacts",
+    dimension: "creative",
+    bars: [
+      { label: "Gold Is at an All-Time High", value: 30, formattedValue: "30 contacts" },
+      { label: "Gold Is at an All-Time High", value: 12, formattedValue: "12 contacts" },
+    ],
+    sourceNoteIds: ["S1"],
+  });
+  assert.match(bar.markup, /30 contacts/);
+  assert.match(bar.markup, /12 contacts/);
+  assertUniqueKeys(bar.keysByType, "div");
+
+  const scatter = captureRender({
+    id: "scatter_creative_spend_cpl",
+    type: "scatter_chart",
+    title: "Spend versus CPL by creative",
+    dimension: "creative",
+    xMetric: "spend",
+    yMetric: "cpl",
+    points: [
+      { label: "Gold Is at an All-Time High", x: 100, y: 5, formattedX: "$100", formattedY: "$5" },
+      { label: "Gold Is at an All-Time High", x: 250, y: 9, formattedX: "$250", formattedY: "$9" },
+    ],
+    sourceNoteIds: ["S1"],
+  });
+  assert.match(scatter.markup, /\$100/);
+  assert.match(scatter.markup, /\$250/);
+  assertUniqueKeys(scatter.keysByType, "circle");
+  assertUniqueKeys(scatter.keysByType, "div");
+
+  const pivot = captureRender({
+    id: "pivot_creative_week_contacts",
+    type: "pivot_table",
+    title: "Contacts by creative and week",
+    rowDimension: "creative",
+    columnDimension: "week",
+    metric: "messaging_contacts",
+    columns: [{ key: "2026-W20", label: "2026-W20" }],
+    rows: [
+      {
+        rowLabel: "Gold Is at an All-Time High",
+        cells: { "2026-W20": { value: 30, formattedValue: "30" } },
+        total: { value: 30, formattedValue: "row-total-A" },
+      },
+      {
+        rowLabel: "Gold Is at an All-Time High",
+        cells: { "2026-W20": { value: 12, formattedValue: "12" } },
+        total: { value: 12, formattedValue: "row-total-B" },
+      },
+    ],
+    sourceNoteIds: ["S1"],
+  });
+  assert.match(pivot.markup, /row-total-A/);
+  assert.match(pivot.markup, /row-total-B/);
+  assertUniqueKeys(pivot.keysByType, "tr");
 });
 
 function loadModule(filePath: string) {

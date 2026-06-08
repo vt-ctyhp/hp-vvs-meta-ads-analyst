@@ -3,7 +3,7 @@
 import {
   AlertTriangle,
   BarChart3,
-  Clock3,
+  ChevronDown,
   Download,
   EyeOff,
   FileText,
@@ -17,7 +17,7 @@ import {
   Table2,
   X,
 } from "lucide-react";
-import { useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 
 import {
   buildAnalysisContextChips,
@@ -107,7 +107,6 @@ const LOCAL_WORKBENCH_API_COST: OpenAICostBreakdown = {
 };
 
 export function AnalysisWorkbenchClient({ initialRuns }: Props) {
-  const [runs, setRuns] = useState(initialRuns);
   const [selectedRun, setSelectedRun] = useState<AnalysisWorkbenchRun | null>(
     initialRuns[0] || null,
   );
@@ -121,13 +120,8 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
   const [removedContextKeys, setRemovedContextKeys] = useState<string[]>([]);
 
   const statusSentence = useMemo(() => {
-    if (selectedRun) {
-      return `${selectedRun.title} is saved as a durable ${OUTPUT_MODE_LABELS[
-        selectedRun.outputMode
-      ].toLowerCase()} run.`;
-    }
-
-    return "Create the first durable Ask AI run from one prompt.";
+    if (selectedRun) return "Your latest answer is ready below.";
+    return "Ask a question to get your first answer.";
   }, [selectedRun]);
   const allContextChips = useMemo(
     () => buildAnalysisContextChips(selectedRun ? resolveAnalysisRunContext(selectedRun) : null),
@@ -161,33 +155,9 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
       if (!response.ok) throw new Error(payload.error || "Run creation failed");
       const run = payload.run as AnalysisWorkbenchRun;
       setSelectedRun(run);
-      setRuns((current) => [run, ...current.filter((item) => item.id !== run.id)].slice(0, 12));
       setPrompt("");
       setRemovedContextKeys([]);
       setStatus("Run created.");
-      setStatusKind("success");
-    } catch (error) {
-      setStatus(translateError(error));
-      setStatusKind("error");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function reopenRun(runId: string) {
-    setLoading(true);
-    setStatus("");
-    setStatusKind("idle");
-
-    try {
-      const response = await fetch(`/api/analysis-runs?runId=${encodeURIComponent(runId)}`);
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Run reopen failed");
-      const run = payload.run as AnalysisWorkbenchRun;
-      setSelectedRun(run);
-      setOutputMode(normalizeAnalysisOutputMode(run.outputMode));
-      setRemovedContextKeys([]);
-      setStatus("Run reopened.");
       setStatusKind("success");
     } catch (error) {
       setStatus(translateError(error));
@@ -217,7 +187,6 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
       if (!response.ok) throw new Error(payload.error || "Dashboard promotion failed");
       const run = payload.run as AnalysisWorkbenchRun;
       setSelectedRun(run);
-      setRuns((current) => [run, ...current.filter((item) => item.id !== run.id)].slice(0, 12));
       setOutputMode("full_dashboard");
       setStatus("Dashboard packet saved.");
       setStatusKind("success");
@@ -250,7 +219,6 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
       if (!response.ok) throw new Error(payload.error || "Run rerun failed");
       const run = payload.run as AnalysisWorkbenchRun;
       setSelectedRun(run);
-      setRuns((current) => [run, ...current.filter((item) => item.id !== run.id)].slice(0, 12));
       setOutputMode(normalizeAnalysisOutputMode(run.outputMode));
       setRemovedContextKeys([]);
       setStatus(edits && Object.keys(edits).length ? "Edited run created." : "Run refreshed.");
@@ -278,31 +246,20 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
           </p>
         </header>
 
-        <main className="mt-8 grid gap-6 xl:grid-cols-[380px_1fr]">
-          <aside className="space-y-6">
+        <main className="mt-8 grid gap-6 xl:grid-cols-[340px_1fr]">
+          <aside className="space-y-6 xl:sticky xl:top-6 xl:self-start">
             <section className="border border-hp-rule bg-hp-card p-5">
               <div className="mb-4 flex items-center gap-2 text-hp-ink">
                 <FileText size={17} />
-                <span className="text-[11px] uppercase tracking-[0.14em]">New Run</span>
+                <span className="text-[11px] uppercase tracking-[0.14em]">Ask a question</span>
               </div>
-
-              <ModeSelector value={outputMode} onChange={setOutputMode} />
-              <InheritedContextChips
-                chips={inheritedContextChips}
-                onRemove={(id) =>
-                  setRemovedContextKeys((current) =>
-                    current.includes(id) ? current : [...current, id],
-                  )
-                }
-                onClearAll={() => setRemovedContextKeys(allContextChips.map((chip) => chip.id))}
-              />
 
               <textarea
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
-                rows={7}
+                rows={6}
                 placeholder="Which campaign groups changed most this week?"
-                className="mt-4 w-full resize-none border border-hp-rule bg-hp-inset p-3 text-sm leading-6 text-hp-body outline-none placeholder:text-hp-muted focus:border-hp-ink"
+                className="w-full resize-none border border-hp-rule bg-hp-inset p-3 text-sm leading-6 text-hp-body outline-none placeholder:text-hp-muted focus:border-hp-ink"
               />
               <button
                 onClick={submitRun}
@@ -313,35 +270,29 @@ export function AnalysisWorkbenchClient({ initialRuns }: Props) {
                 Run analysis
               </button>
               <StatusNotice loading={loading} status={status} kind={statusKind} />
-            </section>
 
-            <section className="border border-hp-rule bg-hp-card p-5">
-              <div className="mb-4 flex items-center gap-2 text-hp-ink">
-                <Clock3 size={17} />
-                <span className="text-[11px] uppercase tracking-[0.14em]">Recent Runs</span>
-              </div>
-
-              <div className="space-y-2">
-                {runs.length ? (
-                  runs.map((run) => (
-                    <button
-                      key={run.id}
-                      onClick={() => reopenRun(run.id)}
-                      className="w-full border border-hp-rule bg-hp-foundation p-3 text-left transition-colors hover:bg-hp-inset"
-                    >
-                      <span className="line-clamp-2 block text-sm text-hp-ink">{run.title}</span>
-                      <span className="mt-2 flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.14em] text-hp-muted">
-                        <span>{OUTPUT_MODE_LABELS[run.outputMode]}</span>
-                        <span>{formatDate(run.updatedAt)}</span>
-                      </span>
-                    </button>
-                  ))
-                ) : (
-                  <p className="border border-dashed border-hp-rule bg-hp-foundation p-4 text-sm text-hp-muted">
-                    No runs yet.
-                  </p>
-                )}
-              </div>
+              <details className="group mt-4 border-t border-hp-rule pt-4">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-[10px] uppercase tracking-[0.14em] text-hp-muted transition-colors hover:text-hp-ink [&::-webkit-details-marker]:hidden">
+                  <span>Options</span>
+                  <ChevronDown
+                    size={14}
+                    aria-hidden
+                    className="transition-transform group-open:rotate-180"
+                  />
+                </summary>
+                <div className="mt-3">
+                  <ModeSelector value={outputMode} onChange={setOutputMode} />
+                  <InheritedContextChips
+                    chips={inheritedContextChips}
+                    onRemove={(id) =>
+                      setRemovedContextKeys((current) =>
+                        current.includes(id) ? current : [...current, id],
+                      )
+                    }
+                    onClearAll={() => setRemovedContextKeys(allContextChips.map((chip) => chip.id))}
+                  />
+                </div>
+              </details>
             </section>
           </aside>
 
@@ -518,125 +469,193 @@ export function RunDetail({
   promoting?: boolean;
   rerunning?: boolean;
 }) {
-  const canPromote = run.status === "completed" && run.outputMode !== "full_dashboard" && onPromote;
+  const canPromote = Boolean(
+    run.status === "completed" && run.outputMode !== "full_dashboard" && onPromote,
+  );
+  const heroCard = pickPrimaryVisualCard(
+    run.visualCards.length ? run.visualCards : run.dashboardPacket?.visualObjects ?? [],
+  );
 
   return (
     <article>
       <div className="flex flex-col gap-4 border-b border-hp-rule pb-5 md:flex-row md:items-start md:justify-between">
-        <div>
+        <div className="min-w-0">
           <span className="text-[11px] uppercase tracking-[0.14em] text-hp-muted">
             {run.status}
           </span>
           <h2 className="mt-2 font-title text-3xl leading-tight text-hp-ink">{run.title}</h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-hp-body">{run.prompt}</p>
         </div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <div className="flex shrink-0 flex-col items-start gap-2 sm:flex-row sm:items-center md:flex-col md:items-end">
           <ExportButton
             label="Export PDF"
             ariaLabel={`Export ${run.title} run PDF`}
             onClick={() => downloadRunPdf(run)}
           />
-          {onRerun ? (
-            <button
-              type="button"
-              onClick={onRerun}
-              disabled={rerunning}
-              className="inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap border border-hp-rule bg-hp-card px-3 text-[10px] uppercase tracking-[0.12em] text-hp-body transition-colors hover:border-hp-ink hover:bg-hp-inset disabled:hover:border-hp-rule disabled:hover:bg-hp-card"
-            >
-              {rerunning ? (
-                <Loader2 size={14} className="animate-spin" aria-hidden />
-              ) : (
-                <RefreshCw size={14} aria-hidden />
-              )}
-              Rerun latest data
-            </button>
-          ) : null}
-          {canPromote ? (
-            <button
-              type="button"
-              onClick={onPromote}
-              disabled={promoting}
-              className="inline-flex h-10 items-center justify-center gap-2 border border-hp-rule bg-hp-ink px-3 text-[11px] uppercase tracking-[0.14em] text-hp-foundation transition-colors hover:bg-hp-body disabled:hover:bg-hp-ink"
-            >
-              {promoting ? (
-                <Loader2 size={14} className="animate-spin" aria-hidden />
-              ) : (
-                <LayoutDashboard size={14} aria-hidden />
-              )}
-              Promote to dashboard
-            </button>
-          ) : null}
-          <div className="border border-hp-rule bg-hp-foundation px-3 py-2 text-[11px] uppercase tracking-[0.14em] text-hp-muted">
-            {OUTPUT_MODE_LABELS[run.outputMode]}
-          </div>
-        </div>
-      </div>
-
-      <div className="grid gap-4 border-b border-hp-rule py-5 md:grid-cols-2">
-        <RunField label="Created" value={formatDateTime(run.createdAt)} />
-        <RunField label="Updated" value={formatDateTime(run.updatedAt)} />
-      </div>
-
-      {onApplyEdits ? (
-        <ControlledEditPanel run={run} onApply={onApplyEdits} disabled={rerunning} />
-      ) : null}
-
-      <section className="border-b border-hp-rule py-5">
-        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2 text-hp-ink">
-            <FileText size={17} />
-            <span className="text-[11px] uppercase tracking-[0.14em]">Answer</span>
-          </div>
           <AnswerApiCostBadge apiCost={run.answer.apiCost || LOCAL_WORKBENCH_API_COST} />
         </div>
-        <ReadableAnswer summary={run.answer.summary} />
+      </div>
+
+      <section className="border-b border-hp-rule py-5">
+        <div className="mb-3 flex items-center gap-2 text-hp-ink">
+          <FileText size={17} />
+          <span className="text-[11px] uppercase tracking-[0.14em]">Answer</span>
+        </div>
+        <ReadableAnswer summary={run.answer.summary} clean />
       </section>
 
-      {run.dashboardPacket ? (
-        <DashboardPacketView
-          packet={run.dashboardPacket}
-          runId={run.id}
-          onApplyEdits={onApplyEdits}
-        />
+      {heroCard ? (
+        <section className="border-b border-hp-rule py-5">
+          <VisualCard card={heroCard} sourceNotes={run.sourceNotes} hideMeta />
+        </section>
       ) : null}
 
-      <SourceNotes notes={run.sourceNotes} />
-
-      <VisualCardGrid
-        cards={run.visualCards}
-        runStatus={run.status}
-        runId={run.id}
-        sourceNotes={run.sourceNotes}
+      <RunDetailExtras
+        run={run}
+        onPromote={onPromote}
+        onRerun={onRerun}
+        onApplyEdits={onApplyEdits}
+        promoting={promoting}
+        rerunning={rerunning}
+        canPromote={canPromote}
       />
-
-      <section className="grid gap-4 py-5 md:grid-cols-2">
-        <StructuredStatus icon={<Table2 size={17} />} label="Facts" value={statusFromJson(run.facts)} />
-        <StructuredStatus
-          icon={<BarChart3 size={17} />}
-          label="Visuals"
-          value={`${run.visualCards.length} cards`}
-        />
-      </section>
     </article>
   );
 }
 
-function ReadableAnswer({ summary }: { summary: string }) {
+function RunDetailExtras({
+  run,
+  onPromote,
+  onRerun,
+  onApplyEdits,
+  promoting,
+  rerunning,
+  canPromote,
+}: {
+  run: AnalysisWorkbenchRun;
+  onPromote?: () => void;
+  onRerun?: () => void;
+  onApplyEdits?: (edits: ControlledEditDraft) => void;
+  promoting: boolean;
+  rerunning: boolean;
+  canPromote: boolean;
+}) {
+  return (
+    <details className="group border-b border-hp-rule">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 py-5 text-[11px] uppercase tracking-[0.14em] text-hp-muted transition-colors hover:text-hp-ink [&::-webkit-details-marker]:hidden">
+        <span className="flex items-center gap-2">
+          <Settings2 size={15} aria-hidden />
+          Details &amp; refine
+        </span>
+        <ChevronDown size={15} aria-hidden className="transition-transform group-open:rotate-180" />
+      </summary>
+
+      <div className="pb-1">
+        {onRerun || canPromote ? (
+          <div className="flex flex-wrap gap-2 pb-1">
+            {onRerun ? (
+              <button
+                type="button"
+                onClick={onRerun}
+                disabled={rerunning}
+                className="inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap border border-hp-rule bg-hp-card px-3 text-[10px] uppercase tracking-[0.12em] text-hp-body transition-colors hover:border-hp-ink hover:bg-hp-inset disabled:hover:border-hp-rule disabled:hover:bg-hp-card"
+              >
+                {rerunning ? (
+                  <Loader2 size={14} className="animate-spin" aria-hidden />
+                ) : (
+                  <RefreshCw size={14} aria-hidden />
+                )}
+                Rerun latest data
+              </button>
+            ) : null}
+            {canPromote ? (
+              <button
+                type="button"
+                onClick={onPromote}
+                disabled={promoting}
+                className="inline-flex h-10 items-center justify-center gap-2 border border-hp-rule bg-hp-ink px-3 text-[11px] uppercase tracking-[0.14em] text-hp-foundation transition-colors hover:bg-hp-body disabled:hover:bg-hp-ink"
+              >
+                {promoting ? (
+                  <Loader2 size={14} className="animate-spin" aria-hidden />
+                ) : (
+                  <LayoutDashboard size={14} aria-hidden />
+                )}
+                Promote to dashboard
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {onApplyEdits ? (
+          <ControlledEditPanel run={run} onApply={onApplyEdits} disabled={rerunning} />
+        ) : null}
+
+        {run.dashboardPacket ? (
+          <DashboardPacketView
+            packet={run.dashboardPacket}
+            runId={run.id}
+            onApplyEdits={onApplyEdits}
+          />
+        ) : null}
+
+        <VisualCardGrid
+          cards={run.visualCards}
+          runStatus={run.status}
+          runId={run.id}
+          sourceNotes={run.sourceNotes}
+        />
+
+        <SourceNotes notes={run.sourceNotes} />
+
+        <div className="grid gap-4 py-5 md:grid-cols-2">
+          <RunField label="Created" value={formatDateTime(run.createdAt)} />
+          <RunField label="Updated" value={formatDateTime(run.updatedAt)} />
+          <RunField label="Output mode" value={OUTPUT_MODE_LABELS[run.outputMode]} />
+        </div>
+      </div>
+    </details>
+  );
+}
+
+function pickPrimaryVisualCard(
+  cards: AnalysisWorkbenchVisualCard[],
+): AnalysisWorkbenchVisualCard | null {
+  if (!cards.length) return null;
+
+  const tiers: Array<Array<AnalysisWorkbenchVisualCard["type"]>> = [
+    ["bar_chart", "line_chart", "scatter_chart"],
+    ["pivot_table", "flat_table"],
+    ["metric_card"],
+  ];
+
+  for (const tier of tiers) {
+    const found = cards.find((card) => tier.includes(card.type));
+    if (found) return found;
+  }
+
+  return cards[0] ?? null;
+}
+
+function ReadableAnswer({ summary, clean = false }: { summary: string; clean?: boolean }) {
   const answer = parseReadableAnswer(summary);
 
   if (!hasReadableAnswerContent(answer)) {
     return <p className="max-w-3xl text-sm leading-6 text-hp-muted">No answer saved.</p>;
   }
 
-  const supportingSections = [
-    { title: "Assumptions", items: answer.assumptions },
-    { title: "Caveats", items: answer.caveats },
-    { title: "Source notes", items: answer.sourceNotes },
-  ].filter((section) => section.items.length);
+  const supportingSections = (
+    clean
+      ? [{ title: "Caveats", items: answer.caveats }]
+      : [
+          { title: "Assumptions", items: answer.assumptions },
+          { title: "Caveats", items: answer.caveats },
+          { title: "Source notes", items: answer.sourceNotes },
+        ]
+  ).filter((section) => section.items.length);
 
   return (
     <div className="max-w-3xl space-y-4 text-sm leading-6 text-hp-body">
-      {answer.context.length ? (
+      {!clean && answer.context.length ? (
         <AnswerInset title="Context" items={answer.context} />
       ) : null}
 
@@ -655,7 +674,7 @@ function ReadableAnswer({ summary }: { summary: string }) {
                   {item.label ? (
                     <span className="mr-1 font-bold text-hp-ink">{item.label}:</span>
                   ) : null}
-                  <AnswerText text={item.body} />
+                  <AnswerText text={item.body} strip={clean} />
                 </p>
               </li>
             ))}
@@ -664,9 +683,14 @@ function ReadableAnswer({ summary }: { summary: string }) {
       ) : null}
 
       {supportingSections.length ? (
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className={clean ? "" : "grid gap-3 md:grid-cols-3"}>
           {supportingSections.map((section) => (
-            <AnswerInset key={section.title} title={section.title} items={section.items} />
+            <AnswerInset
+              key={section.title}
+              title={section.title}
+              items={section.items}
+              strip={clean}
+            />
           ))}
         </div>
       ) : null}
@@ -674,7 +698,15 @@ function ReadableAnswer({ summary }: { summary: string }) {
   );
 }
 
-function AnswerInset({ title, items }: { title: string; items: ReadableAnswerItem[] }) {
+function AnswerInset({
+  title,
+  items,
+  strip = false,
+}: {
+  title: string;
+  items: ReadableAnswerItem[];
+  strip?: boolean;
+}) {
   return (
     <div className="border-l border-hp-rule pl-3">
       <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">{title}</p>
@@ -682,7 +714,7 @@ function AnswerInset({ title, items }: { title: string; items: ReadableAnswerIte
         {items.map((item, index) => (
           <p key={`${item.body}-${index}`}>
             {item.label ? <span className="mr-1 font-bold text-hp-ink">{item.label}:</span> : null}
-            <AnswerText text={item.body} />
+            <AnswerText text={item.body} strip={strip} />
           </p>
         ))}
       </div>
@@ -690,7 +722,11 @@ function AnswerInset({ title, items }: { title: string; items: ReadableAnswerIte
   );
 }
 
-function AnswerText({ text }: { text: string }) {
+function AnswerText({ text, strip = false }: { text: string; strip?: boolean }) {
+  if (strip) {
+    return <>{text.replace(/\s*\[[A-Z]\d+\]/g, "").replace(/\s{2,}/g, " ").trim()}</>;
+  }
+
   return text.split(/(\[[A-Z]\d+\])/g).map((part, index) => {
     if (/^\[[A-Z]\d+\]$/.test(part)) {
       return (
@@ -1260,34 +1296,48 @@ function VisualCard({
   card,
   runId,
   sourceNotes,
+  hideMeta = false,
 }: {
   card: AnalysisWorkbenchVisualCard;
   runId?: string;
   sourceNotes: AnalysisWorkbenchRun["sourceNotes"];
+  hideMeta?: boolean;
 }) {
-  if (card.type === "metric_card") return <MetricVisualCard card={card} />;
+  if (card.type === "metric_card") return <MetricVisualCard card={card} hideMeta={hideMeta} />;
   if (card.type === "flat_table") {
-    return <TableVisualCard card={card} runId={runId} sourceNotes={sourceNotes} />;
+    return (
+      <TableVisualCard card={card} runId={runId} sourceNotes={sourceNotes} hideMeta={hideMeta} />
+    );
   }
   if (card.type === "bar_chart") {
-    return <BarVisualCard card={card} runId={runId} sourceNotes={sourceNotes} />;
+    return <BarVisualCard card={card} runId={runId} sourceNotes={sourceNotes} hideMeta={hideMeta} />;
   }
   if (card.type === "pivot_table") {
-    return <PivotVisualCard card={card} runId={runId} sourceNotes={sourceNotes} />;
+    return (
+      <PivotVisualCard card={card} runId={runId} sourceNotes={sourceNotes} hideMeta={hideMeta} />
+    );
   }
   if (card.type === "scatter_chart") {
-    return <ScatterVisualCard card={card} runId={runId} sourceNotes={sourceNotes} />;
+    return (
+      <ScatterVisualCard card={card} runId={runId} sourceNotes={sourceNotes} hideMeta={hideMeta} />
+    );
   }
-  return <LineVisualCard card={card} runId={runId} sourceNotes={sourceNotes} />;
+  return <LineVisualCard card={card} runId={runId} sourceNotes={sourceNotes} hideMeta={hideMeta} />;
 }
 
-function MetricVisualCard({ card }: { card: Extract<AnalysisWorkbenchVisualCard, { type: "metric_card" }> }) {
+function MetricVisualCard({
+  card,
+  hideMeta = false,
+}: {
+  card: Extract<AnalysisWorkbenchVisualCard, { type: "metric_card" }>;
+  hideMeta?: boolean;
+}) {
   return (
     <section className="border border-hp-rule bg-hp-foundation p-4">
       <p className="text-[10px] uppercase tracking-[0.14em] text-hp-muted">Metric card</p>
       <h3 className="mt-2 font-title text-2xl leading-tight text-hp-ink">{card.title}</h3>
       <p className="mt-3 font-title text-4xl leading-none text-hp-ink">{card.formattedValue}</p>
-      <VisualCardMeta card={card} />
+      {hideMeta ? null : <VisualCardMeta card={card} />}
     </section>
   );
 }
@@ -1296,10 +1346,12 @@ function TableVisualCard({
   card,
   runId,
   sourceNotes,
+  hideMeta = false,
 }: {
   card: Extract<AnalysisWorkbenchVisualCard, { type: "flat_table" }>;
   runId?: string;
   sourceNotes: AnalysisWorkbenchRun["sourceNotes"];
+  hideMeta?: boolean;
 }) {
   return (
     <section className="overflow-hidden border border-hp-rule bg-hp-foundation">
@@ -1351,7 +1403,7 @@ function TableVisualCard({
         </table>
       </div>
       <div className="p-4 pt-3">
-        <VisualCardMeta card={card} />
+        {hideMeta ? null : <VisualCardMeta card={card} />}
       </div>
     </section>
   );
@@ -1361,10 +1413,12 @@ function BarVisualCard({
   card,
   runId,
   sourceNotes,
+  hideMeta = false,
 }: {
   card: Extract<AnalysisWorkbenchVisualCard, { type: "bar_chart" }>;
   runId?: string;
   sourceNotes: AnalysisWorkbenchRun["sourceNotes"];
+  hideMeta?: boolean;
 }) {
   const maxValue = Math.max(1, ...card.bars.map((bar) => bar.value));
 
@@ -1378,8 +1432,8 @@ function BarVisualCard({
         <ChartExportAction card={card} runId={runId} sourceNotes={sourceNotes} />
       </div>
       <div className="mt-4 space-y-3">
-        {card.bars.map((bar) => (
-          <div key={bar.label} className="grid grid-cols-[minmax(90px,0.8fr)_minmax(120px,1.2fr)_auto] items-center gap-3">
+        {card.bars.map((bar, index) => (
+          <div key={`${bar.label}-${index}`} className="grid grid-cols-[minmax(90px,0.8fr)_minmax(120px,1.2fr)_auto] items-center gap-3">
             <span className="min-w-0 text-sm text-hp-ink">
               {bar.entity ? <VisualEntity entity={bar.entity} compact /> : <span className="truncate">{bar.label}</span>}
             </span>
@@ -1393,7 +1447,7 @@ function BarVisualCard({
           </div>
         ))}
       </div>
-      <VisualCardMeta card={card} />
+      {hideMeta ? null : <VisualCardMeta card={card} />}
     </section>
   );
 }
@@ -1402,10 +1456,12 @@ function LineVisualCard({
   card,
   runId,
   sourceNotes,
+  hideMeta = false,
 }: {
   card: Extract<AnalysisWorkbenchVisualCard, { type: "line_chart" }>;
   runId?: string;
   sourceNotes: AnalysisWorkbenchRun["sourceNotes"];
+  hideMeta?: boolean;
 }) {
   const polyline = lineChartPoints(card.points);
 
@@ -1444,7 +1500,7 @@ function LineVisualCard({
           <p className="p-4 text-sm text-hp-muted">No trend points saved.</p>
         )}
       </div>
-      <VisualCardMeta card={card} />
+      {hideMeta ? null : <VisualCardMeta card={card} />}
     </section>
   );
 }
@@ -1453,10 +1509,12 @@ function PivotVisualCard({
   card,
   runId,
   sourceNotes,
+  hideMeta = false,
 }: {
   card: Extract<AnalysisWorkbenchVisualCard, { type: "pivot_table" }>;
   runId?: string;
   sourceNotes: AnalysisWorkbenchRun["sourceNotes"];
+  hideMeta?: boolean;
 }) {
   return (
     <section className="overflow-hidden border border-hp-rule bg-hp-foundation">
@@ -1490,8 +1548,8 @@ function PivotVisualCard({
             </tr>
           </thead>
           <tbody>
-            {card.rows.map((row) => (
-              <tr key={row.rowLabel} className="border-b border-hp-rule last:border-b-0">
+            {card.rows.map((row, index) => (
+              <tr key={`${row.rowLabel}-${index}`} className="border-b border-hp-rule last:border-b-0">
                 <td className="px-3 py-3 text-hp-ink">
                   {row.rowEntity ? <VisualEntity entity={row.rowEntity} /> : row.rowLabel}
                 </td>
@@ -1509,7 +1567,7 @@ function PivotVisualCard({
         </table>
       </div>
       <div className="p-4 pt-3">
-        <VisualCardMeta card={card} />
+        {hideMeta ? null : <VisualCardMeta card={card} />}
       </div>
     </section>
   );
@@ -1519,10 +1577,12 @@ function ScatterVisualCard({
   card,
   runId,
   sourceNotes,
+  hideMeta = false,
 }: {
   card: Extract<AnalysisWorkbenchVisualCard, { type: "scatter_chart" }>;
   runId?: string;
   sourceNotes: AnalysisWorkbenchRun["sourceNotes"];
+  hideMeta?: boolean;
 }) {
   const points = scatterChartPoints(card.points);
 
@@ -1542,14 +1602,14 @@ function ScatterVisualCard({
               <title>{card.title}</title>
               <line x1="28" y1="132" x2="304" y2="132" stroke="#d4cfc4" strokeWidth="1" />
               <line x1="28" y1="16" x2="28" y2="132" stroke="#d4cfc4" strokeWidth="1" />
-              {points.map((point) => (
-                <circle key={point.label} cx={point.cx} cy={point.cy} r="4" fill="#2a2725" />
+              {points.map((point, index) => (
+                <circle key={`${point.label}-${index}`} cx={point.cx} cy={point.cy} r="4" fill="#2a2725" />
               ))}
             </svg>
             <div className="mt-2 grid gap-2">
-              {card.points.slice(0, 4).map((point) => (
+              {card.points.slice(0, 4).map((point, index) => (
                 <div
-                  key={point.label}
+                  key={`${point.label}-${index}`}
                   className="flex items-center justify-between gap-3 text-sm text-hp-body"
                 >
                   <span className="truncate text-hp-ink">{point.label}</span>
@@ -1564,7 +1624,7 @@ function ScatterVisualCard({
           <p className="p-4 text-sm text-hp-muted">No scatter points saved.</p>
         )}
       </div>
-      <VisualCardMeta card={card} />
+      {hideMeta ? null : <VisualCardMeta card={card} />}
     </section>
   );
 }
@@ -1792,35 +1852,6 @@ function RunField({ label, value }: { label: string; value: string }) {
   );
 }
 
-function StructuredStatus({
-  icon,
-  label,
-  value,
-}: {
-  icon: ReactNode;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="border border-hp-rule bg-hp-foundation p-4">
-      <div className="mb-2 flex items-center gap-2 text-hp-ink">
-        {icon}
-        <span className="text-[11px] uppercase tracking-[0.14em]">{label}</span>
-      </div>
-      <p className="text-sm text-hp-body">{value}</p>
-    </div>
-  );
-}
-
-function statusFromJson(value: unknown) {
-  if (value && typeof value === "object" && "status" in value) {
-    const status = (value as { status?: unknown }).status;
-    if (typeof status === "string") return status;
-  }
-
-  return "pending";
-}
-
 function normalizeSourceNote(note: unknown) {
   if (!note || typeof note !== "object" || Array.isArray(note)) return null;
   const candidate = note as { id?: unknown; label?: unknown; value?: unknown };
@@ -1968,10 +1999,6 @@ function scatterChartPoints(points: Array<{ label: string; x: number; y: number 
 
 function roundChartPoint(value: number) {
   return Math.round(value * 100) / 100;
-}
-
-function formatDate(value: string) {
-  return new Date(value).toLocaleDateString();
 }
 
 function formatDateTime(value: string) {
