@@ -15,8 +15,27 @@ function uuidOrNull(value: string | null | undefined): string | null {
   return /^[0-9a-f-]{36}$/i.test(value) ? value : null;
 }
 
-type DynamicSupabaseClient = ReturnType<typeof createAdsAnalystClient> & {
-  from: (table: string) => any;
+type JsonRecord = Record<string, unknown>;
+type DynamicQueryResult = { data: JsonRecord[] | null; error: Error | null };
+type DynamicSingleResult = { data: JsonRecord | null; error: Error | null };
+type DynamicQuery = PromiseLike<DynamicQueryResult> & {
+  eq: (column: string, value: string | number | boolean | null) => DynamicQuery;
+  in: (column: string, values: (string | number)[]) => DynamicQuery;
+  order: (column: string, options?: { ascending?: boolean; nullsFirst?: boolean }) => DynamicQuery;
+  limit: (count: number) => DynamicQuery;
+  select: (columns: string) => DynamicQuery;
+  single: () => Promise<DynamicSingleResult>;
+};
+type DynamicUpdateQuery = DynamicQuery & {
+  select: (columns: string) => DynamicQuery;
+};
+type DynamicTable = {
+  select: (columns: string) => DynamicQuery;
+  insert: (row: JsonRecord | JsonRecord[]) => DynamicQuery;
+  update: (row: JsonRecord) => DynamicUpdateQuery;
+};
+type DynamicSupabaseClient = {
+  from: (table: string) => DynamicTable;
 };
 function db(): DynamicSupabaseClient {
   return createAdsAnalystClient("web") as unknown as DynamicSupabaseClient;

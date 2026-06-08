@@ -8,8 +8,21 @@ import type {
   BrandCode, ChangeLogDraft, ChangeLogEntityRef, ChangeType, EntityKind,
 } from "./change-log-types.ts";
 
-type DynamicSupabaseClient = ReturnType<typeof createAdsAnalystClient> & { from: (t: string) => any };
-function db() { return createAdsAnalystClient("web") as unknown as DynamicSupabaseClient; }
+type JsonRecord = Record<string, unknown>;
+type DynamicQueryResult = { data: JsonRecord[] | null; error: Error | null };
+type DynamicQuery = PromiseLike<DynamicQueryResult> & {
+  eq: (column: string, value: string | number | boolean | null) => DynamicQuery;
+  ilike: (column: string, pattern: string) => DynamicQuery;
+  limit: (count: number) => DynamicQuery;
+  select: (columns: string) => DynamicQuery;
+};
+type DynamicTable = {
+  select: (columns: string) => DynamicQuery;
+};
+type DynamicSupabaseClient = {
+  from: (table: string) => DynamicTable;
+};
+function db(): DynamicSupabaseClient { return createAdsAnalystClient("web") as unknown as DynamicSupabaseClient; }
 
 // The strict JSON shape we ask the model to return.
 type Extraction = {
