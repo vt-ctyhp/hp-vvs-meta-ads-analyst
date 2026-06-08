@@ -953,6 +953,36 @@ async function fetchMetaAdsForCatalogRefresh(
   }
 }
 
+export type LiveAdSetState = {
+  id: string;
+  name: string | null;
+  status: string | null;
+  dailyBudget: string | null; // Meta returns minor units as a string
+};
+
+/**
+ * Read-only live read of an ad set's current status and daily budget.
+ * Returns null if Meta is unreachable or the token is missing - callers must
+ * degrade gracefully (verify_value = 'na'); this never throws to the caller.
+ */
+export async function fetchLiveAdSetState(adSetId: string): Promise<LiveAdSetState | null> {
+  try {
+    const data = await graphFetch<{ id: string; name?: string; status?: string; daily_budget?: string }>(
+      adSetId,
+      { fields: "id,name,status,daily_budget" },
+    );
+    const node = data as { id: string; name?: string; status?: string; daily_budget?: string };
+    return {
+      id: node.id,
+      name: node.name ?? null,
+      status: node.status ?? null,
+      dailyBudget: node.daily_budget ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // Shared request shape for the per-ad-set catalog fetch. Exported so tests can
 // assert the edge/fields/page-size without hitting Meta.
 export function adSetAdsRequest(adSetId: string) {
