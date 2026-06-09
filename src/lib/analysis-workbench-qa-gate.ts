@@ -8,6 +8,8 @@ import type {
   WorkbenchDimension,
   WorkbenchMetric,
 } from "./analysis-workbench-semantic-catalog.ts";
+import { CAMPAIGN_UMBRELLAS } from "./campaign-umbrellas.ts";
+import type { AgentLedgerEntry } from "./analysis-workbench-agent.ts";
 
 export const ANALYSIS_WORKBENCH_QA_PASSING = {
   minScore: 90,
@@ -228,6 +230,314 @@ export const ANALYSIS_WORKBENCH_QA_CASES: AnalysisWorkbenchQaCase[] = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// Agent path eval set (Phase 4)
+//
+// The agent answers freely and chooses its own visuals, so this gate does not
+// assert a templated metric/dimension/chart menu. It asserts the qualities that
+// matter: every figure is real (traceable to a query result, nothing redacted),
+// the question was actually answered, no entity was invented, and the chosen
+// visual fits the question (or was correctly omitted). Each case carries a
+// representative "good run" script (the planned tool calls + the answer and
+// visuals a sound agent would submit) so the gate is reproducible with fakes —
+// no live model call.
+// ---------------------------------------------------------------------------
+
+/** Whether the answer should carry a visual, must omit one, or either is fine. */
+export type AnalysisWorkbenchAgentQaVisual = "required" | "forbidden" | "optional";
+
+export type AnalysisWorkbenchAgentQaScriptCall = {
+  name: "query_performance" | "query_entities";
+  args: Record<string, unknown>;
+};
+
+export type AnalysisWorkbenchAgentQaScript = {
+  calls: AnalysisWorkbenchAgentQaScriptCall[];
+  answer: string;
+  visuals: Array<Record<string, unknown>>;
+};
+
+export type AnalysisWorkbenchAgentQaCase = {
+  id: string;
+  persona: AnalysisWorkbenchQaPersona;
+  requestType: string;
+  mode: AnalysisOutputMode;
+  prompt: string;
+  script: AnalysisWorkbenchAgentQaScript;
+  expected: {
+    /** Substrings the answer must contain (case-insensitive) — proves it answered. */
+    mustMention?: string[];
+    visual: AnalysisWorkbenchAgentQaVisual;
+    /** If a visual is required, at least one card must be one of these types. */
+    visualTypeAny?: Array<AnalysisWorkbenchVisualCard["type"]>;
+    minVisuals?: number;
+    /** Dashboard: assert a varied, data-appropriate mix, not a canned set. */
+    requireVisualVariety?: boolean;
+    requireDashboardPacket?: boolean;
+  };
+};
+
+export const ANALYSIS_WORKBENCH_AGENT_QA_CASES: AnalysisWorkbenchAgentQaCase[] = [
+  {
+    id: "status-us-vn-product-active",
+    persona: "edge_case",
+    requestType: "entity_status_roster",
+    mode: "answer_visuals",
+    prompt:
+      "Can you please check whether the US Product and VN Product ads are still active, or if they have already been turned off?",
+    script: {
+      calls: [
+        { name: "query_entities", args: { entityType: "ad", filters: { campaignUmbrella: "Facebook US Product" } } },
+        { name: "query_entities", args: { entityType: "ad", filters: { campaignUmbrella: "Facebook VN Product" } } },
+      ],
+      answer:
+        "The US Product ads are still running — 2 are live and 1 is paused, with none fully turned off. For VN Product, only 1 ad is live while 2 have been turned off.",
+      visuals: [],
+    },
+    expected: {
+      mustMention: ["live", "paused"],
+      visual: "forbidden",
+    },
+  },
+  {
+    id: "trend-weekly-spend-2026",
+    persona: "analyst",
+    requestType: "spend_trend",
+    mode: "answer_visuals",
+    prompt: "How has our weekly ad spend trended across 2026?",
+    script: {
+      calls: [
+        {
+          name: "query_performance",
+          args: {
+            start: "2026-01-01",
+            end: "2026-05-24",
+            metrics: ["spend"],
+            dimensions: ["week"],
+            sortField: "week",
+            sortDirection: "asc",
+          },
+        },
+      ],
+      answer:
+        "Weekly spend climbed to a peak of $3,900, then pulled back to $900 before recovering to $1,300 in the latest week.",
+      visuals: [
+        { type: "line_chart", title: "Weekly spend", sourceCallId: "Q1", metric: "spend", dimension: "week" },
+      ],
+    },
+    expected: {
+      mustMention: ["spend"],
+      visual: "required",
+      visualTypeAny: ["line_chart"],
+    },
+  },
+  {
+    id: "creative-winners-cash-for-gold",
+    persona: "marketing",
+    requestType: "creative_breakdown",
+    mode: "answer_visuals",
+    prompt: "Which Cash for Gold creatives are winning on messaging contacts over the last month?",
+    script: {
+      calls: [
+        {
+          name: "query_performance",
+          args: {
+            start: "2026-04-25",
+            end: "2026-05-24",
+            metrics: ["messaging_contacts", "spend"],
+            dimensions: ["creative"],
+            filters: [{ field: "campaign_umbrella", operator: "contains", value: "Cash for Gold" }],
+            sortField: "messaging_contacts",
+            sortDirection: "desc",
+          },
+        },
+      ],
+      answer:
+        "Gold Story A is the clear winner with 240 messaging contacts on $1,800 spend, far ahead of Offer Test B's 72 contacts on $900.",
+      visuals: [
+        {
+          type: "bar_chart",
+          title: "Messaging contacts by creative",
+          sourceCallId: "Q1",
+          metric: "messaging_contacts",
+          dimension: "creative",
+        },
+      ],
+    },
+    expected: {
+      mustMention: ["messaging contacts"],
+      visual: "required",
+      visualTypeAny: ["bar_chart"],
+    },
+  },
+  {
+    id: "budget-by-group",
+    persona: "manager",
+    requestType: "budget_question",
+    mode: "answer_visuals",
+    prompt: "How does spend compare to the monthly budget across our campaign groups this month?",
+    script: {
+      calls: [
+        {
+          name: "query_performance",
+          args: {
+            start: "2026-05-01",
+            end: "2026-05-31",
+            metrics: ["spend", "monthly_budget"],
+            dimensions: ["campaign_umbrella"],
+            sortField: "spend",
+            sortDirection: "desc",
+          },
+        },
+      ],
+      answer:
+        "Book Appts US has the largest footprint at $4,700 spend against a $24,000 monthly budget, followed by Cash for Gold US at $2,700 and Facebook US Product at $1,300.",
+      visuals: [
+        { type: "flat_table", title: "Spend vs monthly budget by group", sourceCallId: "Q1" },
+        { type: "bar_chart", title: "Spend by group", sourceCallId: "Q1", metric: "spend", dimension: "campaign_umbrella" },
+      ],
+    },
+    expected: {
+      mustMention: ["budget"],
+      visual: "required",
+      visualTypeAny: ["flat_table", "bar_chart"],
+    },
+  },
+  {
+    id: "full-dashboard-may-overview",
+    persona: "manager",
+    requestType: "full_dashboard_overview",
+    mode: "full_dashboard",
+    prompt: "Build me a full dashboard on this month's performance by campaign group.",
+    script: {
+      calls: [
+        {
+          name: "query_performance",
+          args: {
+            start: "2026-05-01",
+            end: "2026-05-31",
+            metrics: ["spend", "messaging_contacts", "primary_results"],
+            dimensions: ["campaign_umbrella"],
+            sortField: "spend",
+            sortDirection: "desc",
+          },
+        },
+        {
+          name: "query_performance",
+          args: {
+            start: "2026-01-01",
+            end: "2026-05-24",
+            metrics: ["spend"],
+            dimensions: ["week"],
+            sortField: "week",
+            sortDirection: "asc",
+          },
+        },
+      ],
+      answer:
+        "Across May, Book Appts US led spend at $4,700 with 79 messaging contacts; Cash for Gold US drove the most contacts at 312 on $2,700. Weekly spend peaked at $3,900.",
+      visuals: [
+        { type: "flat_table", title: "Performance by group", sourceCallId: "Q1" },
+        { type: "bar_chart", title: "Spend by group", sourceCallId: "Q1", metric: "spend", dimension: "campaign_umbrella" },
+        { type: "line_chart", title: "Weekly spend", sourceCallId: "Q2", metric: "spend", dimension: "week" },
+      ],
+    },
+    expected: {
+      mustMention: ["spend"],
+      visual: "required",
+      minVisuals: 3,
+      requireVisualVariety: true,
+      requireDashboardPacket: true,
+    },
+  },
+  {
+    id: "free-form-messaging-drivers",
+    persona: "analyst",
+    requestType: "free_form",
+    mode: "answer_visuals",
+    prompt: "What's been driving most of our messaging contacts recently?",
+    script: {
+      calls: [
+        {
+          name: "query_performance",
+          args: {
+            start: "2026-04-24",
+            end: "2026-05-24",
+            metrics: ["messaging_contacts", "spend"],
+            dimensions: ["campaign_umbrella"],
+            sortField: "messaging_contacts",
+            sortDirection: "desc",
+          },
+        },
+      ],
+      answer:
+        "Most messaging contacts are coming from Cash for Gold US — 312 in the last month, well above Facebook US Product's 110 and Book Appts US's 79.",
+      visuals: [
+        {
+          type: "bar_chart",
+          title: "Messaging contacts by group",
+          sourceCallId: "Q1",
+          metric: "messaging_contacts",
+          dimension: "campaign_umbrella",
+        },
+      ],
+    },
+    expected: {
+      mustMention: ["messaging"],
+      visual: "required",
+      visualTypeAny: ["bar_chart"],
+    },
+  },
+  {
+    id: "free-form-spend-read-answer-only",
+    persona: "manager",
+    requestType: "free_form",
+    mode: "answer_only",
+    prompt: "Give me a quick read on how our spend has been trending.",
+    script: {
+      calls: [
+        {
+          name: "query_performance",
+          args: {
+            start: "2026-01-01",
+            end: "2026-05-24",
+            metrics: ["spend"],
+            dimensions: ["week"],
+            sortField: "week",
+            sortDirection: "asc",
+          },
+        },
+      ],
+      answer:
+        "Spend ran near $2,600 early on, peaked around $3,900, then settled between $900 and $1,300 in the most recent weeks.",
+      visuals: [],
+    },
+    expected: {
+      mustMention: ["spend"],
+      visual: "forbidden",
+    },
+  },
+  {
+    id: "free-form-revenue-roas-not-tracked",
+    persona: "edge_case",
+    requestType: "free_form_unsupported",
+    mode: "answer_visuals",
+    prompt: "Which campaigns drove the most sales revenue and ROAS last month?",
+    script: {
+      calls: [
+        { name: "query_performance", args: { start: "2026-05-01", end: "2026-05-31", metrics: ["revenue"] } },
+      ],
+      answer:
+        "This workbench doesn't track sales revenue or ROAS — those depend on CRM and transaction data we don't ingest here. I can report Meta-side metrics like spend and messaging contacts instead.",
+      visuals: [],
+    },
+    expected: {
+      mustMention: ["revenue", "roas"],
+      visual: "forbidden",
+    },
+  },
+];
+
 export function evaluateAnalysisWorkbenchQaCase(
   qaCase: AnalysisWorkbenchQaCase,
   result: AnalysisWorkbenchPipelineResult,
@@ -324,6 +634,206 @@ export function formatAnalysisWorkbenchQaReport(
   }
 
   return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Agent path evaluator (Phase 4)
+// ---------------------------------------------------------------------------
+
+const AGENT_CHART_TYPES = new Set<AnalysisWorkbenchVisualCard["type"]>([
+  "bar_chart",
+  "line_chart",
+  "scatter_chart",
+]);
+const AGENT_TABLE_TYPES = new Set<AnalysisWorkbenchVisualCard["type"]>(["flat_table", "pivot_table"]);
+
+export function evaluateAnalysisWorkbenchAgentQaCase(
+  qaCase: AnalysisWorkbenchAgentQaCase,
+  result: AnalysisWorkbenchPipelineResult,
+  options: { ledger?: AgentLedgerEntry[]; renderedPageText?: string } = {},
+): AnalysisWorkbenchQaEvaluation {
+  const criticalFailures: string[] = [];
+  const missingObjects: string[] = [];
+  const validationFailures: string[] = [];
+  const nextFixAreas = new Set<string>();
+  let score = 100;
+
+  const fail = (message: string, scorePenalty: number, nextFixArea: string, critical = true) => {
+    if (critical) criticalFailures.push(message);
+    else validationFailures.push(message);
+    score -= scorePenalty;
+    nextFixAreas.add(nextFixArea);
+  };
+  const missing = (message: string, scorePenalty: number, nextFixArea: string) => {
+    missingObjects.push(message);
+    score -= scorePenalty;
+    nextFixAreas.add(nextFixArea);
+  };
+
+  if (result.status !== "completed") {
+    fail(`expected completed agent run, got ${result.status}`, 30, "agent loop");
+  }
+
+  const answer = result.answer.summary.trim();
+  if (!answer) {
+    missing("agent answer missing summary", 30, "agent answer");
+  }
+  const lowerAnswer = answer.toLowerCase();
+
+  // (a) Numbers are real: every figure traces to a query result and nothing was redacted.
+  const grounding = agentGroundingMeta(result.intent);
+  if (!grounding || grounding.status !== "grounded" || (grounding.untraceable?.length ?? 0) > 0) {
+    fail(
+      `answer carries figures not traceable to query results: ${
+        grounding?.untraceable?.join(", ") || "grounding metadata missing"
+      }`,
+      40,
+      "grounding",
+    );
+  }
+  if (/\(unverified\)/.test(answer)) {
+    fail("answer shipped a redacted (unverified) figure", 25, "grounding");
+  }
+  const withheld = result.validation.warnings.filter(
+    (warning) => warning.code === "withheld_unverified_figure",
+  );
+  if (withheld.length) {
+    fail(`grounding withheld ${withheld.length} unverified figure(s)`, 15, "grounding", false);
+  }
+
+  // (b) It answered the question.
+  (qaCase.expected.mustMention || []).forEach((needle) => {
+    if (!lowerAnswer.includes(needle.toLowerCase())) {
+      fail(`answer does not address "${needle}"`, 12, "answer relevance");
+    }
+  });
+
+  // (c) No fabricated entities: any named campaign group must appear in the queried evidence.
+  const evidence = buildAgentEvidenceText(options.ledger || [], result);
+  CAMPAIGN_UMBRELLAS.forEach((umbrella) => {
+    const needle = umbrella.toLowerCase();
+    if (lowerAnswer.includes(needle) && !evidence.includes(needle)) {
+      fail(`answer names entity "${umbrella}" not present in queried data`, 20, "fabricated entity");
+    }
+  });
+  if (/\b\d{10,}\b/.test(answer)) {
+    fail("answer includes a raw technical entity ID", 15, "entity display");
+  }
+
+  // (d) The chosen visual fits — or was correctly omitted.
+  evaluateAgentVisuals(result, qaCase.expected, fail, missing);
+
+  const normalizedScore = Math.max(0, Math.round(score));
+  const passed =
+    normalizedScore >= ANALYSIS_WORKBENCH_QA_PASSING.minScore &&
+    criticalFailures.length <= ANALYSIS_WORKBENCH_QA_PASSING.maxCriticalFailures &&
+    (!ANALYSIS_WORKBENCH_QA_PASSING.requireAllObjects || missingObjects.length === 0);
+
+  return {
+    id: qaCase.id,
+    persona: qaCase.persona,
+    requestType: qaCase.requestType,
+    prompt: qaCase.prompt,
+    mode: qaCase.mode,
+    score: normalizedScore,
+    passed,
+    criticalFailures,
+    missingObjects,
+    validationFailures,
+    nextFixAreas: [...nextFixAreas],
+  };
+}
+
+function evaluateAgentVisuals(
+  result: AnalysisWorkbenchPipelineResult,
+  expected: AnalysisWorkbenchAgentQaCase["expected"],
+  fail: (message: string, scorePenalty: number, nextFixArea: string, critical?: boolean) => void,
+  missing: (message: string, scorePenalty: number, nextFixArea: string) => void,
+) {
+  const cards = result.visualCards;
+
+  if (expected.visual === "forbidden" && cards.length) {
+    fail(
+      `expected no visual but got ${cards.length} (${cards.map((card) => card.type).join(", ")})`,
+      18,
+      "visual selection",
+    );
+  }
+
+  if (expected.visual === "required") {
+    if (!cards.length) {
+      missing("expected a supporting visual, got none", 15, "visual selection");
+    } else if (
+      expected.visualTypeAny?.length &&
+      !cards.some((card) => expected.visualTypeAny!.includes(card.type))
+    ) {
+      fail(
+        `expected a ${expected.visualTypeAny.join(" or ")} visual, got ${cards
+          .map((card) => card.type)
+          .join(", ")}`,
+        12,
+        "visual selection",
+      );
+    }
+  }
+
+  if (expected.minVisuals && cards.length < expected.minVisuals) {
+    missing(`expected at least ${expected.minVisuals} visuals, got ${cards.length}`, 12, "visual selection");
+  }
+
+  if (expected.requireVisualVariety) {
+    const types = new Set(cards.map((card) => card.type));
+    const hasChart = cards.some((card) => AGENT_CHART_TYPES.has(card.type));
+    const hasTable = cards.some((card) => AGENT_TABLE_TYPES.has(card.type));
+    if (types.size < 2 || !hasChart || !hasTable) {
+      fail(
+        "dashboard visual mix is not varied (need >=2 distinct types including a chart and a table)",
+        15,
+        "dashboard composition",
+      );
+    }
+  }
+
+  if (expected.requireDashboardPacket && !result.dashboardPacket) {
+    missing("full dashboard packet missing", 15, "dashboard packet");
+  }
+}
+
+function agentGroundingMeta(
+  intent: AnalysisWorkbenchPipelineResult["intent"],
+): { status?: string; untraceable?: string[] } | null {
+  const value =
+    intent && typeof intent === "object"
+      ? (intent as Record<string, unknown>).grounding
+      : null;
+  return value && typeof value === "object"
+    ? (value as { status?: string; untraceable?: string[] })
+    : null;
+}
+
+function buildAgentEvidenceText(
+  ledger: AgentLedgerEntry[],
+  result: AnalysisWorkbenchPipelineResult,
+): string {
+  const parts: string[] = [];
+
+  for (const entry of ledger) {
+    parts.push(entry.summary);
+    for (const row of entry.rows) {
+      for (const value of Object.values(row)) {
+        if (typeof value === "string") parts.push(value);
+      }
+    }
+  }
+
+  // Fall back to the mapped surfaces so the check still works without a ledger.
+  result.sourceNotes.forEach((note) => {
+    parts.push(note.label);
+    if (typeof note.value === "string") parts.push(note.value);
+  });
+  result.visualCards.forEach((card) => parts.push(...visualSearchText(card)));
+
+  return parts.join(" ").toLowerCase();
 }
 
 function evaluateUnsupportedCase(
