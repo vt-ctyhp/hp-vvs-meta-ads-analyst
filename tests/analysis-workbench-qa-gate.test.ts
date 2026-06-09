@@ -7,7 +7,9 @@ import { runInNewContext } from "node:vm";
 import * as ts from "typescript";
 
 import {
+  ANALYSIS_WORKBENCH_AGENT_QA_CASES,
   ANALYSIS_WORKBENCH_QA_CASES,
+  evaluateAnalysisWorkbenchAgentQaCase,
   evaluateAnalysisWorkbenchQaCase,
   formatAnalysisWorkbenchQaReport,
 } from "../src/lib/analysis-workbench-qa-gate.ts";
@@ -22,6 +24,17 @@ import type {
   MetaInsightDimension,
   MetaInsightFilter,
 } from "../src/lib/meta-insight-aggregates.ts";
+import {
+  runWorkbenchAgent,
+  type AgentCompletion,
+  type AgentCompletionResponse,
+} from "../src/lib/analysis-workbench-agent.ts";
+import {
+  queryEntities,
+  queryPerformance,
+  type RawEntityRow,
+} from "../src/lib/analysis-workbench-query-tools.ts";
+import { mapWorkbenchAgentResultToPipelineResult } from "../src/lib/analysis-workbench-agent-mapper.ts";
 
 const require = createRequire(import.meta.url);
 const React = require("react");
@@ -345,6 +358,150 @@ function aggregateRow(overrides: Partial<MetaInsightAggregateRow> = {}): MetaIns
 
 function stripMarkup(markup: string) {
   return markup.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+}
+
+// ---------------------------------------------------------------------------
+// Agent path QA gate — grounded, agentic answers (Phase 4)
+// ---------------------------------------------------------------------------
+
+test("agent QA gate: grounded agentic answers pass the persona/free-form/dashboard suite", async () => {
+  const { RunDetail } = loadClientModule("src/components/analysis-workbench-client.tsx");
+  const evaluations = [];
+
+  for (const qaCase of ANALYSIS_WORKBENCH_AGENT_QA_CASES) {
+    const agentRun = await runWorkbenchAgent({
+      prompt: qaCase.prompt,
+      outputMode: qaCase.mode,
+      latestSyncedInsightDate: "2026-05-24",
+      completion: agentScriptCompletion(qaCase.script),
+      executePerformance: (params) =>
+        queryPerformance(params, { executeAggregate: fixtureAggregateMetaInsights }),
+      executeEntities: (params) => queryEntities(params, { fetchEntities: fixtureFetchEntities }),
+    });
+    const result = mapWorkbenchAgentResultToPipelineResult({
+      prompt: qaCase.prompt,
+      outputMode: qaCase.mode,
+      agentResult: agentRun,
+    });
+
+    // The distilled answer view still renders for AI-composed output.
+    const markup = renderToStaticMarkup(
+      React.createElement(RunDetail, {
+        run: runFromResult(`agent-${qaCase.id}`, qaCase.prompt, qaCase.mode, result),
+      }),
+    );
+    assert.ok(stripMarkup(markup).trim().length > 0, `${qaCase.id} rendered empty markup`);
+
+    evaluations.push(
+      evaluateAnalysisWorkbenchAgentQaCase(qaCase, result, {
+        ledger: agentRun.ledger,
+        renderedPageText: stripMarkup(markup),
+      }),
+    );
+  }
+
+  const report = formatAnalysisWorkbenchQaReport(evaluations);
+  assert.equal(
+    evaluations.every((evaluation) => evaluation.passed),
+    true,
+    report,
+  );
+});
+
+test("agent QA gate: the US/VN Product status prompt yields a grounded roster, not a zero chart", async () => {
+  const statusCase = ANALYSIS_WORKBENCH_AGENT_QA_CASES.find(
+    (qaCase) => qaCase.id === "status-us-vn-product-active",
+  );
+  assert.ok(statusCase, "status case present in the agent eval set");
+
+  const agentRun = await runWorkbenchAgent({
+    prompt: statusCase!.prompt,
+    outputMode: statusCase!.mode,
+    latestSyncedInsightDate: "2026-05-24",
+    completion: agentScriptCompletion(statusCase!.script),
+    executePerformance: (params) =>
+      queryPerformance(params, { executeAggregate: fixtureAggregateMetaInsights }),
+    executeEntities: (params) => queryEntities(params, { fetchEntities: fixtureFetchEntities }),
+  });
+  const result = mapWorkbenchAgentResultToPipelineResult({
+    prompt: statusCase!.prompt,
+    outputMode: statusCase!.mode,
+    agentResult: agentRun,
+  });
+
+  // Sensible roster: live vs paused/off, grounded, and no forced zero chart.
+  assert.match(result.answer.summary.toLowerCase(), /live/);
+  assert.match(result.answer.summary.toLowerCase(), /paused|turned off/);
+  assert.equal(result.visualCards.length, 0);
+  assert.doesNotMatch(result.answer.summary, /\(unverified\)/);
+  const grounding = (result.intent as { grounding?: { status?: string } }).grounding;
+  assert.equal(grounding?.status, "grounded");
+});
+
+type AgentQaScript = (typeof ANALYSIS_WORKBENCH_AGENT_QA_CASES)[number]["script"];
+
+let agentToolCallSeq = 0;
+
+function agentScriptCompletion(script: AgentQaScript): AgentCompletion {
+  const responses: AgentCompletionResponse[] = [
+    ...script.calls.map((call) => agentToolCallResponse(call.name, call.args)),
+    agentToolCallResponse("submit_answer", { answer: script.answer, visuals: script.visuals }),
+  ];
+  let index = 0;
+  return async () => {
+    if (index >= responses.length) {
+      throw new Error(`agent script exhausted after ${responses.length} responses`);
+    }
+    return responses[index++];
+  };
+}
+
+function agentToolCallResponse(name: string, args: unknown): AgentCompletionResponse {
+  agentToolCallSeq += 1;
+  return {
+    model: "gpt-5.4",
+    usage: { inputTokens: 80, outputTokens: 40 },
+    message: {
+      content: null,
+      toolCalls: [{ id: `call_${name}_${agentToolCallSeq}`, name, arguments: JSON.stringify(args) }],
+    },
+  };
+}
+
+function fixtureFetchEntities(_input: { entityType: RawEntityRow["entityType"] }): Promise<RawEntityRow[]> {
+  return Promise.resolve(fixtureEntityRows());
+}
+
+function fixtureEntityRows(): RawEntityRow[] {
+  return [
+    rawAd("us-1", "US Evergreen Carousel", "ACTIVE", "Master Product US Evergreen"),
+    rawAd("us-2", "US Evergreen Single", "ACTIVE", "Master Product US Evergreen"),
+    rawAd("us-3", "US Evergreen Story", "PAUSED", "Master Product US Evergreen"),
+    rawAd("vn-1", "VN Evergreen Carousel", "ACTIVE", "Master Product VN Evergreen"),
+    rawAd("vn-2", "VN Evergreen Single", "ARCHIVED", "Master Product VN Evergreen"),
+    rawAd("vn-3", "VN Evergreen Story", "CAMPAIGN_PAUSED", "Master Product VN Evergreen"),
+  ];
+}
+
+function rawAd(
+  id: string,
+  name: string,
+  effectiveStatus: string,
+  campaignName: string,
+): RawEntityRow {
+  return {
+    entityType: "ad",
+    id,
+    name,
+    status: effectiveStatus,
+    effectiveStatus,
+    campaignName,
+    adSetName: null,
+    brandCode: "HP",
+    dailyBudget: null,
+    lifetimeBudget: null,
+    thumbnailUrl: null,
+  };
 }
 
 function loadClientModule(filePath: string) {

@@ -14,10 +14,8 @@ import {
   type AnalysisWorkbenchRun,
   type JsonValue,
 } from "./analysis-workbench-contract.ts";
-import {
-  runAnalysisWorkbenchFactsPipeline,
-  type AnalysisWorkbenchEntityDisplayRequest,
-} from "./analysis-workbench-pipeline.ts";
+import { type AnalysisWorkbenchEntityDisplayRequest } from "./analysis-workbench-pipeline.ts";
+import { runAnalysisWorkbenchAnswer } from "./analysis-workbench-engine.ts";
 import { createAdsAnalystClient, withAdsAnalystEnvironment } from "./ads-analyst-db.ts";
 import { ConfigurationError, getMissingDashboardEnv } from "./env.ts";
 import { aggregateMetaInsights } from "./meta-insight-aggregates.ts";
@@ -69,7 +67,7 @@ export async function createAnalysisWorkbenchRun(input: {
     parentRun ? resolveAnalysisRunContext(parentRun) : null,
     input.removedContextKeys || [],
   );
-  const pipelineResult = await runAnalysisWorkbenchFactsPipeline({
+  const pipelineResult = await runAnalysisWorkbenchAnswer({
     prompt: input.prompt,
     outputMode,
     latestSyncedInsightDate,
@@ -166,7 +164,7 @@ export async function rerunAnalysisWorkbenchRun(
     controlledEdit || null,
   );
   const outputMode = normalizeAnalysisOutputMode(sourceRun.outputMode);
-  const pipelineResult = await runAnalysisWorkbenchFactsPipeline({
+  const pipelineResult = await runAnalysisWorkbenchAnswer({
     prompt: sourceRun.prompt,
     outputMode,
     latestSyncedInsightDate,
