@@ -34,8 +34,10 @@ type DynamicTable = {
   insert: (row: JsonRecord | JsonRecord[]) => DynamicQuery;
   update: (row: JsonRecord) => DynamicUpdateQuery;
 };
+type DynamicRpcResult = { data: unknown; error: Error | null };
 type DynamicSupabaseClient = {
   from: (table: string) => DynamicTable;
+  rpc: (fn: string, params?: JsonRecord) => PromiseLike<DynamicRpcResult>;
 };
 function db(): DynamicSupabaseClient {
   return createAdsAnalystClient("web") as unknown as DynamicSupabaseClient;
@@ -132,45 +134,39 @@ export async function getChangeLogEntriesForWindow(input: {
 
 export async function createChangeLogEntry(draft: ChangeLogDraft, actor: Actor): Promise<string> {
   const supabase = db();
-  const { data, error } = await supabase
-    .from("change_log_entries")
-    .insert(withAdsAnalystEnvironment({
-      brand_code: draft.brandCode,
-      meta_account_id: null,
-      event_date: draft.eventDate,
-      effective_start: draft.effectiveStart,
-      effective_end: draft.effectiveEnd,
-      change_type: draft.changeType,
-      title: draft.title,
-      reason: draft.reason,
-      before_value: draft.beforeValue,
-      after_value: draft.afterValue,
-      raw_input: draft.rawInput,
-      verify_entity: draft.verifyEntity,
-      verify_value: draft.verifyValue,
-      created_by: uuidOrNull(actor.appUserId),
-      created_by_email: actor.email,
-    }))
-    .select("id")
-    .single();
+  // Atomic: a Postgres function inserts the entry, its entities, and the
+  // 'create' revision in one transaction so a mid-sequence failure can no
+  // longer leave an orphan entry (active, listed, AI-fed) with no entities
+  // and no audit row. Environment scoping lives in the function, mirroring
+  // the column default / RLS policy, so withAdsAnalystEnvironment is not used here.
+  const { data, error } = await supabase.rpc("create_change_log_entry", {
+    p_brand_code: draft.brandCode,
+    p_meta_account_id: null,
+    p_event_date: draft.eventDate,
+    p_effective_start: draft.effectiveStart,
+    p_effective_end: draft.effectiveEnd,
+    p_change_type: draft.changeType,
+    p_title: draft.title,
+    p_reason: draft.reason,
+    p_before_value: draft.beforeValue,
+    p_after_value: draft.afterValue,
+    p_raw_input: draft.rawInput,
+    p_verify_entity: draft.verifyEntity,
+    p_verify_value: draft.verifyValue,
+    p_created_by: uuidOrNull(actor.appUserId),
+    p_created_by_email: actor.email,
+    p_entities: draft.entities.map((e) => ({
+      entity_kind: e.entityKind,
+      entity_meta_id: e.entityMetaId,
+      entity_name: e.entityName,
+      match_status: e.matchStatus,
+    })),
+    p_actor_id: uuidOrNull(actor.appUserId),
+    p_actor_email: actor.email,
+    p_snapshot: { draft },
+  });
   if (error) throw error;
-  const entryId = (data as { id: string }).id;
-
-  if (draft.entities.length > 0) {
-    const { error: entErr } = await supabase
-      .from("change_log_entry_entities")
-      .insert(draft.entities.map((e) => withAdsAnalystEnvironment({
-        entry_id: entryId,
-        entity_kind: e.entityKind,
-        entity_meta_id: e.entityMetaId,
-        entity_name: e.entityName,
-        match_status: e.matchStatus,
-      })));
-    if (entErr) throw entErr;
-  }
-
-  await writeRevision(entryId, "create", { draft }, actor);
-  return entryId;
+  return data as string;
 }
 
 export async function updateChangeLogEntry(
