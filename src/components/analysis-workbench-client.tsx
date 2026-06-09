@@ -47,6 +47,12 @@ import {
 } from "@/lib/analysis-workbench-export";
 import { CAMPAIGN_UMBRELLAS } from "@/lib/campaign-umbrellas";
 import { translateError } from "@/lib/glossary";
+import {
+  hasReadableAnswerContent,
+  parseReadableAnswer,
+  type ParsedReadableAnswer,
+  type ReadableAnswerItem,
+} from "@/lib/analysis-workbench-answer-format";
 import type { OpenAICostBreakdown } from "@/lib/openai-cost";
 
 type Props = {
@@ -68,17 +74,6 @@ const OUTPUT_MODE_HELP: Record<AnalysisOutputMode, string> = {
 const OUTPUT_MODES: AnalysisOutputMode[] = ["answer_only", "answer_visuals", "full_dashboard"];
 type StatusKind = "idle" | "success" | "error";
 type ControlledEditDraft = AnalysisWorkbenchControlledEdit;
-type ReadableAnswerItem = {
-  body: string;
-  label?: string;
-};
-type ParsedReadableAnswer = {
-  context: ReadableAnswerItem[];
-  findings: ReadableAnswerItem[];
-  assumptions: ReadableAnswerItem[];
-  caveats: ReadableAnswerItem[];
-  sourceNotes: ReadableAnswerItem[];
-};
 
 const EDIT_METRIC_OPTIONS = ["spend", "primary_results", "cpl", "ctr"] as const;
 const EDIT_DIMENSION_OPTIONS = ["campaign_umbrella", "campaign", "ad_set", "creative"] as const;
@@ -741,73 +736,6 @@ function AnswerText({ text, strip = false }: { text: string; strip?: boolean }) 
 
     return part;
   });
-}
-
-function parseReadableAnswer(summary: string): ParsedReadableAnswer {
-  const parsed: ParsedReadableAnswer = {
-    context: [],
-    findings: [],
-    assumptions: [],
-    caveats: [],
-    sourceNotes: [],
-  };
-
-  const sentences = summary
-    .trim()
-    .split(/(?<=\.)\s+(?=[A-Z0-9])/)
-    .map((sentence) => sentence.replace(/\s+/g, " ").trim())
-    .filter(Boolean);
-
-  sentences.forEach((sentence) => {
-    const labelMatch = sentence.match(/^([A-Z][A-Za-z ]{2,32}s?):\s+(.+)$/);
-    const label = labelMatch?.[1];
-    const body = labelMatch?.[2] || sentence;
-    const lowerLabel = label?.toLowerCase() || "";
-    const lowerSentence = sentence.toLowerCase();
-    const item = label ? { label, body } : { body };
-
-    if (lowerLabel.startsWith("assumption")) {
-      parsed.assumptions.push({ body });
-      return;
-    }
-
-    if (lowerLabel.startsWith("caveat")) {
-      parsed.caveats.push({ body });
-      return;
-    }
-
-    if (lowerLabel.startsWith("source note")) {
-      parsed.sourceNotes.push({ body });
-      return;
-    }
-
-    if (
-      lowerSentence.startsWith("answer only mode used governed meta ads facts") ||
-      lowerSentence.startsWith("answer + visuals mode used governed meta ads facts") ||
-      lowerSentence.startsWith("full dashboard mode used governed meta ads facts")
-    ) {
-      parsed.context.push(item);
-      return;
-    }
-
-    parsed.findings.push(item);
-  });
-
-  if (!sentences.length && summary.trim()) {
-    parsed.findings.push({ body: summary.trim() });
-  }
-
-  return parsed;
-}
-
-function hasReadableAnswerContent(answer: ParsedReadableAnswer) {
-  return Boolean(
-    answer.context.length ||
-      answer.findings.length ||
-      answer.assumptions.length ||
-      answer.caveats.length ||
-      answer.sourceNotes.length,
-  );
 }
 
 export function VisualCardGrid({

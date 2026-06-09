@@ -6,6 +6,8 @@ import { runInNewContext } from "node:vm";
 
 import * as ts from "typescript";
 
+import * as answerFormatModule from "../src/lib/analysis-workbench-answer-format.ts";
+
 const require = createRequire(import.meta.url);
 const React = require("react");
 const { renderToStaticMarkup } = require("react-dom/server");
@@ -782,6 +784,9 @@ function loadModule(filePath: string) {
             return run.intent || null;
           },
         };
+      }
+      if (id === "@/lib/analysis-workbench-answer-format") {
+        return answerFormatModule;
       }
       if (id === "@/lib/analysis-workbench-export") {
         return {

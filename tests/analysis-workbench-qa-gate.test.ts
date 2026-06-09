@@ -35,6 +35,7 @@ import {
   type RawEntityRow,
 } from "../src/lib/analysis-workbench-query-tools.ts";
 import { mapWorkbenchAgentResultToPipelineResult } from "../src/lib/analysis-workbench-agent-mapper.ts";
+import * as answerFormatModule from "../src/lib/analysis-workbench-answer-format.ts";
 
 const require = createRequire(import.meta.url);
 const React = require("react");
@@ -536,6 +537,9 @@ function loadClientModule(filePath: string) {
             return null;
           },
         };
+      }
+      if (id === "@/lib/analysis-workbench-answer-format") {
+        return answerFormatModule;
       }
       if (id === "@/lib/analysis-workbench-export") {
         return {

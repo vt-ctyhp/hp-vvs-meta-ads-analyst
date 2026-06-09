@@ -36,6 +36,47 @@ const ENTITY_LEDGER: AgentLedgerEntry[] = [
   },
 ];
 
+test("redaction does not corrupt adjacent or larger numbers", () => {
+  // Evidence has 1 (rowCount) and 12 (a spend), but not a standalone 2.
+  const ledger: AgentLedgerEntry[] = [
+    {
+      id: "Q1",
+      tool: "query_performance",
+      params: {},
+      summary: "spend: 1 row.",
+      rowCount: 1,
+      rows: [{ campaign_umbrella: "Facebook US Product", spend: 12 }],
+    },
+  ];
+  const grounded = groundAgentAnswer("We saw 12 ads but only 2 were live.", ledger);
+  // The untraceable standalone 2 is redacted...
+  assert.match(grounded.answer, /only \(unverified\) were live/);
+  // ...without mangling the traceable 12 into "1(unverified)".
+  assert.match(grounded.answer, /We saw 12 ads/);
+  assert.doesNotMatch(grounded.answer, /1\(unverified\)/);
+});
+
+test("a status count derived from roster rows is traceable even if absent from the summary", () => {
+  // Summary omits the count; the model counts 2 paused rows itself.
+  const ledger: AgentLedgerEntry[] = [
+    {
+      id: "Q1",
+      tool: "query_entities",
+      params: {},
+      summary: "query_entities campaign matched a roster.",
+      rowCount: 3,
+      rows: [
+        { id: "a", status: "live" },
+        { id: "b", status: "paused" },
+        { id: "c", status: "paused" },
+      ],
+    },
+  ];
+  const result = validateAnswerGrounding("2 campaigns are paused.", ledger);
+  assert.equal(result.status, "grounded");
+  assert.equal(result.untraceable.length, 0);
+});
+
 test("an answer whose numbers all come from rows is grounded", () => {
   const result = validateAnswerGrounding("US Product spent $1,200; VN Product spent $800.", PERF_LEDGER);
   assert.equal(result.status, "grounded");

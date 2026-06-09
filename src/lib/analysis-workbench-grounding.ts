@@ -63,7 +63,7 @@ export function groundAgentAnswer(answer: string, ledger: AgentLedgerEntry[]): G
 
   let redacted = answer;
   for (const token of grounding.untraceable) {
-    redacted = replaceAll(redacted, token, REDACTION);
+    redacted = redactUntraceable(redacted, token);
   }
 
   const warnings = [
@@ -118,15 +118,23 @@ function buildEvidenceValues(ledger: AgentLedgerEntry[]): number[] {
     for (const token of extractNumericTokens(entry.summary)) values.push(token.value);
 
     const columnSums = new Map<string, number>();
+    // Category counts (e.g. how many rows have status "paused") so a roster
+    // count the model derives by tallying rows stays traceable.
+    const categoryCounts = new Map<string, number>();
     for (const row of entry.rows) {
       for (const [key, raw] of Object.entries(row)) {
         const value = coerceNumber(raw);
-        if (value === null) continue;
-        values.push(value);
-        columnSums.set(key, (columnSums.get(key) || 0) + value);
+        if (value !== null) {
+          values.push(value);
+          columnSums.set(key, (columnSums.get(key) || 0) + value);
+        } else if (typeof raw === "string" && raw.trim()) {
+          const categoryKey = `${key}=${raw.trim().toLowerCase()}`;
+          categoryCounts.set(categoryKey, (categoryCounts.get(categoryKey) || 0) + 1);
+        }
       }
     }
     for (const sum of columnSums.values()) values.push(sum);
+    for (const count of categoryCounts.values()) values.push(count);
   }
   return values;
 }
@@ -161,8 +169,15 @@ function approxEqual(a: number, b: number): boolean {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function replaceAll(text: string, token: string, replacement: string): string {
-  return text.split(token).join(replacement);
+/**
+ * Replace only standalone occurrences of an untraceable figure. Boundary
+ * lookarounds keep the token from matching inside a larger number, so redacting
+ * "2" never mangles "12", "2026", or "$1,200".
+ */
+function redactUntraceable(text: string, token: string): string {
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`(?<![\\d.,$%])${escaped}(?![\\d.,%])`, "g");
+  return text.replace(pattern, REDACTION);
 }
 
 function uniqueStrings(values: string[]): string[] {
