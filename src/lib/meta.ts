@@ -3295,6 +3295,24 @@ export function getConfiguredAccounts(): SyncAccountConfig[] {
   return accounts;
 }
 
+/**
+ * Returns the Meta account id in the stored `act_<digits>` format for a given
+ * brandCode, or null if that brand has no configured account.
+ * Uses the same act_/normalizeAccountId logic as the rest of this file so the
+ * returned value matches what is written to meta_ad_sets.meta_account_id.
+ */
+export function metaAccountIdForBrand(brandCode: "HP" | "VVS"): string | null {
+  const hp = process.env.META_HP_AD_ACCOUNT_ID;
+  const vvs = process.env.META_VVS_AD_ACCOUNT_ID;
+  if (brandCode === "HP") {
+    return hp ? `act_${normalizeAccountId(hp)}` : null;
+  }
+  if (brandCode === "VVS") {
+    return vvs?.trim() ? `act_${normalizeAccountId(vvs)}` : null;
+  }
+  return null;
+}
+
 function requireMetaAccessToken() {
   const accessToken = process.env.META_ACCESS_TOKEN;
   if (!accessToken) {
