@@ -46,6 +46,9 @@ function baseInput() {
     prompt: "How much did US Product spend?",
     outputMode: "answer_visuals" as const,
     latestSyncedInsightDate: "2026-05-24",
+    // Default to no Anthropic key so provider resolution is deterministic in CI;
+    // individual tests opt into a provider explicitly.
+    anthropicApiKey: null as string | null,
     executeAggregate: async (_request: AnalysisWorkbenchPipelineAggregateRequest) =>
       [] as MetaInsightAggregateRow[],
     loadEntityDisplays: async () => [],
@@ -75,6 +78,33 @@ test("uses the agent engine when enabled and an API key is present", async () =>
   assert.equal(result.status, "completed");
   assert.equal((result.intent as { engine?: string }).engine, "agent");
   assert.match(result.answer.summary, /\$1,200/);
+});
+
+test("prefers the Anthropic provider and passes the Sonnet model + raised cost ceiling", async () => {
+  const captured: { model?: string; costCeilingUsd?: number; estimateCost?: unknown } = {};
+  await runAnalysisWorkbenchAnswer({
+    ...baseInput(),
+    agentEnabled: true,
+    anthropicApiKey: "sk-ant",
+    openAiApiKey: "sk-openai", // present too — Anthropic should still win
+    createCompletion: () => async () => {
+      throw new Error(NEVER_CALLED);
+    },
+    fetchEntities: async () => [] as RawEntityRow[],
+    runAgent: async (agentInput) => {
+      captured.model = agentInput.model;
+      captured.costCeilingUsd = agentInput.costCeilingUsd;
+      captured.estimateCost = agentInput.estimateCost;
+      return agentResult();
+    },
+    runDeterministic: async () => {
+      throw new Error(NEVER_CALLED);
+    },
+  });
+
+  assert.equal(captured.model, "claude-sonnet-4-6");
+  assert.equal(captured.costCeilingUsd, 0.25);
+  assert.equal(typeof captured.estimateCost, "function");
 });
 
 test("falls back to the deterministic pipeline when the agent flag is off", async () => {

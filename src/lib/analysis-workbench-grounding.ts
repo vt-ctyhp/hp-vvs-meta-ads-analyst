@@ -30,6 +30,9 @@ export type GroundedAnswer = {
 
 const REDACTION = "(unverified)";
 const ISO_DATE = /\d{4}-\d{2}-\d{2}/g;
+// A number immediately followed by a time unit ("30 days", "30-day", "4 weeks")
+// describes a window, not a measured value — don't treat it as a figure.
+const DURATION_UNIT = /^[\s-]*(day|days|week|weeks|month|months|quarter|quarters|hour|hours|minute|minutes|year|years)\b/i;
 // Currency/percent/grouped/decimal numbers, e.g. $1,200  47  1.2%  2,000.
 // Grouped form (with thousands commas) is matched first so a trailing
 // sentence comma is never absorbed into the number.
@@ -89,6 +92,8 @@ function extractNumericTokens(text: string): NumericToken[] {
     const value = parseNumber(raw);
     if (value === null) continue;
     if (isBareYear(raw, value)) continue;
+    const trailing = withoutDates.slice((match.index ?? 0) + raw.length);
+    if (DURATION_UNIT.test(trailing)) continue;
     tokens.push({ raw, value });
   }
   return tokens;

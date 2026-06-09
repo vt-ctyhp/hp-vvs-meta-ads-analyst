@@ -121,6 +121,8 @@ export type RunWorkbenchAgentInput = {
   model?: string;
   costCeilingUsd?: number;
   maxToolCalls?: number;
+  /** Cost estimator for the ceiling check; defaults to OpenAI pricing. */
+  estimateCost?: (input: { model: string; inputTokens: number; outputTokens: number }) => OpenAICostBreakdown;
 };
 
 // ---------------------------------------------------------------------------
@@ -295,7 +297,8 @@ export async function runWorkbenchAgent(input: RunWorkbenchAgentInput): Promise<
   let lastAssistantText = "";
   let resolvedModel = model;
 
-  const cost = () => buildOpenAICostBreakdown({ model: resolvedModel, inputTokens, outputTokens });
+  const estimate = input.estimateCost ?? buildOpenAICostBreakdown;
+  const cost = () => estimate({ model: resolvedModel, inputTokens, outputTokens });
 
   const finish = (
     answer: string,

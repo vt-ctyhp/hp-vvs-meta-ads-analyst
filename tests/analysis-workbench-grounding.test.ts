@@ -36,6 +36,30 @@ const ENTITY_LEDGER: AgentLedgerEntry[] = [
   },
 ];
 
+test("a window length like '30 days' is descriptive, not a figure to verify", () => {
+  const ledger: AgentLedgerEntry[] = [
+    {
+      id: "Q1",
+      tool: "query_entities",
+      params: {},
+      summary: "campaign: 2 matched (2 live, 0 paused, 0 off).",
+      rowCount: 2,
+      rows: [
+        { id: "a", status: "live", name: "CBI_Evergreen_Prospecting_US_Lifetime" },
+        { id: "b", status: "live", name: "CBI_Evergreen_Prospecting_US_Jun_ADV_Audience" },
+      ],
+    },
+  ];
+  const grounded = groundAgentAnswer(
+    "For the last 30 days (2026-05-10 to 2026-06-08), 2 campaigns are live.",
+    ledger,
+  );
+  // "30 days" and the 30-day window must not be redacted.
+  assert.match(grounded.answer, /last 30 days/);
+  assert.doesNotMatch(grounded.answer, /\(unverified\)/);
+  assert.equal(grounded.grounding.status, "grounded");
+});
+
 test("redaction does not corrupt adjacent or larger numbers", () => {
   // Evidence has 1 (rowCount) and 12 (a spend), but not a standalone 2.
   const ledger: AgentLedgerEntry[] = [
