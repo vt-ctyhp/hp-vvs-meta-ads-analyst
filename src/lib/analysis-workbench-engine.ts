@@ -66,6 +66,8 @@ export type RunAnalysisWorkbenchAnswerInput = {
   openAiApiKey?: string | null;
   createCompletion?: () => AgentCompletion;
   fetchEntities?: QueryEntitiesDeps["fetchEntities"];
+  /** Agent path only: swap id-shaped entity names for real names before the model sees rows. */
+  resolveEntityNames?: (rows: MetaInsightAggregateRow[]) => Promise<MetaInsightAggregateRow[]>;
   runAgent?: (input: RunWorkbenchAgentInput) => Promise<WorkbenchAgentResult>;
   mapAgentResult?: typeof mapWorkbenchAgentResultToPipelineResult;
   runDeterministic?: typeof runAnalysisWorkbenchFactsPipeline;
@@ -92,6 +94,7 @@ export async function runAnalysisWorkbenchAnswer(
     const mapAgent = input.mapAgentResult ?? mapWorkbenchAgentResultToPipelineResult;
     const completion = (input.createCompletion ?? createOpenAIAgentCompletion)();
     const fetchEntities = input.fetchEntities ?? createSupabaseEntityFetcher();
+    const resolveEntityNames = input.resolveEntityNames ?? (async (rows) => rows);
 
     const agentResult = await runAgent({
       prompt: input.prompt,
@@ -99,7 +102,9 @@ export async function runAnalysisWorkbenchAnswer(
       latestSyncedInsightDate: input.latestSyncedInsightDate,
       completion,
       executePerformance: (params) =>
-        queryPerformance(params, { executeAggregate: input.executeAggregate }),
+        queryPerformance(params, {
+          executeAggregate: async (request) => resolveEntityNames(await input.executeAggregate(request)),
+        }),
       executeEntities: (params) => queryEntities(params, { fetchEntities }),
     });
 

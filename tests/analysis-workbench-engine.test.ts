@@ -183,3 +183,45 @@ test("agent engine wires the read-only query tools to the injected data access",
   assert.equal(captured.entities.rows[0].status, "live");
   assert.equal(captured.entities.rows[0].campaignUmbrella, "Facebook US Product");
 });
+
+test("agent engine resolves id-shaped entity names before the model sees the rows", async () => {
+  const captured: { perf?: QueryPerformanceResult } = {};
+
+  await runAnalysisWorkbenchAnswer({
+    ...baseInput(),
+    agentEnabled: true,
+    openAiApiKey: "sk-test",
+    createCompletion: () => async () => {
+      throw new Error(NEVER_CALLED);
+    },
+    fetchEntities: async () => [] as RawEntityRow[],
+    // Raw row carries an id in the creative name column.
+    executeAggregate: async () =>
+      [
+        {
+          creative: "2092661268352347",
+          creative_id: "2092661268352347",
+          spend: 252.78,
+        } as unknown as MetaInsightAggregateRow,
+      ],
+    // Engine should pipe rows through this before query_performance projects them.
+    resolveEntityNames: async (rows) =>
+      rows.map((row) => ({ ...row, creative: "Gold Story A" })),
+    runAgent: async (agentInput) => {
+      captured.perf = await agentInput.executePerformance({
+        start: "2026-06-02",
+        end: "2026-06-08",
+        metrics: ["spend"],
+        dimensions: ["creative"],
+      } as QueryPerformanceParams);
+      return agentResult();
+    },
+    runDeterministic: async () => {
+      throw new Error(NEVER_CALLED);
+    },
+  });
+
+  assert.ok(captured.perf);
+  assert.equal(captured.perf.rows[0].creative, "Gold Story A");
+  assert.equal(captured.perf.rows[0].spend, 252.78);
+});

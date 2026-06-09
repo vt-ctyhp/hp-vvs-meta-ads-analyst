@@ -18,7 +18,8 @@ import { type AnalysisWorkbenchEntityDisplayRequest } from "./analysis-workbench
 import { runAnalysisWorkbenchAnswer } from "./analysis-workbench-engine.ts";
 import { createAdsAnalystClient, withAdsAnalystEnvironment } from "./ads-analyst-db.ts";
 import { ConfigurationError, getMissingDashboardEnv } from "./env.ts";
-import { aggregateMetaInsights } from "./meta-insight-aggregates.ts";
+import { aggregateMetaInsights, type MetaInsightAggregateRow } from "./meta-insight-aggregates.ts";
+import { applyEntityNameMaps, buildEntityNameMap } from "./analysis-workbench-entity-names.ts";
 
 const RUN_COLUMNS =
   "id,status,prompt,output_mode,title,intent,query_plan,facts,visual_cards,source_notes,validation,lineage,answer,dashboard_packet,created_at,updated_at";
@@ -83,6 +84,7 @@ export async function createAnalysisWorkbenchRun(input: {
         limit: request.limit,
       }),
     loadEntityDisplays: loadAnalysisWorkbenchEntityDisplays,
+    resolveEntityNames: resolveAgentEntityNames,
   });
 
   const run = buildAnalysisRunInsert({
@@ -181,6 +183,7 @@ export async function rerunAnalysisWorkbenchRun(
         limit: request.limit,
       }),
     loadEntityDisplays: loadAnalysisWorkbenchEntityDisplays,
+    resolveEntityNames: resolveAgentEntityNames,
   });
   const run = buildAnalysisRunInsert({
     prompt: sourceRun.prompt,
@@ -199,6 +202,45 @@ export async function rerunAnalysisWorkbenchRun(
 
   if (response.error) throw response.error;
   return mapAnalysisRunRecord(response.data as AnalysisRunRecord);
+}
+
+/**
+ * Agent path: swap id-shaped campaign/ad_set/ad/creative names for the real
+ * names from the entity tables, so AI-built tables and charts show names rather
+ * than raw 16-digit ids. Mirrors the deterministic pipeline's display join.
+ */
+async function resolveAgentEntityNames(
+  rows: MetaInsightAggregateRow[],
+): Promise<MetaInsightAggregateRow[]> {
+  if (!rows.length) return rows;
+  const supabase = createAdsAnalystClient("web") as unknown as EntityMetadataClient;
+
+  const campaignIds = uniqueStrings(rows.map((row) => row.campaign_id));
+  const adSetIds = uniqueStrings(rows.map((row) => row.ad_set_id));
+  const adIds = uniqueStrings(rows.map((row) => row.ad_id));
+  const creativeIds = uniqueStrings(rows.map((row) => row.creative_id));
+
+  const [campaigns, adSets, ads, creatives] = await Promise.all([
+    campaignIds.length
+      ? selectRowsById(supabase, "meta_campaigns", "campaign_id,name", "campaign_id", campaignIds)
+      : Promise.resolve([]),
+    adSetIds.length
+      ? selectRowsById(supabase, "meta_ad_sets", "ad_set_id,name", "ad_set_id", adSetIds)
+      : Promise.resolve([]),
+    adIds.length
+      ? selectRowsById(supabase, "meta_ads", "ad_id,name", "ad_id", adIds)
+      : Promise.resolve([]),
+    creativeIds.length
+      ? selectRowsById(supabase, "meta_creatives", "creative_id,name,title", "creative_id", creativeIds)
+      : Promise.resolve([]),
+  ]);
+
+  return applyEntityNameMaps(rows, {
+    campaign: buildEntityNameMap(campaigns, "campaign_id", ["name"]),
+    ad_set: buildEntityNameMap(adSets, "ad_set_id", ["name"]),
+    ad: buildEntityNameMap(ads, "ad_id", ["name"]),
+    creative: buildEntityNameMap(creatives, "creative_id", ["name", "title"]),
+  });
 }
 
 async function loadAnalysisWorkbenchEntityDisplays(

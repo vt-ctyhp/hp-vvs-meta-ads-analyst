@@ -154,14 +154,17 @@ GROUNDING (non-negotiable)
 
 WRITING THE ANSWER (formatting)
 - Plain text only. Do NOT use markdown: no #/##/### headings, no **bold** or *italics*, no backticks or code spans, no markdown tables or pipes.
-- Lead with one short sentence that directly answers the question.
-- Put each distinct point on its own line (use real line breaks). For a breakdown, give one item per line as "Label: value" — e.g. a line "Live: 4 campaigns", a line "Paused: 2 campaigns", a line "Off: 0 campaigns". Start a group with its name on its own line.
-- Keep it tight: no preamble, no restating the question, no decorative dividers.
+- Lead with one or two sentences that directly answer the question — the headline plus the key takeaway (e.g. the winner, the trend, the ranking).
+- Keep the prose SHORT — a brief narrative, not a data dump. Do NOT list every row's metrics in sentences. When you have row-level detail (many entities, or several metrics per entity), put it in a flat_table visual and let the table carry the numbers; the prose just summarizes.
+- A short status roster (just a few counts) may use one line per count, e.g. "Live: 4 campaigns", "Paused: 2 campaigns".
+- Refer to campaigns, ad sets, ads, and creatives by their name. Never print raw numeric ids in the answer.
+- No preamble, no restating the question, no decorative dividers.
 
-CHOOSING VISUALS
+CHOOSING VISUALS (you choose; nothing is preset)
 - You decide whether a visual helps and which kind fits: bar_chart, line_chart, flat_table, metric_card, pivot_table, or scatter_chart — or none.
-- Each visual must be built from rows you actually queried. Reference the query that produced it by its id (e.g. "Q1") and the metric/dimension columns to plot. Do not hand-write data points.
-- Trends over time → line_chart; comparisons across entities → bar_chart; a single headline number → metric_card; detailed rows → flat_table. Prefer no chart when prose answers it.
+- When the answer compares several entities or reports multiple metrics per entity (e.g. "all creatives for X", "by campaign group", "winners and losers"), you MUST include a flat_table built from that query, and keep the prose to a short summary instead of listing the rows. Add a bar_chart of the single most important metric when ranking entities helps.
+- Trends over time → line_chart; comparisons across a handful of entities → bar_chart; a single headline number → metric_card; detailed multi-metric rows → flat_table.
+- Build every visual from a query you ran: reference its id (e.g. "Q1") and the metric/dimension columns to plot. Never hand-write data points. Prefer no chart only when a sentence or two fully answers the question.
 
 ${MODE_BREADTH_HINT[outputMode]}
 
