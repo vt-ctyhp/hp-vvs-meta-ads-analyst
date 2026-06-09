@@ -953,6 +953,36 @@ async function fetchMetaAdsForCatalogRefresh(
   }
 }
 
+export type LiveAdSetState = {
+  id: string;
+  name: string | null;
+  status: string | null;
+  dailyBudget: string | null; // Meta returns minor units as a string
+};
+
+/**
+ * Read-only live read of an ad set's current status and daily budget.
+ * Returns null if Meta is unreachable or the token is missing - callers must
+ * degrade gracefully (verify_value = 'na'); this never throws to the caller.
+ */
+export async function fetchLiveAdSetState(adSetId: string): Promise<LiveAdSetState | null> {
+  try {
+    const data = await graphFetch<{ id: string; name?: string; status?: string; daily_budget?: string }>(
+      adSetId,
+      { fields: "id,name,status,daily_budget" },
+    );
+    const node = data as { id: string; name?: string; status?: string; daily_budget?: string };
+    return {
+      id: node.id,
+      name: node.name ?? null,
+      status: node.status ?? null,
+      dailyBudget: node.daily_budget ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // Shared request shape for the per-ad-set catalog fetch. Exported so tests can
 // assert the edge/fields/page-size without hitting Meta.
 export function adSetAdsRequest(adSetId: string) {
@@ -3263,6 +3293,24 @@ export function getConfiguredAccounts(): SyncAccountConfig[] {
   }
 
   return accounts;
+}
+
+/**
+ * Returns the Meta account id in the stored `act_<digits>` format for a given
+ * brandCode, or null if that brand has no configured account.
+ * Uses the same act_/normalizeAccountId logic as the rest of this file so the
+ * returned value matches what is written to meta_ad_sets.meta_account_id.
+ */
+export function metaAccountIdForBrand(brandCode: "HP" | "VVS"): string | null {
+  const hp = process.env.META_HP_AD_ACCOUNT_ID;
+  const vvs = process.env.META_VVS_AD_ACCOUNT_ID;
+  if (brandCode === "HP") {
+    return hp ? `act_${normalizeAccountId(hp)}` : null;
+  }
+  if (brandCode === "VVS") {
+    return vvs?.trim() ? `act_${normalizeAccountId(vvs)}` : null;
+  }
+  return null;
 }
 
 function requireMetaAccessToken() {
