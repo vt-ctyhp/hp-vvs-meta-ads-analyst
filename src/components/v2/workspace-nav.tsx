@@ -44,6 +44,7 @@ const ROOM_ITEMS: Record<
       permission: "view_creative_analysis",
     },
     { href: "/analysis", label: "AI Analysis", permission: "view_ai_analysis" },
+    { href: "/analyst/financial-audit", label: "Financial Audit", permission: "view_dashboard" },
     { href: "/analyst/change-log", label: "Change Log", permission: "view_change_log" },
   ],
   convert: [
